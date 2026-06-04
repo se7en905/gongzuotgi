@@ -1,0 +1,30 @@
+{
+  "name": "agent-workflow-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:api": "API_PORT=4288 node scripts/start-api.mjs",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "start": "node scripts/start-api.mjs",
+    "remote:start": "bash scripts/start-remote-service.sh",
+    "smoke": "node server/smoke.mjs",
+    "db:sync": "node scripts/sync-json-to-mysql.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
+    "@vitejs/plugin-vue": "^5.2.4",
+    "element-plus": "^2.9.11",
+    "mysql2": "^3.22.3",
+    "vite": "^5.4.19",
+    "vue": "^3.5.16"
+  },
+  "devDependencies": {
+    "sass": "^1.99.0"
+  }
+}

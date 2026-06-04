@@ -1,0 +1,702 @@
+import { randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
+import { readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { listRolesRaw, listSessionsRaw, listUsersRaw, paths, writeRolesRaw, writeSessionsRaw, writeUsersRaw } from './store.mjs';
+
+const scrypt = promisify(scryptCallback);
+const sessionCookieName = 'awp_session';
+const sessionMaxAgeMs = Number(process.env.AWP_SESSION_MAX_AGE_MS || 12 * 60 * 60 * 1000);
+const sessionIdleMaxAgeMs = Number(process.env.AWP_SESSION_IDLE_MAX_AGE_MS || 4 * 60 * 60 * 1000);
+const roleRank = {
+  viewer: 1,
+  reviewer: 2,
+  developer: 3,
+  admin: 4
+};
+const permissionCatalog = [
+  { id: 'menu.workspace', name: '工作台', type: 'menu', group: '工作台', description: '访问工作台总览。' },
+  { id: 'menu.projects', name: '项目列表', type: 'menu', group: '项目管理', description: '访问项目列表。' },
+  { id: 'menu.tasks', name: '任务中心', type: 'menu', group: '任务总览', description: '访问美术任务中心。' },
+  { id: 'menu.skillManagement', name: '技能管理', type: 'menu', group: '技能管理', description: '访问技能管理一级菜单。' },
+  { id: 'menu.skillList', name: '技能清单', type: 'menu', group: '技能管理', description: '查看技能清单。' },
+  { id: 'menu.skillMembers', name: '成员产物', type: 'menu', group: '技能管理', description: '查看成员产物沉淀。' },
+  { id: 'menu.skillValidations', name: '验证回填', type: 'menu', group: '技能管理', description: '查看 Skill 验证回填。' },
+  { id: 'menu.skillEvents', name: '研究同步', type: 'menu', group: '技能管理', description: '查看 AI 研究沉淀同步。' },
+  { id: 'menu.repository', name: '资料库管理', type: 'menu', group: 'AI 管理', description: '访问资料库管理。' },
+  { id: 'menu.aiMembers', name: 'AI部门看板', type: 'menu', group: 'AI 管理', description: '访问 AI 部门成员展示和周报摘要。' },
+  { id: 'menu.aiMembers.owner', name: '负责人看板', type: 'menu', group: 'AI 管理', description: '查看 AI 部门负责人看板。' },
+  { id: 'menu.aiMembers.member', name: '组员看板', type: 'menu', group: 'AI 管理', description: '查看 AI 部门组员看板。' },
+  { id: 'menu.aiArchive', name: 'AI 档案', type: 'menu', group: 'AI 管理', description: '访问 AI 档案和验证记录。' },
+  { id: 'menu.codexConfig', name: 'Codex 配置', type: 'menu', group: 'AI 管理', description: '访问 Codex 配置页。' },
+  { id: 'menu.runs', name: '执行任务', type: 'menu', group: '执行管理', description: '访问执行任务页。' },
+  { id: 'menu.workflowDesigner', name: '工作流编排', type: 'menu', group: '执行管理', description: '访问工作流编排页。' },
+  { id: 'menu.users', name: '账户管理', type: 'menu', group: '用户管理', description: '访问账户管理页。' },
+  { id: 'menu.roles', name: '角色管理', type: 'menu', group: '用户管理', description: '访问角色管理页。' },
+  { id: 'menu.operationLogs', name: '操作日志', type: 'menu', group: '用户管理', description: '访问平台操作审计日志。' },
+  { id: 'project.create', name: '接入项目', type: 'button', group: '项目管理', description: '新增项目接入。' },
+  { id: 'project.edit', name: '编辑项目', type: 'button', group: '项目管理', description: '编辑项目配置。' },
+  { id: 'project.delete', name: '删除项目', type: 'button', group: '项目管理', description: '删除平台项目记录和产物。' },
+  { id: 'artProjectSheet.manage', name: '维护项目列表字段', type: 'button', group: '项目管理', description: '新增、编辑、删除工作台项目列表字段和本地项目行。' },
+  { id: 'task.sync', name: '同步任务/Bug', type: 'button', group: '任务中心', description: '同步禅道任务或 Bug。' },
+  { id: 'task.note.manage', name: '保存任务备注', type: 'button', group: '任务中心', description: '保存任务中心处理备注。' },
+  { id: 'task.artBrief.generate', name: '生成美术摘要', type: 'button', group: '任务中心', description: '生成或重新生成任务美术摘要。' },
+  { id: 'task.codexPrompt.copy', name: '复制 Codex 指令', type: 'button', group: '任务中心', description: '复制任务给 Codex 使用的分析或执行指令。' },
+  { id: 'task.personPressure.view', name: '查看人员分配判断', type: 'button', group: '任务中心', description: '查看人员卡片底部的分配判断、负责人提醒和压力分。' },
+  { id: 'run.create', name: '创建执行', type: 'button', group: '执行管理', description: '创建执行任务。' },
+  { id: 'run.codex.execute', name: '启动 Codex 执行', type: 'button', group: '执行管理', description: '启动、中断或重试会消耗服务器侧 Codex Key 的执行。' },
+  { id: 'run.start', name: '启动执行', type: 'button', group: '执行管理', description: '启动或重试执行。' },
+  { id: 'run.cancel', name: '中断执行', type: 'button', group: '执行管理', description: '中断运行中的执行。' },
+  { id: 'run.delete', name: '删除执行记录', type: 'button', group: '执行管理', description: '删除运行记录和平台产物。' },
+  { id: 'review.submit', name: '提交复核', type: 'button', group: '人工复核', description: '提交人工验收、阶段复核或图片复核。' },
+  { id: 'review.image.submit', name: '保存图片复核', type: 'button', group: '人工复核', description: '保存图片人工复核结论。' },
+  { id: 'skill.version.manage', name: '维护产物版本', type: 'button', group: '技能管理', description: '编辑技能清单/产物预览里的版本号。' },
+  { id: 'skill.alias.manage', name: '维护产物调用别名', type: 'button', group: '技能管理', description: '编辑产物预览里的调用别名，不允许修改版本。' },
+  { id: 'skill.usageLogs.view', name: '查看产物使用明细', type: 'button', group: '技能管理', description: '查看产物调用次数、成员使用明细和收起的使用日志。' },
+  { id: 'skill.validation.manage', name: '维护验证回填', type: 'button', group: '技能管理', description: '新增、编辑、删除 Skill 验证回填记录。' },
+  { id: 'skill.validationBackfill.manage', name: '确认验证明细回填', type: 'button', group: '技能管理', description: '将验证明细里未自动映射的记录确认展示到产物验证区。' },
+  { id: 'skill.validationOwner.manage', name: '修改验证贡献人', type: 'button', group: '技能管理', description: '修改产物验证区记录里的贡献人字段。' },
+  { id: 'skill.validationColumns.manage', name: '配置产物验证区字段', type: 'button', group: '技能管理', description: '隐藏或恢复产物验证区字段，并控制组员默认可见字段。' },
+  { id: 'skill.validationLogs.view', name: '查看验证回填明细', type: 'button', group: '技能管理', description: '查看验证回填页收起的未映射、非验证范畴和归档明细。' },
+  { id: 'skill.validationDetailLogs.view', name: '查看验证明细抽屉', type: 'button', group: '技能管理', description: '查看验证回填页右侧收起的验证明细。' },
+  { id: 'skill.validationDetailLogs.delete', name: '删除验证明细记录', type: 'button', group: '技能管理', description: '删除验证回填页右侧收起的验证明细记录。' },
+  { id: 'skill.asset.manage', name: '维护 AI 产物', type: 'button', group: '技能管理', description: '新增、编辑、隐藏 AI 产物清单记录。' },
+  { id: 'skill.assetOwner.manage', name: '修改产物贡献人', type: 'button', group: '技能管理', description: '修改 AI 产物清单和产物列表里的贡献人字段。' },
+  { id: 'artProgress.manage', name: '维护研究同步', type: 'button', group: '技能管理', description: '编辑或删除研究同步记录。' },
+  { id: 'artProgress.logs.manage', name: '维护研究同步日志', type: 'button', group: '技能管理', description: '查看研究同步接入记录、操作记录并删除日志记录。' },
+  { id: 'artProgress.operationLogs.view', name: '查看 Codex 操作记录', type: 'button', group: '技能管理', description: '查看研究同步页右侧收起的 Codex 操作记录。' },
+  { id: 'artProgress.accessLogs.view', name: '查看接入测试记录', type: 'button', group: '技能管理', description: '查看研究同步页右侧收起的接入完成和连接测试记录。' },
+  { id: 'artProgress.logs.delete', name: '删除研究同步日志', type: 'button', group: '技能管理', description: '删除研究同步页右侧收起的操作记录或接入测试记录。' },
+  { id: 'archive.export', name: '导出 AI 档案记录', type: 'button', group: 'AI 档案', description: '导出 AI 档案台账或单任务记录。' },
+  { id: 'archive.record.manage', name: '管理人工流程记录', type: 'button', group: 'AI 档案', description: '新增、编辑、删除和导入 AI 全流程人工记录。' },
+  { id: 'codex.config.manage', name: '管理 Codex 配置', type: 'button', group: 'AI 管理', description: '保存 Codex 模型、Provider 和 API Key。' },
+  { id: 'workflow.manage', name: '管理工作流模板', type: 'button', group: '工作流编排', description: '新增、编辑、保存工作流模板。' },
+  { id: 'user.manage', name: '管理账号', type: 'button', group: '用户管理', description: '新增、编辑、禁用账号和重置密码。' },
+  { id: 'role.manage', name: '管理角色', type: 'button', group: '用户管理', description: '新增、编辑、删除角色。' },
+  { id: 'api.projects.manage', name: '项目管理 API', type: 'api', group: '后端接口', description: '项目增删改相关接口。' },
+  { id: 'api.artProjectSheet.manage', name: '项目列表字段 API', type: 'api', group: '后端接口', description: '维护项目列表字段、本地覆盖行和链接。' },
+  { id: 'api.taskNotes.manage', name: '任务备注 API', type: 'api', group: '后端接口', description: '保存任务中心处理备注。' },
+  { id: 'api.taskArtBrief.generate', name: '美术摘要 API', type: 'api', group: '后端接口', description: '生成或重新生成任务美术摘要。' },
+  { id: 'api.runs.execute', name: '执行任务 API', type: 'api', group: '后端接口', description: '创建、启动、中断执行。' },
+  { id: 'api.runs.delete', name: '删除执行 API', type: 'api', group: '后端接口', description: '删除执行记录。' },
+  { id: 'api.workflow.manage', name: '工作流模板 API', type: 'api', group: '后端接口', description: '新增、编辑、删除工作流模板。' },
+  { id: 'api.reviews.submit', name: '复核提交 API', type: 'api', group: '后端接口', description: '提交人工复核。' },
+  { id: 'api.skillVersion.manage', name: '产物版本 API', type: 'api', group: '后端接口', description: '保存技能清单/产物版本号。' },
+  { id: 'api.skillAlias.manage', name: '产物调用别名 API', type: 'api', group: '后端接口', description: '保存产物调用别名，不允许修改版本。' },
+  { id: 'api.skillValidations.manage', name: '验证回填 API', type: 'api', group: '后端接口', description: '保存和删除 Skill 验证回填。' },
+  { id: 'api.aiAssets.manage', name: 'AI 产物 API', type: 'api', group: '后端接口', description: '保存和隐藏 AI 产物清单记录。' },
+  { id: 'api.artProgress.manage', name: '研究同步 API', type: 'api', group: '后端接口', description: '编辑和删除研究同步记录。' },
+  { id: 'api.codex.config.read', name: 'Codex 配置读取 API', type: 'api', group: '后端接口', description: '读取 Codex 脱敏配置。' },
+  { id: 'api.codex.config.manage', name: 'Codex 配置保存 API', type: 'api', group: '后端接口', description: '保存 Codex 配置。' },
+  { id: 'api.users.manage', name: '账号管理 API', type: 'api', group: '后端接口', description: '账号管理接口。' },
+  { id: 'api.roles.manage', name: '角色管理 API', type: 'api', group: '后端接口', description: '角色管理接口。' },
+  { id: 'api.taskCenter.config.manage', name: '任务中心字段配置 API', type: 'api', group: '后端接口', description: '保存任务中心组员可见字段。' },
+  { id: 'api.operationLogs.read', name: '操作日志读取 API', type: 'api', group: '后端接口', description: '查询平台操作审计日志。' },
+  { id: 'api.operationLogs.delete', name: '操作日志删除 API', type: 'api', group: '后端接口', description: '删除平台操作日志记录。' }
+];
+const allPermissionIds = permissionCatalog.map(item => item.id);
+const levelPermissions = {
+  4: allPermissionIds,
+  3: [
+    'menu.workspace', 'menu.projects', 'menu.tasks', 'menu.skillManagement', 'menu.skillList', 'menu.skillMembers', 'menu.skillValidations', 'menu.skillEvents', 'menu.repository', 'menu.aiMembers', 'menu.aiMembers.member', 'menu.aiArchive', 'menu.codexConfig', 'menu.runs', 'menu.workflowDesigner',
+    'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy', 'run.create', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'archive.export', 'archive.record.manage', 'workflow.manage',
+    'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.workflow.manage', 'api.reviews.submit', 'api.codex.config.read', 'api.skillAlias.manage'
+  ],
+  2: [
+    'menu.workspace', 'menu.projects', 'menu.tasks', 'menu.skillManagement', 'menu.skillList', 'menu.skillValidations', 'menu.aiMembers', 'menu.aiMembers.member', 'menu.aiArchive', 'menu.runs',
+    'task.codexPrompt.copy', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'archive.export', 'api.reviews.submit', 'api.skillAlias.manage'
+  ],
+  1: ['menu.workspace', 'menu.projects', 'menu.tasks', 'menu.skillManagement', 'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'skill.alias.manage', 'skill.usageLogs.view', 'api.skillAlias.manage']
+};
+const defaultRoles = [
+  {
+    id: 'admin',
+    name: '美术负责人',
+    description: '管理美术部门任务、用户、角色和所有执行记录。',
+    level: 4,
+    permissions: levelPermissions[4],
+    system: true,
+    disabled: false
+  },
+  {
+    id: 'developer',
+    name: '美术执行人',
+    description: '创建并启动执行，管理任务同步和美术流程。',
+    level: 3,
+    permissions: levelPermissions[3],
+    system: true,
+    disabled: false
+  },
+  {
+    id: 'reviewer',
+    name: '美术验证人',
+    description: '查看任务并提交人工复核或 Skill 验证结论。',
+    level: 2,
+    permissions: levelPermissions[2],
+    system: true,
+    disabled: false
+  },
+  {
+    id: 'viewer',
+    name: '组员只读',
+    description: '只读查看任务、执行记录和部门资产。',
+    level: 1,
+    permissions: levelPermissions[1],
+    system: true,
+    disabled: false
+  }
+];
+export const authConfig = {
+  sessionCookieName,
+  sessionMaxAgeMs
+};
+
+export async function ensureDefaultAdmin() {
+  await ensureDefaultRoles();
+  const users = await listUsersRaw();
+  if (users.length) return null;
+  const username = process.env.AWP_ADMIN_USERNAME || 'admin';
+  const password = process.env.AWP_ADMIN_PASSWORD || randomBytes(9).toString('base64url');
+  const now = new Date().toISOString();
+  const user = {
+    id: randomUUID(),
+    username,
+    displayName: '美术负责人',
+    role: 'admin',
+    projectIds: ['*'],
+    passwordHash: await hashPassword(password),
+    createdAt: now,
+    updatedAt: now,
+    lastLoginAt: ''
+  };
+  await writeUsersRaw([user]);
+  return { username, password };
+}
+
+export async function ensureDefaultRoles() {
+  const roles = await listRolesRaw();
+  const byId = new Map(roles.map(role => [role.id, role]));
+  let changed = false;
+  for (const role of defaultRoles) {
+    if (!byId.has(role.id)) {
+      roles.push(normalizeRoleRecord(role, true));
+      changed = true;
+    } else {
+      const existing = byId.get(role.id);
+      if (existing.system !== true) {
+        existing.system = true;
+        existing.updatedAt = new Date().toISOString();
+        changed = true;
+      }
+      const mergedPermissions = mergeLegacyPermissions(existing.permissions || [], legacyRolePermissionAdditions(existing.id));
+      if (JSON.stringify(mergedPermissions) !== JSON.stringify(normalizePermissions(existing.permissions || []))) {
+        existing.permissions = mergedPermissions;
+        existing.updatedAt = new Date().toISOString();
+        changed = true;
+      }
+    }
+  }
+  if (changed) await writeRolesRaw(sortRoles(roles));
+  return roles;
+}
+
+function legacyRolePermissionAdditions(roleId = '') {
+  if (roleId === 'admin') return levelPermissions[4];
+  if (roleId === 'developer') return ['menu.skillManagement', 'menu.skillList', 'menu.skillMembers', 'menu.skillValidations', 'menu.skillEvents', 'menu.aiMembers.member', 'skill.alias.manage', 'skill.usageLogs.view', 'api.skillAlias.manage'];
+  if (roleId === 'reviewer') return ['menu.skillManagement', 'menu.skillList', 'menu.skillValidations', 'menu.aiMembers.member', 'skill.alias.manage', 'skill.usageLogs.view', 'api.skillAlias.manage'];
+  if (roleId === 'viewer') return ['menu.skillManagement', 'menu.skillList', 'menu.aiMembers.member', 'skill.alias.manage', 'skill.usageLogs.view', 'api.skillAlias.manage'];
+  return [];
+}
+
+export async function authenticateRequest(req, options = {}) {
+  const token = parseCookies(req.headers.cookie || '')[sessionCookieName];
+  if (!token) return null;
+  const sessions = await listSessionsRaw();
+  const sessionIndex = sessions.findIndex(item => item.token === token);
+  const session = sessions[sessionIndex];
+  if (!session) return null;
+  const now = Date.now();
+  const expiresAt = Date.parse(session.expiresAt || '');
+  const lastSeenAt = Date.parse(session.lastSeenAt || session.createdAt || '');
+  if (expiresAt <= now || (lastSeenAt && now - lastSeenAt > sessionIdleMaxAgeMs)) {
+    await writeSessionsRaw(sessions.filter(item => item.token !== token));
+    if (options.includeExpired) return { expired: true, session };
+    return null;
+  }
+  const users = await listUsersRaw();
+  const user = users.find(item => item.id === session.userId && item.disabled !== true);
+  if (!user) return null;
+  sessions[sessionIndex] = {
+    ...session,
+    lastSeenAt: new Date(now).toISOString()
+  };
+  await writeSessionsRaw(sessions);
+  return hydrateUserPermissions(publicUser(user));
+}
+
+export async function loginUser(username, password) {
+  const account = String(username || '').trim();
+  if (!account || !password) return null;
+  const users = await listUsersRaw();
+  const user = users.find(item => item.disabled !== true && item.username === account);
+  if (!user || !(await verifyPassword(password, user.passwordHash))) return null;
+  const now = new Date();
+  const token = randomBytes(32).toString('base64url');
+  const sessions = await listSessionsRaw();
+  sessions.push({
+    id: randomUUID(),
+    token,
+    userId: user.id,
+    createdAt: now.toISOString(),
+    lastSeenAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + sessionMaxAgeMs).toISOString()
+  });
+  await writeSessionsRaw(sessions.filter(item => Date.parse(item.expiresAt || '') > now.getTime()));
+  user.lastLoginAt = now.toISOString();
+  user.updatedAt = now.toISOString();
+  await writeUsersRaw(users);
+  return { user: await hydrateUserPermissions(publicUser(user)), token };
+}
+
+export async function logoutUser(req) {
+  const token = parseCookies(req.headers.cookie || '')[sessionCookieName];
+  if (!token) return;
+  const sessions = await listSessionsRaw();
+  await writeSessionsRaw(sessions.filter(item => item.token !== token));
+}
+
+export async function listPublicUsers() {
+  const users = await listUsersRaw();
+  const roles = await listRoles();
+  const passwordRecords = await listPasswordRecords();
+  return users.map(user => publicUser(user, roles, passwordRecords)).sort((a, b) => String(a.username).localeCompare(String(b.username)));
+}
+
+export async function listRoles() {
+  await ensureDefaultRoles();
+  const roles = await listRolesRaw();
+  return sortRoles(roles.map(publicRole));
+}
+
+export function listPermissionCatalog() {
+  return permissionCatalog;
+}
+
+export async function upsertRole(input = {}) {
+  await ensureDefaultRoles();
+  const roles = await listRolesRaw();
+  const role = normalizeRoleRecord({
+    ...input,
+    id: input.id || uniqueRoleId(input.name, roles)
+  });
+  const index = roles.findIndex(item => item.id === role.id);
+  if (index >= 0) {
+    const previous = roles[index];
+    roles[index] = {
+      ...previous,
+      ...role,
+      system: previous.system === true,
+      createdAt: previous.createdAt || role.createdAt,
+      updatedAt: new Date().toISOString()
+    };
+  } else {
+    roles.push(role);
+  }
+  await writeRolesRaw(sortRoles(roles));
+  return publicRole(index >= 0 ? roles[index] : role);
+}
+
+export async function deleteRole(id) {
+  await ensureDefaultRoles();
+  const roleId = String(id || '').trim();
+  const roles = await listRolesRaw();
+  const role = roles.find(item => item.id === roleId);
+  if (!role) throw statusError(404, '角色不存在。');
+  if (role.system) throw statusError(400, '系统内置角色不能删除。');
+  const users = await listUsersRaw();
+  if (users.some(user => user.role === roleId)) throw statusError(400, '该角色已有账号使用，不能删除。');
+  await writeRolesRaw(roles.filter(item => item.id !== roleId));
+  return publicRole(role);
+}
+
+export async function createUser(input = {}) {
+  const username = String(input.username || '').trim();
+  const password = String(input.password || '12345678');
+  if (!/^[a-zA-Z0-9._-]{2,40}$/.test(username)) throw statusError(400, '用户名只能包含字母、数字、点、下划线和短横线，长度 2-40。');
+  if (password.length < 8) throw statusError(400, '密码至少 8 位。');
+  const role = await normalizeExistingRole(input.role);
+  const users = await listUsersRaw();
+  if (users.some(item => item.username === username)) throw statusError(409, '用户名已存在。');
+  const now = new Date().toISOString();
+  const user = {
+    id: randomUUID(),
+    username,
+    displayName: String(input.displayName || username).trim(),
+    role,
+    projectIds: normalizeProjectIds(input.projectIds),
+    passwordHash: await hashPassword(password),
+    mustChangePassword: input.mustChangePassword === false ? false : true,
+    disabled: false,
+    createdAt: now,
+    updatedAt: now,
+    lastLoginAt: ''
+  };
+  users.push(user);
+  await writeUsersRaw(users);
+  await recordPasswordDisplay(user, password, '创建账号');
+  return publicUser(user, [], await listPasswordRecords());
+}
+
+export async function updateUser(id, input = {}) {
+  const users = await listUsersRaw();
+  const index = users.findIndex(item => item.id === id);
+  if (index === -1) throw statusError(404, '用户不存在。');
+  const user = users[index];
+  const nextUsername = input.username === undefined ? user.username : String(input.username || '').trim();
+  if (!/^[a-zA-Z0-9._-]{2,40}$/.test(nextUsername)) throw statusError(400, '用户名只能包含字母、数字、点、下划线和短横线，长度 2-40。');
+  if (users.some(item => item.id !== id && item.username === nextUsername)) throw statusError(409, '用户名已存在。');
+  const nextRole = input.role === undefined ? user.role : await normalizeExistingRole(input.role);
+  const nextProjectIds = input.projectIds === undefined ? user.projectIds : normalizeProjectIds(input.projectIds);
+  const nextDisabled = input.disabled === undefined ? user.disabled === true : Boolean(input.disabled);
+  const adminUsers = users.filter(item => item.disabled !== true && normalizeRole(item.role) === 'admin');
+  if (user.role === 'admin' && (nextRole !== 'admin' || nextDisabled) && adminUsers.length <= 1) {
+    throw statusError(400, '至少保留一个启用状态的管理员账号。');
+  }
+  users[index] = {
+    ...user,
+    username: nextUsername,
+    displayName: input.displayName === undefined ? user.displayName : String(input.displayName || nextUsername).trim(),
+    role: nextRole,
+    projectIds: nextProjectIds,
+    mustChangePassword: input.mustChangePassword === undefined ? user.mustChangePassword === true : Boolean(input.mustChangePassword),
+    disabled: nextDisabled,
+    updatedAt: new Date().toISOString()
+  };
+  await writeUsersRaw(users);
+  if (nextDisabled) await revokeUserSessions(id);
+  return publicUser(users[index], [], await listPasswordRecords());
+}
+
+export async function deleteUser(id, currentUserId = '') {
+  const users = await listUsersRaw();
+  const index = users.findIndex(item => item.id === id);
+  if (index === -1) throw statusError(404, '用户不存在。');
+  const user = users[index];
+  if (user.id === currentUserId) throw statusError(400, '不能删除当前登录账号。');
+  const adminUsers = users.filter(item => item.disabled !== true && normalizeRole(item.role) === 'admin');
+  if (normalizeRole(user.role) === 'admin' && adminUsers.length <= 1) {
+    throw statusError(400, '至少保留一个启用状态的管理员账号。');
+  }
+  users.splice(index, 1);
+  await writeUsersRaw(users);
+  await revokeUserSessions(id);
+  return publicUser(user, [], await listPasswordRecords());
+}
+
+export async function resetUserPassword(id, password = '') {
+  if (String(password).length < 8) throw statusError(400, '密码至少 8 位。');
+  const users = await listUsersRaw();
+  const index = users.findIndex(item => item.id === id);
+  if (index === -1) throw statusError(404, '用户不存在。');
+  users[index] = {
+    ...users[index],
+    passwordHash: await hashPassword(password),
+    mustChangePassword: true,
+    updatedAt: new Date().toISOString()
+  };
+  await writeUsersRaw(users);
+  await recordPasswordDisplay(users[index], password, '重置密码');
+  await revokeUserSessions(id);
+  return publicUser(users[index], [], await listPasswordRecords());
+}
+
+export async function recordUserVisiblePassword(id, password = '', source = '手动登记') {
+  if (String(password).length < 1) throw statusError(400, '请填写需要展示的密码。');
+  const users = await listUsersRaw();
+  const user = users.find(item => item.id === id);
+  if (!user) throw statusError(404, '用户不存在。');
+  await recordPasswordDisplay(user, password, source);
+  return publicUser(user, [], await listPasswordRecords());
+}
+
+export async function changeOwnPassword(id, currentPassword = '', nextPassword = '') {
+  if (String(nextPassword).length < 8) throw statusError(400, '密码至少 8 位。');
+  const users = await listUsersRaw();
+  const index = users.findIndex(item => item.id === id);
+  if (index === -1) throw statusError(404, '用户不存在。');
+  const user = users[index];
+  if (!(await verifyPassword(currentPassword, user.passwordHash))) {
+    throw statusError(400, '当前密码不正确。');
+  }
+  users[index] = {
+    ...user,
+    passwordHash: await hashPassword(nextPassword),
+    mustChangePassword: false,
+    updatedAt: new Date().toISOString()
+  };
+  await writeUsersRaw(users);
+  await recordPasswordDisplay(users[index], nextPassword, '本人修改');
+  await revokeUserSessions(id);
+  return publicUser(users[index], [], await listPasswordRecords());
+}
+
+async function revokeUserSessions(userId) {
+  const sessions = await listSessionsRaw();
+  await writeSessionsRaw(sessions.filter(item => item.userId !== userId));
+}
+
+export function requireAuth(user) {
+  if (!user) throw statusError(401, '未登录或登录已过期。');
+  return user;
+}
+
+export function requireRole(user, role) {
+  requireAuth(user);
+  if (roleLevel(user.role) < roleLevel(role)) {
+    throw statusError(403, '当前账号没有权限执行该操作。');
+  }
+  return user;
+}
+
+export function requirePermission(user, permission) {
+  requireAuth(user);
+  if (!hasPermission(user, permission)) {
+    throw statusError(403, '当前账号没有权限执行该操作。');
+  }
+  return user;
+}
+
+export function requireAnyPermission(user, permissions = []) {
+  requireAuth(user);
+  if (!permissions.some(permission => hasPermission(user, permission))) {
+    throw statusError(403, '当前账号没有权限执行该操作。');
+  }
+  return user;
+}
+
+export function requireProjectAccess(user, projectId, role = 'viewer', permission = '') {
+  if (permission) requirePermission(user, permission);
+  else requireRole(user, role);
+  if (!canAccessProject(user, projectId)) {
+    throw statusError(403, '当前账号没有该项目权限。');
+  }
+  return user;
+}
+
+export function hasPermission(user, permission) {
+  if (!permission) return true;
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  return new Set(user.permissions || []).has(permission);
+}
+
+export function canAccessProject(user, projectId) {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  const ids = Array.isArray(user.projectIds) ? user.projectIds : [];
+  return ids.includes('*') || ids.includes(projectId);
+}
+
+export function publicUser(user = {}, roles = [], passwordRecords = {}) {
+  const role = roles.find(item => item.id === user.role);
+  const passwordRecord = passwordRecords[user.id] || passwordRecords[user.username] || null;
+  return {
+    id: user.id,
+    username: user.username,
+    displayName: user.displayName || user.username,
+    role: normalizeRole(user.role),
+    roleName: role?.name || '',
+    permissions: normalizePermissions(role?.permissions || user.permissions || []),
+    projectIds: normalizeProjectIds(user.projectIds),
+    mustChangePassword: user.mustChangePassword === true,
+    disabled: user.disabled === true,
+    createdAt: user.createdAt || '',
+    updatedAt: user.updatedAt || '',
+    lastLoginAt: user.lastLoginAt || '',
+    passwordDisplay: passwordRecord?.password || '',
+    passwordRecordedAt: passwordRecord?.updatedAt || '',
+    passwordSource: passwordRecord?.source || ''
+  };
+}
+
+async function listPasswordRecords() {
+  try {
+    const raw = await readFile(passwordDisplayPath(), 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function recordPasswordDisplay(user = {}, password = '', source = '') {
+  const value = String(password || '').trim();
+  if (!user.id || !value) return;
+  const records = await listPasswordRecords();
+  const record = {
+    userId: user.id,
+    username: user.username || '',
+    displayName: user.displayName || user.username || '',
+    password: value,
+    source,
+    updatedAt: new Date().toISOString()
+  };
+  records[user.id] = record;
+  if (user.username) records[user.username] = record;
+  await writeFile(passwordDisplayPath(), `${JSON.stringify(records, null, 2)}\n`);
+}
+
+function passwordDisplayPath() {
+  return path.join(paths.dataDir, 'user-password-display.json');
+}
+
+export function buildSessionCookie(token) {
+  const maxAge = Math.floor(sessionMaxAgeMs / 1000);
+  return `${sessionCookieName}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
+}
+
+export function clearSessionCookie() {
+  return `${sessionCookieName}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+}
+
+function normalizeRole(role = '') {
+  return String(role || 'viewer').trim() || 'viewer';
+}
+
+async function normalizeExistingRole(role = '') {
+  await ensureDefaultRoles();
+  const roleId = String(role || '').trim() || 'viewer';
+  const roles = await listRolesRaw();
+  const matched = roles.find(item => item.id === roleId && item.disabled !== true);
+  if (!matched) throw statusError(400, '请选择有效角色。');
+  return matched.id;
+}
+
+function roleLevel(role = '') {
+  return roleRank[role] || 1;
+}
+
+function normalizeRoleRecord(input = {}, systemDefault = false) {
+  const now = new Date().toISOString();
+  const id = String(input.id || input.name || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+  if (!id) throw statusError(400, '角色标识不能为空。');
+  const level = Math.max(1, Math.min(4, Number(input.level || roleRank[id] || 1)));
+  return {
+    id,
+    name: String(input.name || id).trim(),
+    description: String(input.description || '').trim(),
+    level,
+    permissions: normalizePermissions(input.permissions),
+    system: systemDefault || input.system === true,
+    disabled: input.disabled === true,
+    createdAt: input.createdAt || now,
+    updatedAt: now
+  };
+}
+
+function uniqueRoleId(name = '', roles = []) {
+  const base = slugifyRole(name) || `role-${Date.now()}`;
+  const used = new Set(roles.map(role => role.id));
+  if (!used.has(base)) return base;
+  let index = 2;
+  while (used.has(`${base}-${index}`)) index += 1;
+  return `${base}-${index}`;
+}
+
+function slugifyRole(value = '') {
+  const raw = String(value || '').trim();
+  const ascii = raw.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+  if (ascii) return ascii;
+  const encoded = [...raw].map(char => char.codePointAt(0).toString(36)).join('-');
+  return encoded ? `role-${encoded}` : '';
+}
+
+function normalizePermissions(value = []) {
+  if (!Array.isArray(value)) return [];
+  const allowed = new Set(permissionCatalog.map(item => item.id));
+  return [...new Set(value.flatMap(item => expandLegacyPermission(item)).map(item => String(item || '').trim()).filter(item => allowed.has(item)))];
+}
+
+function publicRole(role = {}) {
+  return {
+    id: role.id,
+    name: role.name || role.id,
+    description: role.description || '',
+    level: Number(role.level || roleRank[role.id] || 1),
+    permissions: normalizePermissions(role.permissions),
+    system: role.system === true,
+    disabled: role.disabled === true,
+    createdAt: role.createdAt || '',
+    updatedAt: role.updatedAt || ''
+  };
+}
+
+async function hydrateUserPermissions(user) {
+  const roles = await listRoles();
+  const role = roles.find(item => item.id === user.role);
+  return {
+    ...user,
+    roleName: role?.name || user.roleName || '',
+    permissions: normalizePermissions(role?.permissions || user.permissions || [])
+  };
+}
+
+function mergeLegacyPermissions(previous = [], next = []) {
+  return normalizePermissions([...previous, ...next]);
+}
+
+function expandLegacyPermission(permission = '') {
+  const value = String(permission || '').trim();
+  const legacy = {
+    'projects.manage': ['project.create', 'project.edit', 'project.delete', 'artProjectSheet.manage', 'api.projects.manage', 'api.artProjectSheet.manage'],
+    'runs.execute': ['run.create', 'run.start', 'run.cancel', 'task.sync', 'api.runs.execute'],
+    'runs.delete': ['run.delete', 'api.runs.delete'],
+    'reviews.submit': ['review.submit', 'api.reviews.submit'],
+    'users.manage': ['menu.users', 'user.manage', 'api.users.manage'],
+    'roles.manage': ['menu.roles', 'role.manage', 'api.roles.manage'],
+    'operationLogs.read': ['menu.operationLogs', 'api.operationLogs.read'],
+    'artProgress.logs.manage': ['artProgress.logs.manage', 'artProgress.operationLogs.view', 'artProgress.accessLogs.view', 'artProgress.logs.delete'],
+    'skill.validationLogs.view': ['skill.validationLogs.view', 'skill.validationDetailLogs.view'],
+    'menu.projects': ['menu.projects'],
+    'menu.aiMembers': ['menu.aiMembers', 'menu.aiMembers.member']
+  };
+  return legacy[value] || [value];
+}
+
+function sortRoles(roles = []) {
+  return [...roles].sort((a, b) => Number(b.level || 0) - Number(a.level || 0) || String(a.id).localeCompare(String(b.id)));
+}
+
+function normalizeProjectIds(value = []) {
+  if (value === '*') return ['*'];
+  if (!Array.isArray(value)) return [];
+  return value.map(item => String(item || '').trim()).filter(Boolean);
+}
+
+async function hashPassword(password) {
+  const salt = randomBytes(16).toString('base64url');
+  const derived = await scrypt(String(password), salt, 64);
+  return `scrypt:${salt}:${derived.toString('base64url')}`;
+}
+
+async function verifyPassword(password, stored = '') {
+  const [scheme, salt, hash] = String(stored).split(':');
+  if (scheme !== 'scrypt' || !salt || !hash) return false;
+  const expected = Buffer.from(hash, 'base64url');
+  const actual = await scrypt(String(password), salt, expected.length);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+function parseCookies(header = '') {
+  return Object.fromEntries(String(header || '').split(';').map(part => {
+    const index = part.indexOf('=');
+    if (index === -1) return ['', ''];
+    return [part.slice(0, index).trim(), decodeURIComponent(part.slice(index + 1).trim())];
+  }).filter(([key]) => key));
+}
+
+function statusError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}

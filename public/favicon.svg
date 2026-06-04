@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="glass" x1="18" y1="14" x2="108" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8ee8ff"/>
+      <stop offset="0.42" stop-color="#4d8dff"/>
+      <stop offset="1" stop-color="#3947e7"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="20" y1="18" x2="110" y2="104" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#d9fbff" stop-opacity="0.9"/>
+      <stop offset="0.5" stop-color="#72e7ff" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#5967ff" stop-opacity="0.75"/>
+    </linearGradient>
+    <filter id="shadow" x="-24" y="-20" width="176" height="176" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#3156e7" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <rect width="128" height="128" rx="30" fill="#f6f8ff"/>
+  <g filter="url(#shadow)">
+    <path d="M24 33.5C27.5 25.7 35.2 20.4 43.7 19.8L76.8 17.6C84.7 17.1 92.4 20.1 97.9 25.8L108.9 37.2C114.7 43.2 117.3 51.7 115.8 59.9L109.5 94.4C108 102.9 101.7 109.8 93.4 112.2L62.5 121.3C54.7 123.6 46.3 121.9 40 116.7L19.4 99.9C12.7 94.4 9.5 85.8 10.9 77.3L16.5 43.4C17.1 40 18.3 36.7 19.9 33.7L24 33.5Z" fill="url(#glass)"/>
+    <path d="M29.6 39.2C32.1 33.3 37.9 29.2 44.3 28.7L76.2 26.5C81.6 26.1 86.9 28.2 90.7 32.1L101.3 43.2C105.2 47.3 106.9 53 105.9 58.5L100.1 90.5C99.1 96.4 94.7 101.1 89 102.8L60.8 111.1C55.4 112.7 49.6 111.5 45.2 107.9L26.1 92.4C21.5 88.7 19.4 82.7 20.3 76.9L25.5 45.2C25.9 43.1 26.6 41.1 27.6 39.3L29.6 39.2Z" fill="none" stroke="url(#edge)" stroke-width="5" opacity="0.88"/>
+    <path d="M70.2 35.2L44.4 69.7C41.2 74 44.3 80.2 49.7 80.2H63.1L56.1 106.2C54.7 111.3 61.1 114.9 64.8 111.1L91.4 83.3C95.5 79 92.5 71.9 86.6 71.9H73.2L79.4 40.2C80.5 34.9 73.5 30.9 70.2 35.2Z" fill="#ffffff"/>
+  </g>
+</svg>

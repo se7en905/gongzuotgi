@@ -1,0 +1,12 @@
+node_modules/
+dist/
+logs/
+outputs/
+workspace/
+data/
+.env
+.env.*
+.pnpm-store/
+.playwright-cli/
+.codex-mockups/
+*.log
