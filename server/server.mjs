@@ -45,6 +45,7 @@ import {
   deleteRun,
   deleteCustomWorkflow,
   ensurePlatformDirs,
+  enforceRetentionNow,
   getCodexConfig,
   getCustomWorkflow,
   getAiFlowRecord,
@@ -162,6 +163,8 @@ let artDepartmentUsersRefreshPromise = null;
 const artDepartmentUsersCacheTtlMs = Number(process.env.ZENTAO_ART_USERS_CACHE_TTL_MS || 10 * 60 * 1000);
 const dataRetentionDays = Math.max(1, Number(process.env.AWP_DATA_RETENTION_DAYS || 2) || 2);
 const dataRetentionEnabled = process.env.AWP_DATA_RETENTION_ENABLED !== '0';
+const dataRetentionCleanupIntervalMs = Math.max(60 * 60 * 1000, Number(process.env.AWP_DATA_RETENTION_CLEANUP_INTERVAL_MS || 6 * 60 * 60 * 1000) || 6 * 60 * 60 * 1000);
+let dataRetentionCleanupRunning = false;
 
 await ensurePlatformDirs();
 await enforceServerFileRetention();
@@ -194,6 +197,7 @@ server.listen(port, host, () => {
   }
   console.log(`Static: ${publicDir}`);
   console.log(`Data: ${paths.dataDir}`);
+  scheduleDataRetentionCleanup();
   scheduleZentaoAutoSync();
 });
 
@@ -693,6 +697,32 @@ async function handleApi(req, res, url) {
       after: result,
       description: `${currentUser.displayName || currentUser.username} ${result.hidden ? '作废' : '恢复'}产物「${body.title || body.id || body.relativePath || result.key}」`
     });
+    sendJson(res, 200, result);
+    return;
+  }
+
+  if (req.method === 'PATCH' && url.pathname === '/api/skill-inventory/display-visibility') {
+    requirePermission(currentUser, 'api.skillSources.manage');
+    const body = await readBody(req);
+    const project = body.projectId ? await getProject(body.projectId) : null;
+    const sourceType = String(body.sourceType || project?.sourceType || '').toLowerCase();
+    if (!['local', 'shared'].includes(sourceType)) {
+      sendJson(res, 400, { error: '只有本地路径或共享盘扫描产物可以调整展示状态。' });
+      return;
+    }
+    const result = await saveSkillInventoryDisplayVisibilityOverride({ ...body, sourceType }, currentUser);
+    await writeOperationLog(req, {
+      user: currentUser,
+      module: 'skill-inventory',
+      action: result.displayHidden ? 'HIDE_SCAN_SOURCE_PRODUCT' : 'SHOW_SCAN_SOURCE_PRODUCT',
+      actionName: result.displayHidden ? '隐藏扫描产物展示' : '展示扫描产物',
+      targetType: 'skill',
+      targetId: result.key,
+      targetName: body.title || body.id || body.relativePath || body.path || '',
+      after: result,
+      description: `${currentUser.displayName || currentUser.username} ${result.displayHidden ? '隐藏' : '展示'}扫描产物「${body.title || body.id || body.relativePath || body.path || result.key}」`
+    });
+    broadcastPlatformEvent('project-scan-cache.changed', { projectId: body.projectId || '', module: 'skill-inventory' });
     sendJson(res, 200, result);
     return;
   }
@@ -1968,6 +1998,24 @@ function subscribePlatformEvents(req, res, user = {}) {
   });
 }
 
+function scheduleDataRetentionCleanup() {
+  if (!dataRetentionEnabled) return;
+  setInterval(() => runDataRetentionCleanup('interval'), dataRetentionCleanupIntervalMs);
+}
+
+async function runDataRetentionCleanup(source = 'manual') {
+  if (!dataRetentionEnabled || dataRetentionCleanupRunning) return;
+  dataRetentionCleanupRunning = true;
+  try {
+    await enforceRetentionNow();
+    await enforceServerFileRetention();
+  } catch (error) {
+    console.error(`Data retention cleanup failed (${source}): ${error.message}`);
+  } finally {
+    dataRetentionCleanupRunning = false;
+  }
+}
+
 function broadcastPlatformEvent(type, payload = {}) {
   const event = {
     type,
@@ -2968,6 +3016,41 @@ async function saveSkillInventoryVisibilityOverride(input = {}, currentUser = {}
   return record;
 }
 
+async function saveSkillInventoryDisplayVisibilityOverride(input = {}, currentUser = {}) {
+  const key = skillDisplayVisibilityOverrideKey(input);
+  if (!key) throw statusError(400, '缺少产物路径，无法保存展示状态。');
+  const displayHidden = input.displayHidden === true || input.visible === false;
+  const overrides = await loadSkillVersionOverrides();
+  const previous = overrides[key] || {};
+  const now = new Date().toISOString();
+  const userName = currentUser.displayName || currentUser.username || '';
+  const record = {
+    ...previous,
+    key,
+    id: String(input.id || previous.id || '').trim(),
+    projectId: String(input.projectId || previous.projectId || '').trim(),
+    title: String(input.title || previous.title || '').trim(),
+    relativePath: String(input.relativePath || input.path || previous.relativePath || '').trim(),
+    sourceType: String(input.sourceType || previous.sourceType || '').trim(),
+    displayHidden,
+    displayHiddenAt: displayHidden ? now : '',
+    displayHiddenBy: displayHidden ? userName : '',
+    displayRestoredAt: displayHidden ? (previous.displayRestoredAt || '') : now,
+    displayRestoredBy: displayHidden ? (previous.displayRestoredBy || '') : userName,
+    updatedAt: now
+  };
+  overrides[key] = record;
+  await writeSkillVersionOverrides(overrides);
+  return record;
+}
+
+function skillDisplayVisibilityOverrideKey(input = {}) {
+  const projectId = String(input.projectId || '').trim();
+  const target = skillVersionOverrideKey(input);
+  if (!target) return '';
+  return projectId ? `display:${projectId}:${target}` : `display:${target}`;
+}
+
 function normalizeSkillAliases(value = []) {
   const raw = Array.isArray(value)
     ? value
@@ -2997,24 +3080,40 @@ async function applySkillVersionOverridesToScan(scan = {}) {
         path: skill.path || '',
         id: skill.id || ''
       });
+      const displayKey = skillDisplayVisibilityOverrideKey({
+        projectId: scan.projectId || '',
+        relativePath: skill.git?.relativePath || skill.relativePath || '',
+        path: skill.path || '',
+        id: skill.id || ''
+      });
       const override = overrides[key]
         || overrides[skill.relativePath]
         || overrides[skill.git?.relativePath]
         || overrides[skill.path]
         || overrides[skill.id];
-      const hasVisibilityOverride = Object.prototype.hasOwnProperty.call(override || {}, 'hidden');
-      if (!override?.version && !Array.isArray(override?.aliases) && !override?.owner && !hasVisibilityOverride) return skill;
-      const hidden = hasVisibilityOverride ? override.hidden === true : skill.hidden === true;
+      const baseOverride = override || {};
+      const displayOverride = overrides[displayKey];
+      const hasVisibilityOverride = Object.prototype.hasOwnProperty.call(baseOverride, 'hidden');
+      const hasDisplayVisibilityOverride = Object.prototype.hasOwnProperty.call(displayOverride || override || {}, 'displayHidden');
+      if (!override?.version && !Array.isArray(override?.aliases) && !override?.owner && !hasVisibilityOverride && !hasDisplayVisibilityOverride) return skill;
+      const hidden = hasVisibilityOverride ? baseOverride.hidden === true : skill.hidden === true;
+      const displaySource = displayOverride || override || {};
+      const displayHidden = hasDisplayVisibilityOverride ? displaySource.displayHidden === true : skill.displayHidden === true;
       return {
         ...skill,
-        version: override.version || skill.version,
-        aliases: Array.isArray(override.aliases) ? override.aliases : skill.aliases,
-        ownerOverride: override.owner || '',
+        version: baseOverride.version || skill.version,
+        aliases: Array.isArray(baseOverride.aliases) ? baseOverride.aliases : skill.aliases,
+        ownerOverride: baseOverride.owner || '',
         hidden,
-        hiddenAt: hidden ? (override.hiddenAt || '') : '',
-        hiddenBy: hidden ? (override.hiddenBy || '') : '',
-        restoredAt: override.restoredAt || '',
-        restoredBy: override.restoredBy || ''
+        hiddenAt: hidden ? (baseOverride.hiddenAt || '') : '',
+        hiddenBy: hidden ? (baseOverride.hiddenBy || '') : '',
+        restoredAt: baseOverride.restoredAt || '',
+        restoredBy: baseOverride.restoredBy || '',
+        displayHidden,
+        displayHiddenAt: displayHidden ? (displaySource.displayHiddenAt || '') : '',
+        displayHiddenBy: displayHidden ? (displaySource.displayHiddenBy || '') : '',
+        displayRestoredAt: displaySource.displayRestoredAt || '',
+        displayRestoredBy: displaySource.displayRestoredBy || ''
       };
     })
   };

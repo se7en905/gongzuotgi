@@ -1782,7 +1782,7 @@ function codexKeyFingerprint(value = '') {
   return `key_${createHash('sha256').update(text).digest('hex').slice(0, 12)}`;
 }
 
-async function enforceRetentionNow() {
+export async function enforceRetentionNow() {
   if (!retentionEnabled) return;
   for (const file of retentionPaths) {
     const current = await readJson(file, null);
@@ -1837,7 +1837,20 @@ function shouldKeepRecordForRetention(file = '', record = {}) {
   if (!record || typeof record !== 'object') return false;
   if (file === paths.tasks && record.source === 'zentao' && record.isCurrent !== false) return true;
   if (file === paths.bugs && record.source === 'zentao' && !/deleted|closed|done|completed|cancelled|canceled|passed|resolved/i.test(String(record.status || record.zentao?.status || ''))) return true;
+  if (file === paths.operationLogs && !isMemberReportOperationLog(record)) return true;
   return false;
+}
+
+function isMemberReportOperationLog(record = {}) {
+  const module = cleanString(record.module);
+  const action = cleanString(record.action);
+  const targetType = cleanString(record.targetType);
+  const targetId = cleanString(record.targetId);
+  if (module === 'art-progress') return true;
+  if (targetType === 'art-progress-event') return true;
+  if (['REPORT_ART_PROGRESS', 'UPDATE_ART_PROGRESS', 'DELETE_ART_PROGRESS'].includes(action)) return true;
+  if (action === 'AUTO_UPSERT_SKILL_VALIDATION') return true;
+  return /^skill-validation-from-art-progress-/i.test(targetId);
 }
 
 function retentionRecordTime(record = {}) {

@@ -10,6 +10,7 @@
         <ElTooltip v-if="app.canRefreshSkillInventoryScan" :content="app.skillInventoryRefreshHint" placement="top" effect="dark">
           <ElButton :loading="app.loading.scan" @click="app.scanAllProjects">刷新库存</ElButton>
         </ElTooltip>
+        <ElButton v-if="app.canManageSkillSourceDisplay" plain @click="app.openSkillSourceDisplayDialog">展示管理</ElButton>
         <ElButton v-if="(app.skillInventoryTab === 'list' || app.skillInventoryTab === 'assets') && app.canConnectSkillInventorySource" type="primary" @click="app.openAssetScanConnect">接入扫描</ElButton>
       </div>
       </div>
@@ -43,6 +44,72 @@
         </article>
       </div>
     </div>
+
+    <ElDialog
+      v-model="app.skillSourceDisplayDialog.visible"
+      title="来源内容展示管理"
+      width="920px"
+      top="8vh"
+      class="app-dialog skill-source-display-dialog"
+      append-to-body
+      :close-on-click-modal="false"
+    >
+      <div class="skill-source-display-panel">
+        <div class="skill-source-display-toolbar">
+          <ElInput
+            v-model="app.skillSourceDisplayDialog.keyword"
+            clearable
+            placeholder="搜索产物、来源或路径"
+          />
+          <span>取消展示后，产物不会出现在 AI 产物清单；源文件不会被删除。</span>
+        </div>
+        <ElTable
+          class="skill-clean-table skill-source-display-table"
+          :data="app.skillSourceDisplayRows"
+          row-key="uid"
+          max-height="560"
+          empty-text="暂无本地路径或共享盘产物"
+        >
+          <ElTableColumn label="展示" width="86" align="center">
+            <template #default="{ row }">
+              <ElCheckbox
+                :model-value="row.displayHidden !== true"
+                :disabled="app.loading.skillVersion"
+                @change="checked => app.toggleSkillSourceDisplay(row, checked)"
+              />
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="产物名称" min-width="240">
+            <template #default="{ row }">
+              <div class="skill-title-cell">
+                <strong>{{ row.productDisplayName || row.productFileName || row.title || row.id }}</strong>
+                <span>{{ row.relativePath || row.path || '-' }}</span>
+              </div>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="来源" width="180">
+            <template #default="{ row }">
+              <span class="skill-table-text">{{ row.projectName || row.source || '-' }}</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="类型" width="110">
+            <template #default="{ row }">
+              <span class="skill-table-text">{{ row.skillInventoryKind === 'skill' ? 'Skill' : '文件夹产物' }}</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="状态" width="110">
+            <template #default="{ row }">
+              <ElTag :type="row.displayHidden === true ? 'info' : 'success'" size="small">{{ row.displayHidden === true ? '不展示' : '展示中' }}</ElTag>
+            </template>
+          </ElTableColumn>
+        </ElTable>
+      </div>
+      <template #footer>
+        <div class="dialog-footer-actions">
+          <ElButton @click="app.skillSourceDisplayDialog.visible = false">关闭</ElButton>
+        </div>
+      </template>
+    </ElDialog>
 
     <ElDialog
       v-model="app.aiAssetDialog.visible"
@@ -799,6 +866,33 @@ export default {
 
   .skill-inventory-filter {
     width: 150px;
+  }
+
+  .skill-source-display-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .skill-source-display-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .skill-source-display-toolbar .el-input {
+    flex: 0 0 280px;
+  }
+
+  .skill-source-display-toolbar span {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .skill-source-display-table .skill-title-cell span {
+    white-space: normal;
+    word-break: break-all;
   }
 
   .skill-member-summary {

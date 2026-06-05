@@ -596,6 +596,10 @@ export default {
       skillInventoryPage: 1,
       skillInventoryPageSize: 10,
       skillInventoryShowHidden: false,
+      skillSourceDisplayDialog: {
+        visible: false,
+        keyword: ''
+      },
       skillInventoryScanCacheLoaded: false,
       aiAssetKeyword: '',
       aiAssetStatusFilter: '',
@@ -2049,12 +2053,48 @@ export default {
       return this.dedupeSkillInventoryRows([
         ...rows,
         ...this.skillInventoryMemberProductRows()
-      ]).filter(row => row.hidden !== true && this.isVisibleSkillInventoryProductRow(row));
+      ]).filter(row => row.displayHidden !== true && row.hidden !== true && this.isVisibleSkillInventoryProductRow(row));
     },
 
     skillInventoryVisibleRows() {
       return this.skillInventoryRows
+        .filter(row => row.displayHidden !== true)
         .filter(row => (row.hidden !== true || this.canOperateSkillInventoryManage) && this.isVisibleSkillInventoryProductRow(row));
+    },
+
+    canManageSkillSourceDisplay() {
+      return this.canEditSkillInventorySource || this.isPlatformAdmin;
+    },
+
+    skillSourceDisplaySourceRows() {
+      return this.projectRows
+        .filter(project => ['local', 'shared'].includes(String(project.sourceType || '').toLowerCase()))
+        .filter(project => Array.isArray(project.scan?.skills) && project.scan.skills.length);
+    },
+
+    skillSourceDisplayRows() {
+      const keyword = String(this.skillSourceDisplayDialog.keyword || '').trim().toLowerCase();
+      const rows = this.skillSourceDisplaySourceRows.flatMap(projectRow => {
+        const skills = Array.isArray(projectRow.scan?.skills) ? projectRow.scan.skills : [];
+        return skills
+          .filter(skill => this.isMemberArtReporterRow(skill) || !this.isFigmaUseConnectorArtifact(skill))
+          .map(skill => this.buildSkillInventoryRow(projectRow, skill));
+      });
+      return this.dedupeSkillSourceDisplayRows(rows)
+        .filter(row => {
+          if (!keyword) return true;
+          const haystack = [
+            row.productDisplayName,
+            row.productFileName,
+            row.title,
+            row.projectName,
+            row.relativePath,
+            row.path,
+            row.source
+          ].join('\n').toLowerCase();
+          return haystack.includes(keyword);
+        })
+        .sort((a, b) => String(a.projectName || '').localeCompare(String(b.projectName || ''), 'zh-Hans-CN') || String(a.productDisplayName || a.title || '').localeCompare(String(b.productDisplayName || b.title || ''), 'zh-Hans-CN'));
     },
 
     skillInventoryDocumentRows() {
@@ -2358,6 +2398,22 @@ export default {
           if (this.isSkillInventorySkillProduct(row) && !this.isSkillInventorySkillProduct(existing)) {
             map.set(key, row);
           }
+        }
+        return [...map.values()];
+      };
+    },
+
+    dedupeSkillSourceDisplayRows() {
+      return (rows = []) => {
+        const map = new Map();
+        for (const row of Array.isArray(rows) ? rows : []) {
+          const key = [
+            row.projectId || '',
+            row.relativePath || row.path || row.skill?.git?.relativePath || row.skill?.path || '',
+            row.productDisplayName || row.productFileName || row.title || row.id || ''
+          ].map(value => String(value || '').trim().toLowerCase()).join('::');
+          if (!key.replace(/:/g, '')) continue;
+          if (!map.has(key)) map.set(key, row);
         }
         return [...map.values()];
       };
@@ -6811,6 +6867,11 @@ export default {
         hidden: skill.hidden === true,
         hiddenAt: skill.hiddenAt || '',
         hiddenBy: skill.hiddenBy || '',
+        displayHidden: skill.displayHidden === true,
+        displayHiddenAt: skill.displayHiddenAt || '',
+        displayHiddenBy: skill.displayHiddenBy || '',
+        displayRestoredAt: skill.displayRestoredAt || '',
+        displayRestoredBy: skill.displayRestoredBy || '',
         skillInventoryKind: this.skillInventoryKind(skill),
         uploadedAt: skill.uploadedAt || skill.git?.uploadedAt || '',
         skill: { ...skill, aliases }
@@ -10122,7 +10183,7 @@ export default {
           { label: '调用次数', value: totalCount || 0 },
           { label: '计入等级人数', value: effectivePeople.length },
           { label: '人均次数', value: people.size ? Math.round((totalCount / people.size) * 10) / 10 : 0 },
-          { label: '有效占比', value: `${validationCoverage.rate}%` }
+          { label: '有效占比', value: validationCoverage.excluded ? '-' : `${validationCoverage.rate}%` }
         ]
       };
     },
@@ -10293,6 +10354,55 @@ export default {
         ElMessage.success(hidden ? '产物已作废，已从 AI 评分中排除' : '产物已恢复');
       } catch (error) {
         ElMessage.error(this.readApiError(error) || (hidden ? '产物作废失败' : '产物恢复失败'));
+      } finally {
+        this.loading.skillVersion = false;
+      }
+    },
+
+    openSkillSourceDisplayDialog() {
+      if (!this.canManageSkillSourceDisplay) {
+        ElMessage.warning('当前角色没有管理扫描来源展示的权限');
+        return;
+      }
+      if (!this.skillSourceDisplaySourceRows.length) {
+        ElMessage.warning('暂无本地路径或共享盘扫描产物，请先接入并扫描来源。');
+        return;
+      }
+      this.skillSourceDisplayDialog = {
+        visible: true,
+        keyword: ''
+      };
+    },
+
+    async toggleSkillSourceDisplay(row = {}, visible = true) {
+      if (!this.canManageSkillSourceDisplay) {
+        ElMessage.warning('当前角色没有管理扫描来源展示的权限');
+        return;
+      }
+      const sourceType = String(this.projectRows.find(project => project.id === row.projectId)?.sourceType || row.projectSourceType || '').toLowerCase();
+      if (!['local', 'shared'].includes(sourceType)) {
+        ElMessage.warning('只有本地路径或共享盘扫描产物可以调整展示状态。');
+        return;
+      }
+      this.loading.skillVersion = true;
+      try {
+        const result = await this.api('/api/skill-inventory/display-visibility', {
+          method: 'PATCH',
+          body: JSON.stringify({
+            id: row.id,
+            projectId: row.projectId,
+            sourceType,
+            title: row.title || row.productDisplayName,
+            path: row.path,
+            relativePath: row.skill?.git?.relativePath || row.relativePath || row.path || row.id || '',
+            displayHidden: visible !== true
+          })
+        });
+        this.patchSkillDisplayVisibilityInScans(row, result.displayHidden === true, result);
+        this.saveWorkbenchDisplayCache('scans', this.scans);
+        ElMessage.success(result.displayHidden ? '产物已从清单隐藏' : '产物已恢复展示');
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || '产物展示状态保存失败');
       } finally {
         this.loading.skillVersion = false;
       }
@@ -10529,6 +10639,38 @@ export default {
       }
     },
 
+    patchSkillDisplayVisibilityInScans(row = {}, displayHidden = true, result = {}) {
+      const targetProjectId = String(row.projectId || '');
+      const targetPath = String(row.skill?.git?.relativePath || row.relativePath || row.path || '');
+      const targetId = String(row.id || '');
+      const scans = {};
+      for (const [projectId, scan] of Object.entries(this.scans || {})) {
+        scans[projectId] = {
+          ...scan,
+          skills: Array.isArray(scan.skills)
+            ? scan.skills.map(item => {
+              const itemPath = String(item.git?.relativePath || item.relativePath || item.path || '');
+              const projectMatches = !targetProjectId || String(projectId) === targetProjectId;
+              if (projectMatches && ((targetPath && itemPath === targetPath) || (!targetPath && targetId && item.id === targetId))) {
+                return {
+                  ...item,
+                  displayHidden,
+                  displayHiddenAt: displayHidden ? (result.displayHiddenAt || item.displayHiddenAt || '') : '',
+                  displayHiddenBy: displayHidden ? (result.displayHiddenBy || item.displayHiddenBy || '') : '',
+                  displayRestoredAt: result.displayRestoredAt || item.displayRestoredAt || '',
+                  displayRestoredBy: result.displayRestoredBy || item.displayRestoredBy || ''
+                };
+              }
+              return item;
+            })
+            : scan.skills
+        };
+      }
+      this.scans = scans;
+      this.clearValidationMatchCache();
+      this.clearSkillUsageLogCache();
+    },
+
     async loadSkillContent(skill) {
       if (!skill?.path) return '';
       if (skill.inventoryKind === 'directory') return skill.preview || `产物目录：${skill.title || skill.relativePath || skill.path}`;
@@ -10670,23 +10812,35 @@ export default {
         ElMessage.warning('请填写本地或共享盘路径');
         return;
       }
+      const beforeProject = isEditing
+        ? (this.projects.find(item => item.id === this.projectForm.id) || null)
+        : null;
+      const beforeScan = beforeProject?.id ? this.scans[beforeProject.id] : null;
+      const shouldScanAfterSave = ['local', 'shared'].includes(String(sourceType || '').toLowerCase())
+        && (!isEditing
+          || String(beforeProject?.sourceType || '').toLowerCase() !== String(sourceType || '').toLowerCase()
+          || String(beforeProject?.rootPath || '').trim() !== rootPath
+          || !Array.isArray(beforeScan?.skills)
+          || !beforeScan.skills.length);
       const payload = projectPayload(this.projectForm);
-      this.loading.scan = !isEditing;
+      this.loading.scan = shouldScanAfterSave || !isEditing;
       try {
         const project = await this.api('/api/projects', {
           method: 'POST',
           body: JSON.stringify(payload)
         });
         await this.refreshProjects();
-        if (!isEditing) {
-          await this.scanSingleSkillSource(project);
+        let scanResult = null;
+        if (shouldScanAfterSave || !isEditing) {
+          scanResult = await this.scanSingleSkillSource(project);
         } else {
-          await this.loadProjectScanCacheForInventory();
+          await this.loadProjectScanCacheForInventory({ force: true, silent: true });
         }
         this.projectDrawer = false;
         this.projectForm = emptyProjectForm();
         this.selectedProjectId = project.id || this.selectedProjectId;
-        ElMessage.success(isEditing ? '扫描源已保存，库存保持上次扫描结果' : '扫描源已接入并完成扫描');
+        if (scanResult) ElMessage.success(isEditing ? '扫描源已保存并完成扫描' : '扫描源已接入并完成扫描');
+        else if (isEditing) ElMessage.success('扫描源已保存，库存保持上次扫描结果');
       } catch (error) {
         ElMessage.error(this.readApiError(error) || (isEditing ? '扫描源保存失败' : '扫描源接入失败'));
       } finally {
