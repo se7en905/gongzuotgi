@@ -609,12 +609,21 @@ async function handleApi(req, res, url) {
   if (req.method === 'PATCH' && url.pathname === '/api/skill-version') {
     const body = await readBody(req);
     const ownerChange = hasSkillVersionOwnerChange(body);
+    const displayNameChange = hasSkillDisplayNameChange(body);
     const versionOrAliasChange = Object.prototype.hasOwnProperty.call(body, 'version')
       || Object.prototype.hasOwnProperty.call(body, 'aliases');
     if (ownerChange && !canManageSkillAssetOwner(currentUser)) {
       throw new HttpError(403, '当前账号没有权限修改产物贡献人。');
     }
-    if (versionOrAliasChange || !ownerChange) {
+    if (displayNameChange && !versionOrAliasChange) {
+      requirePermission(currentUser, 'api.skillSources.manage');
+      const project = body.projectId ? await getProject(body.projectId) : null;
+      const sourceType = String(body.sourceType || project?.sourceType || '').toLowerCase();
+      if (!['local', 'shared'].includes(sourceType)) {
+        sendJson(res, 400, { error: '只有本地路径或共享盘扫描产物可以修改常用名称。' });
+        return;
+      }
+    } else if (versionOrAliasChange || !ownerChange) {
       requirePermission(currentUser, 'api.skillVersion.manage');
     }
     const result = await saveSkillVersionOverride({ ...body, allowAliases: true });
@@ -3220,22 +3229,37 @@ function scopedSkillOwnerOverrideKey(input = {}) {
   return `owner:${projectId}:${key}`;
 }
 
+function scopedSkillDisplayNameOverrideKey(input = {}) {
+  const projectId = String(input.projectId || '').trim();
+  const key = skillVersionOverrideKey(input);
+  if (!projectId || !key) return '';
+  return `name:${projectId}:${key}`;
+}
+
 function hasSkillVersionOwnerChange(input = {}) {
   return Object.prototype.hasOwnProperty.call(input, 'owner')
     || Object.prototype.hasOwnProperty.call(input, 'uploader');
 }
 
+function hasSkillDisplayNameChange(input = {}) {
+  return Object.prototype.hasOwnProperty.call(input, 'displayName')
+    || Object.prototype.hasOwnProperty.call(input, 'commonName');
+}
+
 async function saveSkillVersionOverride(input = {}) {
   const ownerChange = hasSkillVersionOwnerChange(input);
+  const displayNameChange = hasSkillDisplayNameChange(input);
   const scopedOwnerKey = ownerChange ? scopedSkillOwnerOverrideKey(input) : '';
-  const key = scopedOwnerKey || skillVersionOverrideKey(input);
+  const scopedDisplayNameKey = displayNameChange ? scopedSkillDisplayNameOverrideKey(input) : '';
+  const key = scopedOwnerKey || scopedDisplayNameKey || skillVersionOverrideKey(input);
   const allowVersion = input.allowVersion !== false;
   const allowAliases = input.allowAliases === true || input.aliases !== undefined;
   const version = String(input.version || '').trim();
   if (!key) throw statusError(400, '缺少产物路径，无法保存版本。');
   const owner = normalizePersonListText(input.owner || input.uploader || '');
   const aliases = allowAliases && input.aliases !== undefined ? normalizeSkillAliases(input.aliases) : null;
-  if (allowVersion && !version && !owner && aliases === null) throw statusError(400, '请填写版本、别名或归属人。');
+  const displayName = displayNameChange ? cleanText(input.displayName ?? input.commonName) : '';
+  if (allowVersion && !version && !owner && aliases === null && !displayNameChange) throw statusError(400, '请填写版本、别名、归属人或常用名称。');
   if (!allowVersion && aliases === null) throw statusError(400, '请填写调用别名。');
   const overrides = await loadSkillVersionOverrides();
   const previous = overrides[key] || {};
@@ -3251,6 +3275,10 @@ async function saveSkillVersionOverride(input = {}) {
     owner: allowVersion ? (owner || previous.owner || '') : (previous.owner || ''),
     updatedAt: new Date().toISOString()
   };
+  if (displayNameChange || Object.prototype.hasOwnProperty.call(previous, 'displayName') || Object.prototype.hasOwnProperty.call(previous, 'commonName')) {
+    record.displayName = displayNameChange ? displayName : (previous.displayName || '');
+    record.commonName = displayNameChange ? displayName : (previous.commonName || '');
+  }
   overrides[key] = record;
   await writeSkillVersionOverrides(overrides);
   return record;
@@ -3358,24 +3386,41 @@ async function applySkillVersionOverridesToScan(scan = {}) {
         path: skill.path || '',
         id: skill.id || ''
       });
-      const baseOverride = overrides[key]
+      const displayNameKey = scopedSkillDisplayNameOverrideKey({
+        projectId: scan.projectId || '',
+        relativePath: skill.git?.relativePath || skill.relativePath || '',
+        path: skill.path || '',
+        id: skill.id || ''
+      });
+      const rawBaseOverride = overrides[key]
         || overrides[skill.relativePath]
         || overrides[skill.git?.relativePath]
         || overrides[skill.path]
         || overrides[skill.id];
+      const baseOverride = rawBaseOverride || {};
       const ownerOverride = overrides[ownerKey]?.owner ? overrides[ownerKey] : null;
+      const displayNameOverride = overrides[displayNameKey] || null;
       const displayOverride = overrides[displayKey];
       const hasVisibilityOverride = Object.prototype.hasOwnProperty.call(baseOverride, 'hidden');
       const hasDisplayVisibilityOverride = Object.prototype.hasOwnProperty.call(displayOverride || baseOverride || {}, 'displayHidden');
-      if (!baseOverride?.version && !Array.isArray(baseOverride?.aliases) && !baseOverride?.owner && !ownerOverride?.owner && !hasVisibilityOverride && !hasDisplayVisibilityOverride) return skill;
+      const displayNameSource = displayNameOverride || {};
+      const hasDisplayNameOverride = Object.prototype.hasOwnProperty.call(displayNameSource, 'displayName')
+        || Object.prototype.hasOwnProperty.call(displayNameSource, 'commonName');
+      if (!baseOverride?.version && !Array.isArray(baseOverride?.aliases) && !baseOverride?.owner && !ownerOverride?.owner && !hasVisibilityOverride && !hasDisplayVisibilityOverride && !hasDisplayNameOverride) return skill;
       const hidden = hasVisibilityOverride ? baseOverride.hidden === true : skill.hidden === true;
       const displaySource = displayOverride || baseOverride || {};
       const displayHidden = hasDisplayVisibilityOverride ? displaySource.displayHidden === true : skill.displayHidden === true;
+      const displayName = cleanText(displayNameSource.displayName ?? displayNameSource.commonName);
       return {
         ...skill,
         version: baseOverride.version || skill.version,
         aliases: Array.isArray(baseOverride.aliases) ? baseOverride.aliases : skill.aliases,
         ownerOverride: ownerOverride?.owner || baseOverride.owner || '',
+        productDisplayName: hasDisplayNameOverride ? (displayName || skill.productFileName || skill.productDisplayName) : skill.productDisplayName,
+        displayName: hasDisplayNameOverride ? (displayName || skill.productFileName || skill.displayName) : skill.displayName,
+        commonName: hasDisplayNameOverride ? displayName : skill.commonName,
+        commonNameOverride: hasDisplayNameOverride,
+        originalProductDisplayName: skill.originalProductDisplayName || skill.productDisplayName || '',
         hidden,
         hiddenAt: hidden ? (baseOverride.hiddenAt || '') : '',
         hiddenBy: hidden ? (baseOverride.hiddenBy || '') : '',

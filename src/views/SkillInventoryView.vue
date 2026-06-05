@@ -48,7 +48,7 @@
     <ElDialog
       v-model="app.skillSourceDisplayDialog.visible"
       title="来源内容展示管理"
-      width="920px"
+      width="1080px"
       top="8vh"
       class="app-dialog skill-source-display-dialog"
       append-to-body
@@ -87,12 +87,24 @@
               />
             </template>
           </ElTableColumn>
-          <ElTableColumn label="产物名称" min-width="240">
+          <ElTableColumn label="文件夹名称" min-width="200">
             <template #default="{ row }">
               <div class="skill-title-cell">
-                <strong>{{ row.productDisplayName || row.productFileName || row.title || row.id }}</strong>
+                <strong>{{ app.skillSourceDisplayOriginalName(row) }}</strong>
                 <span>{{ row.relativePath || row.path || '-' }}</span>
               </div>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="常用名称" min-width="210">
+            <template #default="{ row }">
+              <ElInput
+                :model-value="row.productDisplayName || row.productFileName || row.title || ''"
+                clearable
+                placeholder="默认使用文件夹名称"
+                :disabled="app.loading.skillVersion || !app.canManageSkillSourceDisplay"
+                @change="value => app.saveSkillSourceDisplayName(row, value)"
+                @keyup.enter="event => app.saveSkillSourceDisplayName(row, event.target.value)"
+              />
             </template>
           </ElTableColumn>
           <ElTableColumn label="来源" width="180">
@@ -100,10 +112,14 @@
               <span class="skill-table-text">{{ row.projectName || row.source || '-' }}</span>
             </template>
           </ElTableColumn>
-          <ElTableColumn label="贡献人" width="170">
+          <ElTableColumn label="贡献人" width="220">
             <template #default="{ row }">
               <ElSelect
-                :model-value="app.personList(row.uploader)[0] || ''"
+                class="skill-source-owner-select"
+                :model-value="app.personList(row.uploader)"
+                multiple
+                collapse-tags
+                collapse-tags-tooltip
                 filterable
                 clearable
                 placeholder="选择贡献人"
@@ -262,7 +278,7 @@
               <strong>
                 {{ row.productDisplayName || row.productFileName || row.title || row.id }}
               </strong>
-              <span>{{ app.skillSceneText(row, '待补充适用场景') }}</span>
+              <span v-if="!app.isPathScanFolderProductRow(row)">{{ app.skillSceneText(row, '待补充适用场景') }}</span>
             </button>
           </div>
         </template>

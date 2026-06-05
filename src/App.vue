@@ -698,6 +698,7 @@ export default {
       skillContentCache: {},
       skillInventoryMetricsCache: {},
       skillOwnerOverrides: {},
+      skillDisplayNameOverrides: {},
       skillPreview: {
         visible: false,
         skill: null,
@@ -4861,22 +4862,36 @@ export default {
         const result = await this.api('/api/skill-version-overrides');
         const overrides = result.overrides || {};
         const ownerOverrides = {};
+        const displayNameOverrides = {};
         for (const [key, record] of Object.entries(overrides)) {
           const owner = this.displayPersonList(record?.owner || record?.uploader || '');
-          if (!owner || owner === '-') continue;
-          [
+          const overrideKeys = [
             key,
             record?.key,
             record?.relativePath,
             record?.path,
             record?.id
-          ].map(value => String(value || '').trim()).filter(Boolean).forEach(itemKey => {
-            ownerOverrides[itemKey] = owner;
-          });
+          ].map(value => String(value || '').trim()).filter(Boolean);
+          if (owner && owner !== '-') {
+            overrideKeys.forEach(itemKey => {
+              ownerOverrides[itemKey] = owner;
+            });
+          }
+          if (Object.prototype.hasOwnProperty.call(record || {}, 'displayName') || Object.prototype.hasOwnProperty.call(record || {}, 'commonName')) {
+            const displayName = String(record?.displayName ?? record?.commonName ?? '').trim();
+            const displayNameKeys = String(key || '').startsWith('name:') || String(record?.key || '').startsWith('name:')
+              ? [key, record?.key].map(value => String(value || '').trim()).filter(Boolean)
+              : overrideKeys;
+            displayNameKeys.forEach(itemKey => {
+              displayNameOverrides[itemKey] = displayName;
+            });
+          }
         }
         this.skillOwnerOverrides = ownerOverrides;
+        this.skillDisplayNameOverrides = displayNameOverrides;
       } catch {
         this.skillOwnerOverrides = this.skillOwnerOverrides || {};
+        this.skillDisplayNameOverrides = this.skillDisplayNameOverrides || {};
       }
     },
 
@@ -6801,6 +6816,36 @@ export default {
       return '';
     },
 
+    skillDisplayNameOverrideKeys(input = {}) {
+      const skill = input.skill || {};
+      const projectId = String(input.projectId || skill.projectId || '').trim();
+      const keys = [
+        input.git?.relativePath,
+        skill.git?.relativePath,
+        skill.relativePath,
+        input.relativePath,
+        input.key,
+        skill.path,
+        input.path,
+        input.overrideKey,
+        input.uid,
+        skill.id,
+        input.id
+      ].map(value => String(value || '').trim()).filter(Boolean);
+      const scopedKeys = projectId ? keys.map(key => `name:${projectId}:${key}`) : [];
+      return [...scopedKeys, ...keys];
+    },
+
+    skillDisplayNameOverrideFor(input = {}) {
+      const overrides = this.skillDisplayNameOverrides || {};
+      for (const key of this.skillDisplayNameOverrideKeys(input)) {
+        if (Object.prototype.hasOwnProperty.call(overrides, key)) {
+          return String(overrides[key] ?? '').trim();
+        }
+      }
+      return null;
+    },
+
     gitHistoryOwnerNames(skill = {}) {
       const history = Array.isArray(skill.git?.history) ? skill.git.history : [];
       const orderedHistory = [...history]
@@ -6848,11 +6893,15 @@ export default {
       const version = String(skill.version || '1.0').trim() || '1.0';
       const relativePath = skill.git?.relativePath || skill.relativePath || skill.path || '';
       const isDirectoryProduct = skill.directoryProduct === true || skill.inventoryKind === 'directory';
-      const directoryName = isDirectoryProduct
-        ? (skill.productDisplayName || skill.productFileName || this.fileNameFromPath(skill.relativePath) || this.fileNameFromPath(skill.path))
+      const directoryFileName = isDirectoryProduct
+        ? (skill.productFileName || skill.originalProductDisplayName || this.fileNameFromPath(skill.relativePath) || this.fileNameFromPath(skill.path) || skill.productDisplayName)
         : '';
-      const productFileName = directoryName || skill.productFileName || skill.displayName || this.fileNameFromPath(relativePath) || this.fileNameFromPath(skill.path) || skill.id;
-      const productDisplayName = directoryName || skill.productDisplayName || skill.displayName || skill.title || productFileName;
+      const displayNameOverride = this.skillDisplayNameOverrideFor({ ...skill, projectId: projectRow.id });
+      const directoryDisplayName = isDirectoryProduct
+        ? (displayNameOverride !== null ? (displayNameOverride || directoryFileName) : (skill.productDisplayName || skill.displayName || directoryFileName))
+        : '';
+      const productFileName = directoryFileName || skill.productFileName || skill.displayName || this.fileNameFromPath(relativePath) || this.fileNameFromPath(skill.path) || skill.id;
+      const productDisplayName = directoryDisplayName || skill.productDisplayName || skill.displayName || skill.title || productFileName;
       const aliases = this.normalizeSkillAliasList([
         ...(Array.isArray(skill.aliases) ? skill.aliases : []),
         ...this.generateSkillAliases({ ...skill, relativePath })
@@ -6876,8 +6925,10 @@ export default {
         scenes,
         projectId: projectRow.id,
         projectName: projectRow.name,
+        projectSourceType: projectRow.sourceType || '',
         path: skill.path || '',
         relativePath,
+        originalProductDisplayName: skill.originalProductDisplayName || directoryFileName || skill.productFileName || skill.productDisplayName || '',
         aliases,
         hidden: skill.hidden === true,
         hiddenAt: skill.hiddenAt || '',
@@ -10460,12 +10511,73 @@ export default {
       }
     },
 
+    skillSourceDisplayOriginalName(row = {}) {
+      return row.originalProductDisplayName
+        || row.productFileName
+        || this.fileNameFromPath(row.relativePath)
+        || this.fileNameFromPath(row.path)
+        || row.title
+        || row.id
+        || '-';
+    },
+
+    isPathScanFolderProductRow(row = {}) {
+      const sourceType = String(this.projectRows.find(project => project.id === row.projectId)?.sourceType || row.projectSourceType || '').toLowerCase();
+      return ['local', 'shared'].includes(sourceType)
+        && (row.skill?.directoryProduct === true || row.skillInventoryKind === 'directory' || row.skill?.inventoryKind === 'directory');
+    },
+
+    async saveSkillSourceDisplayName(row = {}, nameValue = '') {
+      if (!this.canManageSkillSourceDisplay) {
+        ElMessage.warning('当前角色没有管理扫描来源展示的权限');
+        return;
+      }
+      const sourceType = String(this.projectRows.find(project => project.id === row.projectId)?.sourceType || row.projectSourceType || '').toLowerCase();
+      if (!['local', 'shared'].includes(sourceType)) {
+        ElMessage.warning('只有本地路径或共享盘扫描产物可以修改常用名称。');
+        return;
+      }
+      const displayName = String(nameValue || '').trim();
+      const currentName = String(row.productDisplayName || '').trim();
+      if (displayName === currentName) return;
+      this.loading.skillVersion = true;
+      try {
+        const result = await this.api('/api/skill-version', {
+          method: 'PATCH',
+          body: JSON.stringify({
+            id: row.id,
+            projectId: row.projectId,
+            sourceType,
+            title: row.title || row.productDisplayName,
+            path: row.path,
+            relativePath: row.skill?.git?.relativePath || row.relativePath || row.path || '',
+            displayName
+          })
+        });
+        this.patchSkillDisplayNameInScans({
+          ...row,
+          id: result.id || row.id,
+          path: result.relativePath || row.path,
+          relativePath: result.relativePath || row.relativePath,
+          overrideKey: result.key || ''
+        }, result.displayName ?? result.commonName ?? displayName);
+        this.saveWorkbenchDisplayCache('scans', this.scans);
+        ElMessage.success(displayName ? '常用名称已保存' : '常用名称已恢复为文件夹名称');
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || '常用名称保存失败');
+      } finally {
+        this.loading.skillVersion = false;
+      }
+    },
+
     async saveSkillSourceDisplayOwner(row = {}, ownerValue = '') {
       if (!this.canEditSkillInventoryOwnerRow(row)) {
         ElMessage.warning('只有本地路径或共享盘扫描产物可以调整贡献人。');
         return;
       }
-      const owner = this.displayPersonList(ownerValue);
+      const owner = Array.isArray(ownerValue)
+        ? this.displayPersonList(ownerValue.join('、'))
+        : this.displayPersonList(ownerValue);
       if (!owner || owner === '-') {
         ElMessage.warning('请选择贡献人');
         return;
@@ -10692,6 +10804,65 @@ export default {
       }
     },
 
+    patchSkillDisplayNameInScans(row = {}, displayName = '') {
+      const originalName = this.skillSourceDisplayOriginalName(row);
+      const normalizedName = String(displayName || '').trim();
+      const nextDisplayName = normalizedName || originalName;
+      if (!nextDisplayName) return;
+      const targetKeys = this.skillDisplayNameOverrideKeys(row).filter(key => String(key || '').startsWith('name:'));
+      const nextOverrides = { ...(this.skillDisplayNameOverrides || {}) };
+      for (const key of targetKeys) nextOverrides[key] = normalizedName;
+      this.skillDisplayNameOverrides = nextOverrides;
+      const targetProjectId = String(row.projectId || '');
+      const targetPath = String(row.skill?.git?.relativePath || row.relativePath || row.path || '');
+      const targetId = String(row.id || '');
+      let updatedDialogRow = null;
+      const scans = {};
+      for (const [projectId, scan] of Object.entries(this.scans || {})) {
+        scans[projectId] = {
+          ...scan,
+          skills: Array.isArray(scan.skills)
+            ? scan.skills.map(item => {
+              const itemPath = String(item.git?.relativePath || item.relativePath || item.path || '');
+              const projectMatches = !targetProjectId || String(projectId) === targetProjectId;
+              if (projectMatches && ((targetPath && itemPath === targetPath) || (!targetPath && targetId && item.id === targetId))) {
+                const itemOriginalName = item.originalProductDisplayName
+                  || item.productFileName
+                  || this.fileNameFromPath(item.relativePath)
+                  || this.fileNameFromPath(item.path)
+                  || item.productDisplayName
+                  || item.title
+                  || '';
+                const nextItemName = normalizedName || itemOriginalName || nextDisplayName;
+                const nextItem = {
+                  ...item,
+                  productDisplayName: nextItemName,
+                  displayName: nextItemName,
+                  commonName: normalizedName,
+                  commonNameOverride: true,
+                  originalProductDisplayName: itemOriginalName
+                };
+                const projectRow = this.projectRows.find(project => project.id === projectId) || this.projectFromCachedScan(projectId, scan);
+                updatedDialogRow = this.buildSkillInventoryRow(projectRow, nextItem);
+                return nextItem;
+              }
+              return item;
+            })
+            : scan.skills
+        };
+      }
+      this.scans = scans;
+      this.clearValidationMatchCache();
+      this.clearSkillUsageLogCache();
+      if (this.skillUsageDialog.visible && this.skillUsageDialog.row && updatedDialogRow) {
+        const dialogRow = this.skillUsageDialog.row;
+        const dialogPath = String(dialogRow.skill?.git?.relativePath || dialogRow.relativePath || dialogRow.path || '');
+        if ((targetPath && dialogPath === targetPath) || (!targetPath && targetId && dialogRow.id === targetId)) {
+          this.skillUsageDialog = this.buildSkillUsageDialogState(updatedDialogRow, this.skillUsageDialog);
+        }
+      }
+    },
+
     patchSkillVisibilityInScans(row = {}, hidden = true, result = {}) {
       const targetPath = String(row.skill?.git?.relativePath || row.relativePath || row.path || '');
       const targetId = String(row.id || '');
@@ -10731,7 +10902,6 @@ export default {
         }
       }
     },
-
     patchSkillDisplayVisibilityInScans(row = {}, displayHidden = true, result = {}) {
       const targetProjectId = String(row.projectId || '');
       const targetPath = String(row.skill?.git?.relativePath || row.relativePath || row.path || '');
