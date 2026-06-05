@@ -148,11 +148,12 @@
             <template #default="{ row }">
               <ElSelect
                 class="skill-source-type-select"
-                :model-value="row.skillInventoryKind === 'skill' ? 'skill' : 'directory'"
+                :model-value="app.skillSourceDisplayTypeValue(row)"
                 :disabled="app.loading.skillVersion || !app.canManageSkillSourceDisplay"
                 @change="value => app.saveSkillSourceDisplayType(row, value)"
               >
                 <ElOption label="Skill" value="skill" />
+                <ElOption label="规范" value="document" />
                 <ElOption label="文件夹产物" value="directory" />
               </ElSelect>
             </template>

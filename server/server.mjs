@@ -3260,6 +3260,15 @@ function scopedSkillAliasOverrideKey(input = {}) {
   return `alias:${projectId}:${key}`;
 }
 
+function skillAliasOverrideKey(input = {}) {
+  const scopedKey = scopedSkillAliasOverrideKey(input);
+  if (scopedKey) return scopedKey;
+  const key = skillVersionOverrideKey(input);
+  const fileName = path.basename(String(key || '').replace(/\\/g, '/'));
+  if (/^(SKILL|README)\.md$/i.test(fileName)) return '';
+  return key;
+}
+
 function scopedSkillInventoryKindOverrideKey(input = {}) {
   const projectId = String(input.projectId || '').trim();
   const key = skillVersionOverrideKey(input);
@@ -3292,7 +3301,7 @@ async function saveSkillVersionOverride(input = {}) {
   const allowVersion = input.allowVersion !== false;
   const allowAliases = input.allowAliases === true || input.aliases !== undefined;
   const aliasOnlyChange = allowAliases && input.aliases !== undefined && !String(input.version || '').trim() && !ownerChange && !displayNameChange;
-  const scopedAliasKey = aliasOnlyChange ? scopedSkillAliasOverrideKey(input) : '';
+  const scopedAliasKey = aliasOnlyChange ? skillAliasOverrideKey(input) : '';
   const key = scopedOwnerKey || scopedDisplayNameKey || scopedInventoryKindKey || scopedAliasKey || skillVersionOverrideKey(input);
   const version = String(input.version || '').trim();
   if (!key) throw statusError(400, '缺少产物路径，无法保存版本。');
@@ -3332,6 +3341,7 @@ async function saveSkillVersionOverride(input = {}) {
 function normalizeSkillInventoryKind(value = '') {
   const text = cleanText(value).toLowerCase();
   if (['skill', 'skills'].includes(text) || text === '技能') return 'skill';
+  if (['document', 'doc', 'docs', 'standard', 'standards'].includes(text) || /规范|文档|标准/.test(text)) return 'document';
   if (['directory', 'folder', 'file-product', 'file_product'].includes(text) || /文件夹|目录|产物/.test(text)) return 'directory';
   return '';
 }
@@ -3467,6 +3477,9 @@ async function applySkillVersionOverridesToScan(scan = {}) {
       const ownerOverride = overrides[ownerKey]?.owner ? overrides[ownerKey] : null;
       const displayNameOverride = overrides[displayNameKey] || null;
       const displayOverride = overrides[displayKey];
+      const legacyAliasOverride = !aliasKey && rawBaseOverride && Array.isArray(rawBaseOverride.aliases)
+        ? rawBaseOverride
+        : null;
       const hasVisibilityOverride = Object.prototype.hasOwnProperty.call(baseOverride, 'hidden');
       const hasDisplayVisibilityOverride = Object.prototype.hasOwnProperty.call(displayOverride || baseOverride || {}, 'displayHidden');
       const displayNameSource = displayNameOverride || {};
@@ -3474,16 +3487,24 @@ async function applySkillVersionOverridesToScan(scan = {}) {
         || Object.prototype.hasOwnProperty.call(displayNameSource, 'commonName');
       const hasInventoryKindOverride = Object.prototype.hasOwnProperty.call(inventoryKindOverride || {}, 'inventoryKind')
         || Object.prototype.hasOwnProperty.call(baseOverride || {}, 'inventoryKind');
-      if (!baseOverride?.version && !Array.isArray(baseOverride?.aliases) && !Array.isArray(aliasOverride?.aliases) && !baseOverride?.owner && !ownerOverride?.owner && !hasVisibilityOverride && !hasDisplayVisibilityOverride && !hasDisplayNameOverride && !hasInventoryKindOverride) return skill;
+      if (!baseOverride?.version && !Array.isArray(legacyAliasOverride?.aliases) && !Array.isArray(aliasOverride?.aliases) && !baseOverride?.owner && !ownerOverride?.owner && !hasVisibilityOverride && !hasDisplayVisibilityOverride && !hasDisplayNameOverride && !hasInventoryKindOverride) return skill;
       const hidden = hasVisibilityOverride ? baseOverride.hidden === true : skill.hidden === true;
       const displaySource = displayOverride || baseOverride || {};
       const displayHidden = hasDisplayVisibilityOverride ? displaySource.displayHidden === true : skill.displayHidden === true;
       const displayName = cleanText(displayNameSource.displayName ?? displayNameSource.commonName);
+      const aliases = Array.isArray(aliasOverride?.aliases)
+        ? aliasOverride.aliases
+        : (Array.isArray(legacyAliasOverride?.aliases) ? legacyAliasOverride.aliases : skill.aliases);
+      const manualAliases = Array.isArray(aliasOverride?.aliases)
+        ? aliasOverride.aliases
+        : (Array.isArray(legacyAliasOverride?.aliases) ? legacyAliasOverride.aliases : []);
       return {
         ...skill,
         version: baseOverride.version || skill.version,
         inventoryKind: hasInventoryKindOverride ? (inventoryKindOverride?.inventoryKind || baseOverride.inventoryKind || skill.inventoryKind) : skill.inventoryKind,
-        aliases: Array.isArray(aliasOverride?.aliases) ? aliasOverride.aliases : (Array.isArray(baseOverride.aliases) ? baseOverride.aliases : skill.aliases),
+        aliases,
+        manualAliases,
+        hasAliasOverride: manualAliases.length > 0,
         ownerOverride: ownerOverride?.owner || baseOverride.owner || '',
         productDisplayName: hasDisplayNameOverride ? (displayName || skill.productFileName || skill.productDisplayName) : skill.productDisplayName,
         displayName: hasDisplayNameOverride ? (displayName || skill.productFileName || skill.displayName) : skill.displayName,
