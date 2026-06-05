@@ -8946,6 +8946,7 @@ export default {
         this.detailPagedProjectTasks = rows.slice(0, this.taskPageSize);
         const selectedScan = this.scans[activeProjectId];
         const scanChangeSummary = this.skillInventoryScanChangeSummary(previousInventoryRows, scanMap);
+        const preservedScans = Object.values(scanMap).filter(scan => scan?.preserved === true || scan?.lastError);
         this.scanOutput = selectedScan
           ? JSON.stringify({
             configs: selectedScan.configs,
@@ -8955,6 +8956,11 @@ export default {
             error: selectedScan.error
           }, null, 2)
           : '已完成美术资料库库存同步。';
+        if (preservedScans.length) {
+          const reason = preservedScans.map(scan => scan.lastError || scan.error).filter(Boolean)[0] || '本次刷新未读取到新库存';
+          ElMessage.warning(`刷新库存失败，已保留上次扫描内容：${reason}`);
+          return;
+        }
         const nextRows = this.skillInventoryRows.length;
         const changeText = [
           scanChangeSummary.added ? `新增 ${scanChangeSummary.added}` : '',

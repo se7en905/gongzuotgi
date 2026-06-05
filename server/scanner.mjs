@@ -61,6 +61,7 @@ async function syncGenericGitRepository(project = {}, force = false) {
   try {
     await fs.mkdir(path.dirname(root), { recursive: true });
     if (await exists(path.join(root, '.git'))) {
+      await restoreArtGitCacheSystemFiles(root);
       await runCommand('git', ['fetch', '--all', '--prune'], { cwd: root });
       await runCommand('git', ['pull', '--ff-only'], { cwd: root });
     } else if (!(await exists(root)) || !(await hasDirectoryEntries(root))) {
@@ -315,7 +316,10 @@ async function scanArtDepartmentSkills(root, options = {}) {
 }
 
 async function scanArtGitSkills(options = {}) {
-  await syncArtGitSkillRepo(options.forceGitSync === true);
+  const syncResult = await syncArtGitSkillRepo(options.forceGitSync === true);
+  if (options.forceGitSync === true && syncResult?.ok === false) {
+    throw new Error(syncResult.error || '美术资料库 Git 同步失败');
+  }
   if (!(await exists(artGitSkillRepoDir))) return [];
   const files = await collectArtGitProductFiles(artGitSkillRepoDir);
   const skills = [];
@@ -478,6 +482,7 @@ async function syncArtGitSkillRepo(force = false) {
   try {
     await fs.mkdir(path.dirname(artGitSkillRepoDir), { recursive: true });
     if (await exists(path.join(artGitSkillRepoDir, '.git'))) {
+      await restoreArtGitCacheSystemFiles(artGitSkillRepoDir);
       await runCommand('git', ['fetch', '--all', '--prune'], { cwd: artGitSkillRepoDir });
       await runCommand('git', ['pull', '--ff-only'], { cwd: artGitSkillRepoDir });
     } else {
@@ -488,6 +493,35 @@ async function syncArtGitSkillRepo(force = false) {
     artGitLastSyncResult = { ok: false, error: error.message || String(error), syncedAt: new Date().toISOString(), repoUrl: artGitSkillRepoUrl, repoDir: artGitSkillRepoDir };
   }
   return artGitLastSyncResult;
+}
+
+async function restoreArtGitCacheSystemFiles(repoDir = '') {
+  if (path.resolve(repoDir) !== path.resolve(artGitSkillRepoDir)) return [];
+  const restored = [];
+  try {
+    const { stdout } = await runCommand('git', ['status', '--porcelain'], { cwd: repoDir });
+    const systemFiles = stdout.split('\n')
+      .map(line => line.trimEnd())
+      .filter(Boolean)
+      .map(line => {
+        const status = line.slice(0, 2);
+        const rawPath = line.slice(3).replace(/^"|"$/g, '');
+        const filePath = rawPath.includes(' -> ') ? rawPath.split(' -> ').pop() : rawPath;
+        return { status, filePath };
+      })
+      .filter(item => path.basename(item.filePath) === '.DS_Store');
+    for (const item of systemFiles) {
+      if (item.status === '??') {
+        await runCommand('git', ['clean', '-f', '--', item.filePath], { cwd: repoDir });
+      } else {
+        await runCommand('git', ['checkout', '--', item.filePath], { cwd: repoDir });
+      }
+      restored.push(item.filePath);
+    }
+  } catch {
+    return restored;
+  }
+  return restored;
 }
 
 async function gitFileMeta(filePath) {
