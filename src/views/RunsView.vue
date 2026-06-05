@@ -76,6 +76,38 @@
         <strong>{{ app.liveRunDurationText(app.selectedRun) }}</strong>
       </div>
     </section>
+    <section v-if="app.selectedRun && app.isDirectSkillRun(app.selectedRun)" class="run-worker-panel">
+      <div class="run-section-head">
+        <div>
+          <h4>执行人本机状态</h4>
+          <p>直接执行由执行人本机 Worker 领取，使用执行人自己的 Codex、Figma MCP 和 Figma 账号授权。</p>
+        </div>
+        <ElButton size="small" :loading="app.loading.agentWorkers" @click="app.refreshAgentWorkers">刷新状态</ElButton>
+      </div>
+      <div class="run-worker-grid">
+        <div>
+          <span>执行人</span>
+          <strong>{{ app.selectedRun.assignedToName || app.selectedRun.developer || '-' }}</strong>
+        </div>
+        <div>
+          <span>领取设备</span>
+          <strong>{{ app.selectedRun.claimedByDeviceId || app.directSkillWorkerForRun(app.selectedRun)?.deviceName || '未领取' }}</strong>
+        </div>
+        <div>
+          <span>本机状态</span>
+          <strong>{{ app.directSkillWorkerStatusText(app.selectedRun) }}</strong>
+        </div>
+        <div>
+          <span>最近心跳</span>
+          <strong>{{ app.directSkillWorkerLastSeenText(app.directSkillWorkerForRun(app.selectedRun)) }}</strong>
+        </div>
+      </div>
+      <div class="run-worker-note">
+        <span v-if="!app.directSkillWorkerForRun(app.selectedRun)">执行人需要启动本机 Worker 后，任务才会从“待启动”变为“已领取 / 执行中”。</span>
+        <span v-else-if="!app.directSkillWorkerForRun(app.selectedRun)?.figmaMcpReady">该设备未通过 Figma MCP 自检，请执行人在本机完成 Figma MCP 授权。</span>
+        <span v-else>本机 Worker 会把 Codex 日志和执行结果回传到当前执行记录。</span>
+      </div>
+    </section>
     <div class="stage-steps-wrap">
       <ElSteps :active="app.activeRunStage" finish-status="success" direction="horizontal" class="stage-steps">
         <ElStep
@@ -813,6 +845,67 @@ export default {
 
     strong {
       color: #075985;
+    }
+  }
+
+  .run-worker-panel {
+    display: grid;
+    gap: 12px;
+    margin: 14px 18px 0;
+    padding: 14px;
+    border: 1px solid rgba(14, 165, 233, 0.22);
+    border-radius: 8px;
+    background: rgba(248, 250, 252, 0.92);
+  }
+
+  .run-worker-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+
+    div {
+      min-width: 0;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #ffffff;
+    }
+
+    span,
+    strong {
+      display: block;
+    }
+
+    span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    strong {
+      margin-top: 4px;
+      overflow: hidden;
+      color: var(--heading);
+      font-size: 13px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .run-worker-note {
+    color: #475569;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  @media (max-width: 1100px) {
+    .run-worker-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 720px) {
+    .run-worker-grid {
+      grid-template-columns: 1fr;
     }
   }
 

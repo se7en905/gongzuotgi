@@ -673,6 +673,7 @@ export default {
       },
       permissionCatalog: [],
       runs: [],
+      agentWorkers: [],
       codexModelOptions: CODEX_MODEL_OPTIONS,
       codexConfigForm: emptyCodexConfigForm(),
       codexApiKeyDraft: '',
@@ -782,6 +783,7 @@ export default {
         projects: false,
         tasks: false,
         runs: false,
+        agentWorkers: false,
         scan: false,
         skillInventoryCache: false,
         syncTasks: false,
@@ -3900,6 +3902,7 @@ export default {
       if (view === 'runs') {
         this.restoreWorkbenchDisplayCacheKey('artProgressEvents');
         if (!this.runs.length && !this.loading.runs) this.refreshRuns().catch(() => {});
+        if (!this.agentWorkers.length && !this.loading.agentWorkers) this.refreshAgentWorkers().catch(() => {});
       }
       if (view === 'operation-logs') {
         if (!this.operationLogs.length && !this.loading.operationLogs) this.refreshOperationLogs().catch(() => {});
@@ -4626,6 +4629,16 @@ export default {
         this.schedulePlatformRefresh('project-scan-cache', async () => {
           await this.loadProjectScanCacheForInventory();
         }, 400);
+      }
+      if (type === 'runs.changed' && this.can('menu.runs')) {
+        this.schedulePlatformRefresh('runs', async () => {
+          await this.refreshRuns();
+        }, 300);
+      }
+      if (type === 'agent-workers.changed' && this.can('menu.runs')) {
+        this.schedulePlatformRefresh('agent-workers', async () => {
+          await this.refreshAgentWorkers();
+        }, 500);
       }
     },
 
@@ -6533,6 +6546,18 @@ export default {
         if (this.selectedRunId) await this.loadSelectedRunLog();
       } finally {
         this.loading.runs = false;
+      }
+    },
+
+    async refreshAgentWorkers() {
+      if (!this.can('menu.runs')) return;
+      this.loading.agentWorkers = true;
+      try {
+        this.agentWorkers = await this.api('/api/agent-workers');
+      } catch (error) {
+        console.warn('本机 Worker 状态读取失败', error);
+      } finally {
+        this.loading.agentWorkers = false;
       }
     },
 
@@ -13767,6 +13792,35 @@ export default {
 
     isDirectSkillRun(run = null) {
       return run?.sourceType === 'direct-skill' || run?.executionMode === 'direct-skill';
+    },
+
+    directSkillWorkerForRun(run = null) {
+      if (!run) return null;
+      const claimedDevice = String(run.claimedByDeviceId || '').trim();
+      const assignee = String(run.assignedToUserId || run.ownerUserId || '').trim();
+      return this.agentWorkers.find(worker => claimedDevice && worker.deviceId === claimedDevice)
+        || this.agentWorkers.find(worker => assignee && worker.userId === assignee)
+        || null;
+    },
+
+    directSkillWorkerOnline(worker = null) {
+      if (!worker?.lastHeartbeatAt) return false;
+      const last = Date.parse(worker.lastHeartbeatAt);
+      return Boolean(last && Date.now() - last < 45000);
+    },
+
+    directSkillWorkerStatusText(run = null) {
+      const worker = this.directSkillWorkerForRun(run);
+      if (!worker) return '未发现执行人本机 Worker';
+      const online = this.directSkillWorkerOnline(worker);
+      const figma = worker.figmaMcpReady ? 'Figma MCP 已就绪' : 'Figma MCP 未就绪';
+      const codex = worker.codexReady ? 'Codex 已就绪' : 'Codex 未就绪';
+      return `${online ? '在线' : '离线'} · ${codex} · ${figma}`;
+    },
+
+    directSkillWorkerLastSeenText(worker = null) {
+      if (!worker?.lastHeartbeatAt) return '暂无心跳';
+      return this.formatDateTime(worker.lastHeartbeatAt);
     },
 
     businessTasksForProject(projectId) {

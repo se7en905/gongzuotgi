@@ -1251,6 +1251,7 @@ async function handleApi(req, res, url) {
       userName: currentUser.displayName || currentUser.username,
       lastHeartbeatAt: new Date().toISOString()
     });
+    broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, module: 'agent-worker' });
     sendJson(res, 200, worker);
     return;
   }
@@ -1265,6 +1266,7 @@ async function handleApi(req, res, url) {
       status: 'online',
       lastHeartbeatAt: new Date().toISOString()
     });
+    broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, module: 'agent-worker' });
     const run = await claimNextAgentRun({
       userId: currentUser.id,
       deviceId: worker.deviceId,
