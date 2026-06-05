@@ -7,10 +7,6 @@
           <h3>操作日志</h3>
           <p>关键操作审计台账</p>
         </div>
-        <div class="operation-log-head-actions">
-          <ElTag effect="plain">共 {{ app.operationLogTotal }} 条</ElTag>
-          <ElButton type="primary" plain :loading="app.loading.operationLogs" @click="app.refreshOperationLogs">刷新</ElButton>
-        </div>
       </div>
     </template>
 
@@ -41,9 +37,28 @@
         <span>关键词</span>
         <ElInput v-model="app.operationLogFilters.keyword" clearable placeholder="用户、对象、描述、IP" @keyup.enter="app.refreshOperationLogs" />
       </label>
+      <label class="operation-filter-field">
+        <span>开始时间</span>
+        <ElDatePicker
+          v-model="app.operationLogFilters.from"
+          type="datetime"
+          value-format="YYYY-MM-DD HH:mm:ss"
+          placeholder="不限"
+        />
+      </label>
+      <label class="operation-filter-field">
+        <span>结束时间</span>
+        <ElDatePicker
+          v-model="app.operationLogFilters.to"
+          type="datetime"
+          value-format="YYYY-MM-DD HH:mm:ss"
+          placeholder="不限"
+        />
+      </label>
       <div class="operation-filter-actions">
         <ElButton type="primary" :loading="app.loading.operationLogs" @click="app.refreshOperationLogs">查询</ElButton>
         <ElButton plain @click="app.resetOperationLogFilters">重置</ElButton>
+        <ElButton v-if="app.can('api.operationLogs.delete')" type="danger" plain :loading="app.loading.operationLogs" @click="app.deleteOperationLogsByCurrentFilters">删除当前范围</ElButton>
       </div>
     </div>
 
@@ -164,6 +179,7 @@ export default {
     moduleOptions() {
       return [
         { label: '认证', value: 'auth' },
+        { label: '工作台', value: 'workbench' },
         { label: '用户', value: 'user' },
         { label: '角色', value: 'role' },
         { label: '项目', value: 'project' },
@@ -202,7 +218,7 @@ export default {
 
   .operation-log-filters {
     display: grid;
-    grid-template-columns: 190px 160px 140px minmax(260px, 1fr) auto;
+    grid-template-columns: 170px 140px 120px minmax(220px, 1fr) 180px 180px auto;
     gap: 12px;
     align-items: center;
     padding: 14px 16px;

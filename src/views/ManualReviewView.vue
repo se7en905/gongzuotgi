@@ -2,7 +2,7 @@
 <section v-show="app.activeView === 'manual-review'" class="view-grid manual-review-view">
   <ElBreadcrumb class="nav-crumbs" separator="/">
     <ElBreadcrumbItem>
-      <button type="button" @click="app.goAiArchive">AI 档案</button>
+      <button type="button" @click="app.switchView('runs')">美术执行台</button>
     </ElBreadcrumbItem>
     <ElBreadcrumbItem>
       <button type="button" @click="app.goTaskResult">执行详情</button>

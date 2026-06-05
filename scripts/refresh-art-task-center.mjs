@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dataDir = path.join(root, 'data');
 const artDashboardDir = path.join(dataDir, 'art-dashboard');
-const projectId = process.env.ART_PLATFORM_PROJECT_ID || process.env.ZENTAO_AUTO_SYNC_PROJECT_ID || 'qp_lobby_5_2';
+const projectId = process.env.ART_PLATFORM_PROJECT_ID || process.env.ZENTAO_AUTO_SYNC_PROJECT_ID || 'art_department';
 
 const activeStatuses = new Set(['wait', 'doing', 'testing', 'pause', 'waittest']);
 

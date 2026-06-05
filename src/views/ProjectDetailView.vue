@@ -15,7 +15,7 @@
         </div>
         <div class="panel-actions">
           <ElButton @click="app.goProjectList">返回 skii 仓库</ElButton>
-          <ElButton v-if="app.can('run.create')" type="primary" @click="app.runDrawer = true">新建协作任务</ElButton>
+          <ElButton v-if="app.can('run.create')" type="primary" @click="app.openRunCreateDrawer">新建协作任务</ElButton>
         </div>
       </div>
     </template>

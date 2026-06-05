@@ -15,14 +15,21 @@ let artGitLastSyncResult = null;
 
 export async function scanProject(project, options = {}) {
   const root = project.rootPath;
-  if (project.sourceType === 'git' && project.git?.remoteUrl) {
+  const shouldSyncGit = project.git?.remoteUrl && (
+    project.sourceType === 'git'
+    || (options.forceGitSync === true && path.resolve(root) === path.resolve(artGitSkillRepoDir))
+  );
+  if (shouldSyncGit) {
     await syncGenericGitRepository(project, options.forceGitSync === true);
   }
   const agentConfigAbs = path.join(root, project.agentConfigPath || 'AGENTS.md');
   const skillConfigAbs = path.join(root, project.skillConfigPath || '.agent-hub/config.md');
   const platformTaskDirAbs = path.join(paths.artifactDir, project.id);
   const packageJson = await readJsonIfExists(path.join(root, 'package.json'));
-  const skills = project.id === (process.env.ART_PLATFORM_PROJECT_ID || process.env.ZENTAO_AUTO_SYNC_PROJECT_ID || 'qp_lobby_5_2')
+  const sourceType = String(project.sourceType || '').toLowerCase();
+  const skills = ['local', 'shared'].includes(sourceType)
+    ? await scanShallowDirectoryProducts(root, project)
+    : project.id === (process.env.ART_PLATFORM_PROJECT_ID || process.env.ZENTAO_AUTO_SYNC_PROJECT_ID || 'art_department')
     ? await scanArtDepartmentSkills(root, options)
     : await scanSkills(root, { project });
   const configText = await readTextIfExists(skillConfigAbs);
@@ -177,8 +184,32 @@ async function scanShallowDirectoryProducts(root, project = {}) {
     throw error;
   }
   const products = [];
+  const seenDisplayNames = new Set();
+  const pushProduct = product => {
+    const displayName = path.basename(String(
+      product.productDisplayName
+      || product.productFileName
+      || product.relativePath
+      || product.path
+      || product.title
+      || ''
+    ).replace(/\\/g, '/'));
+    const key = displayName.trim().toLowerCase();
+    if (!key || seenDisplayNames.has(key)) return;
+    seenDisplayNames.add(key);
+    const productTitle = product.inventoryKind === 'skill' ? (product.title || displayName) : displayName;
+    products.push({
+      ...product,
+      title: productTitle,
+      productDisplayName: displayName,
+      displayName,
+      dedupeName: displayName
+    });
+  };
   for (const entry of entries) {
     if (!entry.isDirectory() || shouldSkipSharedProductDirectory(entry.name)) continue;
+    const title = entry.name.trim();
+    if (!title) continue;
     const fullPath = path.join(resolvedRoot, entry.name);
     let stat = null;
     try {
@@ -186,9 +217,7 @@ async function scanShallowDirectoryProducts(root, project = {}) {
     } catch {
       continue;
     }
-    const title = entry.name.trim();
-    if (!title) continue;
-    products.push(directoryProductRecord({
+    pushProduct(await directoryProductRecord({
       project,
       fullPath,
       relativePath: title,
@@ -196,59 +225,74 @@ async function scanShallowDirectoryProducts(root, project = {}) {
       stat,
       depth: 1
     }));
-    const secondLevelEntries = await readDirectoryEntries(fullPath);
-    for (const child of secondLevelEntries) {
-      if (!child.isDirectory() || shouldSkipSharedProductDirectory(child.name)) continue;
-      const childTitle = child.name.trim();
-      if (!childTitle) continue;
-      const childPath = path.join(fullPath, child.name);
-      let childStat = null;
-      try {
-        childStat = await fs.stat(childPath);
-      } catch {
-        continue;
-      }
-      products.push(directoryProductRecord({
-        project,
-        fullPath: childPath,
-        relativePath: `${title}/${childTitle}`,
-        title: childTitle,
-        stat: childStat,
-        depth: 2,
-        parentDirectory: title
-      }));
-    }
   }
   return products.sort((a, b) => String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')) || a.title.localeCompare(b.title));
 }
 
-async function readDirectoryEntries(dir) {
-  try {
-    return await fs.readdir(dir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-}
-
-function directoryProductRecord({ project = {}, fullPath = '', relativePath = '', title = '', stat = null, depth = 1, parentDirectory = '' } = {}) {
+async function directoryProductRecord({ project = {}, fullPath = '', relativePath = '', title = '', stat = null, depth = 1, parentDirectory = '' } = {}) {
   const sourceLabel = project.sourceType === 'local' ? '本地目录' : '共享盘';
+  const displayName = path.basename(String(title || relativePath || fullPath).replace(/\\/g, '/'));
+  const skillFile = await findDirectorySkillFile(fullPath);
+  const skillRaw = skillFile ? await readTextIfExists(skillFile) : '';
+  const skillTitle = skillRaw ? firstHeading(skillRaw) || displayName : displayName;
   return {
     id: slugifySkillId(`directory-${relativePath || title}`),
     path: fullPath,
+    skillPath: skillFile || '',
+    skillRelativePath: skillFile ? path.relative(fullPath, skillFile).replace(/\\/g, '/') : '',
     relativePath,
-    title,
-    triggers: [],
-    description: depth > 1 ? `浅层目录：${relativePath}` : '共享盘浅层目录',
-    category: '文件夹产物',
-    preview: `产物目录：${relativePath || title}`,
+    title: skillTitle,
+    productDisplayName: displayName,
+    productFileName: displayName,
+    triggers: skillRaw ? extractTriggers(skillRaw) : [],
+    description: skillRaw ? extractSkillDescription(skillRaw) : (depth > 1 ? `浅层目录：${relativePath}` : '共享盘浅层目录'),
+    category: skillRaw ? 'Skill' : '文件夹产物',
+    preview: skillRaw ? skillRaw.slice(0, 2400) : `产物目录：${relativePath || title}`,
     source: `${sourceLabel}:${project.name || '未命名资料库'}`,
-    inventoryKind: 'directory',
+    inventoryKind: skillRaw ? 'skill' : 'directory',
+    directoryProduct: true,
     directoryDepth: depth,
     parentDirectory,
     uploadedAt: stat?.mtime?.toISOString() || '',
     status: 'ready',
     statusLabel: '已接入'
   };
+}
+
+async function findDirectorySkillFile(dir = '') {
+  const root = path.resolve(String(dir || ''));
+  const candidates = [];
+  async function collect(currentDir, depth) {
+    if (depth > 8) return;
+    let entries = [];
+    try {
+      entries = await fs.readdir(currentDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (!shouldSkipSharedProductDirectory(entry.name)) await collect(path.join(currentDir, entry.name), depth + 1);
+        continue;
+      }
+      if (!entry.isFile() || !/\.md$/i.test(entry.name)) continue;
+      const filePath = path.join(currentDir, entry.name);
+      const relativePath = path.relative(root, filePath).replace(/\\/g, '/');
+      candidates.push({ path: filePath, relativePath, name: entry.name, depth });
+    }
+  }
+  await collect(root, 0);
+  if (!candidates.length) return '';
+  const rank = item => {
+    if (item.name === 'SKILL.md') return 0;
+    if (/^skill\.md$/i.test(item.name)) return 1;
+    if (/skill/i.test(item.name)) return 2;
+    return 9;
+  };
+  const selected = candidates
+    .filter(item => rank(item) < 9)
+    .sort((a, b) => rank(a) - rank(b) || a.depth - b.depth || a.relativePath.localeCompare(b.relativePath))[0];
+  return selected?.path || '';
 }
 
 function shouldSkipSharedProductDirectory(name = '') {
@@ -289,6 +333,8 @@ async function scanArtGitSkills(options = {}) {
       id: parsed.id,
       path: filePath,
       title: parsed.title,
+      productDisplayName: parsed.productDisplayName || parsed.title,
+      productFileName: parsed.productFileName || path.basename(relativePath),
       triggers: extractTriggers(raw),
       description: parsed.description,
       category: parsed.category,
@@ -497,12 +543,21 @@ function parseArtGitProduct(raw, filePath, relativePath = '', productGroupPath =
   const ext = extWithDot.replace(/^\./, '').toLowerCase();
   const id = slugifySkillId(relativePath || fileBase) || parsed.id;
   const folderName = productDisplayGroupName(productGroupPath || relativePath);
+  const displayName = gitProductChineseDisplayName(parsed.title, folderName, fileBase, fileName);
   const title = fileName === 'SKILL.md'
-    ? folderName || parsed.title || parsed.id
-    : [folderName, fileName].filter(Boolean).join(' / ') || parsed.title || fileBase || parsed.id;
+    ? displayName || parsed.id
+    : displayName || [folderName, fileName].filter(Boolean).join(' / ') || parsed.title || fileBase || parsed.id;
   const category = parsed.category || ext || '';
   const description = parsed.description || (ext ? `${ext} 文件` : '');
-  return { ...parsed, id, title, category, description, productGroupPath };
+  return { ...parsed, id, title, productDisplayName: displayName || title, productFileName: displayName || fileName, category, description, productGroupPath };
+}
+
+function gitProductChineseDisplayName(...values) {
+  for (const value of values) {
+    const text = String(value || '').trim();
+    if (/[\u4e00-\u9fa5]/.test(text)) return text;
+  }
+  return '';
 }
 
 function productDisplayGroupName(groupPath = '') {
@@ -543,14 +598,14 @@ function normalizeGitUploader(meta) {
   const raw = String(meta?.uploaderName || meta?.uploaderEmail || '').trim();
   if (!raw) return '';
   const lowered = raw.toLowerCase();
-  if (lowered.includes('zhangqw') || raw === '张倩文') return 'zhangqw';
-  if (lowered.includes('yejunbo') || lowered.includes('yjb') || raw === '叶君博') return 'yejunbo';
-  if (lowered.includes('fengshuqi') || raw === '冯淑琪') return 'fengshuqi';
-  if (lowered.includes('yushengwei') || raw === '余盛威') return 'yushengwei';
-  if (lowered.includes('huangjianrong') || raw === '黄剑荣') return 'huangjianrong';
-  if (lowered.includes('lilh') || lowered === 'lhl' || lowered.includes('547569307') || raw === '李华玲') return 'lilh';
-  if (lowered.includes('zhangzb') || raw === '张宗斌') return 'zhangzb';
-  if (lowered.includes('lanhj') || raw === '兰韩界') return 'lanhj';
+  if (lowered.includes('zhangqw') || raw === '张倩文') return '张倩文';
+  if (lowered.includes('yejunbo') || lowered.includes('yjb') || raw === '叶君博') return '叶君博';
+  if (lowered.includes('fengshuqi') || raw === '冯淑琪') return '冯淑琪';
+  if (lowered.includes('yushengwei') || raw === '余盛威') return '余盛威';
+  if (lowered.includes('huangjianrong') || raw === '黄剑荣') return '黄剑荣';
+  if (lowered.includes('lilh') || lowered === 'lhl' || lowered.includes('547569307') || raw === '李华玲') return '李华玲';
+  if (lowered.includes('zhangzb') || raw === '张宗斌') return '张宗斌';
+  if (lowered.includes('lanhj') || lowered === 'alan' || raw === '兰韩界') return '兰韩界';
   return lowered.replace(/@.*$/, '').replace(/\s+/g, '') || raw;
 }
 

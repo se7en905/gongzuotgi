@@ -5,6 +5,7 @@ ROOT="/Users/se7en/ArtProject/platform"
 LABEL="com.artproject.platform"
 PLIST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
 NODE_BIN="$(command -v node)"
+CODEX_CLI_PATH="/Applications/Codex.app/Contents/Resources/codex"
 LOG_DIR="${ROOT}/logs"
 
 mkdir -p "${LOG_DIR}" "${HOME}/Library/LaunchAgents"
@@ -38,6 +39,8 @@ cat > "${PLIST}" <<PLIST
     <string>0</string>
     <key>ZENTAO_ART_DEPT_ID</key>
     <string>27</string>
+    <key>CODEX_CLI_PATH</key>
+    <string>${CODEX_CLI_PATH}</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>

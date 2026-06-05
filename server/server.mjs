@@ -35,6 +35,7 @@ import {
   createTaskReview,
   deleteAiFlowRecord,
   deleteArtProgressEvent,
+  deleteOperationLogsByFilters,
   deleteOperationLog,
   createOperationLog,
   createRun,
@@ -66,7 +67,9 @@ import {
   listTaskProcessingNotes,
   listTasks,
   paths,
+  recordUsageCountersForArtProgressEvent,
   recordUsageCountersForExpiredSkillValidations,
+  recordUsageCountersForSkillValidation,
   reconcileZentaoTaskSnapshot,
   upsertBugs,
   redactCodexConfig,
@@ -87,6 +90,7 @@ import { cancelRun, startRun, subscribe } from './runner.mjs';
 import { buildWorkflowPlan, workflowLevels } from './workflow.mjs';
 import { getZentaoApi, getZentaoModules } from './zentao-adapter.mjs';
 import { syncZentaoBugsForProject } from './zentao-bug-sync.mjs';
+import { applyZentaoSplitPlan, assignZentaoTask, buildZentaoSplitPlan } from './zentao-task-actions.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, '..', process.env.STATIC_DIR || 'dist');
@@ -96,7 +100,7 @@ const aiWeekDir = process.env.AI_WEEK_DIR || '/Users/se7en/ArtProject/Week';
 const artDashboardDataDir = process.env.ART_DASHBOARD_DATA_DIR || path.join(paths.dataDir, 'art-dashboard');
 const zentaoBaseUrl = 'https://cd.baa360.cc:20088/index.php';
 const zentaoArtDeptId = Number(process.env.ZENTAO_ART_DEPT_ID || 27);
-const zentaoArtDeptIds = normalizeZentaoArtDeptIds(process.env.ZENTAO_ART_DEPT_IDS || process.env.ZENTAO_ART_DEPT_ID || '27');
+const zentaoArtDeptIds = new Set([zentaoArtDeptId]);
 const defaultArtUsers = [
   { account: 'zhangqw', realname: '张倩文', role: 'owner' },
   { account: 'fengshuqi', realname: '冯淑琪' },
@@ -110,7 +114,7 @@ const defaultArtUsers = [
 const zentaoBugProductIds = process.env.ZENTAO_BUG_PRODUCT_IDS || 'all';
 const zentaoAutoSyncIntervalMs = Number(process.env.ZENTAO_AUTO_SYNC_INTERVAL_MS || 30 * 60 * 1000);
 const zentaoAutoSyncInitialDelayMs = Number(process.env.ZENTAO_AUTO_SYNC_INITIAL_DELAY_MS || 5000);
-const zentaoAutoSyncProjectId = process.env.ZENTAO_AUTO_SYNC_PROJECT_ID || 'qp_lobby_5_2';
+const zentaoAutoSyncProjectId = process.env.ZENTAO_AUTO_SYNC_PROJECT_ID || 'art_department';
 const artProjectId = process.env.ART_PLATFORM_PROJECT_ID || zentaoAutoSyncProjectId;
 const zentaoAutoSyncScript = path.join(paths.root, 'scripts', 'sync-zentao-art-tasks.mjs');
 const zentaoBugSyncScript = path.join(paths.root, 'scripts', 'sync-zentao-art-bugs.mjs');
@@ -137,7 +141,7 @@ const artProjectSheetConfigPath = path.join(paths.dataDir, 'art-project-sheet-co
 const execFileAsync = promisify(execFile);
 let zentaoAutoSyncRunning = false;
 let zentaoAutoSyncState = {
-  enabled: process.env.ZENTAO_AUTO_SYNC !== '0',
+  enabled: process.env.ZENTAO_AUTO_SYNC === '1',
   running: false,
   projectId: zentaoAutoSyncProjectId,
   intervalMs: zentaoAutoSyncIntervalMs,
@@ -146,7 +150,9 @@ let zentaoAutoSyncState = {
   lastSuccessAt: '',
   lastErrorAt: '',
   lastError: '',
-  lastSummary: null
+  lastSummary: null,
+  tasks: createZentaoQueueState('tasks'),
+  bugs: createZentaoQueueState('bugs')
 };
 const platformEventClients = new Set();
 let platformEventSeq = 0;
@@ -334,7 +340,7 @@ async function handleApi(req, res, url) {
 
   const artProgressEventDetail = url.pathname.match(/^\/api\/art-progress-events\/([^/]+)$/);
   if (artProgressEventDetail && req.method === 'PUT') {
-    requirePermission(currentUser, 'api.artProgress.manage');
+    requirePermission(currentUser, 'api.skillAsset.create');
     const body = await readBody(req);
     const event = await editArtProgressEvent(artProgressEventDetail[1], body, currentUser);
     if (!event) {
@@ -349,9 +355,9 @@ async function handleApi(req, res, url) {
   if (artProgressEventDetail && req.method === 'DELETE') {
     const existingEvent = (await listArtProgressEvents({})).find(event => String(event.id) === String(artProgressEventDetail[1]));
     if (isReporterLifecycleEvent(existingEvent)) {
-      requireAnyPermission(currentUser, ['artProgress.logs.delete', 'artProgress.logs.manage', 'api.artProgress.manage']);
+      requireAnyPermission(currentUser, ['artProgress.logs.delete', 'artProgress.logs.manage', 'api.skillAsset.void']);
     } else {
-      requirePermission(currentUser, 'api.artProgress.manage');
+      requirePermission(currentUser, 'api.skillAsset.void');
     }
     const event = await removeArtProgressEvent(artProgressEventDetail[1], currentUser);
     if (!event) {
@@ -365,7 +371,7 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/ai-asset-sheet') {
     requireAuth(currentUser);
-    if (!hasPermission(currentUser, 'menu.skillList') && !hasPermission(currentUser, 'menu.skillEvents')) {
+    if (!hasPermission(currentUser, 'menu.skillList')) {
       throw new HttpError(403, '当前账号没有权限查看人工研究清单。');
     }
     sendJson(res, 200, await loadAiAssetSheet({ includeDeleted: url.searchParams.get('includeDeleted') === '1' }));
@@ -373,7 +379,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/ai-asset-sheet/rows') {
-    requirePermission(currentUser, 'api.aiAssets.manage');
+    requirePermission(currentUser, 'api.skillAsset.create');
     const result = await saveAiAssetOverride(await readBody(req), currentUser);
     await writeOperationLog(req, {
       user: currentUser,
@@ -393,7 +399,7 @@ async function handleApi(req, res, url) {
 
   const aiAssetSheetRowDetail = url.pathname.match(/^\/api\/ai-asset-sheet\/rows\/([^/]+)$/);
   if (req.method === 'DELETE' && aiAssetSheetRowDetail) {
-    requirePermission(currentUser, 'api.aiAssets.manage');
+    requirePermission(currentUser, 'api.skillAsset.void');
     const result = await deleteAiAssetOverride(aiAssetSheetRowDetail[1], currentUser);
     await writeOperationLog(req, {
       user: currentUser,
@@ -413,7 +419,7 @@ async function handleApi(req, res, url) {
 
   const aiAssetSheetRowRestore = url.pathname.match(/^\/api\/ai-asset-sheet\/rows\/([^/]+)\/restore$/);
   if (req.method === 'POST' && aiAssetSheetRowRestore) {
-    requirePermission(currentUser, 'api.aiAssets.manage');
+    requirePermission(currentUser, 'api.skillAsset.void');
     const result = await restoreAiAssetOverride(aiAssetSheetRowRestore[1], currentUser);
     await writeOperationLog(req, {
       user: currentUser,
@@ -432,7 +438,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/art-project-sheet') {
-    requirePermission(currentUser, 'menu.projects');
+    requirePermission(currentUser, 'menu.skillList');
     sendJson(res, 200, await loadArtProjectSheet({
       spreadsheetId: url.searchParams.get('spreadsheetId') || defaultArtProjectSheetId,
       gid: url.searchParams.get('gid') || defaultArtProjectSheetGid
@@ -441,7 +447,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/art-project-sheet/rows') {
-    requirePermission(currentUser, 'api.artProjectSheet.manage');
+    requirePermission(currentUser, 'api.skillSources.manage');
     const row = await upsertArtProjectSheetOverride(await readBody(req));
     await writeOperationLog(req, {
       user: currentUser,
@@ -461,7 +467,7 @@ async function handleApi(req, res, url) {
 
   const artProjectSheetRowDetail = url.pathname.match(/^\/api\/art-project-sheet\/rows\/([^/]+)$/);
   if (req.method === 'DELETE' && artProjectSheetRowDetail) {
-    requirePermission(currentUser, 'api.artProjectSheet.manage');
+    requirePermission(currentUser, 'api.skillSources.delete');
     const row = await deleteArtProjectSheetOverride(artProjectSheetRowDetail[1]);
     await writeOperationLog(req, {
       user: currentUser,
@@ -480,7 +486,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/art-project-sheet/fields') {
-    requirePermission(currentUser, 'api.artProjectSheet.manage');
+    requirePermission(currentUser, 'api.skillSources.manage');
     const config = await upsertArtProjectSheetField(await readBody(req));
     await writeOperationLog(req, {
       user: currentUser,
@@ -500,7 +506,7 @@ async function handleApi(req, res, url) {
 
   const artProjectSheetFieldDetail = url.pathname.match(/^\/api\/art-project-sheet\/fields\/([^/]+)$/);
   if (req.method === 'DELETE' && artProjectSheetFieldDetail) {
-    requirePermission(currentUser, 'api.artProjectSheet.manage');
+    requirePermission(currentUser, 'api.skillSources.delete');
     const config = await deleteArtProjectSheetField(artProjectSheetFieldDetail[1]);
     await writeOperationLog(req, {
       user: currentUser,
@@ -518,14 +524,14 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/skill-validations') {
-    requirePermission(currentUser, 'menu.skillValidations');
+    requirePermission(currentUser, 'menu.skillList');
     const payload = await loadSkillValidations();
     sendJson(res, 200, filterSkillValidationResponse(payload));
     return;
   }
 
   if (req.method === 'POST' && url.pathname === '/api/skill-validations') {
-    requirePermission(currentUser, 'api.skillValidations.manage');
+    requirePermission(currentUser, 'api.skillAsset.create');
     const body = await readBody(req);
     const result = await saveSkillValidationRecord(body, currentUser);
     await writeOperationLog(req, {
@@ -545,7 +551,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/skill-validations/backfill') {
-    requireAnyPermission(currentUser, ['skill.validationBackfill.manage', 'skill.validation.manage', 'api.skillValidations.manage']);
+    requirePermission(currentUser, 'api.skillAsset.create');
     const body = await readBody(req);
     const sourceId = cleanText(body.id || body.sourceRef);
     const backfillId = sourceId ? `skill-validation-backfill-${sourceId}` : '';
@@ -578,7 +584,7 @@ async function handleApi(req, res, url) {
 
   const skillValidationDetail = url.pathname.match(/^\/api\/skill-validations\/([^/]+)$/);
   if (req.method === 'DELETE' && skillValidationDetail) {
-    requireAnyPermission(currentUser, ['skill.validationDetailLogs.delete', 'skill.validation.manage', 'api.skillValidations.manage']);
+    requirePermission(currentUser, 'api.skillAsset.void');
     const result = await deleteSkillValidationRecord(skillValidationDetail[1], currentUser);
     await writeOperationLog(req, {
       user: currentUser,
@@ -625,26 +631,28 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/skill-version-overrides') {
-    requireAnyPermission(currentUser, ['menu.skillList', 'menu.skillEvents', 'menu.skillValidations']);
+    requireAnyPermission(currentUser, ['menu.skillList']);
     const overrides = await loadSkillVersionOverrides();
     sendJson(res, 200, { overrides });
     return;
   }
 
   if (req.method === 'GET' && url.pathname === '/api/project-scan-cache') {
-    requireAnyPermission(currentUser, ['menu.skillList', 'menu.skillEvents', 'menu.skillValidations', 'menu.repository', 'menu.projects']);
+    requireAnyPermission(currentUser, ['menu.skillList']);
     const projects = await listProjects();
-    const visibleProjectIds = new Set(projects.filter(project => canAccessProject(currentUser, project.id)).map(project => project.id));
+    const visibleProjectIds = new Set(projects.map(project => project.id));
     const cache = await loadProjectScanCache();
     const scans = {};
     for (const [projectId, entry] of Object.entries(cache)) {
       if (!visibleProjectIds.has(projectId)) continue;
       const scan = entry?.scan;
       if (!scan || typeof scan !== 'object') continue;
+      const scanWithOverrides = await applySkillVersionOverridesToScan(scan);
       scans[projectId] = {
         ...scan,
+        ...scanWithOverrides,
         cacheOnly: true,
-        cachedAt: entry.cachedAt || scan.cachedAt || ''
+        cachedAt: entry.cachedAt || scanWithOverrides.cachedAt || ''
       };
     }
     sendJson(res, 200, { scans });
@@ -677,13 +685,13 @@ async function handleApi(req, res, url) {
     await writeOperationLog(req, {
       user: currentUser,
       module: 'skill-inventory',
-      action: result.hidden ? 'HIDE_SKILL_ASSET' : 'RESTORE_SKILL_ASSET',
-      actionName: result.hidden ? '隐藏产物' : '恢复产物',
+      action: result.hidden ? 'VOID_SKILL_ASSET' : 'RESTORE_SKILL_ASSET',
+      actionName: result.hidden ? '作废产物' : '恢复产物',
       targetType: 'skill',
       targetId: result.key,
       targetName: body.title || body.id || body.relativePath || '',
       after: result,
-      description: `${currentUser.displayName || currentUser.username} ${result.hidden ? '隐藏' : '恢复'}产物「${body.title || body.id || body.relativePath || result.key}」`
+      description: `${currentUser.displayName || currentUser.username} ${result.hidden ? '作废' : '恢复'}产物「${body.title || body.id || body.relativePath || result.key}」`
     });
     sendJson(res, 200, result);
     return;
@@ -759,6 +767,58 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === 'DELETE' && url.pathname === '/api/operation-logs') {
+    requirePermission(currentUser, 'api.operationLogs.delete');
+    const body = await readBody(req);
+    const filters = body?.filters && typeof body.filters === 'object' ? body.filters : {};
+    const result = await deleteOperationLogsByFilters(filters);
+    if (result.deletedCount > 0) {
+      await writeOperationLog(req, {
+        user: currentUser,
+        module: 'operation-log',
+        action: 'DELETE_OPERATION_LOG_RANGE',
+        actionName: '范围删除操作日志',
+        targetType: 'operation-log',
+        targetId: 'range',
+        targetName: '操作日志范围',
+        result: 'success',
+        before: { filters },
+        after: { deletedCount: result.deletedCount },
+        description: `${currentUser.displayName || currentUser.username} 删除操作日志 ${result.deletedCount} 条`
+      });
+    }
+    broadcastPlatformEvent('operation-logs.changed', { module: 'operation-log' });
+    sendJson(res, 200, result);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/operation-logs/view') {
+    requireAuth(currentUser);
+    const body = await readBody(req);
+    const view = String(body.view || '').trim();
+    const viewName = String(body.viewName || view || '工作台页面').trim();
+    if (!view) {
+      sendJson(res, 400, { error: '缺少页面标识。' });
+      return;
+    }
+    const log = await writeOperationLog(req, {
+      user: currentUser,
+      module: 'workbench',
+      action: 'VIEW_PAGE',
+      actionName: '进入页面',
+      targetType: 'view',
+      targetId: view,
+      targetName: viewName,
+      result: 'success',
+      description: `${currentUser.displayName || currentUser.username} 进入「${viewName}」`,
+      metadata: {
+        path: body.path || ''
+      }
+    });
+    sendJson(res, 201, { log });
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/skill-usage/task-art-brief') {
     requireAnyPermission(currentUser, ['skill.usageLogs.view', 'api.operationLogs.read']);
     sendJson(res, 200, await listOperationLogs({
@@ -774,7 +834,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/usage-counters') {
-    requireAnyPermission(currentUser, ['skill.usageLogs.view', 'menu.skillList', 'menu.skillEvents', 'menu.skillValidations']);
+    requireAnyPermission(currentUser, ['skill.usageLogs.view', 'menu.skillList']);
     sendJson(res, 200, await getUsageCounters());
     return;
   }
@@ -952,13 +1012,13 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/fs/directories') {
-    requirePermission(currentUser, 'api.projects.manage');
+    requirePermission(currentUser, 'api.skillSources.manage');
     sendJson(res, 200, await listDirectories(url.searchParams.get('path')));
     return;
   }
 
   if (req.method === 'POST' && url.pathname === '/api/fs/open-directory') {
-    requirePermission(currentUser, 'api.projects.manage');
+    requirePermission(currentUser, 'api.skillSources.manage');
     const body = await readBody(req);
     const target = normalizeFsPath(body.path);
     if (!target) {
@@ -1120,9 +1180,9 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/projects') {
-    requirePermission(currentUser, 'api.projects.manage');
     const body = await readBody(req);
     const before = body.id ? await getProject(body.id) : null;
+    requirePermission(currentUser, before ? 'api.skillSources.manage' : 'api.skillSources.manage');
     const project = redactProject(await upsertProject(body));
     await writeOperationLog(req, {
       user: currentUser,
@@ -1143,7 +1203,7 @@ async function handleApi(req, res, url) {
   const projectDetail = url.pathname.match(/^\/api\/projects\/([^/]+)$/);
   if (req.method === 'DELETE' && projectDetail) {
     const projectId = decodeURIComponent(projectDetail[1]);
-    requireProjectAccess(currentUser, projectId, 'admin', 'api.projects.manage');
+    requireProjectAccess(currentUser, projectId, 'admin', 'api.skillSources.delete');
     const projectRuns = (await listRuns()).filter(run => run.projectId === projectId);
     const runningRun = projectRuns.find(run => /running|in_progress/i.test(String(run.status || '')));
     if (runningRun) {
@@ -1174,8 +1234,10 @@ async function handleApi(req, res, url) {
   const projectScan = url.pathname.match(/^\/api\/projects\/([^/]+)\/scan$/);
   if (req.method === 'GET' && projectScan) {
     const project = await requireProject(projectScan[1]);
-    requireProjectAccess(currentUser, project.id, 'viewer');
-    sendJson(res, 200, await scanProjectWithStableCache(project, { forceGitSync: url.searchParams.get('refresh') === '1' }));
+    requireProjectAccess(currentUser, project.id, 'viewer', 'api.skillScan.run');
+    sendJson(res, 200, url.searchParams.get('refresh') === '1'
+      ? await scanProjectWithStableCache(project, { forceGitSync: true })
+      : await readProjectScanFromCache(project));
     return;
   }
 
@@ -1317,6 +1379,106 @@ async function handleApi(req, res, url) {
       module: 'task-processing-note'
     });
     sendJson(res, 200, note);
+    return;
+  }
+
+  const taskAssign = url.pathname.match(/^\/api\/tasks\/([^/]+)\/assign-zentao$/);
+  if (req.method === 'POST' && taskAssign) {
+    const body = await readBody(req).catch(() => ({}));
+    const task = await requireTaskLike(taskAssign[1]);
+    requireProjectAccess(currentUser, task.projectId, 'developer', 'task.sync');
+    const assigneeInput = body.assignedTo || body.account || body.name || body.assignedName || body.realname;
+    const assignee = findArtAssignee(assigneeInput) || {
+      account: String(body.assignedTo || body.account || '').trim(),
+      realname: String(body.assignedName || body.name || body.realname || body.assignedTo || '').trim()
+    };
+    if (!assignee.account && !assignee.realname) throw new HttpError(400, '未找到要指派的美术成员');
+    const before = task;
+    const changedAt = new Date().toISOString();
+    let zentaoTask = null;
+    let zentaoAssignError = '';
+    if (assignee.account) {
+      try {
+        zentaoTask = await assignZentaoTask(task, assignee);
+      } catch (error) {
+        zentaoAssignError = zentaoSyncErrorMessage(error);
+        console.warn(`ZenTao assign fallback for task ${task.taskNo || task.id}: ${zentaoAssignError}`);
+      }
+    } else {
+      zentaoAssignError = '未匹配到禅道账号，已先更新工作台负责人。';
+    }
+    const updated = await upsertTask({
+      ...task,
+      developer: assignee.realname || assignee.account,
+      assignedTo: assignee.account,
+      zentaoStatus: zentaoTask?.status || task.zentaoStatus || '',
+      zentao: {
+        ...(task.zentao || {}),
+        assignedTo: assignee.account,
+        assignedToName: assignee.realname || assignee.account,
+        assignedDate: zentaoTask?.assignedDate || task.zentao?.assignedDate || '',
+        originalStatus: zentaoTask?.status || task.zentaoStatus || task.zentao?.originalStatus || '',
+        assignSync: {
+          status: zentaoAssignError ? (assignee.account ? 'pending_retry' : 'local_only') : 'synced',
+          targetAccount: assignee.account,
+          targetName: assignee.realname || assignee.account,
+          syncedAt: zentaoAssignError ? '' : changedAt,
+          lastErrorAt: zentaoAssignError ? changedAt : '',
+          lastError: zentaoAssignError
+        }
+      },
+      updatedAt: changedAt
+    });
+    await writeOperationLog(req, {
+      user: currentUser,
+      module: 'task',
+      action: zentaoAssignError ? 'ASSIGN_TASK_LOCAL_WITH_ZENTAO_RETRY' : 'ASSIGN_ZENTAO_TASK',
+      actionName: zentaoAssignError ? '拖拽指派任务（禅道待补同步）' : '拖拽指派禅道任务',
+      targetType: 'task',
+      targetId: task.id,
+      targetName: task.displayTitle || task.title || task.taskNo || task.id,
+      before,
+      after: updated,
+      metadata: { taskNo: task.taskNo || task.zentao?.id || '', assignedTo: assignee.account, assignedToName: assignee.realname, zentaoAssignError },
+      description: zentaoAssignError
+        ? `${currentUser.displayName || currentUser.username} 将任务「${task.displayTitle || task.title || task.taskNo || task.id}」在工作台指派给 ${assignee.realname || assignee.account}，禅道写回待补同步`
+        : `${currentUser.displayName || currentUser.username} 将任务「${task.displayTitle || task.title || task.taskNo || task.id}」指派给 ${assignee.realname || assignee.account}`
+    });
+    broadcastPlatformEvent('tasks.changed', { projectId: task.projectId || artProjectId, taskId: task.id, taskNo: task.taskNo || '', module: 'zentao-task-assign' });
+    sendJson(res, 200, { ...updated, zentaoAssignError, zentaoAssignSynced: !zentaoAssignError });
+    return;
+  }
+
+  const taskSplitPlan = url.pathname.match(/^\/api\/tasks\/([^/]+)\/split-plan$/);
+  if (req.method === 'POST' && taskSplitPlan) {
+    const task = await requireTaskLike(taskSplitPlan[1]);
+    requireProjectAccess(currentUser, task.projectId, 'developer', 'task.sync');
+    if (isSgProjectTask(task)) throw new HttpError(400, 'SG 项目不需要拆单。');
+    const plan = await buildZentaoSplitPlan(task);
+    sendJson(res, 200, plan);
+    return;
+  }
+
+  const taskSplitApply = url.pathname.match(/^\/api\/tasks\/([^/]+)\/split-apply$/);
+  if (req.method === 'POST' && taskSplitApply) {
+    const body = await readBody(req).catch(() => ({}));
+    const task = await requireTaskLike(taskSplitApply[1]);
+    requireProjectAccess(currentUser, task.projectId, 'developer', 'task.sync');
+    if (isSgProjectTask(task)) throw new HttpError(400, 'SG 项目不需要拆单。');
+    const result = await applyZentaoSplitPlan(task, body.plan || body);
+    await writeOperationLog(req, {
+      user: currentUser,
+      module: 'task',
+      action: 'SPLIT_ZENTAO_TASK',
+      actionName: '工作台拆单',
+      targetType: 'task',
+      targetId: task.id,
+      targetName: task.displayTitle || task.title || task.taskNo || task.id,
+      metadata: result,
+      description: `${currentUser.displayName || currentUser.username} 在工作台拆单「${task.displayTitle || task.title || task.taskNo || task.id}」`
+    });
+    broadcastPlatformEvent('tasks.changed', { projectId: task.projectId || artProjectId, taskId: task.id, taskNo: task.taskNo || '', module: 'zentao-task-split' });
+    sendJson(res, 200, result);
     return;
   }
 
@@ -1495,7 +1657,23 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const project = await requireProject(body.projectId);
     requireProjectAccess(currentUser, project.id, 'developer', 'api.runs.execute');
-    const result = await syncZentaoBugs(project, body);
+    if (body.wait === false || body.async === true) {
+      const result = triggerZentaoBugSync(project, body, 'manual');
+      await writeOperationLog(req, {
+        user: currentUser,
+        module: 'task',
+        action: 'TRIGGER_ZENTAO_BUG_SYNC',
+        actionName: '触发禅道 Bug 同步',
+        targetType: 'project',
+        targetId: project.id,
+        targetName: project.name,
+        metadata: result,
+        description: `${currentUser.displayName || currentUser.username} 触发项目「${project.name || project.id}」的禅道 Bug 同步`
+      });
+      sendJson(res, 202, result);
+      return;
+    }
+    const result = await syncZentaoBugs(project, { ...body, trigger: 'manual' });
     await writeOperationLog(req, {
       user: currentUser,
       module: 'task',
@@ -1810,9 +1988,10 @@ function sendPlatformEvent(client, eventName, payload = {}) {
 
 function canReceivePlatformEvent(client, event = {}) {
   const type = event.type || '';
-  if (type === 'skill-validations.changed') return client.permissions.has('menu.skillValidations') || client.permissions.has('menu.skillManagement');
-  if (type === 'art-progress-events.changed') return client.permissions.has('menu.skillEvents') || client.permissions.has('menu.skillManagement');
-  if (type === 'art-project-sheet.changed') return client.permissions.has('menu.projects');
+  if (type === 'skill-validations.changed') return client.permissions.has('menu.skillList');
+  if (type === 'art-progress-events.changed') return client.permissions.has('menu.skillList');
+  if (type === 'art-project-sheet.changed') return client.permissions.has('menu.skillList');
+  if (type === 'project-scan-cache.changed') return client.permissions.has('menu.skillList') && canClientAccessProject(client, event.payload?.projectId || artProjectId);
   if (type === 'task-art-brief.changed' || type === 'task-processing-notes.changed' || type === 'tasks.changed') {
     return client.permissions.has('menu.tasks') && canClientAccessProject(client, event.payload?.projectId || artProjectId);
   }
@@ -2549,6 +2728,7 @@ async function saveSkillValidationRecord(input = {}, currentUser = {}, options =
     manualRecords
   });
   await writeSkillValidations(result);
+  await recordUsageCountersForSkillValidation(savedRecord);
   return { ...result, savedRecord };
 }
 
@@ -2616,6 +2796,19 @@ async function writeProjectScanCache(cache = {}) {
   await fs.writeFile(projectScanCachePath, `${JSON.stringify(cache, null, 2)}\n`);
 }
 
+async function readProjectScanFromCache(project = {}) {
+  const cache = await loadProjectScanCache();
+  const cached = cache[project.id]?.scan;
+  if (cached && typeof cached === 'object') {
+    return await applySkillVersionOverridesToScan({
+      ...cached,
+      cacheOnly: true,
+      cachedAt: cache[project.id]?.cachedAt || cached.cachedAt || ''
+    });
+  }
+  return await applySkillVersionOverridesToScan(emptyPreservedProjectScan(project, new Error('暂无上次库存缓存，请点击刷新库存。')));
+}
+
 async function scanProjectWithStableCache(project = {}, options = {}) {
   const cache = await loadProjectScanCache();
   try {
@@ -2628,6 +2821,7 @@ async function scanProjectWithStableCache(project = {}, options = {}) {
       scan: stableScan
     };
     await writeProjectScanCache(cache);
+    broadcastPlatformEvent('project-scan-cache.changed', { projectId: project.id, module: 'skill-inventory' });
     return stableScan;
   } catch (error) {
     const cached = cache[project.id]?.scan;
@@ -2661,11 +2855,24 @@ function emptyPreservedProjectScan(project = {}, error = null) {
 }
 
 function mergeStableProjectScan(project = {}, previousScan = null, nextScan = {}) {
+  const previousSkills = Array.isArray(previousScan?.skills) ? previousScan.skills : [];
+  const nextSkills = Array.isArray(nextScan?.skills) ? nextScan.skills : [];
+  if (previousSkills.length && !nextSkills.length) {
+    return {
+      ...previousScan,
+      ...nextScan,
+      skills: previousSkills,
+      tasks: previousScan.tasks || [],
+      preserved: true,
+      lastError: nextScan.error || nextScan.lastError || '本次刷新未读取到产物，已保留上次库存。',
+      lastFailedAt: new Date().toISOString()
+    };
+  }
   if (!previousScan || shouldReplaceProjectScan(project)) return nextScan;
   return {
     ...previousScan,
     ...nextScan,
-    skills: mergeStableScanSkills(previousScan.skills, nextScan.skills),
+    skills: mergeStableScanSkills(previousSkills, nextSkills),
     tasks: Array.isArray(nextScan.tasks) && nextScan.tasks.length ? nextScan.tasks : (previousScan.tasks || [])
   };
 }
@@ -2687,6 +2894,11 @@ function mergeStableScanSkills(previousSkills = [], nextSkills = []) {
 }
 
 function stableScanSkillKey(skill = {}) {
+  if (skill.inventoryKind === 'directory' || skill.fileProduct === true) {
+    return String(skill.productFileName || skill.displayName || skill.title || '')
+      .trim()
+      .toLowerCase();
+  }
   return String(skill.git?.relativePath || skill.relativePath || skill.path || skill.id || skill.title || '').trim();
 }
 
@@ -3147,7 +3359,7 @@ function canEditAiAssetRow(row = {}, currentUser = {}) {
 
 function canRestoreAiAssetRow(row = {}, currentUser = {}) {
   if (canEditAiAssetRow(row, currentUser)) return true;
-  return Array.isArray(currentUser.permissions) && currentUser.permissions.includes('skill.asset.manage');
+  return Array.isArray(currentUser.permissions) && currentUser.permissions.includes('skill.asset.void');
 }
 
 function samePersonName(left = '', right = '') {
@@ -3552,6 +3764,7 @@ async function saveArtProgressEvent(input = {}, user = {}, source = 'api') {
     memberName: normalizeArtMemberName(input.memberName || user.displayName || user.username, input.memberAccount || user.username),
     source
   });
+  await recordUsageCountersForArtProgressEvent(event);
   await createOperationLog({
     user,
     module: 'art-progress',
@@ -4329,9 +4542,15 @@ async function listDirectories(inputPath) {
 
 async function syncZentaoTasks(project, options = {}) {
   const startedAt = new Date().toISOString();
+  markZentaoQueueRunning('tasks', {
+    projectId: project.id,
+    trigger: options.trigger || options.reason || zentaoAutoSyncState.trigger || 'manual',
+    startedAt
+  });
   zentaoAutoSyncState = {
     ...zentaoAutoSyncState,
     running: true,
+    projectId: project.id,
     lastStartedAt: startedAt,
     lastError: ''
   };
@@ -4347,11 +4566,9 @@ async function syncZentaoTasks(project, options = {}) {
           executionScanLimit: Math.max(Number(options.executionScanLimit || 0), 120)
         }
       : options;
-    const executions = await resolveZentaoExecutionIds(syncOptions);
     const limit = Math.min(Math.max(Number(syncOptions.limit || 100), 1), 200);
     const maxPages = Math.min(Math.max(Number(syncOptions.maxPages || 5), 1), 50);
     const detailConcurrency = Math.min(Math.max(Number(syncOptions.detailConcurrency || (interactive ? 6 : 4)), 1), 10);
-    const executionScanLimit = Math.min(Math.max(Number(syncOptions.executionScanLimit || (interactive ? 24 : executions.length)), 1), 200);
     const { artAccounts, userNames } = await getZentaoArtUsers();
     const artSnapshotTasks = await listArtSnapshotTasks(project.id).catch(() => []);
     const artSeenCandidateTaskNos = await listArtSeenCandidateTaskNos().catch(() => []);
@@ -4370,6 +4587,14 @@ async function syncZentaoTasks(project, options = {}) {
       ...artSnapshotTasks.filter(task => task.taskNo).map(task => [String(task.taskNo), task]),
       ...existingZentaoTasks.map(task => [String(task.taskNo), task])
     ]);
+    const executions = await resolveZentaoExecutionIds(syncOptions).catch(error => {
+      if (interactive) {
+        console.warn(`ZenTao execution list fallback: ${error.message || error}`);
+        return [];
+      }
+      throw error;
+    });
+    const executionScanLimit = Math.min(Math.max(Number(syncOptions.executionScanLimit || (interactive ? 24 : executions.length || 1)), 1), 200);
     const allTasks = [];
     const executionSummaries = [];
     const detailRefresh = await refreshTrackedZentaoTasks(project, existingZentaoTaskNos, existingZentaoTaskByNo, artAccounts, userNames, detailConcurrency);
@@ -4396,16 +4621,14 @@ async function syncZentaoTasks(project, options = {}) {
           const scope = syncOptions.scope || syncOptions.taskScope || 'all';
           const artTasks = flatTasks.filter(task => {
             const taskNo = String(task.id || task.taskID || '').trim();
-            const existingTask = existingZentaoTaskByNo.get(taskNo);
-            const tracked = existingZentaoTaskNos.has(taskNo)
-              && (isArtTask(task, artAccounts) || isArtDepartmentZentaoTask(task, existingTask));
-            const currentArtTask = isCurrentArtZentaoTask(task, existingTask, artAccounts);
+            const tracked = existingZentaoTaskNos.has(taskNo) && isArtTask(task, artAccounts);
+            const currentArtTask = isCurrentArtZentaoTask(task, artAccounts);
             return !isBugLikeTaskInput(task)
               && (currentArtTask || tracked)
               && (scope !== 'unfinished' || isUnfinishedZentaoTask(task));
           });
           const currentArtTaskIds = artTasks
-            .filter(task => isCurrentArtZentaoTask(task, existingZentaoTaskByNo.get(String(task.id || task.taskID || '').trim()), artAccounts))
+            .filter(task => isCurrentArtZentaoTask(task, artAccounts))
             .map(task => `${project.id}_${String(task.id || task.taskID || '').trim()}`);
           total = Number(result.total || tasks.length || total);
           fetched += tasks.length;
@@ -4427,7 +4650,8 @@ async function syncZentaoTasks(project, options = {}) {
     const taskByNo = new Map();
     for (const task of allTasks) taskByNo.set(String(task.taskNo), task);
     for (const task of detailRefresh.tasks) taskByNo.set(String(task.taskNo), task);
-    const existingCurrentZentaoTasks = existingZentaoTasks.filter(task => task.isCurrent !== false);
+    const existingCurrentZentaoTasks = existingZentaoTasks
+      .filter(task => task.isCurrent !== false && isArtTask(task, artAccounts));
     const incomingCurrentTaskCount = [...taskByNo.values()].filter(task => task.isCurrent !== false).length;
     const preserveExistingCurrentTasks = existingCurrentZentaoTasks.length >= 10
       && incomingCurrentTaskCount > 0
@@ -4444,10 +4668,16 @@ async function syncZentaoTasks(project, options = {}) {
       task.id,
       task.projectId && task.taskNo ? `${task.projectId}:${task.taskNo}` : ''
     ]).filter(Boolean);
+    const hasReliableCurrentSnapshot = currentTaskIds.length > 0 || detailRefresh.refreshed > 0 || executionSummaries.some(item => Number(item.matched || 0) > 0);
+    if (interactive && !hasReliableCurrentSnapshot) {
+      for (const task of existingCurrentZentaoTasks) {
+        currentTaskIds.push(task.id, task.projectId && task.taskNo ? `${task.projectId}:${task.taskNo}` : '');
+      }
+    }
     if (interactive) {
       for (const failure of detailRefresh.failed) {
         const existing = existingZentaoTaskByNo.get(String(failure.taskNo));
-        if (existing?.isCurrent !== false) {
+        if (existing?.isCurrent !== false && isArtTask(existing, artAccounts)) {
           currentTaskIds.push(existing.id || `${project.id}_${failure.taskNo}`, `${project.id}:${failure.taskNo}`);
         }
       }
@@ -4475,9 +4705,10 @@ async function syncZentaoTasks(project, options = {}) {
       preservedExistingCurrentTasks: preserveExistingCurrentTasks,
       syncedAt
     };
+    markZentaoQueueSuccess('tasks', result, result.syncedAt);
     zentaoAutoSyncState = {
       ...zentaoAutoSyncState,
-      running: false,
+      running: hasRunningZentaoQueue(),
       lastFinishedAt: result.syncedAt,
       lastSuccessAt: result.syncedAt,
       lastError: '',
@@ -4487,9 +4718,10 @@ async function syncZentaoTasks(project, options = {}) {
   } catch (error) {
     const failedAt = new Date().toISOString();
     const message = zentaoSyncErrorMessage(error);
+    markZentaoQueueFailed('tasks', message, failedAt);
     zentaoAutoSyncState = {
       ...zentaoAutoSyncState,
-      running: false,
+      running: hasRunningZentaoQueue(),
       lastFinishedAt: failedAt,
       lastErrorAt: failedAt,
       lastError: message
@@ -4499,69 +4731,93 @@ async function syncZentaoTasks(project, options = {}) {
 }
 
 function triggerZentaoTaskSync(project, options = {}, reason = 'manual') {
-  if (zentaoAutoSyncState.running) {
-    return {
-      accepted: false,
-      running: true,
-      message: '已有同步任务正在执行',
-      zentaoAutoSync: zentaoAutoSyncState
-    };
-  }
   const startedAt = new Date().toISOString();
-  zentaoAutoSyncState = {
-    ...zentaoAutoSyncState,
+  let taskTrigger = {
+    accepted: false,
     running: true,
-    projectId: project.id,
-    lastStartedAt: startedAt,
-    lastError: '',
-    trigger: reason
+    startedAt: zentaoQueueState('tasks').lastStartedAt || '',
+    message: '已有任务同步正在执行'
   };
-  syncZentaoTasksWithStats(project, options).catch(error => {
-    const failedAt = new Date().toISOString();
-    const message = zentaoSyncErrorMessage(error);
+  if (!isZentaoQueueRunning('tasks')) {
+    markZentaoQueueRunning('tasks', {
+      projectId: project.id,
+      trigger: reason,
+      startedAt
+    });
     zentaoAutoSyncState = {
       ...zentaoAutoSyncState,
-      running: false,
-      lastFinishedAt: failedAt,
-      lastErrorAt: failedAt,
-      lastError: message,
-      lastSummary: {
-        ...compactZentaoSyncSummary(zentaoAutoSyncState.lastSummary || {}),
-        preservedExistingTasks: true
-      }
+      running: true,
+      projectId: project.id,
+      lastStartedAt: startedAt,
+      lastError: '',
+      trigger: reason
     };
-    console.error(`ZenTao ${reason} sync failed:`, message);
-  });
+    taskTrigger = { accepted: true, running: true, startedAt };
+    syncZentaoTasks(project, { ...options, trigger: reason }).catch(error => {
+      const failedAt = new Date().toISOString();
+      const message = zentaoSyncErrorMessage(error);
+      markZentaoQueueFailed('tasks', message, failedAt);
+      zentaoAutoSyncState = {
+        ...zentaoAutoSyncState,
+        running: hasRunningZentaoQueue(),
+        lastFinishedAt: failedAt,
+        lastErrorAt: failedAt,
+        lastError: message,
+        lastSummary: {
+          ...compactZentaoSyncSummary(zentaoAutoSyncState.lastSummary || {}),
+          preservedExistingTasks: true
+        }
+      };
+      console.error(`ZenTao ${reason} sync failed:`, message);
+    });
+  }
+  const bugTrigger = triggerZentaoBugSync(project, {
+    products: options.products || options.product || options.productIds || zentaoBugProductIds,
+    limit: options.bugLimit || 100,
+    maxPages: options.bugMaxPages || 10,
+    refreshTracked: options.bugRefreshTracked !== false,
+    trackedConcurrency: options.bugTrackedConcurrency || 4
+  }, reason);
   return {
     accepted: true,
-    running: true,
+    running: hasRunningZentaoQueue(),
     startedAt,
-    message: '同步任务已开始',
-    zentaoAutoSync: zentaoAutoSyncState
+    queues: {
+      tasks: taskTrigger,
+      bugs: bugTrigger
+    },
+    message: syncTriggerMessage(taskTrigger, bugTrigger),
+    zentaoAutoSync: compactZentaoAutoSyncState(zentaoAutoSyncState)
   };
 }
 
 async function syncZentaoTasksWithStats(project, options = {}) {
-  const tasks = await syncZentaoTasks(project, options);
-  let bugs = null;
-  try {
-    bugs = await syncZentaoBugs(project, {
+  const [tasksResult, bugsResult] = await Promise.allSettled([
+    syncZentaoTasks(project, { ...options, trigger: options.trigger || 'manual' }),
+    syncZentaoBugs(project, {
       products: options.products || options.product || options.productIds || zentaoBugProductIds,
       limit: options.bugLimit || 100,
       maxPages: options.bugMaxPages || 10,
       refreshTracked: options.bugRefreshTracked !== false,
-      trackedConcurrency: options.bugTrackedConcurrency || 4
-    });
-  } catch (error) {
-    bugs = { error: error.message };
-  }
+      trackedConcurrency: options.bugTrackedConcurrency || 4,
+      trigger: options.trigger || 'manual'
+    })
+  ]);
+  if (tasksResult.status === 'rejected' && bugsResult.status === 'rejected') throw tasksResult.reason;
+  const tasks = tasksResult.status === 'fulfilled' ? tasksResult.value : {
+    error: zentaoSyncErrorMessage(tasksResult.reason),
+    preservedExistingTasks: true
+  };
+  const bugs = bugsResult.status === 'fulfilled' ? bugsResult.value : {
+    error: zentaoSyncErrorMessage(bugsResult.reason)
+  };
   const finishedAt = new Date().toISOString();
   zentaoAutoSyncState = {
     ...zentaoAutoSyncState,
-    running: false,
+    running: hasRunningZentaoQueue(),
     lastFinishedAt: finishedAt,
-    lastSuccessAt: tasks.syncedAt || finishedAt,
-    lastError: '',
+    lastSuccessAt: tasks.syncedAt || bugs.syncedAt || finishedAt,
+    lastError: tasks.error || bugs.error || '',
     lastSummary: compactZentaoSyncSummary({
       ...(zentaoAutoSyncState.lastSummary || {}),
       ...tasks,
@@ -4571,9 +4827,69 @@ async function syncZentaoTasksWithStats(project, options = {}) {
   return { ...tasks, bugs, zentaoAutoSync: compactZentaoAutoSyncState(zentaoAutoSyncState) };
 }
 
+function triggerZentaoBugSync(project, options = {}, reason = 'manual') {
+  if (isZentaoQueueRunning('bugs')) {
+    return {
+      accepted: false,
+      running: true,
+      startedAt: zentaoQueueState('bugs').lastStartedAt || '',
+      message: '已有 Bug 同步正在执行'
+    };
+  }
+  const startedAt = new Date().toISOString();
+  markZentaoQueueRunning('bugs', {
+    projectId: project.id,
+    trigger: reason,
+    startedAt
+  });
+  zentaoAutoSyncState = {
+    ...zentaoAutoSyncState,
+    running: true,
+    projectId: project.id,
+    lastStartedAt: startedAt,
+    lastError: '',
+    trigger: reason
+  };
+  syncZentaoBugs(project, { ...options, trigger: reason }).catch(error => {
+    const failedAt = new Date().toISOString();
+    const message = zentaoSyncErrorMessage(error);
+    markZentaoQueueFailed('bugs', message, failedAt);
+    zentaoAutoSyncState = {
+      ...zentaoAutoSyncState,
+      running: hasRunningZentaoQueue(),
+      lastFinishedAt: failedAt,
+      lastErrorAt: failedAt,
+      lastError: message,
+      lastSummary: {
+        ...compactZentaoSyncSummary(zentaoAutoSyncState.lastSummary || {}),
+        bugs: { error: message }
+      }
+    };
+    console.error(`ZenTao bug ${reason} sync failed:`, message);
+  });
+  return {
+    accepted: true,
+    running: true,
+    startedAt,
+    message: 'Bug 同步已开始'
+  };
+}
+
 function compactZentaoAutoSyncState(state = {}) {
+  const tasks = compactZentaoQueueState(state.tasks || createZentaoQueueState('tasks'));
+  const bugs = compactZentaoQueueState(state.bugs || createZentaoQueueState('bugs'));
+  const running = Boolean(state.running || tasks.running || bugs.running);
+  const lastError = state.lastError || tasks.lastError || bugs.lastError || '';
+  const lastErrorAt = latestDate(tasks.lastErrorAt, bugs.lastErrorAt) || state.lastErrorAt || '';
+  const lastSuccessAt = latestDate(tasks.lastSuccessAt, bugs.lastSuccessAt) || state.lastSuccessAt || '';
   return {
     ...state,
+    running,
+    lastError,
+    lastErrorAt,
+    lastSuccessAt,
+    tasks,
+    bugs,
     lastSummary: compactZentaoSyncSummary(state.lastSummary || null)
   };
 }
@@ -4592,6 +4908,90 @@ function compactZentaoSyncSummary(summary = null) {
     output.bugs = compactZentaoSyncSummary(output.bugs);
   }
   return output;
+}
+
+function createZentaoQueueState(type) {
+  return {
+    type,
+    running: false,
+    projectId: zentaoAutoSyncProjectId,
+    trigger: '',
+    lastStartedAt: '',
+    lastFinishedAt: '',
+    lastSuccessAt: '',
+    lastErrorAt: '',
+    lastError: '',
+    lastSummary: null
+  };
+}
+
+function zentaoQueueState(type) {
+  const key = type === 'bugs' ? 'bugs' : 'tasks';
+  if (!zentaoAutoSyncState[key] || typeof zentaoAutoSyncState[key] !== 'object') {
+    zentaoAutoSyncState[key] = createZentaoQueueState(key);
+  }
+  return zentaoAutoSyncState[key];
+}
+
+function markZentaoQueueRunning(type, options = {}) {
+  const state = zentaoQueueState(type);
+  zentaoAutoSyncState[type] = {
+    ...state,
+    type,
+    running: true,
+    projectId: options.projectId || state.projectId || zentaoAutoSyncProjectId,
+    trigger: options.trigger || state.trigger || '',
+    lastStartedAt: options.startedAt || new Date().toISOString(),
+    lastError: ''
+  };
+}
+
+function markZentaoQueueSuccess(type, summary = {}, finishedAt = new Date().toISOString()) {
+  const state = zentaoQueueState(type);
+  zentaoAutoSyncState[type] = {
+    ...state,
+    type,
+    running: false,
+    lastFinishedAt: finishedAt,
+    lastSuccessAt: finishedAt,
+    lastError: '',
+    lastSummary: compactZentaoSyncSummary(summary)
+  };
+}
+
+function markZentaoQueueFailed(type, message = '', failedAt = new Date().toISOString(), summary = null) {
+  const state = zentaoQueueState(type);
+  zentaoAutoSyncState[type] = {
+    ...state,
+    type,
+    running: false,
+    lastFinishedAt: failedAt,
+    lastErrorAt: failedAt,
+    lastError: message || '禅道同步失败，已保留现有列表。',
+    lastSummary: summary ? compactZentaoSyncSummary(summary) : state.lastSummary
+  };
+}
+
+function isZentaoQueueRunning(type) {
+  return Boolean(zentaoQueueState(type).running);
+}
+
+function hasRunningZentaoQueue() {
+  return isZentaoQueueRunning('tasks') || isZentaoQueueRunning('bugs');
+}
+
+function compactZentaoQueueState(state = {}) {
+  return {
+    ...state,
+    lastSummary: compactZentaoSyncSummary(state.lastSummary || null)
+  };
+}
+
+function syncTriggerMessage(taskTrigger = {}, bugTrigger = {}) {
+  if (taskTrigger.accepted && bugTrigger.accepted) return '任务和 Bug 同步已分别开始';
+  if (taskTrigger.accepted) return '任务同步已开始，Bug 同步已有队列在执行';
+  if (bugTrigger.accepted) return 'Bug 同步已开始，任务同步已有队列在执行';
+  return '已有同步队列正在执行';
 }
 
 async function generateZentaoArtBrief(task = {}) {
@@ -5069,8 +5469,8 @@ async function refreshTrackedZentaoTasks(project, taskNos = new Set(), existingT
           const detailTaskNo = String(detailTask.id || detailTask.taskID || '').trim();
           const existingTask = existingTaskByNo.get(detailTaskNo);
           const executionId = detailTask.execution || existingTask?.zentao?.execution || '';
-          const isCurrent = isCurrentArtZentaoTask(detailTask, existingTask, artAccounts);
-          if (!isCurrent && !isArtDepartmentZentaoTask(detailTask, existingTask)) continue;
+          const isCurrent = isCurrentArtZentaoTask(detailTask, artAccounts);
+          if (!isCurrent) continue;
           const normalized = normalizeZentaoTask(
             project,
             {
@@ -5123,13 +5523,42 @@ function expandZentaoDetailTasks(task = {}) {
 }
 
 async function syncZentaoBugs(project, options = {}) {
+  const startedAt = new Date().toISOString();
+  markZentaoQueueRunning('bugs', {
+    projectId: project.id,
+    trigger: options.trigger || zentaoAutoSyncState.trigger || 'manual',
+    startedAt
+  });
+  zentaoAutoSyncState = {
+    ...zentaoAutoSyncState,
+    running: true,
+    projectId: project.id,
+    lastStartedAt: startedAt,
+    lastError: ''
+  };
   try {
-    return await syncZentaoBugsForProject(project, {
+    const result = await syncZentaoBugsForProject(project, {
       ...options,
       products: options.products || options.product || options.productIds || zentaoBugProductIds,
       artDeptId: zentaoArtDeptId
     });
+    markZentaoQueueSuccess('bugs', result, result.syncedAt || new Date().toISOString());
+    zentaoAutoSyncState = {
+      ...zentaoAutoSyncState,
+      running: hasRunningZentaoQueue(),
+      lastFinishedAt: result.syncedAt || new Date().toISOString(),
+      lastSuccessAt: result.syncedAt || new Date().toISOString(),
+      lastError: '',
+      lastSummary: compactZentaoSyncSummary({
+        ...(zentaoAutoSyncState.lastSummary || {}),
+        bugs: result
+      })
+    };
+    return result;
   } catch (error) {
+    const failedAt = new Date().toISOString();
+    const message = zentaoSyncErrorMessage(error);
+    markZentaoQueueFailed('bugs', message, failedAt);
     if (/product ID/.test(error.message || '')) throw new HttpError(400, error.message);
     throw error;
   }
@@ -5138,7 +5567,7 @@ async function syncZentaoBugs(project, options = {}) {
 async function resolveZentaoExecutionIds(options = {}) {
   const configured = normalizeExecutionIds(options.executions || options.execution || options.executionIds);
   if (configured.length) return configured;
-  const limit = 10;
+  const limit = Math.min(Math.max(Number(options.executionLimit || options.limitExecutions || 100), 10), 200);
   const maxPages = Math.min(Math.max(Number(options.executionMaxPages || 50), 1), 100);
   const executions = [];
   let page = 1;
@@ -5161,7 +5590,7 @@ async function resolveZentaoExecutionIds(options = {}) {
 
 async function getZentaoArtUsers() {
   const users = [];
-  const limit = 20;
+  const limit = 1000;
   let page = 1;
   let total = 0;
   while (page <= 20) {
@@ -5174,10 +5603,13 @@ async function getZentaoArtUsers() {
     if (!pageUsers.length || users.length >= total) break;
     page += 1;
   }
-  const artUsers = users.filter(user => zentaoArtDeptIds.has(Number(user.dept)));
-  const artAccounts = new Set(defaultArtUsers.map(user => user.account).filter(Boolean));
+  const artUsers = users.filter(user => Number(user.dept) === zentaoArtDeptId);
+  const artAccounts = new Set();
   for (const user of artUsers) {
     if (user.account) artAccounts.add(user.account);
+  }
+  if (!artAccounts.size) {
+    throw new HttpError(502, `ZenTao 同步失败：未获取到部门 ID=${zentaoArtDeptId} 的美术人员，已保留现有任务列表。`);
   }
   return {
     artAccounts,
@@ -5248,16 +5680,15 @@ function flattenZentaoTask(task) {
 }
 
 function isArtTask(task, artAccounts) {
-  const assignedTo = accountName(task.assignedTo);
-  return Boolean(assignedTo && artAccounts.has(assignedTo));
+  const assignedToCandidates = [
+    task.assignedTo,
+    task.zentao?.assignedTo
+  ].map(accountName).filter(Boolean);
+  return assignedToCandidates.some(assignedTo => artAccounts.has(assignedTo));
 }
 
-function isCurrentArtZentaoTask(task = {}, existing = null, artAccounts = new Set()) {
-  return isUnfinishedZentaoTask(task)
-    && (
-      isArtTask(task, artAccounts)
-      || (isArtAcceptanceOrDesignSyncTask(task, existing) && isArtDepartmentZentaoTask(task, existing))
-    );
+function isCurrentArtZentaoTask(task = {}, artAccounts = new Set()) {
+  return isUnfinishedZentaoTask(task) && isArtTask(task, artAccounts);
 }
 
 function isArtAcceptanceOrDesignSyncTask(task = {}, existing = null) {
@@ -5805,8 +6236,8 @@ function latestDate(a = '', b = '') {
 }
 
 function scheduleZentaoAutoSync() {
-  if (process.env.ZENTAO_AUTO_SYNC === '0') {
-    console.log('ZenTao auto sync disabled by ZENTAO_AUTO_SYNC=0');
+  if (process.env.ZENTAO_AUTO_SYNC !== '1') {
+    console.log('ZenTao auto sync disabled; set ZENTAO_AUTO_SYNC=1 to enable background sync');
     return;
   }
   setTimeout(() => runZentaoAutoSync('initial'), zentaoAutoSyncInitialDelayMs);
@@ -5815,18 +6246,24 @@ function scheduleZentaoAutoSync() {
 }
 
 async function runZentaoAutoSync(reason) {
-  if (zentaoAutoSyncRunning) {
-    console.log(`ZenTao auto sync skipped (${reason}): previous sync is still running`);
+  if (hasRunningZentaoQueue()) {
+    console.log(`ZenTao auto sync skipped (${reason}): previous sync queue is still running`);
     return;
   }
   zentaoAutoSyncRunning = true;
   const startedAt = Date.now();
+  const startedAtIso = new Date(startedAt).toISOString();
+  markZentaoQueueRunning('tasks', { projectId: zentaoAutoSyncProjectId, trigger: reason, startedAt: startedAtIso });
+  markZentaoQueueRunning('bugs', { projectId: zentaoAutoSyncProjectId, trigger: reason, startedAt: startedAtIso });
   zentaoAutoSyncState = {
     ...zentaoAutoSyncState,
     running: true,
-    lastStartedAt: new Date(startedAt).toISOString(),
+    lastStartedAt: startedAtIso,
     lastError: ''
   };
+  let summary = null;
+  let bugSummary = null;
+  let taskError = '';
   try {
     const { stdout } = await execFileAsync(process.execPath, [zentaoAutoSyncScript], {
       cwd: paths.root,
@@ -5839,76 +6276,74 @@ async function runZentaoAutoSync(reason) {
         ZENTAO_TASK_SCOPE: 'all'
       }
     });
-    const summary = parseCommandJson(stdout, 'sync-zentao-art-tasks');
-    let bugSummary = null;
-    try {
-      const { stdout: bugStdout } = await execFileAsync(process.execPath, [zentaoBugSyncScript], {
-        cwd: paths.root,
-        timeout: 120000,
-        maxBuffer: 1024 * 1024 * 8,
-        env: {
-          ...process.env,
-          AWP_PROJECT_ID: zentaoAutoSyncProjectId,
-          ZENTAO_ART_DEPT_ID: String(zentaoArtDeptId),
-          ZENTAO_BUG_PRODUCT_IDS: zentaoBugProductIds,
-          ZENTAO_BUG_LIMIT: '100',
-          ZENTAO_BUG_MAX_PAGES: '10'
-        }
-      });
-      bugSummary = parseCommandJson(bugStdout, 'sync-zentao-art-bugs');
-    } catch (error) {
-      const stderr = String(error.stderr || '').trim();
-      const stdout = String(error.stdout || '').trim();
-      bugSummary = { error: stderr || stdout || error.message };
-    }
-    zentaoAutoSyncState = {
-      ...zentaoAutoSyncState,
-      running: false,
-      lastFinishedAt: new Date().toISOString(),
-      lastSuccessAt: new Date().toISOString(),
-      lastError: '',
-      lastSummary: compactZentaoSyncSummary({ ...summary, bugs: bugSummary })
-    };
-    console.log(`ZenTao auto sync done (${reason}): matched=${summary.matchedTaskCount}, total=${summary.totalTasks}, ${Date.now() - startedAt}ms`);
+    summary = parseCommandJson(stdout, 'sync-zentao-art-tasks');
+    markZentaoQueueSuccess('tasks', summary, new Date().toISOString());
   } catch (error) {
     const stderr = String(error.stderr || '').trim();
     const stdout = String(error.stdout || '').trim();
-    const message = stderr || stdout || error.message;
+    taskError = stderr || stdout || error.message;
     const snapshotFallback = await latestArtSnapshot();
     if (snapshotFallback?.report && process.env.ZENTAO_SNAPSHOT_FALLBACK !== '0') {
       const tasks = await listArtSnapshotTasks(zentaoAutoSyncProjectId);
       const bugs = await listArtSnapshotBugs(zentaoAutoSyncProjectId);
-      zentaoAutoSyncState = {
-        ...zentaoAutoSyncState,
-        running: false,
-        lastFinishedAt: new Date().toISOString(),
-        lastErrorAt: new Date().toISOString(),
-        lastError: message,
-        lastSummary: {
-          source: 'art-dashboard-snapshot-fallback',
-          snapshot: path.basename(snapshotFallback.snapshotPath),
-          matchedTaskCount: tasks.length,
-          totalTasks: tasks.length,
-          bugs: { total: bugs.length },
-          liveSyncError: message
-        }
+      summary = {
+        source: 'art-dashboard-snapshot-fallback',
+        snapshot: path.basename(snapshotFallback.snapshotPath),
+        matchedTaskCount: tasks.length,
+        totalTasks: tasks.length,
+        liveSyncError: taskError
       };
-      console.error(`ZenTao live sync failed (${reason}), snapshot fallback loaded: ${message}`);
-      return;
+      markZentaoQueueFailed('tasks', taskError, new Date().toISOString(), summary);
+      console.error(`ZenTao live task sync failed (${reason}), snapshot fallback loaded: ${taskError}`);
+    } else {
+      markZentaoQueueFailed('tasks', taskError, new Date().toISOString());
+      console.error(`ZenTao task auto sync failed (${reason}): ${taskError}`);
     }
+  }
+
+  try {
+    const { stdout: bugStdout } = await execFileAsync(process.execPath, [zentaoBugSyncScript], {
+      cwd: paths.root,
+      timeout: 120000,
+      maxBuffer: 1024 * 1024 * 8,
+      env: {
+        ...process.env,
+        AWP_PROJECT_ID: zentaoAutoSyncProjectId,
+        ZENTAO_ART_DEPT_ID: String(zentaoArtDeptId),
+        ZENTAO_BUG_PRODUCT_IDS: zentaoBugProductIds,
+        ZENTAO_BUG_LIMIT: '100',
+        ZENTAO_BUG_MAX_PAGES: '10'
+      }
+    });
+    bugSummary = parseCommandJson(bugStdout, 'sync-zentao-art-bugs');
+    markZentaoQueueSuccess('bugs', bugSummary, new Date().toISOString());
+  } catch (error) {
+    const stderr = String(error.stderr || '').trim();
+    const stdout = String(error.stdout || '').trim();
+    const message = stderr || stdout || error.message;
+    bugSummary = { error: message };
+    markZentaoQueueFailed('bugs', message, new Date().toISOString(), bugSummary);
+    console.error(`ZenTao bug auto sync failed (${reason}): ${message}`);
+  }
+
+  try {
+    const finishedAt = new Date().toISOString();
+    const lastError = taskError || bugSummary?.error || '';
     zentaoAutoSyncState = {
       ...zentaoAutoSyncState,
       running: false,
-      lastFinishedAt: new Date().toISOString(),
-      lastErrorAt: new Date().toISOString(),
-      lastError: message
+      lastFinishedAt: finishedAt,
+      lastSuccessAt: summary || (bugSummary && !bugSummary.error) ? finishedAt : zentaoAutoSyncState.lastSuccessAt,
+      lastError,
+      lastErrorAt: lastError ? finishedAt : zentaoAutoSyncState.lastErrorAt,
+      lastSummary: compactZentaoSyncSummary({ ...summary, bugs: bugSummary })
     };
-    console.error(`ZenTao auto sync failed (${reason}): ${message}`);
+    console.log(`ZenTao auto sync done (${reason}): matched=${summary?.matchedTaskCount || 0}, bugs=${bugSummary?.total || bugSummary?.bugCount || 0}, ${Date.now() - startedAt}ms`);
   } finally {
     zentaoAutoSyncRunning = false;
     zentaoAutoSyncState = {
       ...zentaoAutoSyncState,
-      running: false
+      running: hasRunningZentaoQueue()
     };
   }
 }
@@ -5992,6 +6427,16 @@ function accountName(value) {
   if (!value) return '';
   if (typeof value === 'string') return value;
   return value.account || value.realname || '';
+}
+
+function findArtAssignee(value = '') {
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return null;
+  return defaultArtUsers.find(user => {
+    const account = String(user.account || '').toLowerCase();
+    const realname = String(user.realname || user.name || '').toLowerCase();
+    return text === account || text === realname || text.includes(account) || text.includes(realname);
+  }) || null;
 }
 
 function validDate(value) {
@@ -6131,22 +6576,51 @@ async function requireTask(id) {
 async function requireTaskLike(id) {
   const direct = await getTask(id);
   if (direct) return direct;
+  const storedRows = await listTasks();
   const projectRows = await listProjects();
-  const snapshotRows = [];
+  const candidateRows = [...storedRows];
   for (const project of projectRows) {
-    snapshotRows.push(...await listArtSnapshotTasks(project.id));
+    candidateRows.push(...await listArtSnapshotTasks(project.id));
   }
   const decoded = decodeURIComponent(String(id || ''));
-  const matched = snapshotRows.find(task => task.id === decoded || task.taskNo === decoded || rowIdentityKey(task).endsWith(`:${decoded}`));
+  const normalized = normalizeTaskLookupKey(decoded);
+  const matched = candidateRows.find(task => {
+    const keys = [
+      task.id,
+      task.taskNo,
+      task.zentaoId,
+      task.zentao?.id,
+      rowIdentityKey(task)
+    ].map(normalizeTaskLookupKey).filter(Boolean);
+    return keys.includes(normalized) || keys.some(key => normalized && key.endsWith(`:${normalized}`));
+  });
   if (!matched) throw new HttpError(404, `task not found: ${id}`);
   return matched;
+}
+
+function normalizeTaskLookupKey(value = '') {
+  return String(value || '').trim();
+}
+
+function isSgProjectTask(task = {}) {
+  const text = [
+    task.projectName,
+    task.title,
+    task.displayTitle,
+    task.summary,
+    task.requirement,
+    task.zentao?.storyTitle,
+    task.zentao?.parentName,
+    task.zentao?.executionName
+  ].map(value => String(value || '')).join('\n');
+  return /(?:^|[^A-Za-z0-9])SG(?:[^A-Za-z0-9]|$)|SG版本需求|SG项目|SG翡翠绿|翡翠绿/i.test(text);
 }
 
 async function loadAiMembersSnapshot(currentUser = {}) {
   const ownerBoardPath = path.join(aiWeekDir, '美术部 AI 可视化看板.html');
   const memberBoardPath = path.join(aiWeekDir, '美术部AI看板.html');
-  const canViewOwnerBoard = hasPermission(currentUser, 'menu.aiMembers.owner');
-  const canViewMemberBoard = hasPermission(currentUser, 'menu.aiMembers.member');
+  const canViewOwnerBoard = hasPermission(currentUser, 'menu.aiMembers');
+  const canViewMemberBoard = hasPermission(currentUser, 'menu.aiMembers');
   const boardPath = canViewOwnerBoard ? ownerBoardPath : memberBoardPath;
   const memberDataPath = memberBoardPath;
   const [boardStat, boardHtml, memberBoardHtml, ownerBoardHtml] = await Promise.all([

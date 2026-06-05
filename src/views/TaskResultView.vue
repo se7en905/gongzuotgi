@@ -2,7 +2,7 @@
 <section v-show="app.activeView === 'task-result'" class="view-grid task-result-view">
   <ElBreadcrumb class="nav-crumbs" separator="/">
     <ElBreadcrumbItem>
-      <button type="button" @click="app.goAiArchive">AI 档案</button>
+      <button type="button" @click="app.switchView('runs')">美术执行台</button>
     </ElBreadcrumbItem>
     <ElBreadcrumbItem>执行详情</ElBreadcrumbItem>
   </ElBreadcrumb>
@@ -179,56 +179,6 @@
               </div>
             </section>
           </div>
-        </div>
-      </ElTabPane>
-
-      <ElTabPane label="人工全流程记录" name="manual-flow">
-        <div class="manual-flow-panel">
-          <div class="manual-flow-head">
-            <div>
-              <h3>人工全流程记录</h3>
-              <p>记录需求、模型、Figma、API、质检、报告、评估和修复过程。</p>
-            </div>
-            <div class="panel-actions">
-              <ElTag :type="app.selectedTaskManualFlowRecord?.status === 'confirmed' ? 'success' : 'warning'">
-                {{ app.aiFlowRecordStatusLabel(app.selectedTaskManualFlowRecord?.status) }}
-              </ElTag>
-              <ElButton v-if="app.can('archive.record.manage')" type="primary" plain @click="app.openAiFlowRecordDialog(app.selectedTaskArchiveRow)">
-                {{ app.selectedTaskManualFlowRecord ? '编辑记录' : '补充记录' }}
-              </ElButton>
-            </div>
-          </div>
-          <template v-if="app.selectedTaskManualFlowRecord">
-            <div class="manual-flow-summary">
-              <div>
-                <span>智能体/模型</span>
-                <strong>{{ app.selectedTaskManualFlowRecord.agentModel || '-' }}</strong>
-              </div>
-              <div>
-                <span>全流程完成度</span>
-                <strong>{{ app.selectedTaskManualFlowRecord.flowCompletion || 0 }}%</strong>
-              </div>
-              <div>
-                <span>生成总时长</span>
-                <strong>{{ app.selectedTaskManualFlowRecord.totalDuration || '-' }}</strong>
-              </div>
-              <div>
-                <span>最近更新</span>
-                <strong>{{ app.formatDateTime(app.selectedTaskManualFlowRecord.updatedAt || app.selectedTaskManualFlowRecord.importedAt) }}</strong>
-              </div>
-            </div>
-            <div class="manual-flow-grid">
-              <section v-for="field in app.aiFlowStageFields" :key="field.key">
-                <h4>{{ field.label }}</h4>
-                <p>{{ app.selectedTaskManualFlowRecord[field.key] || '未记录。' }}</p>
-              </section>
-            </div>
-            <section class="manual-flow-issues">
-              <h4>总结和问题</h4>
-              <p>{{ app.selectedTaskManualFlowRecord.summaryIssues || '未记录。' }}</p>
-            </section>
-          </template>
-          <div v-else class="empty-block">当前任务还没有人工全流程记录。</div>
         </div>
       </ElTabPane>
 
@@ -1180,92 +1130,6 @@ export default {
     }
   }
 
-  .manual-flow-panel {
-    display: grid;
-    gap: 12px;
-
-    > .empty-block {
-      padding: 12px 14px;
-    }
-  }
-
-  .manual-flow-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 16px;
-
-    h3,
-    p {
-      margin: 0;
-    }
-
-    p {
-      margin-top: 4px;
-      color: var(--muted);
-    }
-  }
-
-  .manual-flow-summary,
-  .manual-flow-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 12px;
-  }
-
-  .manual-flow-summary > div,
-  .manual-flow-grid > section,
-  .manual-flow-issues {
-    padding: 14px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: var(--panel-soft);
-  }
-
-  .manual-flow-summary span,
-  .manual-flow-summary strong {
-    display: block;
-  }
-
-  .manual-flow-summary span {
-    color: var(--muted);
-    font-size: 12px;
-  }
-
-  .manual-flow-summary strong {
-    margin-top: 6px;
-    color: var(--heading);
-  }
-
-  .manual-flow-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-
-    h4,
-    p {
-      margin: 0;
-    }
-
-    p {
-      margin-top: 8px;
-      color: var(--text);
-      white-space: pre-wrap;
-      line-height: 1.55;
-    }
-  }
-
-  .manual-flow-issues {
-    h4,
-    p {
-      margin: 0;
-    }
-
-    p {
-      margin-top: 8px;
-      white-space: pre-wrap;
-      line-height: 1.55;
-    }
-  }
-
   @media (max-width: 1180px) {
     .image-workbench {
       grid-template-columns: 1fr;
@@ -1283,10 +1147,6 @@ export default {
       overflow: visible;
     }
 
-    .manual-flow-summary,
-    .manual-flow-grid {
-      grid-template-columns: 1fr;
-    }
   }
 }
 </style>

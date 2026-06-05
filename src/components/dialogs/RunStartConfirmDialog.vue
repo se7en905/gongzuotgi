@@ -33,7 +33,7 @@
           <li>Agent 入口：{{ app.selectedRunProject?.agentConfigPath || 'AGENTS.md' }}</li>
           <li>历史任务目录：{{ app.selectedRunProject?.taskDir || '.task' }}</li>
           <li>允许写入：目标项目中的业务代码，以及平台侧产物目录中的报告、截图和日志。</li>
-          <li>产物边界：AI 档案相关产物不写入接入资料库。</li>
+          <li>产物边界：执行报告、截图和日志只写入平台产物目录，不写入接入资料库。</li>
           <li>禁止命令：{{ app.forbiddenCommandText(app.selectedRunProject) }}</li>
         </ul>
       </div>

@@ -15,29 +15,14 @@ const roleRank = {
   admin: 4
 };
 const permissionCatalog = [
-  { id: 'menu.workspace', name: '工作台', type: 'menu', group: '工作台', description: '访问工作台总览。' },
-  { id: 'menu.projects', name: '项目列表', type: 'menu', group: '项目管理', description: '访问项目列表。' },
-  { id: 'menu.tasks', name: '任务中心', type: 'menu', group: '任务总览', description: '访问美术任务中心。' },
-  { id: 'menu.skillManagement', name: '技能管理', type: 'menu', group: '技能管理', description: '访问技能管理一级菜单。' },
-  { id: 'menu.skillList', name: '技能清单', type: 'menu', group: '技能管理', description: '查看技能清单。' },
-  { id: 'menu.skillMembers', name: '成员产物', type: 'menu', group: '技能管理', description: '查看成员产物沉淀。' },
-  { id: 'menu.skillValidations', name: '验证回填', type: 'menu', group: '技能管理', description: '查看 Skill 验证回填。' },
-  { id: 'menu.skillEvents', name: '研究同步', type: 'menu', group: '技能管理', description: '查看 AI 研究沉淀同步。' },
-  { id: 'menu.repository', name: '资料库管理', type: 'menu', group: 'AI 管理', description: '访问资料库管理。' },
-  { id: 'menu.aiMembers', name: 'AI部门看板', type: 'menu', group: 'AI 管理', description: '访问 AI 部门成员展示和周报摘要。' },
-  { id: 'menu.aiMembers.owner', name: '负责人看板', type: 'menu', group: 'AI 管理', description: '查看 AI 部门负责人看板。' },
-  { id: 'menu.aiMembers.member', name: '组员看板', type: 'menu', group: 'AI 管理', description: '查看 AI 部门组员看板。' },
-  { id: 'menu.aiArchive', name: 'AI 档案', type: 'menu', group: 'AI 管理', description: '访问 AI 档案和验证记录。' },
-  { id: 'menu.codexConfig', name: 'Codex 配置', type: 'menu', group: 'AI 管理', description: '访问 Codex 配置页。' },
-  { id: 'menu.runs', name: '执行任务', type: 'menu', group: '执行管理', description: '访问执行任务页。' },
-  { id: 'menu.workflowDesigner', name: '工作流编排', type: 'menu', group: '执行管理', description: '访问工作流编排页。' },
+  { id: 'menu.tasks', name: '任务中心', type: 'menu', group: '一级菜单', description: '访问美术任务中心。' },
+  { id: 'menu.skillList', name: 'AI 产物清单', type: 'menu', group: '一级菜单', description: '查看 AI 产物清单、产物数量统计和产物列表。' },
+  { id: 'menu.aiMembers', name: 'AI 部门看板', type: 'menu', group: '一级菜单', description: '访问 AI 部门看板和当月 AI 评分。' },
+  { id: 'menu.codexConfig', name: 'Codex 配置', type: 'menu', group: '一级菜单', description: '访问 Codex 配置页。' },
+  { id: 'menu.runs', name: '美术执行台', type: 'menu', group: '一级菜单', description: '访问美术执行台。' },
   { id: 'menu.users', name: '账户管理', type: 'menu', group: '用户管理', description: '访问账户管理页。' },
   { id: 'menu.roles', name: '角色管理', type: 'menu', group: '用户管理', description: '访问角色管理页。' },
   { id: 'menu.operationLogs', name: '操作日志', type: 'menu', group: '用户管理', description: '访问平台操作审计日志。' },
-  { id: 'project.create', name: '接入项目', type: 'button', group: '项目管理', description: '新增项目接入。' },
-  { id: 'project.edit', name: '编辑项目', type: 'button', group: '项目管理', description: '编辑项目配置。' },
-  { id: 'project.delete', name: '删除项目', type: 'button', group: '项目管理', description: '删除平台项目记录和产物。' },
-  { id: 'artProjectSheet.manage', name: '维护项目列表字段', type: 'button', group: '项目管理', description: '新增、编辑、删除工作台项目列表字段和本地项目行。' },
   { id: 'task.sync', name: '同步任务/Bug', type: 'button', group: '任务中心', description: '同步禅道任务或 Bug。' },
   { id: 'task.note.manage', name: '保存任务备注', type: 'button', group: '任务中心', description: '保存任务中心处理备注。' },
   { id: 'task.artBrief.generate', name: '生成美术摘要', type: 'button', group: '任务中心', description: '生成或重新生成任务美术摘要。' },
@@ -50,42 +35,31 @@ const permissionCatalog = [
   { id: 'run.delete', name: '删除执行记录', type: 'button', group: '执行管理', description: '删除运行记录和平台产物。' },
   { id: 'review.submit', name: '提交复核', type: 'button', group: '人工复核', description: '提交人工验收、阶段复核或图片复核。' },
   { id: 'review.image.submit', name: '保存图片复核', type: 'button', group: '人工复核', description: '保存图片人工复核结论。' },
-  { id: 'skill.version.manage', name: '维护产物版本', type: 'button', group: '技能管理', description: '编辑技能清单/产物预览里的版本号。' },
-  { id: 'skill.alias.manage', name: '维护产物调用别名', type: 'button', group: '技能管理', description: '编辑产物预览里的调用别名，不允许修改版本。' },
-  { id: 'skill.usageLogs.view', name: '查看产物使用明细', type: 'button', group: '技能管理', description: '查看产物调用次数、成员使用明细和收起的使用日志。' },
-  { id: 'skill.validation.manage', name: '维护验证回填', type: 'button', group: '技能管理', description: '新增、编辑、删除 Skill 验证回填记录。' },
-  { id: 'skill.validationBackfill.manage', name: '确认验证明细回填', type: 'button', group: '技能管理', description: '将验证明细里未自动映射的记录确认展示到产物验证区。' },
-  { id: 'skill.validationOwner.manage', name: '修改验证贡献人', type: 'button', group: '技能管理', description: '修改产物验证区记录里的贡献人字段。' },
-  { id: 'skill.validationColumns.manage', name: '配置产物验证区字段', type: 'button', group: '技能管理', description: '隐藏或恢复产物验证区字段，并控制组员默认可见字段。' },
-  { id: 'skill.validationLogs.view', name: '查看验证回填明细', type: 'button', group: '技能管理', description: '查看验证回填页收起的未映射、非验证范畴和归档明细。' },
-  { id: 'skill.validationDetailLogs.view', name: '查看验证明细抽屉', type: 'button', group: '技能管理', description: '查看验证回填页右侧收起的验证明细。' },
-  { id: 'skill.validationDetailLogs.delete', name: '删除验证明细记录', type: 'button', group: '技能管理', description: '删除验证回填页右侧收起的验证明细记录。' },
-  { id: 'skill.asset.manage', name: '维护 AI 产物', type: 'button', group: '技能管理', description: '新增、编辑、隐藏 AI 产物清单记录。' },
-  { id: 'skill.assetOwner.manage', name: '修改产物贡献人', type: 'button', group: '技能管理', description: '修改 AI 产物清单和产物列表里的贡献人字段。' },
-  { id: 'artProgress.manage', name: '维护研究同步', type: 'button', group: '技能管理', description: '编辑或删除研究同步记录。' },
-  { id: 'artProgress.logs.manage', name: '维护研究同步日志', type: 'button', group: '技能管理', description: '查看研究同步接入记录、操作记录并删除日志记录。' },
-  { id: 'artProgress.operationLogs.view', name: '查看 Codex 操作记录', type: 'button', group: '技能管理', description: '查看研究同步页右侧收起的 Codex 操作记录。' },
-  { id: 'artProgress.accessLogs.view', name: '查看接入测试记录', type: 'button', group: '技能管理', description: '查看研究同步页右侧收起的接入完成和连接测试记录。' },
-  { id: 'artProgress.logs.delete', name: '删除研究同步日志', type: 'button', group: '技能管理', description: '删除研究同步页右侧收起的操作记录或接入测试记录。' },
-  { id: 'archive.export', name: '导出 AI 档案记录', type: 'button', group: 'AI 档案', description: '导出 AI 档案台账或单任务记录。' },
-  { id: 'archive.record.manage', name: '管理人工流程记录', type: 'button', group: 'AI 档案', description: '新增、编辑、删除和导入 AI 全流程人工记录。' },
+  { id: 'skill.scan.refresh', name: '刷新库存扫描', type: 'button', group: 'AI 产物清单', description: '点击刷新库存，重新扫描已接入的 Git、本地或共享盘来源。' },
+  { id: 'skill.source.connect', name: '接入扫描来源', type: 'button', group: 'AI 产物清单', description: '接入 Git 仓库、本地路径或共享盘路径。' },
+  { id: 'skill.source.edit', name: '编辑扫描来源', type: 'button', group: 'AI 产物清单', description: '编辑已接入扫描来源的名称、地址和配置。' },
+  { id: 'skill.source.delete', name: '删除扫描来源', type: 'button', group: 'AI 产物清单', description: '删除工作台中的扫描来源记录，不删除源文件。' },
+  { id: 'skill.asset.create', name: '手动创建产物', type: 'button', group: 'AI 产物清单', description: '手动创建技能或规范类产物记录。' },
+  { id: 'skill.asset.void', name: '作废 / 恢复产物', type: 'button', group: 'AI 产物清单', description: '作废或恢复产物，影响 AI 评分是否计入。' },
+  { id: 'skill.assetOwner.manage', name: '修改产物贡献人', type: 'button', group: 'AI 产物清单', description: '修改 AI 产物清单和产物列表里的贡献人字段。' },
+  { id: 'skill.version.manage', name: '维护产物版本', type: 'button', group: 'AI 产物清单', description: '编辑产物预览里的版本号。' },
+  { id: 'skill.alias.manage', name: '维护产物调用别名', type: 'button', group: 'AI 产物清单', description: '编辑产物预览里的调用别名，不允许修改版本。' },
+  { id: 'skill.usageLogs.view', name: '查看产物使用明细', type: 'button', group: 'AI 产物清单', description: '查看产物调用次数、成员调用统计和版本迭代记录。' },
   { id: 'codex.config.manage', name: '管理 Codex 配置', type: 'button', group: 'AI 管理', description: '保存 Codex 模型、Provider 和 API Key。' },
-  { id: 'workflow.manage', name: '管理工作流模板', type: 'button', group: '工作流编排', description: '新增、编辑、保存工作流模板。' },
   { id: 'user.manage', name: '管理账号', type: 'button', group: '用户管理', description: '新增、编辑、禁用账号和重置密码。' },
   { id: 'role.manage', name: '管理角色', type: 'button', group: '用户管理', description: '新增、编辑、删除角色。' },
-  { id: 'api.projects.manage', name: '项目管理 API', type: 'api', group: '后端接口', description: '项目增删改相关接口。' },
-  { id: 'api.artProjectSheet.manage', name: '项目列表字段 API', type: 'api', group: '后端接口', description: '维护项目列表字段、本地覆盖行和链接。' },
+  { id: 'api.skillSources.manage', name: '扫描来源保存 API', type: 'api', group: '后端接口', description: '新增或编辑 AI 产物扫描来源。' },
+  { id: 'api.skillSources.delete', name: '扫描来源删除 API', type: 'api', group: '后端接口', description: '删除 AI 产物扫描来源记录。' },
+  { id: 'api.skillScan.run', name: '库存扫描 API', type: 'api', group: '后端接口', description: '执行 AI 产物库存扫描并写入扫描缓存。' },
   { id: 'api.taskNotes.manage', name: '任务备注 API', type: 'api', group: '后端接口', description: '保存任务中心处理备注。' },
   { id: 'api.taskArtBrief.generate', name: '美术摘要 API', type: 'api', group: '后端接口', description: '生成或重新生成任务美术摘要。' },
   { id: 'api.runs.execute', name: '执行任务 API', type: 'api', group: '后端接口', description: '创建、启动、中断执行。' },
   { id: 'api.runs.delete', name: '删除执行 API', type: 'api', group: '后端接口', description: '删除执行记录。' },
-  { id: 'api.workflow.manage', name: '工作流模板 API', type: 'api', group: '后端接口', description: '新增、编辑、删除工作流模板。' },
   { id: 'api.reviews.submit', name: '复核提交 API', type: 'api', group: '后端接口', description: '提交人工复核。' },
   { id: 'api.skillVersion.manage', name: '产物版本 API', type: 'api', group: '后端接口', description: '保存技能清单/产物版本号。' },
   { id: 'api.skillAlias.manage', name: '产物调用别名 API', type: 'api', group: '后端接口', description: '保存产物调用别名，不允许修改版本。' },
-  { id: 'api.skillValidations.manage', name: '验证回填 API', type: 'api', group: '后端接口', description: '保存和删除 Skill 验证回填。' },
-  { id: 'api.aiAssets.manage', name: 'AI 产物 API', type: 'api', group: '后端接口', description: '保存和隐藏 AI 产物清单记录。' },
-  { id: 'api.artProgress.manage', name: '研究同步 API', type: 'api', group: '后端接口', description: '编辑和删除研究同步记录。' },
+  { id: 'api.skillAsset.create', name: '手动产物保存 API', type: 'api', group: '后端接口', description: '保存手动创建的技能或规范产物。' },
+  { id: 'api.skillAsset.void', name: '产物作废 API', type: 'api', group: '后端接口', description: '作废或恢复 AI 产物清单产物。' },
   { id: 'api.codex.config.read', name: 'Codex 配置读取 API', type: 'api', group: '后端接口', description: '读取 Codex 脱敏配置。' },
   { id: 'api.codex.config.manage', name: 'Codex 配置保存 API', type: 'api', group: '后端接口', description: '保存 Codex 配置。' },
   { id: 'api.users.manage', name: '账号管理 API', type: 'api', group: '后端接口', description: '账号管理接口。' },
@@ -98,15 +72,17 @@ const allPermissionIds = permissionCatalog.map(item => item.id);
 const levelPermissions = {
   4: allPermissionIds,
   3: [
-    'menu.workspace', 'menu.projects', 'menu.tasks', 'menu.skillManagement', 'menu.skillList', 'menu.skillMembers', 'menu.skillValidations', 'menu.skillEvents', 'menu.repository', 'menu.aiMembers', 'menu.aiMembers.member', 'menu.aiArchive', 'menu.codexConfig', 'menu.runs', 'menu.workflowDesigner',
-    'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy', 'run.create', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'archive.export', 'archive.record.manage', 'workflow.manage',
-    'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.workflow.manage', 'api.reviews.submit', 'api.codex.config.read', 'api.skillAlias.manage'
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs',
+    'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy',
+    'run.create', 'run.codex.execute', 'run.start', 'run.cancel', 'review.submit', 'review.image.submit',
+    'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.asset.create', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
+    'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.reviews.submit', 'api.codex.config.read', 'api.skillSources.manage', 'api.skillScan.run', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create'
   ],
   2: [
-    'menu.workspace', 'menu.projects', 'menu.tasks', 'menu.skillManagement', 'menu.skillList', 'menu.skillValidations', 'menu.aiMembers', 'menu.aiMembers.member', 'menu.aiArchive', 'menu.runs',
-    'task.codexPrompt.copy', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'archive.export', 'api.reviews.submit', 'api.skillAlias.manage'
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.runs',
+    'task.codexPrompt.copy', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'api.reviews.submit', 'api.skillAlias.manage'
   ],
-  1: ['menu.workspace', 'menu.projects', 'menu.tasks', 'menu.skillManagement', 'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'skill.alias.manage', 'skill.usageLogs.view', 'api.skillAlias.manage']
+  1: ['menu.tasks', 'menu.skillList', 'menu.aiMembers', 'skill.usageLogs.view']
 };
 const defaultRoles = [
   {
@@ -202,9 +178,9 @@ export async function ensureDefaultRoles() {
 
 function legacyRolePermissionAdditions(roleId = '') {
   if (roleId === 'admin') return levelPermissions[4];
-  if (roleId === 'developer') return ['menu.skillManagement', 'menu.skillList', 'menu.skillMembers', 'menu.skillValidations', 'menu.skillEvents', 'menu.aiMembers.member', 'skill.alias.manage', 'skill.usageLogs.view', 'api.skillAlias.manage'];
-  if (roleId === 'reviewer') return ['menu.skillManagement', 'menu.skillList', 'menu.skillValidations', 'menu.aiMembers.member', 'skill.alias.manage', 'skill.usageLogs.view', 'api.skillAlias.manage'];
-  if (roleId === 'viewer') return ['menu.skillManagement', 'menu.skillList', 'menu.aiMembers.member', 'skill.alias.manage', 'skill.usageLogs.view', 'api.skillAlias.manage'];
+  if (roleId === 'developer') return ['menu.skillList', 'menu.aiMembers', 'skill.alias.manage', 'skill.usageLogs.view', 'api.skillAlias.manage'];
+  if (roleId === 'reviewer') return ['menu.skillList', 'menu.aiMembers', 'skill.alias.manage', 'skill.usageLogs.view', 'api.skillAlias.manage'];
+  if (roleId === 'viewer') return ['menu.skillList', 'menu.aiMembers', 'skill.usageLogs.view'];
   return [];
 }
 
@@ -648,17 +624,28 @@ function mergeLegacyPermissions(previous = [], next = []) {
 function expandLegacyPermission(permission = '') {
   const value = String(permission || '').trim();
   const legacy = {
-    'projects.manage': ['project.create', 'project.edit', 'project.delete', 'artProjectSheet.manage', 'api.projects.manage', 'api.artProjectSheet.manage'],
+    'projects.manage': ['skill.source.connect', 'skill.source.edit', 'skill.source.delete', 'api.skillSources.manage', 'api.skillSources.delete'],
     'runs.execute': ['run.create', 'run.start', 'run.cancel', 'task.sync', 'api.runs.execute'],
     'runs.delete': ['run.delete', 'api.runs.delete'],
     'reviews.submit': ['review.submit', 'api.reviews.submit'],
     'users.manage': ['menu.users', 'user.manage', 'api.users.manage'],
     'roles.manage': ['menu.roles', 'role.manage', 'api.roles.manage'],
     'operationLogs.read': ['menu.operationLogs', 'api.operationLogs.read'],
-    'artProgress.logs.manage': ['artProgress.logs.manage', 'artProgress.operationLogs.view', 'artProgress.accessLogs.view', 'artProgress.logs.delete'],
-    'skill.validationLogs.view': ['skill.validationLogs.view', 'skill.validationDetailLogs.view'],
-    'menu.projects': ['menu.projects'],
-    'menu.aiMembers': ['menu.aiMembers', 'menu.aiMembers.member']
+    'menu.projects': ['menu.skillList'],
+    'menu.repository': ['menu.skillList', 'skill.source.connect', 'skill.source.edit'],
+    'menu.skillManagement': ['menu.skillList'],
+    'menu.skillMembers': ['menu.skillList'],
+    'menu.aiMembers': ['menu.aiMembers'],
+    'project.create': ['skill.source.connect', 'api.skillSources.manage'],
+    'project.edit': ['skill.source.edit', 'api.skillSources.manage'],
+    'project.delete': ['skill.source.delete', 'api.skillSources.delete'],
+    'artProjectSheet.manage': ['skill.source.connect', 'skill.source.edit', 'api.skillSources.manage'],
+    'api.projects.manage': ['api.skillSources.manage'],
+    'api.artProjectSheet.manage': ['api.skillSources.manage'],
+    'api.aiAssets.manage': ['api.skillAsset.create', 'api.skillAsset.void'],
+    'api.skillValidations.manage': ['api.skillAsset.create', 'api.skillAsset.void'],
+    'api.artProgress.manage': ['api.skillAsset.create', 'api.skillAsset.void'],
+    'skill.asset.manage': ['skill.asset.create', 'skill.asset.void', 'skill.source.connect', 'skill.scan.refresh', 'api.skillAsset.create', 'api.skillAsset.void', 'api.skillSources.manage', 'api.skillScan.run']
   };
   return legacy[value] || [value];
 }

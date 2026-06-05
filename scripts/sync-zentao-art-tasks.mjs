@@ -6,9 +6,8 @@ import { closeMysqlStore } from '../server/mysql-store.mjs';
 import { getZentaoApi, getZentaoModules } from '../server/zentao-adapter.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const projectId = process.env.AWP_PROJECT_ID || 'qp_lobby_5_2';
+const projectId = process.env.AWP_PROJECT_ID || 'art_department';
 const artDeptId = Number(process.env.ZENTAO_ART_DEPT_ID || 27);
-const artDeptIds = normalizeArtDeptIds(process.env.ZENTAO_ART_DEPT_IDS || process.env.ZENTAO_ART_DEPT_ID || '27');
 const limitExecutions = Number(process.env.ZENTAO_EXECUTION_LIMIT || 1000);
 const taskPageLimit = Number(process.env.ZENTAO_TASK_LIMIT || 1000);
 const taskScope = process.env.ZENTAO_TASK_SCOPE || 'all';
@@ -16,21 +15,12 @@ const artDashboardDataDir = process.env.ART_DASHBOARD_DATA_DIR || path.join(root
 
 const api = await getZentaoApi();
 const zentao = await getZentaoModules();
-const usersResult = await zentao.listUsers(api, { page: 1, limit: 1000 });
-const users = usersResult?.result?.users || [];
-const artUsers = users.filter(user => artDeptIds.has(Number(user.dept)));
-const artAccounts = new Set([
-  'zhangqw',
-  'fengshuqi',
-  'yushengwei',
-  'yejunbo',
-  'huangjianrong',
-  'lilh',
-  'lihl',
-  'zhangzb',
-  'lanhj',
-  ...artUsers.map(user => user.account).filter(Boolean)
-]);
+const users = await listZentaoUsers();
+const artUsers = users.filter(user => Number(user.dept) === artDeptId);
+const artAccounts = new Set(artUsers.map(user => user.account).filter(Boolean));
+if (!artAccounts.size) {
+  throw new Error(`ZenTao 同步失败：未获取到部门 ID=${artDeptId} 的美术人员，已保留现有任务列表。`);
+}
 const userNames = new Map(users.map(user => [user.account, user.realname || user.account]));
 
 const executionsResult = await zentao.listExecutions(api, { page: 1, limit: limitExecutions });
@@ -50,7 +40,7 @@ const existingZentaoTaskNos = new Set([...taskMap.values()]
 const artSeenCandidateTaskNos = await listArtSeenCandidateTaskNos();
 for (const taskNo of artSeenCandidateTaskNos) existingZentaoTaskNos.add(String(taskNo));
 const existingCurrentZentaoKeys = new Set([...taskMap.entries()]
-  .filter(([, task]) => task.projectId === projectId && task.source === 'zentao' && task.taskNo && task.isCurrent !== false)
+  .filter(([, task]) => task.projectId === projectId && task.source === 'zentao' && task.taskNo && task.isCurrent !== false && isArtTask(task))
   .map(([key]) => key));
 let scanned = 0;
 let matched = 0;
@@ -75,8 +65,8 @@ for (const execution of executions) {
     const taskNo = String(zentaoTask.id || zentaoTask.taskID || '').trim();
     if (isBugLikeTask(zentaoTask)) continue;
     const existingTask = taskMap.get(`${projectId}:${taskNo}`);
-    const currentArtTask = isCurrentArtTask(zentaoTask, existingTask);
-    if (!currentArtTask && !(existingZentaoTaskNos.has(taskNo) && (isArtTask(zentaoTask) || isArtDepartmentTask(zentaoTask, existingTask)))) continue;
+    const currentArtTask = isCurrentArtTask(zentaoTask);
+    if (!currentArtTask && !(existingZentaoTaskNos.has(taskNo) && isArtTask(zentaoTask))) continue;
     if (taskScope === 'unfinished' && !isUnfinishedTask(zentaoTask)) continue;
     matched += 1;
     const normalized = normalizeZentaoTask(zentaoTask, executionById.get(Number(zentaoTask.execution)));
@@ -113,8 +103,8 @@ for (const taskNo of existingZentaoTaskNos) {
       );
       const key = mapKey(normalized);
       const existed = taskMap.get(key);
-      const currentArtTask = isCurrentArtTask(detailTask, existed);
-      if (!currentArtTask && !isArtDepartmentTask(detailTask, existed)) continue;
+      const currentArtTask = isCurrentArtTask(detailTask);
+      if (!currentArtTask) continue;
       taskMap.set(key, {
         ...(existed || {}),
         ...normalized,
@@ -232,16 +222,15 @@ function slugify(value = '') {
 }
 
 function isArtTask(task) {
-  const assignedTo = accountOf(task.assignedTo);
-  return Boolean(assignedTo && artAccounts.has(assignedTo));
+  const assignedToCandidates = [
+    task.assignedTo,
+    task.zentao?.assignedTo
+  ].map(accountOf).filter(Boolean);
+  return assignedToCandidates.some(assignedTo => artAccounts.has(assignedTo));
 }
 
-function isCurrentArtTask(task = {}, existing = null) {
-  return isUnfinishedTask(task)
-    && (
-      isArtTask(task)
-      || (isArtAcceptanceOrDesignSyncTask(task, existing) && isArtDepartmentTask(task, existing))
-    );
+function isCurrentArtTask(task = {}) {
+  return isUnfinishedTask(task) && isArtTask(task);
 }
 
 function isArtAcceptanceOrDesignSyncTask(task = {}, existing = null) {
@@ -317,15 +306,6 @@ function isUnfinishedTask(task) {
   if (['done', 'closed', 'cancel', 'cancelled'].includes(status)) return false;
   if (task.deleted === true || task.deleted === '1') return false;
   return true;
-}
-
-function normalizeArtDeptIds(value = '') {
-  const ids = String(value || '')
-    .split(',')
-    .map(item => Number(String(item || '').trim()))
-    .filter(Number.isFinite);
-  if (!ids.length) ids.push(artDeptId || 27);
-  return new Set(ids);
 }
 
 function isBugLikeTask(task = {}) {
@@ -483,6 +463,23 @@ function accountOf(value) {
   if (typeof value === 'string') return value;
   if (typeof value === 'object') return value.account || '';
   return String(value);
+}
+
+async function listZentaoUsers() {
+  const users = [];
+  const limit = 1000;
+  let page = 1;
+  let total = 0;
+  while (page <= 20) {
+    const payload = await zentao.listUsers(api, { page, limit });
+    const result = payload?.result || payload?.data || payload;
+    const pageUsers = Array.isArray(result?.users) ? result.users : Array.isArray(result) ? result : [];
+    total = Number(result?.total || pageUsers.length || total);
+    users.push(...pageUsers);
+    if (!pageUsers.length || users.length >= total) break;
+    page += 1;
+  }
+  return users;
 }
 
 function mailtoAccounts(value) {

@@ -1,18 +1,18 @@
 <template>
 <section v-show="app.activeView === 'runs'" class="content-grid runs-view">
   <div class="flow-helper">
-    <span>怎么用</span>
-    <strong>选任务 / Figma → 选择规范或 Skill → 启动 AI 执行 → 查看产物</strong>
-    <small>适合 Figma 生成、规范套用、设计走查、Skill 验证和产物归档；完成后到“AI 档案”复核报告、截图和日志。</small>
+    <span>执行顺序</span>
+    <strong>选择执行记录 → 启动 / 查看进度 → 看任务链路 → 到产物列表看明细</strong>
+    <small>执行台只看任务推进和关键动作是否发生；具体调用明细、截图、文件和验证内容放在产物列表对应明细里。</small>
   </div>
   <ElCard shadow="never" class="panel-card">
     <template #header>
       <div class="panel-head">
         <div>
           <h3>美术执行清单</h3>
-          <p>围绕禅道任务、Figma 设计稿、规范 md 和 Skill 发起自动执行，执行过程会实时显示在右侧。</p>
+          <p>选择一条执行记录后，右侧查看当前任务从需求到产物的推进状态。</p>
         </div>
-        <ElButton v-if="app.can('run.create')" type="primary" @click="app.runDrawer = true">新建美术执行</ElButton>
+        <ElButton v-if="app.can('run.create')" type="primary" @click="app.openRunCreateDrawer">新建美术执行</ElButton>
       </div>
     </template>
     <div class="run-list">
@@ -27,6 +27,18 @@
           <small>{{ app.workflowRunLabel(run) }}</small>
           <small>{{ app.formatDateTime(app.runDisplayTime(run)) }}</small>
         </div>
+        <div class="run-item-action-tags">
+          <span
+            v-for="action in app.highlightedRunSkillActions(run).filter(item => item.count > 0)"
+            :key="action.key"
+            :class="['run-action-chip', action.status]"
+          >
+            {{ action.type }} {{ action.count }}
+          </span>
+          <span v-if="app.runChainReferenceItems(run).length" class="run-action-chip reference">
+            md 引用 {{ app.runChainReferenceItems(run).length }}
+          </span>
+        </div>
       </button>
       <div v-if="!app.runs.length" class="empty-block">还没有美术执行记录，点击“新建美术执行”开始。</div>
     </div>
@@ -37,7 +49,7 @@
       <div class="panel-head">
         <div>
           <h3>AI 执行过程</h3>
-          <p>{{ app.selectedRun ? '查看当前美术任务的阶段进度、Figma / Skill 调用情况和实时日志。' : '请先从左侧选择一条执行记录。' }}</p>
+          <p>{{ app.selectedRun ? '查看阶段进度、关键动作概览和任务链路。产物明细请到产物列表查看。' : '请先从左侧选择一条执行记录。' }}</p>
         </div>
         <div class="run-actions">
           <ElButton v-if="app.can('run.codex.execute')" type="primary" @click="app.startSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun)" :loading="app.isRunInProgress(app.selectedRun)">{{ app.selectedRunActionLabel }}</ElButton>
@@ -86,6 +98,98 @@
       <strong>正在执行中</strong>
       <span>当前美术执行还没有最终结论。执行完成后，这里会显示 Figma / 规范 / Skill 处理结果、风险和下一步操作。</span>
       <small>可以先展开下方原始执行日志查看实时输出。</small>
+    </section>
+    <section v-if="app.selectedRun" class="run-skill-actions-panel">
+      <div class="run-section-head">
+        <div>
+          <h4>关键动作概览</h4>
+          <p>这里只判断本次任务是否发生过关键动作；调用明细在产物列表里查看。</p>
+        </div>
+        <span>{{ app.runChainSkillActions(app.selectedRun).reduce((sum, item) => sum + item.count, 0) }} 次动作</span>
+      </div>
+      <div class="run-skill-action-grid">
+        <div
+          v-for="action in app.highlightedRunSkillActions(app.selectedRun)"
+          :key="action.key"
+          :class="['run-skill-action-card', action.status]"
+        >
+          <div class="run-skill-action-head">
+            <div>
+              <span>{{ action.type }}</span>
+              <strong>{{ action.name }}</strong>
+            </div>
+            <ElTag size="small" :type="app.runActionTagType(action.status)">{{ app.runActionStatusLabel(action.status) }}</ElTag>
+          </div>
+          <p>{{ action.summary }}</p>
+          <div class="run-skill-action-meta">
+            <span>{{ action.count ? `发生 ${action.count} 次` : '未发生' }}</span>
+            <span>{{ action.lastAt ? app.formatDateTime(action.lastAt) : '暂无时间' }}</span>
+          </div>
+        </div>
+      </div>
+      <div v-if="app.otherRunSkillActions(app.selectedRun).length" class="run-other-action-row">
+        <span>其它 skill / 工具动作</span>
+        <strong>{{ app.otherRunSkillActions(app.selectedRun).length }} 类，合计 {{ app.otherRunSkillActions(app.selectedRun).reduce((sum, item) => sum + item.count, 0) }} 次</strong>
+      </div>
+    </section>
+    <section v-if="app.selectedRun" class="run-chain-panel">
+      <div class="run-section-head">
+        <div>
+          <h4>任务链路</h4>
+          <p>按任务推进顺序梳理关键节点，便于判断当前卡在哪一步。</p>
+        </div>
+        <span>任务 {{ app.runChainTaskNo(app.selectedRun) || '-' }}</span>
+      </div>
+      <div class="run-chain-list">
+        <div
+          v-for="step in app.runChainTimeline(app.selectedRun)"
+          :key="step.key"
+          :class="['run-chain-step', app.runChainStepClass(step.status)]"
+        >
+          <div class="run-chain-marker"></div>
+          <div class="run-chain-content">
+            <div class="run-chain-title">
+              <strong>{{ step.title }}</strong>
+              <span>{{ step.time ? app.formatDateTime(step.time) : app.runActionStatusLabel(step.status) }}</span>
+            </div>
+            <p>{{ step.summary }}</p>
+            <div v-if="step.meta?.length" class="run-chain-meta">
+              <span v-for="item in step.meta" :key="item">{{ item }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div v-if="app.runChainReferenceItems(app.selectedRun).length" class="run-reference-list">
+        <span>md / SKILL.md 引用</span>
+        <strong>{{ app.runChainReferenceItems(app.selectedRun).length }} 个引用，明细在产物列表查看</strong>
+      </div>
+    </section>
+    <section v-if="app.selectedRun" class="run-codex-chat-panel">
+      <div class="run-section-head">
+        <div>
+          <h4>继续和 Codex 沟通</h4>
+          <p>基于当前执行记录继续下达要求。提交后会创建一次新的执行，并真实启动 Codex 落地处理。</p>
+        </div>
+        <span>会生成新执行</span>
+      </div>
+      <ElInput
+        v-model="app.runChatInput"
+        type="textarea"
+        :rows="4"
+        placeholder="例如：基于本次 Figma 链接执行 ui-finalize，检查间距、字号、溢出和交付状态；结果写入产物目录。"
+      />
+      <div class="run-codex-chat-actions">
+        <span>适合补充 Figma 链接、指定 md / Skill、追加验收标准或要求重新生成产物。</span>
+        <ElButton
+          v-if="app.can('run.codex.execute')"
+          type="primary"
+          :loading="app.runChatSubmitting"
+          :disabled="!app.runChatInput.trim() || app.isRunInProgress(app.selectedRun)"
+          @click="app.submitRunChatInstruction"
+        >
+          发送并执行
+        </ElButton>
+      </div>
     </section>
     <section v-if="!app.isRunInProgress(app.selectedRun) && app.selectedRun?.resultSummary" :class="['run-result-summary', app.resultSummaryClass(app.effectiveResultStatus(app.selectedRun))]">
       <div class="run-result-head">
@@ -401,6 +505,53 @@ export default {
     margin: 0;
     color: var(--muted);
     font-size: 12px;
+  }
+
+  .run-item-action-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-height: 0;
+  }
+
+  .run-action-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 8px;
+    border: 1px solid rgba(100, 116, 139, 0.24);
+    border-radius: 4px;
+    background: rgba(100, 116, 139, 0.08);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 780;
+    line-height: 1;
+
+    &.completed,
+    &.recorded {
+      border-color: rgba(34, 197, 94, 0.28);
+      background: rgba(34, 197, 94, 0.1);
+      color: #15803d;
+    }
+
+    &.running {
+      border-color: rgba(14, 165, 233, 0.28);
+      background: rgba(14, 165, 233, 0.1);
+      color: #0369a1;
+    }
+
+    &.blocked,
+    &.failed {
+      border-color: rgba(220, 38, 38, 0.28);
+      background: rgba(220, 38, 38, 0.1);
+      color: #b91c1c;
+    }
+
+    &.reference {
+      border-color: rgba(99, 102, 241, 0.24);
+      background: rgba(99, 102, 241, 0.08);
+      color: #4338ca;
+    }
   }
 
   .stage-steps-wrap {
@@ -893,6 +1044,305 @@ export default {
 
     small {
       color: var(--muted);
+    }
+  }
+
+  .run-skill-actions-panel,
+  .run-chain-panel,
+  .run-codex-chat-panel {
+    display: grid;
+    gap: 12px;
+    margin: 0 18px 18px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--soft-card);
+  }
+
+  .run-codex-chat-panel {
+    border-color: rgba(14, 165, 233, 0.22);
+    background: rgba(14, 165, 233, 0.05);
+
+    :deep(.el-textarea__inner) {
+      min-height: 96px !important;
+      resize: vertical;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+  }
+
+  .run-codex-chat-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+
+    span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+  }
+
+  .run-section-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+
+    h4 {
+      margin: 0 0 5px;
+      color: var(--heading);
+      font-size: 15px;
+      font-weight: 900;
+      line-height: 1.25;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    > span {
+      flex: 0 0 auto;
+      color: var(--primary-ink);
+      font-size: 12px;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+  }
+
+  .run-skill-action-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .run-skill-action-card {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-left: 4px solid #94a3b8;
+    border-radius: 8px;
+    background: var(--panel);
+
+    &.completed,
+    &.recorded {
+      border-left-color: var(--primary);
+    }
+
+    &.running {
+      border-left-color: var(--accent);
+    }
+
+    &.blocked,
+    &.failed {
+      border-left-color: var(--danger);
+    }
+
+    p {
+      min-height: 40px;
+      margin: 0;
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+  }
+
+  .run-skill-action-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+
+    div {
+      min-width: 0;
+    }
+
+    span,
+    strong {
+      display: block;
+    }
+
+    span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+    }
+
+    strong {
+      margin-top: 3px;
+      overflow: hidden;
+      color: var(--heading);
+      font-size: 15px;
+      font-weight: 900;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .run-skill-action-meta,
+  .run-other-action-row,
+  .run-chain-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .run-skill-action-meta span,
+  .run-chain-meta span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 0 8px;
+    border-radius: 4px;
+    background: rgba(100, 116, 139, 0.08);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 740;
+  }
+
+  .run-other-action-row {
+    align-items: center;
+    padding-top: 2px;
+
+    > span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    > strong {
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 850;
+    }
+  }
+
+  .run-chain-list {
+    display: grid;
+    gap: 0;
+  }
+
+  .run-chain-step {
+    position: relative;
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    gap: 10px;
+    padding: 0 0 14px;
+
+    &::before {
+      position: absolute;
+      top: 20px;
+      bottom: 0;
+      left: 9px;
+      width: 2px;
+      border-radius: 999px;
+      background: var(--line);
+      content: '';
+    }
+
+    &:last-child {
+      padding-bottom: 0;
+
+      &::before {
+        display: none;
+      }
+    }
+
+    &.is-completed .run-chain-marker {
+      border-color: var(--primary);
+      background: var(--primary);
+    }
+
+    &.is-running .run-chain-marker {
+      border-color: var(--accent);
+      background: var(--accent);
+      box-shadow: 0 0 0 5px rgba(14, 165, 233, 0.12);
+    }
+
+    &.is-problem .run-chain-marker {
+      border-color: var(--danger);
+      background: var(--danger);
+    }
+  }
+
+  .run-chain-marker {
+    position: relative;
+    z-index: 1;
+    width: 20px;
+    height: 20px;
+    border: 2px solid #94a3b8;
+    border-radius: 50%;
+    background: var(--panel);
+  }
+
+  .run-chain-content {
+    display: grid;
+    gap: 7px;
+    min-width: 0;
+    padding: 0 0 0 2px;
+
+    p {
+      margin: 0;
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+  }
+
+  .run-chain-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+
+    strong {
+      color: var(--heading);
+      font-size: 14px;
+      font-weight: 900;
+    }
+
+    span {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 740;
+      white-space: nowrap;
+    }
+  }
+
+  .run-reference-list {
+    display: grid;
+    gap: 7px;
+    padding-top: 2px;
+
+    > span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    > strong {
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    code {
+      display: block;
+      overflow: hidden;
+      padding: 7px 9px;
+      border-radius: 6px;
+      background: var(--code-bg, rgba(15, 23, 42, 0.06));
+      color: var(--heading);
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
   }
 

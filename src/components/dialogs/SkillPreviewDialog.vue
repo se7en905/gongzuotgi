@@ -1,20 +1,15 @@
 <template>
-  <ElDialog v-model="app.skillPreview.visible" width="860px" title="内容预览" class="app-dialog skill-preview-dialog" align-center>
+  <ElDrawer
+    v-model="app.skillPreview.visible"
+    title="内容预览"
+    direction="rtl"
+    size="50%"
+    class="app-dialog art-progress-log-drawer skill-preview-drawer"
+    append-to-body
+    :with-header="true"
+  >
     <div v-if="app.skillPreview.skill" class="skill-preview">
-      <article class="markdown-report skill-preview-content" v-html="app.skillPreviewHtml || '<div class=&quot;empty-block&quot;>正在读取技能内容...</div>'"></article>
       <div class="skill-preview-manage">
-        <div class="skill-preview-version-row">
-          <span>版本</span>
-          <ElInput
-            v-model="app.skillPreviewVersionDraft"
-            size="small"
-            class="skill-preview-version-input"
-            placeholder="例如 1.0"
-            :disabled="!app.can('skill.version.manage')"
-            @change="app.saveSkillPreviewVersion"
-          />
-          <ElButton v-if="app.can('skill.version.manage')" size="small" :loading="app.loading.skillVersion" @click="app.saveSkillPreviewVersion">保存版本</ElButton>
-        </div>
         <div class="skill-preview-version-row skill-preview-alias-row">
           <span>调用别名</span>
           <ElInput
@@ -33,8 +28,9 @@
           <span v-if="!app.skillPreviewEffectiveAliases.length">暂无别名</span>
         </div>
       </div>
+      <article class="markdown-report skill-preview-content" v-html="app.skillPreviewHtml || '<div class=&quot;empty-block&quot;>正在读取技能内容...</div>'"></article>
     </div>
-  </ElDialog>
+  </ElDrawer>
 </template>
 
 <script>

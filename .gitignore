@@ -10,3 +10,4 @@ data/
 .playwright-cli/
 .codex-mockups/
 *.log
+.DS_Store

@@ -2,7 +2,7 @@ import { closeMysqlStore } from '../server/mysql-store.mjs';
 import { getProject } from '../server/store.mjs';
 import { syncZentaoBugsForProject } from '../server/zentao-bug-sync.mjs';
 
-const projectId = process.env.AWP_PROJECT_ID || 'qp_lobby_5_2';
+const projectId = process.env.AWP_PROJECT_ID || 'art_department';
 const project = await getProject(projectId);
 
 if (!project) {

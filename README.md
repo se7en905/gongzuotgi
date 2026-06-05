@@ -218,7 +218,7 @@ API 服务启动后会自动同步美术部门未结束任务到任务中心：
 
 - 启动后约 5 秒执行首轮同步
 - 默认每 30 分钟同步一次
-- 同步项目默认是 `qp_lobby_5_2`
+- 同步项目默认是 `art_department`
 
 常用变量：
 
@@ -226,7 +226,7 @@ API 服务启动后会自动同步美术部门未结束任务到任务中心：
 ZENTAO_AUTO_SYNC=0
 ZENTAO_AUTO_SYNC_INTERVAL_MS=1800000
 ZENTAO_AUTO_SYNC_INITIAL_DELAY_MS=5000
-ZENTAO_AUTO_SYNC_PROJECT_ID=qp_lobby_5_2
+ZENTAO_AUTO_SYNC_PROJECT_ID=art_department
 ZENTAO_ART_DEPT_ID=27
 ZENTAO_BUG_PRODUCT_IDS=all
 ```

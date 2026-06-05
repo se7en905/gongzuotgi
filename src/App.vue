@@ -12,14 +12,14 @@
   <ElContainer v-else class="app-shell" :class="{ collapsed: isSidebarCollapsed }" :data-theme="theme">
     <ElAside class="side-nav" :width="isSidebarCollapsed ? '82px' : '236px'">
       <div class="side-head">
-        <button type="button" class="brand" @click="switchView('workspace')" aria-label="回到工作台">
+        <button type="button" class="brand" @click="switchView('tasks')" aria-label="回到任务中心">
           <div class="brand-mark" aria-hidden="true">
             <span></span>
             <i></i>
           </div>
           <div>
             <strong>美术部工作台</strong>
-            <span>AI项目总览</span>
+            <span>禅道任务实时看板</span>
           </div>
         </button>
         <ElTooltip :content="isSidebarCollapsed ? '展开侧栏' : '收起侧栏'" placement="right">
@@ -32,133 +32,48 @@
       </div>
 
       <ElMenu class="nav-menu" :default-active="activeNav" :default-openeds="navDefaultOpeneds" @select="switchView">
-        <ElMenuItem v-if="can('menu.workspace')" index="workspace">
-          <ElIcon>
-            <Monitor />
-          </ElIcon>
-            <span>任务总览</span>
-          </ElMenuItem>
-        <ElSubMenu v-if="canAny(['menu.projects', 'menu.tasks'])" index="project-management"
-          popper-class="nav-submenu-popper">
-          <template #title>
-            <ElIcon>
-              <FolderChecked />
-            </ElIcon>
-            <span>任务与项目</span>
-          </template>
-          <ElMenuItem v-if="can('menu.projects')" index="project-list">
-            <ElIcon>
-              <FolderChecked />
-            </ElIcon>
-            <span>项目列表</span>
-          </ElMenuItem>
-          <ElMenuItem v-if="can('menu.tasks')" index="tasks">
+        <ElMenuItem v-if="can('menu.tasks')" index="tasks">
             <ElIcon>
               <Tickets />
             </ElIcon>
-            <span>任务中心</span>
-          </ElMenuItem>
-        </ElSubMenu>
-        <ElSubMenu v-if="canAny(['menu.skillList', 'menu.skillValidations', 'menu.skillEvents'])" index="skill-management" popper-class="nav-submenu-popper">
-          <template #title>
-            <ElIcon>
-              <Tickets />
-            </ElIcon>
-            <span>技能管理</span>
-          </template>
-          <ElMenuItem v-if="canAny(['menu.skillList', 'menu.skillEvents'])" index="skill-assets">
+          <span>任务中心</span>
+        </ElMenuItem>
+        <ElMenuItem v-if="can('menu.skillList')" index="skill-assets">
             <ElIcon>
               <FolderChecked />
             </ElIcon>
-            <span>AI 产物清单</span>
-          </ElMenuItem>
-          <ElMenuItem v-if="can('menu.skillValidations')" index="skill-validations">
-            <ElIcon>
-              <FolderChecked />
-            </ElIcon>
-            <span>验证回填</span>
-          </ElMenuItem>
-          <ElMenuItem v-if="can('menu.skillEvents')" index="skill-events">
-            <ElIcon>
-              <DataLine />
-            </ElIcon>
-            <span>研究同步</span>
-          </ElMenuItem>
-        </ElSubMenu>
-        <ElSubMenu v-if="canAny(['menu.repository', 'menu.aiMembers', 'menu.aiArchive', 'menu.codexConfig'])" index="ai-management" popper-class="nav-submenu-popper">
-          <template #title>
-            <ElIcon>
-              <DataLine />
-            </ElIcon>
-            <span>AI 管理</span>
-          </template>
-          <ElMenuItem v-if="can('menu.repository')" index="skii-repository">
-            <ElIcon>
-              <FolderChecked />
-            </ElIcon>
-            <span>资料库管理</span>
-          </ElMenuItem>
-          <ElMenuItem v-if="can('menu.aiArchive')" index="ai-archive">
-            <ElIcon>
-              <FolderChecked />
-            </ElIcon>
-              <span>AI 档案</span>
-          </ElMenuItem>
-          <ElMenuItem v-if="can('menu.aiMembers')" index="ai-members">
+          <span>AI 产物清单</span>
+        </ElMenuItem>
+        <ElMenuItem v-if="can('menu.aiMembers')" index="ai-members">
             <ElIcon>
               <User />
             </ElIcon>
-            <span>AI部门看板</span>
-          </ElMenuItem>
-          <ElMenuItem v-if="can('menu.codexConfig')" index="codex-config">
+          <span>AI部门看板</span>
+        </ElMenuItem>
+        <ElMenuItem v-if="can('menu.codexConfig')" index="codex-config">
             <ElIcon>
               <Key />
             </ElIcon>
-            <span>Codex 配置</span>
-          </ElMenuItem>
-        </ElSubMenu>
-        <ElSubMenu v-if="canAny(['menu.runs', 'menu.workflowDesigner'])" index="execution-management"
-          popper-class="nav-submenu-popper">
-          <template #title>
+          <span>Codex 配置</span>
+        </ElMenuItem>
+        <ElMenuItem v-if="can('menu.runs')" index="runs">
             <ElIcon>
               <Operation />
             </ElIcon>
-            <span>执行管理</span>
-          </template>
-          <ElMenuItem v-if="can('menu.runs')" index="runs">
-            <ElIcon>
-              <Operation />
-            </ElIcon>
-            <span>任务执行台</span>
-          </ElMenuItem>
-          <ElMenuItem v-if="can('menu.workflowDesigner')" index="workflow-designer">
-            <ElIcon>
-              <Guide />
-            </ElIcon>
-            <span>工作流编排</span>
-          </ElMenuItem>
-        </ElSubMenu>
-        <ElSubMenu v-if="canAny(['menu.users', 'menu.roles'])" index="user-management"
-          popper-class="nav-submenu-popper">
-          <template #title>
+          <span>美术执行台</span>
+        </ElMenuItem>
+        <ElMenuItem v-if="can('menu.users')" index="user-access">
             <ElIcon>
               <User />
             </ElIcon>
-            <span>用户管理</span>
-          </template>
-          <ElMenuItem v-if="can('menu.users')" index="user-access">
-            <ElIcon>
-              <User />
-            </ElIcon>
-            <span>账户管理</span>
-          </ElMenuItem>
-          <ElMenuItem v-if="can('menu.roles')" index="role-management">
+          <span>用户管理</span>
+        </ElMenuItem>
+        <ElMenuItem v-if="can('menu.roles')" index="role-management">
             <ElIcon>
               <Key />
             </ElIcon>
-            <span>角色管理</span>
-          </ElMenuItem>
-        </ElSubMenu>
+          <span>角色管理</span>
+        </ElMenuItem>
       </ElMenu>
 
       <div class="side-controls">
@@ -178,30 +93,14 @@
       <ElHeader class="top-bar" height="72px">
         <div class="top-title-row">
           <h1>{{ pageMeta.title }}</h1>
-          <ElButton v-if="activeView === 'skii-repository' && can('project.create')" type="primary"
-            @click="openProjectCreateDrawer">接入资料库</ElButton>
           <template v-if="activeView === 'tasks'">
             <ElButton v-if="can('task.sync')" type="primary" :loading="loading.syncTasks" @click="syncZentaoTasks">{{
               taskSyncButtonText }}</ElButton>
-            <span class="sync-time" :class="{ error: appConfig.zentaoAutoSync?.lastError }">
+            <span class="sync-time" :class="{ error: zentaoSyncLastError }">
               <ElIcon>
                 <Timer />
               </ElIcon>
               {{ zentaoAutoSyncTimeText }}
-            </span>
-          </template>
-          <template v-if="activeView === 'ai-archive'">
-            <span v-if="loading.aiArchiveTaskSync" class="sync-time">
-              <ElIcon>
-                <Timer />
-              </ElIcon>
-              同步任务中...
-            </span>
-            <span v-if="loading.aiArchiveBugSync" class="sync-time">
-              <ElIcon>
-                <Timer />
-              </ElIcon>
-              同步 Bug 中...
             </span>
           </template>
         </div>
@@ -224,21 +123,13 @@
         </div>
       </ElHeader>
 
-      <ElMain
-        :class="['main-stage', { 'is-task-result-stage': activeView === 'task-result' }]">
-        <WorkspaceView :app="appBridge" />
+      <main
+        :class="['el-main', 'main-stage', { 'is-task-result-stage': activeView === 'task-result' }]">
+        <SkillInventoryView v-if="isSkillInventoryViewActive" :app="appBridge" />
 
-        <ProjectListView :app="appBridge" />
+        <TaskCenterView v-if="activeView === 'tasks'" :app="appBridge" :revision="taskCenterRevision" />
 
-        <SkiiRepositoryView :app="appBridge" />
-
-        <SkillInventoryView :app="appBridge" />
-
-        <TaskCenterView :app="appBridge" :revision="taskCenterRevision" />
-
-        <AiArchiveView :app="appBridge" />
-
-        <AiMembersView :app="appBridge" />
+        <AiMembersView v-if="activeView === 'ai-members'" :app="appBridge" />
 
         <section v-show="activeView === 'codex-config'" class="view-grid codex-config-view">
           <ElCard shadow="never" class="panel-card page-card codex-config-card">
@@ -289,7 +180,7 @@
           </ElCard>
         </section>
 
-        <ProjectDetailView :app="appBridge" :selected-project="selectedProject"
+        <ProjectDetailView v-if="activeView === 'project-detail'" :app="appBridge" :selected-project="selectedProject"
           :selected-scan="projectRows.find(item => item.id === selectedProjectId)?.scan || null"
           :project-description="projectDescription" :selected-project-stats="selectedProjectStats"
           :scan-summary="scanSummary" :readiness="readiness" :visible-skills="visibleSkills" :project-tasks="[]"
@@ -297,21 +188,19 @@
           :loading-scan="loading.scan && !projectDetailTasks().length" @update:task-page="taskPage = $event"
           @update:task-page-size="taskPageSize = $event" />
 
-        <RunsView :app="appBridge" />
+        <RunsView v-if="activeView === 'runs'" :app="appBridge" />
 
-        <WorkflowDesignerView :app="appBridge" />
+        <TaskResultView v-if="activeView === 'task-result'" :app="appBridge" />
 
-        <TaskResultView :app="appBridge" />
+        <ManualReviewView v-if="activeView === 'manual-review'" :app="appBridge" />
 
-        <ManualReviewView :app="appBridge" />
+        <UserAccessView v-if="activeView === 'user-access'" :app="appBridge" />
 
-        <UserAccessView :app="appBridge" />
+        <RoleManagementView v-if="activeView === 'role-management'" :app="appBridge" />
 
-        <RoleManagementView :app="appBridge" />
+        <OperationLogView v-if="activeView === 'operation-logs'" :app="appBridge" />
 
-        <OperationLogView :app="appBridge" />
-
-      </ElMain>
+      </main>
     </ElContainer>
   </ElContainer>
 
@@ -322,6 +211,179 @@
   <ProjectFormDialog :app="appBridge" />
   <DirectoryPickerDialog :app="appBridge" />
   <SkillPreviewDialog :app="appBridge" />
+  <ElDrawer
+    v-if="!isSkillInventoryViewActive"
+    v-model="skillUsageDialog.visible"
+    title="使用明细"
+    direction="rtl"
+    size="50%"
+    class="app-dialog art-progress-log-drawer skill-usage-drawer"
+    append-to-body
+    :with-header="true"
+  >
+    <div class="skill-usage-panel">
+      <div class="skill-usage-head">
+        <div class="skill-usage-title-row">
+          <div>
+            <span>当前产物</span>
+            <strong>{{ skillUsageDialog.row?.productDisplayName || skillUsageDialog.row?.productFileName || skillUsageDialog.row?.title || 'AI 产物' }}</strong>
+          </div>
+          <div class="skill-usage-version-badge">
+            <span>当前版本</span>
+            <strong>{{ skillVersionDisplayLabel(skillUsageDialog.row || skillUsageDialog.row?.version || skillUsageDialog.row?.skill?.version) }}</strong>
+          </div>
+        </div>
+        <div class="skill-usage-version-note">
+          {{ skillVersionDescription(skillUsageDialog.row || skillUsageDialog.row?.version || skillUsageDialog.row?.skill?.version) }}
+        </div>
+        <div class="skill-usage-member-stats">
+          <div class="skill-usage-member-stats-head">
+            <strong>成员调用统计</strong>
+            <span>版本按有效使用人数计算，当前 {{ skillUsageDialog.effectivePeopleCount || 0 }} 位成员计入等级</span>
+          </div>
+          <div v-if="skillUsageDialog.memberStats?.length" class="skill-usage-member-list">
+            <article v-for="member in skillUsageDialog.memberStats" :key="member.name" class="skill-usage-member-item">
+              <div>
+                <strong>{{ member.name }}</strong>
+                <span>{{ member.latestTime ? formatDateSecond(member.latestTime) : '历史累计' }}</span>
+              </div>
+              <div>
+                <b>{{ member.count }}</b>
+                <small>调用次数</small>
+              </div>
+            </article>
+          </div>
+          <div v-else class="art-progress-log-empty compact">暂无成员调用记录</div>
+        </div>
+        <div class="skill-usage-history-block">
+          <div class="skill-usage-member-stats-head">
+            <strong>更新与版本迭代</strong>
+            <span>{{ skillUsageDialog.versionEntries?.length || 0 }} 条记录</span>
+          </div>
+          <div v-if="skillUsageDialog.versionEntries?.length" class="skill-usage-version-list">
+            <article v-for="entry in skillUsageDialog.versionEntries" :key="entry.fullCommit || entry.commit || `${entry.time}-${entry.title}`" class="skill-usage-version-item">
+              <div>
+                <strong>{{ entry.title }}</strong>
+                <span>{{ entry.author || '-' }} · {{ formatDateTime(entry.time) || '-' }}</span>
+              </div>
+              <small>{{ entry.commit || '未记录提交号' }}</small>
+            </article>
+          </div>
+          <div v-else class="art-progress-log-empty compact">暂无版本迭代记录</div>
+        </div>
+      </div>
+    </div>
+  </ElDrawer>
+  <ElDialog v-model="skillOwnerDialog.visible" title="调整产物贡献人" width="420px" class="app-dialog" append-to-body align-center>
+    <ElForm label-position="top" @submit.prevent>
+      <ElFormItem label="产物">
+        <ElInput :model-value="skillOwnerDialog.row?.productDisplayName || skillOwnerDialog.row?.title || '-'" disabled />
+      </ElFormItem>
+      <ElFormItem label="贡献人">
+        <ElSelect v-model="skillOwnerDialog.owner" filterable allow-create default-first-option multiple placeholder="选择或输入成员">
+          <ElOption v-for="member in skillOwnerCandidateMembers" :key="member.name" :label="member.name" :value="member.name" />
+        </ElSelect>
+        <small class="form-help-text">多人协作可选择多个成员，也可以直接输入后保存。</small>
+      </ElFormItem>
+    </ElForm>
+    <template #footer>
+      <div class="dialog-footer-actions">
+        <ElButton plain @click="skillOwnerDialog = { visible: false, row: null, owner: [] }">取消</ElButton>
+        <ElButton type="primary" :loading="loading.skillVersion" @click="saveSkillOwnerOverride">保存</ElButton>
+      </div>
+    </template>
+  </ElDialog>
+  <ElDialog v-model="skillHistoryDialog.visible" title="历史版本" width="760px" class="app-dialog skill-history-dialog" append-to-body>
+    <div class="skill-history-panel">
+      <div class="skill-history-meta">
+        <div><span>技能</span><strong>{{ skillHistoryDialog.row?.title || skillHistoryDialog.row?.id || '-' }}</strong></div>
+        <div><span>仓库路径</span><strong>{{ skillHistoryDialog.row?.relativePath || skillHistoryDialog.row?.path || '-' }}</strong></div>
+      </div>
+      <div class="skill-history-list">
+        <article v-for="entry in skillHistoryDialog.entries" :key="entry.fullCommit || entry.commit" class="skill-history-card">
+          <strong>{{ entry.title }}</strong>
+          <span>{{ entry.author }} · {{ entry.email }} · {{ formatDateTime(entry.time) }}</span>
+          <p>{{ entry.summary }}</p>
+          <small>{{ entry.commit || '-' }} · 查看提交</small>
+        </article>
+        <div v-if="!skillHistoryDialog.entries.length" class="empty-block">暂无历史版本记录</div>
+      </div>
+    </div>
+  </ElDialog>
+  <ElDialog
+    v-model="taskSplitDialog.visible"
+    title="工作台拆单"
+    width="980px"
+    class="app-dialog task-split-dialog"
+    :close-on-click-modal="false"
+    append-to-body
+  >
+    <div class="task-split-panel">
+      <div class="task-split-head">
+        <div>
+          <strong>{{ taskSplitDialog.plan.title || taskSplitDialog.task?.displayTitle || taskSplitDialog.task?.title || '未选择任务' }}</strong>
+          <span>禅道任务：{{ taskSplitDialog.plan.taskId || taskSplitDialog.task?.taskNo || '-' }} · 截止：{{ taskSplitDialog.plan.deadline || '-' }}</span>
+        </div>
+        <ElTag type="info" effect="plain">在工作台确认后写入禅道</ElTag>
+      </div>
+      <ElForm label-position="top" class="task-split-form" @submit.prevent>
+        <div class="form-grid two">
+          <ElFormItem label="主单负责人">
+            <ElSelect v-model="taskSplitDialog.plan.mainAssignee" filterable placeholder="选择主单负责人">
+              <ElOption v-for="member in taskSplitDialog.assignees" :key="member.account" :label="member.realname" :value="member.account" />
+            </ElSelect>
+          </ElFormItem>
+          <ElFormItem label="所属版本">
+            <ElInput v-model="taskSplitDialog.plan.executionId" disabled />
+          </ElFormItem>
+        </div>
+      </ElForm>
+      <div class="task-split-table-head">
+        <strong>子单列表</strong>
+        <ElButton size="small" plain @click="addTaskSplitChild">新增子单</ElButton>
+      </div>
+      <ElTable class="task-split-table" :data="taskSplitDialog.plan.children" row-key="id" size="small" empty-text="暂无子单">
+        <ElTableColumn label="启用" width="72">
+          <template #default="{ row }">
+            <ElCheckbox v-model="row.enabled" />
+          </template>
+        </ElTableColumn>
+        <ElTableColumn label="子单名称" min-width="320">
+          <template #default="{ row }">
+            <ElInput v-model="row.name" />
+          </template>
+        </ElTableColumn>
+        <ElTableColumn label="负责人" width="150">
+          <template #default="{ row }">
+            <ElSelect v-model="row.assignedTo" filterable>
+              <ElOption v-for="member in taskSplitDialog.assignees" :key="member.account" :label="member.realname" :value="member.account" />
+            </ElSelect>
+          </template>
+        </ElTableColumn>
+        <ElTableColumn label="截止时间" width="150">
+          <template #default="{ row }">
+            <ElInput v-model="row.deadline" placeholder="YYYY-MM-DD" />
+          </template>
+        </ElTableColumn>
+        <ElTableColumn label="预计工时" width="120">
+          <template #default="{ row }">
+            <ElInputNumber v-model="row.estimate" :min="0" :step="0.5" controls-position="right" />
+          </template>
+        </ElTableColumn>
+        <ElTableColumn label="操作" width="90" align="center">
+          <template #default="{ $index }">
+            <ElButton size="small" type="danger" plain @click="removeTaskSplitChild($index)">删除</ElButton>
+          </template>
+        </ElTableColumn>
+      </ElTable>
+    </div>
+    <template #footer>
+      <div class="dialog-footer-actions">
+        <ElButton @click="taskSplitDialog.visible = false">取消</ElButton>
+        <ElButton type="primary" :loading="loading.taskSplit" @click="submitTaskSplitPlan">确认写入禅道</ElButton>
+      </div>
+    </template>
+  </ElDialog>
   <ElDialog
     v-model="forcePasswordDialog"
     width="460px"
@@ -403,24 +465,15 @@
       <ElButton type="primary" :loading="loading.aiFlowRecords" @click="saveAiFlowRecord">保存记录</ElButton>
     </template>
   </ElDialog>
-  <CriticalNotificationLayer v-if="appBridge" :app="appBridge" :tasks="taskCenterCurrentBusinessTaskRows" :bugs="taskCenterBugRows"
-    :metrics="taskCenterMetrics" :can-view-tasks="Boolean(currentUser && can('menu.tasks'))"
-    :active-view="activeView" />
-
 </template>
 
 <script>
 import { ElMessage, ElMessageBox } from 'element-plus';
-import WorkspaceView from './views/WorkspaceView.vue';
-import ProjectListView from './views/ProjectListView.vue';
-import SkiiRepositoryView from './views/SkiiRepositoryView.vue';
-import SkillInventoryView from './views/SkillInventoryView.vue';
 import TaskCenterView from './views/TaskCenterView.vue';
-import AiArchiveView from './views/AiArchiveView.vue';
+import SkillInventoryView from './views/SkillInventoryView.vue';
 import AiMembersView from './views/AiMembersView.vue';
 import ProjectDetailView from './views/ProjectDetailView.vue';
 import RunsView from './views/RunsView.vue';
-import WorkflowDesignerView from './views/WorkflowDesignerView.vue';
 import TaskResultView from './views/TaskResultView.vue';
 import ManualReviewView from './views/ManualReviewView.vue';
 import LoginView from './views/LoginView.vue';
@@ -434,7 +487,6 @@ import TaskSyncDialog from './components/dialogs/TaskSyncDialog.vue';
 import ProjectFormDialog from './components/dialogs/ProjectFormDialog.vue';
 import DirectoryPickerDialog from './components/dialogs/DirectoryPickerDialog.vue';
 import SkillPreviewDialog from './components/dialogs/SkillPreviewDialog.vue';
-import CriticalNotificationLayer from './components/CriticalNotificationLayer.vue';
 import { Hide, View } from '@element-plus/icons-vue';
 
 const DEFAULT_ZENTAO_BUG_PRODUCTS = 'all';
@@ -457,35 +509,34 @@ const CODEX_MODEL_OPTIONS = ['gpt-5.5', 'gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2'];
 
 const roleLevelPermissionPresets = {
   4: [
-    'menu.workspace', 'menu.projects', 'menu.tasks', 'menu.skillManagement', 'menu.skillList', 'menu.skillValidations', 'menu.skillEvents', 'menu.repository', 'menu.aiMembers', 'menu.aiMembers.owner', 'menu.aiMembers.member', 'menu.aiArchive', 'menu.codexConfig', 'menu.runs', 'menu.workflowDesigner', 'menu.users', 'menu.roles', 'menu.operationLogs',
-    'project.create', 'project.edit', 'project.delete', 'artProjectSheet.manage', 'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy', 'task.personPressure.view', 'run.create', 'run.codex.execute', 'run.start', 'run.cancel', 'run.delete',
-    'review.submit', 'review.image.submit', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view', 'skill.validation.manage', 'skill.validationBackfill.manage', 'skill.validationOwner.manage', 'skill.validationColumns.manage', 'skill.validationLogs.view', 'skill.validationDetailLogs.view', 'skill.validationDetailLogs.delete', 'skill.asset.manage', 'skill.assetOwner.manage', 'artProgress.manage', 'artProgress.logs.manage', 'artProgress.operationLogs.view', 'artProgress.accessLogs.view', 'artProgress.logs.delete', 'archive.export', 'codex.config.manage', 'workflow.manage', 'user.manage', 'role.manage',
-    'api.projects.manage', 'api.artProjectSheet.manage', 'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.runs.delete', 'api.workflow.manage', 'api.reviews.submit', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillValidations.manage', 'api.aiAssets.manage', 'api.artProgress.manage', 'api.codex.config.read', 'api.codex.config.manage', 'api.users.manage', 'api.roles.manage', 'api.taskCenter.config.manage', 'api.operationLogs.read', 'api.operationLogs.delete'
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.users', 'menu.roles', 'menu.operationLogs',
+    'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy', 'task.personPressure.view',
+    'run.create', 'run.codex.execute', 'run.start', 'run.cancel', 'run.delete', 'review.submit', 'review.image.submit',
+    'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.source.delete', 'skill.asset.create', 'skill.asset.void', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
+    'codex.config.manage', 'user.manage', 'role.manage',
+    'api.skillSources.manage', 'api.skillSources.delete', 'api.skillScan.run', 'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.runs.delete', 'api.reviews.submit', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.skillAsset.void', 'api.codex.config.read', 'api.codex.config.manage', 'api.users.manage', 'api.roles.manage', 'api.taskCenter.config.manage', 'api.operationLogs.read', 'api.operationLogs.delete'
   ],
   3: [
-    'menu.workspace', 'menu.projects', 'menu.tasks', 'menu.skillManagement', 'menu.skillList', 'menu.skillValidations', 'menu.skillEvents', 'menu.repository', 'menu.aiMembers', 'menu.aiMembers.member', 'menu.aiArchive', 'menu.codexConfig', 'menu.runs', 'menu.workflowDesigner',
-    'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy', 'run.create', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'archive.export', 'archive.record.manage', 'workflow.manage',
-    'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.workflow.manage', 'api.reviews.submit', 'api.codex.config.read', 'api.skillAlias.manage'
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs',
+    'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy',
+    'run.create', 'run.codex.execute', 'run.start', 'run.cancel', 'review.submit', 'review.image.submit',
+    'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.asset.create', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
+    'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.reviews.submit', 'api.codex.config.read', 'api.skillSources.manage', 'api.skillScan.run', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create'
   ],
   2: [
-    'menu.workspace', 'menu.projects', 'menu.tasks', 'menu.skillManagement', 'menu.skillList', 'menu.skillValidations', 'menu.aiMembers', 'menu.aiMembers.member', 'menu.aiArchive', 'menu.runs',
-    'task.codexPrompt.copy', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'archive.export', 'api.reviews.submit', 'api.skillAlias.manage'
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.runs',
+    'task.codexPrompt.copy', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'api.reviews.submit', 'api.skillAlias.manage'
   ],
-  1: ['menu.workspace', 'menu.projects', 'menu.tasks', 'menu.skillManagement', 'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'skill.alias.manage', 'skill.usageLogs.view', 'api.skillAlias.manage']
+  1: ['menu.tasks', 'menu.skillList', 'menu.aiMembers', 'skill.usageLogs.view']
 };
 
 export default {
   components: {
-    WorkspaceView,
-    ProjectListView,
-    SkiiRepositoryView,
-    SkillInventoryView,
     TaskCenterView,
-    AiArchiveView,
+    SkillInventoryView,
     AiMembersView,
     ProjectDetailView,
     RunsView,
-    WorkflowDesignerView,
     TaskResultView,
     ManualReviewView,
     LoginView,
@@ -499,7 +550,6 @@ export default {
     ProjectFormDialog,
     DirectoryPickerDialog,
     SkillPreviewDialog,
-    CriticalNotificationLayer,
     Hide,
     View
   },
@@ -515,7 +565,7 @@ export default {
         username: 'admin',
         password: ''
       },
-      activeView: 'workspace',
+      activeView: 'tasks',
       currentPath: typeof window !== 'undefined' ? window.location.pathname : '/',
       theme: 'light',
       isSidebarCollapsed: false,
@@ -541,10 +591,12 @@ export default {
       skillInventorySource: '',
       skillInventoryMemberFilter: '',
       skillInventoryPreferMine: false,
+      skillInventoryKindFilter: '',
       skillInventoryTab: 'list',
       skillInventoryPage: 1,
       skillInventoryPageSize: 10,
       skillInventoryShowHidden: false,
+      skillInventoryScanCacheLoaded: false,
       aiAssetKeyword: '',
       aiAssetStatusFilter: '',
       aiAssetShowHidden: false,
@@ -609,7 +661,9 @@ export default {
         userId: '',
         module: '',
         result: '',
-        keyword: ''
+        keyword: '',
+        from: '',
+        to: ''
       },
       operationLogDetail: {
         visible: false,
@@ -634,10 +688,11 @@ export default {
         workflowLevels: []
       },
       taskCenterConfigReady: false,
-      selectedProjectId: 'qp_lobby_5_2',
+      selectedProjectId: 'art_department',
       selectedRunId: null,
       selectedSkillId: '',
       skillContentCache: {},
+      skillInventoryMetricsCache: {},
       skillOwnerOverrides: {},
       skillPreview: {
         visible: false,
@@ -651,7 +706,7 @@ export default {
       skillPreviewAliasesDraft: '',
       aiAssetSheetRows: [],
       aiAssetSheetMeta: null,
-      aiAssetDialog: { visible: false, readonly: false, form: emptyAiAssetForm() },
+      aiAssetDialog: { visible: false, readonly: false, mode: 'asset', form: emptyAiAssetForm() },
       eventSource: null,
       platformEventSource: null,
       platformEventRefreshTimers: {},
@@ -668,6 +723,21 @@ export default {
       selectedArtifact: null,
       artifactPreview: {},
       selectedTask: null,
+      draggingTaskId: '',
+      draggingTask: null,
+      taskSplitDialog: {
+        visible: false,
+        task: null,
+        assignees: [],
+        plan: {
+          taskId: '',
+          title: '',
+          deadline: '',
+          executionId: '',
+          mainAssignee: '',
+          children: []
+        }
+      },
       selectedStageNo: null,
       selectedReport: null,
       selectedReportHtml: '',
@@ -687,6 +757,7 @@ export default {
       },
       taskReviewForm: emptyTaskReviewForm(),
       taskProcessingNotes: {},
+      taskProcessingSheetOpen: false,
       taskArtBriefs: {},
       taskArtBriefLoading: {},
       manualReviewRecords: [],
@@ -696,7 +767,9 @@ export default {
         tasks: false,
         runs: false,
         scan: false,
+        skillInventoryCache: false,
         syncTasks: false,
+        taskNotes: false,
         aiArchiveTaskSync: false,
         aiArchiveBugSync: false,
         aiFlowRecords: false,
@@ -710,7 +783,9 @@ export default {
         skillValidations: false,
         artProgressEvents: false,
         aiAssetSheet: false,
-        skillVersion: false
+        skillVersion: false,
+        taskAssign: false,
+        taskSplit: false
       },
       runDrawer: false,
       startConfirm: {
@@ -754,7 +829,6 @@ export default {
         projectId: '',
         zentaoStatus: '',
         platformStatus: '',
-        executionStatus: '',
         metric: '',
         keyword: ''
       },
@@ -772,6 +846,7 @@ export default {
         type: ''
       },
       runForm: {
+        sourceMode: 'zentao-task',
         taskId: '',
         projectId: '',
         executionMode: 'level-process',
@@ -785,9 +860,12 @@ export default {
         targetPage: '',
         figmaLinks: '',
         showdocHints: '',
+        selectedMaterialHints: [],
         requirement: '',
         sourceType: 'task'
       },
+      runChatInput: '',
+      runChatSubmitting: false,
       projectForm: emptyProjectForm(),
       taskSyncForm: {
         projectId: '',
@@ -831,9 +909,13 @@ export default {
     activeNav() {
       if (['user-access', 'role-management', 'operation-logs'].includes(this.activeView)) return this.activeView;
       if (['task-result', 'manual-review'].includes(this.activeView)) return 'tasks';
-            if (['skill-inventory'].includes(this.activeView)) return this.skillInventoryTab === 'validations' ? 'skill-validations' : this.skillInventoryTab === 'events' ? 'skill-events' : 'skill-assets';
+      if (this.isSkillInventoryViewActive) return 'skill-assets';
       if (['ai-members'].includes(this.activeView)) return 'ai-members';
       return this.activeView;
+    },
+
+    isSkillInventoryViewActive() {
+      return ['skill-inventory', 'skill-assets'].includes(this.activeView);
     },
 
     aiFlowStageFields() {
@@ -843,38 +925,25 @@ export default {
     skillInventoryPageTitle() {
       return {
         list: 'AI 产物清单',
-        validations: '验证回填',
-        events: '研究同步',
         assets: 'AI 产物清单'
       }[this.skillInventoryTab] || '技能管理';
     },
 
     navDefaultOpeneds() {
-      return [
-        ...(this.canAny(['menu.projects', 'menu.tasks']) ? ['project-management'] : []),
-        ...(this.canAny(['menu.skillList', 'menu.skillValidations', 'menu.skillEvents']) ? ['skill-management'] : []),
-        ...(this.canAny(['menu.repository', 'menu.aiMembers', 'menu.aiArchive', 'menu.codexConfig']) ? ['ai-management'] : []),
-        ...(this.canAny(['menu.runs', 'menu.workflowDesigner']) ? ['execution-management'] : []),
-        ...(this.canAny(['menu.users', 'menu.roles']) ? ['user-management'] : [])
-      ];
+      return [];
     },
 
     pageMeta() {
       return {
-        workspace: { eyebrow: this.isPlatformAdmin ? '负责人视角' : '工作台', title: '美术部工作台' },
-        'project-list': { eyebrow: '项目管理', title: '项目列表' },
-        'skii-repository': { eyebrow: 'AI 管理', title: '资料库管理' },
         'skill-inventory': { eyebrow: '技能管理', title: this.skillInventoryPageTitle },
         'ai-members': { eyebrow: 'AI 管理', title: 'AI部门看板' },
         tasks: { eyebrow: '任务中心', title: '任务中心' },
-        'ai-archive': { eyebrow: 'AI 管理', title: 'AI 档案' },
         'codex-config': { eyebrow: 'AI 管理', title: 'Codex 配置' },
-        'workflow-designer': { eyebrow: '执行管理', title: '工作流编排' },
         'user-access': { eyebrow: '账户管理', title: '账户管理' },
         'role-management': { eyebrow: '角色管理', title: '角色管理' },
         'operation-logs': { eyebrow: '操作日志', title: '操作日志' },
         'project-detail': { eyebrow: '资料库详情', title: this.selectedProject?.name || '资料库详情' },
-        runs: { eyebrow: '执行管理', title: '任务执行台' },
+        runs: { eyebrow: '执行管理', title: '美术执行台' },
         'task-result': { eyebrow: '任务产物', title: this.selectedTask?.name || '任务产物' },
         'manual-review': { eyebrow: '人工复核', title: '人工复核' }
       }[this.activeView];
@@ -906,6 +975,20 @@ export default {
 
     canManageTaskCenterFields() {
       return this.can('api.taskCenter.config.manage');
+    },
+
+    zentaoSyncRunning() {
+      const sync = this.appConfig.zentaoAutoSync || {};
+      return Boolean(sync.running || sync.tasks?.running || sync.bugs?.running);
+    },
+
+    zentaoSyncLastError() {
+      const sync = this.appConfig.zentaoAutoSync || {};
+      return sync.lastError || sync.tasks?.lastError || sync.bugs?.lastError || '';
+    },
+
+    canAssignTaskByDrag() {
+      return this.isPlatformAdmin && this.can('task.sync') && !this.loading.taskAssign;
     },
 
     canManageSkillValidationColumns() {
@@ -970,8 +1053,8 @@ export default {
     hasCriticalNotifications() {
       if (!this.currentUser || !this.can('menu.tasks')) return false;
       const today = localDateKey(new Date());
-      const dueToday = this.taskCenterCurrentBusinessTaskRows.filter(task => task.deadline === today && !/closed|cancel|cancelled/i.test(task.zentaoStatus || task.zentao?.originalStatus || task.status || '')).length;
-      const riskTasks = this.taskCenterCurrentBusinessTaskRows.filter(task => this.isArtTaskRisk(task)).length;
+      const dueToday = this.taskCenterCurrentArtMemberTaskRows.filter(task => task.deadline === today && !/closed|cancel|cancelled/i.test(task.zentaoStatus || task.zentao?.originalStatus || task.status || '')).length;
+      const riskTasks = this.taskCenterCurrentArtMemberTaskRows.filter(task => this.isArtTaskRisk(task)).length;
       const activeBugs = this.taskCenterBugRows.filter(bug => !/closed/i.test(bug.status || bug.zentao?.status || '')).length;
       const overdueBugs = this.taskCenterBugRows.filter(bug => bug.deadline && bug.deadline < today && !/closed/i.test(bug.status || bug.zentao?.status || '')).length;
       return dueToday + riskTasks + activeBugs + overdueBugs > 0;
@@ -1041,11 +1124,53 @@ export default {
 
     currentProjectSkillOptions() {
       const scan = this.scans[this.runForm.projectId] || null;
-      return (scan?.skills || []).map(skill => ({
-        value: skill.id,
-        title: skillDisplayText(skill),
-        label: `${skill.id} · ${skillDisplayText(skill)}`
-      }));
+      const rows = (scan?.skills || []).map(skill => {
+        const path = skill.git?.relativePath || skill.relativePath || skill.path || '';
+        const fileName = this.fileNameFromPath(path);
+        const title = skillDisplayText(skill);
+        const value = path || skill.id;
+        return {
+          value,
+          title,
+          path,
+          kind: this.skillInventoryKind(skill),
+          label: [fileName || skill.id, title].filter(Boolean).join(' · ')
+        };
+      });
+      const seen = new Set();
+      return rows.filter(row => {
+        const key = String(row.value || '').trim();
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    },
+
+    currentProjectExecutionMaterialOptions() {
+      const scan = this.scans[this.runForm.projectId] || null;
+      const skills = Array.isArray(scan?.skills) ? scan.skills : [];
+      const rows = skills
+        .map(skill => {
+          const path = skill.git?.relativePath || skill.relativePath || skill.path || '';
+          const fileName = this.fileNameFromPath(path);
+          const isMd = /\.(md|markdown)$/i.test(path || skill.id || '');
+          const kind = this.skillInventoryKind(skill);
+          if (!path && !skill.id) return null;
+          return {
+            value: path || skill.id,
+            label: `${kind === 'skill' ? 'Skill' : isMd ? 'md' : '资料'} · ${skill.title || fileName || skill.id}`,
+            subtitle: path || skill.id,
+            kind
+          };
+        })
+        .filter(Boolean);
+      const seen = new Set();
+      return rows.filter(row => {
+        const key = String(row.value || '').trim();
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
     },
 
     isBugFixRun() {
@@ -1371,7 +1496,7 @@ export default {
           priorityFlags: isLowEffortAcceptance ? [] : this.taskPriorityFlags(task),
           projectName: project?.name || task.projectId || '-',
           sourceLabel: task.source === 'zentao-art-snapshot' ? '美术禅道快照' : task.source === 'google-sheet' ? '表格导入' : task.source === 'platform' ? '平台创建' : task.source === 'zentao' ? 'ZenTao同步' : '人工录入',
-          zentaoStatus: task.zentaoStatus || task.zentao?.originalStatus || '',
+          zentaoStatus: task.zentaoStatus || task.zentao?.status || task.zentao?.originalStatus || task.status || '',
           isCurrent: task.isCurrent !== false,
           syncStatus: task.syncStatus || (task.isCurrent === false ? 'non_current' : 'current'),
           deadline: task.deadline || task.zentao?.deadline || '',
@@ -1408,12 +1533,20 @@ export default {
       return this.businessTaskRows;
     },
 
+    taskCenterArtMemberTaskRows() {
+      return this.taskCenterBusinessTaskRows.filter(task => this.isArtDepartmentTask(task));
+    },
+
     taskCenterCurrentBusinessTaskRows() {
       return this.taskCenterBusinessTaskRows.filter(task => task.isCurrent !== false);
     },
 
     taskCenterCurrentArtMemberTaskRows() {
-      return this.taskCenterCurrentBusinessTaskRows.filter(task => this.isArtDeptPerson(task.developer));
+      return this.taskCenterArtMemberTaskRows.filter(task => task.isCurrent !== false);
+    },
+
+    taskCenterMetricTaskRows() {
+      return this.taskCenterCurrentArtMemberTaskRows.filter(task => !this.isLowEffortArtAcceptanceTask(task));
     },
 
     taskCenterBugRows() {
@@ -1680,7 +1813,7 @@ export default {
           { label: '高优先级', value: urgent, hint: 'P1/P2 或 S1/S2', filter: 'urgentBug' }
         ];
       }
-      const rows = this.taskCenterCurrentBusinessTaskRows.filter(task => !this.isLowEffortArtAcceptanceTask(task));
+      const rows = this.taskCenterCurrentArtMemberTaskRows;
       const today = localDateKey(new Date());
       const current = rows.filter(task => task.isCurrent).length;
       const nonCurrent = rows.length - current;
@@ -1691,12 +1824,13 @@ export default {
       const riskTasks = rows.filter(task => this.isArtTaskRisk(task)).length;
       const done = rows.filter(task => statusBucket(task.platformStatus) === 'passed').length;
       const blocked = rows.filter(task => ['blocked', 'failed', 'rework'].includes(statusBucket(task.platformStatus))).length;
+      const metricRows = this.taskCenterMetricTaskRows;
       const linkedRuns = rows.filter(task => task.runCount > 0).length;
       const unexecuted = rows.length - linkedRuns;
-      const extraSmallTasks = rows.filter(task => task.workloadEstimate?.level === 'XS').length;
-      const smallTasks = rows.filter(task => task.workloadEstimate?.level === 'S').length;
-      const mediumTasks = rows.filter(task => task.workloadEstimate?.level === 'M').length;
-      const largeTasks = rows.filter(task => task.workloadEstimate?.level === 'L').length;
+      const extraSmallTasks = metricRows.filter(task => task.workloadEstimate?.level === 'XS').length;
+      const smallTasks = metricRows.filter(task => task.workloadEstimate?.level === 'S').length;
+      const mediumTasks = metricRows.filter(task => task.workloadEstimate?.level === 'M').length;
+      const largeTasks = metricRows.filter(task => task.workloadEstimate?.level === 'L').length;
       const executedRows = rows.filter(task => task.quality.executed);
       const reviewedRows = rows.filter(task => task.quality.reviewed);
       const qualityRows = reviewedRows.length ? reviewedRows : executedRows;
@@ -1779,6 +1913,15 @@ export default {
       return [...map.values()].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
     },
 
+    defaultRunDeveloperName() {
+      const currentNames = this.currentAccountPersonNames || [];
+      const matched = currentNames
+        .map(name => this.canonicalArtDeptPerson(name) || String(name || '').trim())
+        .find(name => name && name !== 'admin' && name !== '当前账号');
+      if (matched) return matched;
+      return this.currentUser?.displayName || this.currentUser?.realname || this.currentUser?.name || this.currentUser?.username || this.currentUser?.account || '';
+    },
+
     skillValidationPersonOptions() {
       const map = new Map();
       this.artDeptDisplayPeople.forEach(name => {
@@ -1798,7 +1941,7 @@ export default {
 
     zentaoAutoSyncText() {
       const sync = this.appConfig.zentaoAutoSync || {};
-      if (sync.running) return sync.trigger === 'manual' ? '同步中...' : '自动同步中...';
+      if (this.zentaoSyncRunning) return sync.trigger === 'manual' ? '同步中...' : '自动同步中...';
       if (sync.lastSuccessAt) return `自动同步：${formatDateTime(sync.lastSuccessAt)}`;
       if (sync.lastErrorAt) return `同步失败：${formatDateTime(sync.lastErrorAt)}`;
       return sync.enabled === false ? '自动同步已关闭' : '等待自动同步';
@@ -1806,14 +1949,14 @@ export default {
 
     zentaoAutoSyncLabel() {
       const sync = this.appConfig.zentaoAutoSync || {};
-      if (sync.running) return sync.trigger === 'manual' ? '正在同步' : '自动同步中';
-      if (sync.lastErrorAt) return '同步失败';
+      if (this.zentaoSyncRunning) return sync.trigger === 'manual' ? '正在同步' : '自动同步中';
+      if (this.zentaoSyncLastError || sync.lastErrorAt) return '同步失败';
       return sync.enabled === false ? '自动同步已关闭' : '自动同步';
     },
 
     zentaoAutoSyncTimeText() {
       const sync = this.appConfig.zentaoAutoSync || {};
-      if (sync.running) return '同步中...';
+      if (this.zentaoSyncRunning) return '同步中...';
       if (sync.lastSuccessAt) return formatDateTime(sync.lastSuccessAt);
       if (sync.lastErrorAt) return formatDateTime(sync.lastErrorAt);
       return '-';
@@ -1885,10 +2028,7 @@ export default {
           .filter(skill => this.isMemberArtReporterRow(skill) || !this.isFigmaUseConnectorArtifact(skill))
           .map(skill => this.buildSkillInventoryRow(projectRow, skill));
       });
-      return this.dedupeSkillInventoryRows([
-        ...rows,
-        ...this.skillInventoryMemberProductRows()
-      ]).sort((a, b) => {
+      return this.dedupeSkillInventoryRows(rows).sort((a, b) => {
         const timeDiff = String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || ''));
         return timeDiff || a.title.localeCompare(b.title);
       });
@@ -1909,8 +2049,7 @@ export default {
 
     skillInventoryVisibleRows() {
       return this.skillInventoryRows
-        .filter(row => this.skillInventoryShowHidden ? row.hidden === true : row.hidden !== true)
-        .filter(row => this.isVisibleSkillInventoryProductRow(row));
+        .filter(row => (row.hidden !== true || this.canOperateSkillInventoryManage) && this.isVisibleSkillInventoryProductRow(row));
     },
 
     skillInventoryDocumentRows() {
@@ -1927,8 +2066,11 @@ export default {
 
     filteredSkillInventoryRows() {
       const keyword = String(this.skillInventoryKeyword || '').trim().toLowerCase();
+      const kindFilter = String(this.skillInventoryKindFilter || '').trim();
       const rows = this.skillInventoryVisibleRows.filter(row => {
         if (this.skillInventoryMemberFilter && !this.skillInventoryRowDirectlyBelongsToMember(row, this.skillInventoryMemberFilter)) return false;
+        if (kindFilter === 'skill' && !this.isSkillInventorySkillProduct(row)) return false;
+        if (kindFilter === 'standard' && !this.isSkillInventoryStandardProduct(row)) return false;
         if (!keyword) return true;
         const haystack = [
           row.id,
@@ -2052,12 +2194,17 @@ export default {
 
     skillInventoryMemberSummaries() {
       const members = Array.isArray(this.aiMembersSnapshot?.members) ? this.aiMembersSnapshot.members : [];
-      const inventoryRows = this.skillInventoryAssetRows;
+      const inventoryRows = this.skillInventoryAssetRows.filter(row => row.hidden !== true);
       return members.map(member => {
-        const memberProductItems = this.visibleAiBoardMemberProductItems(member);
+        const boardProductItems = this.visibleAiBoardMemberProductItems(member);
         const matchedRows = inventoryRows
+          .filter(row => row.hidden !== true)
           .filter(row => this.isFinishedSkillInventoryRow(row))
-          .filter(row => this.skillInventoryRowBelongsToMember(row, member.name, memberProductItems, []));
+          .filter(row => this.skillInventoryRowBelongsToMember(row, member.name, boardProductItems, []));
+        const inventoryProductItems = matchedRows
+          .map(row => this.skillInventoryRowProductName(row))
+          .filter(Boolean);
+        const memberProductItems = this.dedupeMemberProductItems([...boardProductItems, ...inventoryProductItems]);
         return {
           name: member.name,
           account: member.account,
@@ -2113,6 +2260,154 @@ export default {
         aiAssetCount: this.aiAssetSheetRows.filter(row => row.deleted !== true).length,
         activeMemberCount: rows.filter(row => row.totalSkillCount > 0).length + (ownerProducts.length ? 1 : 0),
         productNames
+      };
+    },
+
+    aiScoreMonthLabel() {
+      return this.aiScoreMonthKey(new Date());
+    },
+
+    aiScoreMonthDisplay() {
+      const [year, month] = this.aiScoreMonthLabel.split('-');
+      return year && month ? `${year}年${month}月` : '本月';
+    },
+
+    aiMemberScoreRows() {
+      const snapshotMembers = Array.isArray(this.aiMembersSnapshot?.members) ? this.aiMembersSnapshot.members : [];
+      const fallbackMembers = DEFAULT_ART_DEPT_PEOPLE.map(person => ({
+        name: person.realname,
+        account: person.account,
+        level: '',
+        status: ''
+      }));
+      const sourceMembers = this.dedupeAiScoreMembers([...snapshotMembers, ...fallbackMembers]);
+      const summaryMap = new Map(this.skillInventoryMemberSummaries.map(summary => [this.normalizeAiScorePersonKey(summary.name || summary.account), summary]));
+      return sourceMembers
+        .filter(member => !this.isAiScoreOwnerMember(member))
+        .map(member => this.aiMemberScoreRow(member, summaryMap.get(this.normalizeAiScorePersonKey(member.name || member.realname || member.account)) || null))
+        .sort((a, b) => b.score - a.score || b.monthUsageCount - a.monthUsageCount || a.name.localeCompare(b.name));
+    },
+
+    aiMemberScoreOverview() {
+      const rows = this.aiMemberScoreRows;
+      const avg = rows.length ? Math.round(rows.reduce((sum, row) => sum + row.score, 0) / rows.length) : 0;
+      const active = rows.filter(row => row.monthUsageCount + row.monthRunCount + row.monthValidationCount > 0).length;
+      const high = rows.filter(row => row.score >= 85).length;
+      return [
+        { label: '月均评分', value: avg, hint: `${rows.length || 0} 人` },
+        { label: '当月活跃', value: active, hint: '有使用、验证或执行记录' },
+        { label: '高分成员', value: high, hint: '85 分及以上' }
+      ];
+    },
+
+    aiMemberScoreRuleText() {
+      return '产物分按有效价值计算：通用性、复用人数、调用次数、质量和版本越高分越高；已作废、低复用或被替代的产物降权。';
+    },
+
+    skillInventoryProductStats() {
+      const products = this.skillInventoryUniqueProductsByName(this.skillInventoryRowsForProductStats || []);
+      const skillRows = products.filter(row => this.isSkillInventorySkillProduct(row));
+      const standardRows = products.filter(row => this.isSkillInventoryStandardProduct(row));
+      return [
+        { key: 'total', label: '产物总计', value: products.length },
+        { key: 'skill', label: '技能总数', value: skillRows.length },
+        { key: 'standard', label: '规范总数', value: standardRows.length }
+      ];
+    },
+
+    skillInventoryRowsForProductStats() {
+      const keyword = String(this.skillInventoryKeyword || '').trim().toLowerCase();
+      return this.skillInventoryVisibleRows.filter(row => {
+        if (row.hidden === true) return false;
+        if (this.skillInventoryMemberFilter && !this.skillInventoryRowDirectlyBelongsToMember(row, this.skillInventoryMemberFilter)) return false;
+        if (!keyword) return true;
+        const haystack = [
+          row.id,
+          row.title,
+          row.uploader,
+          row.source,
+          row.category,
+          row.version,
+          row.projectName,
+          row.relativePath,
+          row.skill?.productGroupPath,
+          row.productFileName,
+          row.productDisplayName,
+          this.skillSceneText(row)
+        ].join('\n').toLowerCase();
+        return haystack.includes(keyword);
+      });
+    },
+
+    skillInventoryUniqueProductsByName() {
+      return (rows = []) => {
+        const map = new Map();
+        for (const row of Array.isArray(rows) ? rows : []) {
+          const key = this.skillInventoryProductNameKey(row);
+          if (!key) continue;
+          const existing = map.get(key);
+          if (!existing) {
+            map.set(key, row);
+            continue;
+          }
+          if (this.isSkillInventorySkillProduct(row) && !this.isSkillInventorySkillProduct(existing)) {
+            map.set(key, row);
+          }
+        }
+        return [...map.values()];
+      };
+    },
+
+    skillInventoryProductNameKey() {
+      return (row = {}) => {
+        const name = row.productDisplayName || row.productFileName || row.title || row.id || '';
+        return this.normalizeValidationMatchText(name);
+      };
+    },
+
+    skillInventoryTableRowKey() {
+      return (row = {}) => {
+        const key = [
+          row.projectId || '',
+          row.skillInventoryKind || row.skill?.inventoryKind || '',
+          row.relativePath || row.skill?.git?.relativePath || row.path || '',
+          row.productDisplayName || row.productFileName || row.title || row.id || '',
+          row.hidden === true ? 'hidden' : 'visible'
+        ]
+          .map(value => String(value || '').trim())
+          .join('::');
+        return key || String(row.uid || row.id || row.title || '');
+      };
+    },
+
+    skillInventoryRowProductName() {
+      return (row = {}) => String(
+        row.productDisplayName
+        || row.productFileName
+        || row.title
+        || this.fileNameFromPath(row.relativePath || row.path || row.skill?.git?.relativePath || row.skill?.path || '')
+        || row.id
+        || ''
+      ).trim();
+    },
+
+    isSkillInventorySkillProduct() {
+      return (row = {}) => {
+        const text = [row.skillInventoryKind, row.relativePath, row.path, row.productFileName, row.productDisplayName, row.title].join('\n');
+        return row.skillInventoryKind === 'skill'
+          || row.skill?.inventoryKind === 'skill'
+          || /(^|\/)SKILL\.md$/i.test(text)
+          || /(^|\/)skills?\//i.test(text);
+      };
+    },
+
+    isSkillInventoryStandardProduct() {
+      return (row = {}) => {
+        if (this.isSkillInventorySkillProduct(row)) return false;
+        const text = [row.relativePath, row.path, row.productFileName, row.productDisplayName, row.title, row.category, row.scenes?.join(' ')].join('\n');
+        return row.skillInventoryKind === 'document'
+          || row.skill?.inventoryKind === 'document'
+          || /规范|规则|模板|说明|指南|标准|交付|命名|清单|流程|design|handoff|template|guide|standard/i.test(text);
       };
     },
 
@@ -2338,19 +2633,19 @@ export default {
     },
 
     canViewArtProgressOperationRecords() {
-      return this.can('artProgress.operationLogs.view') || this.can('artProgress.logs.manage') || this.isPlatformAdmin;
+      return this.can('api.skillAsset.create') || this.isPlatformAdmin;
     },
 
     canViewArtProgressAccessLogs() {
-      return this.can('artProgress.accessLogs.view') || this.can('artProgress.logs.manage') || this.isPlatformAdmin;
+      return this.can('api.skillAsset.create') || this.isPlatformAdmin;
     },
 
     canManageArtProgress() {
-      return this.can('artProgress.manage') || this.can('api.artProgress.manage') || this.isPlatformAdmin;
+      return this.can('api.skillAsset.create') || this.isPlatformAdmin;
     },
 
     canManageArtProgressLogs() {
-      return this.can('artProgress.logs.delete') || this.can('artProgress.logs.manage') || this.isPlatformAdmin;
+      return this.can('api.skillAsset.void') || this.isPlatformAdmin;
     },
 
     displayedArtProgressLogSourceIds() {
@@ -2369,27 +2664,65 @@ export default {
     },
 
     canViewSkillValidationLogs() {
-      return this.can('skill.validationDetailLogs.view') || this.can('skill.validationLogs.view') || this.isPlatformAdmin;
+      return this.can('api.skillAsset.create') || this.isPlatformAdmin;
     },
 
     canDeleteSkillValidationDetailLogs() {
-      return this.can('skill.validationDetailLogs.delete') || this.can('skill.validation.manage') || this.isPlatformAdmin;
+      return this.can('api.skillAsset.void') || this.isPlatformAdmin;
     },
 
     canBackfillSkillValidationDetailLogs() {
-      return this.can('skill.validationBackfill.manage') || this.can('skill.validation.manage') || this.isPlatformAdmin;
+      return this.can('api.skillAsset.create') || this.isPlatformAdmin;
     },
 
     canViewSkillUsageLogs() {
       return this.can('skill.usageLogs.view') || this.isPlatformAdmin;
     },
 
+    canViewSkillInventoryDetail() {
+      return this.can('menu.skillList') || this.isPlatformAdmin;
+    },
+
     canManageSkillAssets() {
-      return this.can('skill.asset.manage') || this.isPlatformAdmin;
+      return this.canAny([
+        'skill.scan.refresh',
+        'skill.source.connect',
+        'skill.source.edit',
+        'skill.source.delete',
+        'skill.asset.create',
+        'skill.asset.void',
+        'skill.assetOwner.manage',
+        'skill.version.manage',
+        'skill.alias.manage'
+      ]) || this.isPlatformAdmin;
+    },
+
+    canRefreshSkillInventoryScan() {
+      return this.can('skill.scan.refresh') || this.isPlatformAdmin;
+    },
+
+    canConnectSkillInventorySource() {
+      return this.can('skill.source.connect') || this.isPlatformAdmin;
+    },
+
+    canEditSkillInventorySource() {
+      return this.can('skill.source.edit') || this.isPlatformAdmin;
+    },
+
+    canDeleteSkillInventorySource() {
+      return this.can('skill.source.delete') || this.isPlatformAdmin;
+    },
+
+    canCreateSkillInventoryAsset() {
+      return this.can('skill.asset.create') || this.isPlatformAdmin;
+    },
+
+    canVoidSkillInventoryAsset() {
+      return this.can('skill.asset.void') || this.isPlatformAdmin;
     },
 
     canOperateSkillInventoryManage() {
-      return this.canManageSkillAssets && this.isOwnerWorkbenchAccount;
+      return this.canVoidSkillInventoryAsset && this.isOwnerWorkbenchAccount;
     },
 
     canManageSkillValidationOwner() {
@@ -2404,6 +2737,16 @@ export default {
       return this.canManageSkillAssetOwner && this.isOwnerWorkbenchAccount;
     },
 
+    skillInventoryActionColumnWidth() {
+      const visibleCount = [
+        this.can('run.create'),
+        true,
+        this.canOperateSkillInventoryOwner,
+        this.canOperateSkillInventoryManage
+      ].filter(Boolean).length;
+      return visibleCount > 2 ? 192 : 144;
+    },
+
     artProgressRefreshHint() {
       return this.isPlatformAdmin
         ? '刷新同步：重新读取组员 Codex 已同步到工作台的研究沉淀、工具试用、产物沉淀和连接记录。不会主动扫描组员电脑。'
@@ -2412,8 +2755,8 @@ export default {
 
     skillInventoryRefreshHint() {
       return this.isPlatformAdmin
-        ? '刷新库存：重新扫描资料库管理接入的 Git、共享盘和本地路径，更新产物列表、成员产物、版本和上传者对应关系。'
-        : '刷新库存：重新读取当前产物列表、版本和上传者信息。';
+        ? '刷新库存：重新扫描已接入的 Git、共享盘和本地路径，只在这里抓取新增和修改；默认页面展示上次库存缓存。'
+        : '刷新库存：重新读取当前产物列表、版本和贡献人信息。';
     },
 
     taskProcessingNotePlaceholder() {
@@ -2509,7 +2852,7 @@ export default {
 
     workspaceMetrics() {
       if (!this.isPlatformAdmin) {
-        const rows = this.taskCenterCurrentBusinessTaskRows.filter(task => !this.isLowEffortArtAcceptanceTask(task));
+        const rows = this.taskCenterCurrentArtMemberTaskRows.filter(task => !this.isLowEffortArtAcceptanceTask(task));
         const riskRows = rows.filter(task => this.taskPriorityFlags(task).length > 0 || ['blocked', 'failed', 'rework'].includes(statusBucket(task.platformStatus)) || this.deadlineState(task.deadline) === 'overdue');
         const today = localDateKey(new Date());
         const todayDue = rows.filter(task => task.deadline === today).length;
@@ -2532,8 +2875,8 @@ export default {
         ? Math.round(taskRows.reduce((sum, task) => sum + task.completion, 0) / taskRows.length)
         : 0;
       return [
-        { label: '接入资料库', value: this.projects.length, hint: `${scannedCount} 个已扫描` },
-        { label: '可调度资料库', value: schedulableProjects, hint: '规则完整且有任务' },
+        { label: '扫描来源', value: this.projects.length, hint: `${scannedCount} 个已扫描` },
+        { label: '可调度来源', value: schedulableProjects, hint: '规则完整且有任务' },
         { label: '待补规则', value: incompleteProjects, hint: '缺配置、扫描失败或类型未知' },
         { label: '历史任务', value: taskRows.length, hint: `${pendingTasks} 个待复核/待补证` },
         { label: '交付报告', value: reportCount, hint: `${evidenceCount} 个截图/证据文件` },
@@ -2729,8 +3072,13 @@ export default {
     },
 
     skillPreviewEffectiveAliases() {
+      if (typeof this.skillPreviewAliasesDraft === 'string' || Array.isArray(this.skillPreviewAliasesDraft)) {
+        return this.normalizeSkillAliasList(this.skillPreviewAliasesDraft);
+      }
       const saved = this.normalizeSkillAliasList(this.skillPreview.skill?.aliases || []);
-      return saved.length ? saved : this.generateSkillAliases(this.skillPreview.skill || {});
+      const contentAliases = this.normalizeSkillAliasList(this.skillPreview.skill?.previewAliases || []);
+      const generated = this.generateSkillAliases(this.skillPreview.skill || {});
+      return this.normalizeSkillAliasList([...saved, ...contentAliases, ...generated]);
     },
 
     activeRunStage() {
@@ -2997,10 +3345,6 @@ export default {
       this.businessTaskPage = 1;
     },
 
-    'taskFilters.executionStatus'() {
-      this.businessTaskPage = 1;
-    },
-
     'taskFilters.metric'() {
       this.businessTaskPage = 1;
     },
@@ -3013,10 +3357,6 @@ export default {
       this.aiArchivePage = 1;
       this.aiArtifactPage = 1;
       this.refreshAiFlowRecords();
-      if (this.activeView === 'ai-archive') {
-        this.autoSyncAiArchiveTasks({ force: true });
-        this.autoSyncAiArchiveBugs({ force: true });
-      }
     },
 
     'archiveFilters.qualityStatus'() {
@@ -3031,7 +3371,6 @@ export default {
 
     selectedBusinessTaskId() {
       this.seedTaskReviewForm();
-      this.refreshSelectedBusinessTaskBrief();
     },
 
     artProjectSheetKeyword() {
@@ -3050,13 +3389,16 @@ export default {
       this.skillInventoryPage = 1;
     },
 
+    skillInventoryKindFilter() {
+      this.skillInventoryPage = 1;
+    },
+
     taskCenterMode() {
       this.businessTaskPage = 1;
       this.taskFilters = {
         ...this.taskFilters,
         zentaoStatus: '',
         platformStatus: '',
-        executionStatus: '',
         keyword: ''
       };
       if (!this.preservePersonFilterOnModeSwitch) {
@@ -3092,6 +3434,25 @@ export default {
       }
     },
 
+    'runForm.sourceMode'(value) {
+      if (value === 'figma-link') {
+        this.runForm.taskId = '';
+        if (!this.runForm.title) this.runForm.title = 'Figma 界面执行';
+      }
+      if (value === 'completed-task') {
+        if (!this.runForm.title) this.runForm.title = '基于已完成任务继续处理';
+      }
+    },
+
+    'runForm.selectedMaterialHints'(value) {
+      const hints = Array.isArray(value) ? value : [];
+      const manual = String(this.runForm.showdocHints || '')
+        .split(/\r?\n/)
+        .map(item => item.trim())
+        .filter(item => item && !this.currentProjectExecutionMaterialOptions.some(option => option.value === item));
+      this.runForm.showdocHints = [...manual, ...hints].filter(Boolean).join('\n');
+    },
+
     'runForm.workflowLevel'(value) {
       if (!this.isBugFixRun) this.runForm.workflow = workflowForLevel(value);
     },
@@ -3106,14 +3467,10 @@ export default {
     },
 
     'runForm.projectId'(value) {
-      if (value && !this.scans[value]) this.scanProject(value);
+      if (value && !this.scans[value]) this.loadProjectScanCacheForInventory().catch(() => {});
       if (this.runForm.customWorkflowId && !this.runnableCustomWorkflows.some(workflow => workflow.id === this.runForm.customWorkflowId)) {
         this.runForm.customWorkflowId = '';
       }
-    },
-
-    'workflowDesigner.projectId'(value) {
-      if (value && !this.scans[value]) this.scanProject(value);
     },
 
     selectedSkill(skill) {
@@ -3122,45 +3479,14 @@ export default {
 
     activeView(value) {
       document.title = `${this.pageMeta.title} · 美术部工作台`;
-      if (value === 'operation-logs' && !this.operationLogs.length && !this.loading.operationLogs) {
-        this.refreshOperationLogs();
-      }
-      if (value === 'project-list' && !this.artProjectSheetRows.length && !this.loading.artProjectSheet) {
-        this.refreshArtProjectSheet();
-      }
-      if (value === 'skill-inventory') this.ensureSkillInventoryTabData(this.skillInventoryTab || 'assets');
-      if (value === 'ai-members' && !this.aiMembersSnapshot && !this.loading.aiMembers) {
-        this.refreshAiMembers();
-      }
-      if (value === 'runs' && !this.runs.length && !this.loading.runs) {
-        this.refreshRuns();
-        this.refreshCustomWorkflows();
-      }
-      if (value === 'ai-archive' && !this.aiFlowRecords.length && !this.loading.aiFlowRecords) {
-        this.refreshAiFlowRecords();
-        this.refreshTaskReviews();
-      }
-      if (value === 'user-access' && !this.users.length && !this.loading.users) {
-        this.refreshUsers();
-      }
-      if (value === 'role-management' && !this.roles.length && !this.loading.roles) {
-        this.refreshRoles();
-      }
+      this.ensureActiveViewData(value);
       if (value === 'tasks') {
-        if (!this.loading.tasks) this.refreshTasks();
-        this.refreshTaskProcessingNotes();
-        this.startZentaoAutoSyncPolling();
-      } else {
         this.stopZentaoAutoSyncPolling();
-      }
-      if (value === 'ai-archive') {
-        this.autoSyncAiArchiveTasks();
-        this.autoSyncAiArchiveBugs();
       }
     },
 
     skillInventoryTab(value) {
-      if (this.activeView === 'skill-inventory') this.ensureSkillInventoryTabData(value || 'assets');
+      if (this.isSkillInventoryViewActive) this.ensureSkillInventoryTabData(value || 'assets');
     },
 
   },
@@ -3179,8 +3505,6 @@ export default {
     this.taskArtBriefs = this.loadTaskArtBriefs();
     this.applyTheme(this.theme);
     window.addEventListener('popstate', this.syncRoute);
-    window.addEventListener('focus', this.refreshVisibleTaskBriefs);
-    document.addEventListener('visibilitychange', this.handleVisibilityRefresh);
     this.bootstrapAuth();
     this.runDurationTimer = setInterval(() => {
       if (this.isRunInProgress(this.selectedRun)) this.nowTick = Date.now();
@@ -3194,11 +3518,20 @@ export default {
     this.stopPlatformEventSync();
     if (this.runDurationTimer) clearInterval(this.runDurationTimer);
     window.removeEventListener('popstate', this.syncRoute);
-    window.removeEventListener('focus', this.refreshVisibleTaskBriefs);
-    document.removeEventListener('visibilitychange', this.handleVisibilityRefresh);
   },
 
   methods: {
+    selectSkillInventoryKindFilter(key = '') {
+      const next = key === 'skill' || key === 'standard' ? key : '';
+      this.skillInventoryKindFilter = this.skillInventoryKindFilter === next ? '' : next;
+      this.skillInventoryPage = 1;
+    },
+
+    isSkillInventoryProductStatActive(key = '') {
+      if (key === 'total') return !this.skillInventoryKindFilter;
+      return this.skillInventoryKindFilter === key;
+    },
+
     safeValidationText(value = '') {
       if (Array.isArray(value)) return value.map(item => this.safeValidationText(item)).filter(Boolean).join(' ');
       if (value && typeof value === 'object') {
@@ -3424,26 +3757,53 @@ export default {
 
     ensureSkillInventoryTabData(tab = 'assets') {
       if (tab === 'validations') {
-        if (!this.loading.skillValidations && !this.skillValidationRows.length) {
-          this.refreshSkillValidations();
-        }
+        this.restoreWorkbenchDisplayCacheKey('skillValidationRows');
         return;
       }
       if (tab === 'events') {
-        if (!this.artProgressEvents.length && !this.loading.artProgressEvents) this.refreshArtProgressEvents();
-        if (!this.aiAssetSheetRows.length && !this.loading.aiAssetSheet) this.refreshAiAssetSheet();
-        if (!this.aiMembersSnapshot && !this.loading.aiMembers) this.refreshAiMembers();
-        if (!this.usageCounters) this.refreshUsageCounters();
-        if (this.canViewSkillUsageLogs && !this.taskArtBriefUsageLogs.length) this.refreshTaskArtBriefUsageLogs();
+        this.restoreWorkbenchDisplayCacheKey('artProgressEvents');
+        this.restoreWorkbenchDisplayCacheKey('aiAssetSheetRows');
+        this.restoreWorkbenchDisplayCacheKey('usageCounters');
         return;
       }
       if (['assets', 'list'].includes(tab)) {
-        if (this.projects.length && !this.skillInventoryRows.length && !this.loading.scan) this.loadProjectScanCacheForInventory();
-        if (!Object.keys(this.skillOwnerOverrides || {}).length) this.refreshSkillVersionOverrides();
-        if (!this.aiAssetSheetRows.length && !this.loading.aiAssetSheet) this.refreshAiAssetSheet();
-        if (!this.aiMembersSnapshot && !this.loading.aiMembers) this.refreshAiMembers();
-        if (!this.usageCounters) this.refreshUsageCounters();
-        if (this.canViewSkillUsageLogs && !this.taskArtBriefUsageLogs.length) this.refreshTaskArtBriefUsageLogs();
+        this.restoreWorkbenchDisplayCacheKey('projects');
+        this.restoreWorkbenchDisplayCacheKey('scans');
+        this.restoreWorkbenchDisplayCacheKey('aiAssetSheetRows');
+        this.restoreWorkbenchDisplayCacheKey('usageCounters');
+        if (!this.loading.skillInventoryCache) {
+          this.loadSkillInventorySavedSnapshot({ force: !this.skillInventoryRows.length }).catch(() => {});
+        }
+        if (this.skillInventoryRows.length) {
+          this.skillInventoryScanCacheLoaded = true;
+        }
+      }
+    },
+
+    ensureActiveViewData(view = this.activeView) {
+      if (['skill-inventory', 'skill-assets'].includes(view)) {
+        if (view === 'skill-assets' || view === 'skill-inventory') this.skillInventoryTab = 'assets';
+        this.ensureSkillInventoryTabData(this.skillInventoryTab || 'assets');
+      }
+      if (view === 'ai-members') {
+        this.ensureAiMemberScoreData();
+      }
+      if (view === 'codex-config') {
+        if (!this.loading.codexConfig) this.loadCodexConfig().catch(() => {});
+      }
+      if (view === 'user-access') {
+        if (!this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
+        if (!this.roles.length && !this.loading.roles) this.refreshRoles().catch(() => {});
+      }
+      if (view === 'role-management') {
+        if ((!this.roles.length || !this.permissionCatalog.length) && !this.loading.roles) this.refreshRoles().catch(() => {});
+      }
+      if (view === 'runs') {
+        this.restoreWorkbenchDisplayCacheKey('artProgressEvents');
+        if (!this.runs.length && !this.loading.runs) this.refreshRuns().catch(() => {});
+      }
+      if (view === 'operation-logs') {
+        if (!this.operationLogs.length && !this.loading.operationLogs) this.refreshOperationLogs().catch(() => {});
       }
     },
 
@@ -3597,6 +3957,15 @@ export default {
       return fields.some(field => aliases.some(alias => samePerson(field, alias)));
     },
 
+    isArtDepartmentTask(task = {}) {
+      return this.isArtDeptPerson(task.developer)
+        || this.isArtDeptPerson(task.assignedTo)
+        || this.isArtDeptPerson(task.assignedToName)
+        || this.isArtDeptPerson(task.zentao?.assignedTo)
+        || this.isArtDeptPerson(task.zentao?.assignedToName)
+        || this.isArtDeptPerson(task.zentao?.assignedToRealName);
+    },
+
     isCurrentAccountBug(bug = {}) {
       if (this.isPlatformAdmin) return true;
       return this.isCurrentAccountPerson(this.bugAssigneeName(bug))
@@ -3644,10 +4013,9 @@ export default {
         if (this.currentUser) {
           this.forcePasswordDialog = this.currentUser.mustChangePassword === true;
           this.syncRoute();
-          await this.refreshAll();
-          if (this.activeView === 'tasks') this.startZentaoAutoSyncPolling();
-          this.startTaskBriefRealtimeSync();
-          this.startPlatformEventSync();
+          await this.refreshConfig();
+          await this.restoreWorkbenchServerState();
+          this.ensureActiveViewData(this.activeView);
         } else if (window.location.pathname !== '/login') {
           this.pushRoute('/login');
         }
@@ -3671,10 +4039,9 @@ export default {
         this.forcePasswordDialog = this.currentUser?.mustChangePassword === true;
         if (window.location.pathname === '/login') this.pushRoute(this.firstAllowedRoute());
         else this.syncRoute();
-        await this.refreshAll();
-        if (this.activeView === 'tasks') this.startZentaoAutoSyncPolling();
-        this.startTaskBriefRealtimeSync();
-        this.startPlatformEventSync();
+        await this.refreshConfig();
+        await this.restoreWorkbenchServerState();
+        this.ensureActiveViewData(this.activeView);
       } catch (error) {
         this.loginError = this.readApiError(error) || '登录失败';
       } finally {
@@ -3710,6 +4077,29 @@ export default {
       this.pushRoute('/login');
     },
 
+    async restoreWorkbenchServerState() {
+      if (!this.currentUser) return;
+      const jobs = [];
+      if (this.can('menu.skillList')) {
+        jobs.push(['库存缓存', () => this.loadSkillInventorySavedSnapshot()]);
+        jobs.push(['人工研究清单', () => this.refreshAiAssetSheet()]);
+        jobs.push(['验证回填', () => this.refreshSkillValidations({ force: true, silent: true })]);
+        jobs.push(['调用次数', () => this.refreshUsageCounters()]);
+        jobs.push(['版本覆盖', () => this.refreshSkillVersionOverrides()]);
+      }
+      if (this.can('menu.skillList') || this.can('menu.aiMembers')) {
+        jobs.push(['AI 研究同步', () => this.refreshArtProgressEvents()]);
+      }
+      if (this.can('menu.aiMembers')) {
+        jobs.push(['成员快照', () => this.refreshAiMembers()]);
+      }
+      const results = await Promise.allSettled(jobs.map(([, run]) => run()));
+      results.forEach((result, index) => {
+        if (result.status === 'rejected') console.warn(`${jobs[index][0]}恢复失败，已保留当前页面状态`, result.reason);
+      });
+      if (!this.platformEventSource) this.startPlatformEventSync();
+    },
+
     roleLabel(role = '', fallbackName = '') {
       if (fallbackName) return fallbackName;
       const label = {
@@ -3737,18 +4127,11 @@ export default {
 
     firstAllowedRoute() {
       const routes = [
-        ['menu.workspace', '/workspace'],
-        ['menu.projects', '/projects'],
-        ['menu.skillList', '/skills/list'],
-        ['menu.skillValidations', '/skills/validations'],
-        ['menu.skillEvents', '/skills/events'],
-        ['menu.repository', '/skii-repository'],
-        ['menu.aiMembers', '/ai-members'],
         ['menu.tasks', '/tasks'],
+        ['menu.skillList', '/skills/list'],
+        ['menu.aiMembers', '/ai-members'],
         ['menu.runs', '/runs'],
-        ['menu.aiArchive', '/ai-archive'],
         ['menu.codexConfig', '/codex-config'],
-        ['menu.workflowDesigner', '/workflow-designer'],
         ['menu.users', '/user-access'],
         ['menu.roles', '/role-management'],
         ['menu.operationLogs', '/operation-logs']
@@ -3792,7 +4175,7 @@ export default {
         return;
       }
       if (this.authChecked && !this.currentUser) {
-        this.activeView = 'workspace';
+        this.activeView = 'tasks';
         if (path !== '/login') this.pushRoute('/login');
         return;
       }
@@ -3801,44 +4184,42 @@ export default {
       const taskResultMatch = path.match(/^\/projects\/([^/]+)\/tasks\/(.+)\/result$/);
 
       if (path === '/' || path === '/workspace') {
-        if (!this.can('menu.workspace')) {
+        if (!this.can('menu.tasks')) {
           this.pushRoute(this.firstAllowedRoute());
           return;
         }
-        this.activeView = 'workspace';
+        this.pushRoute('/tasks');
         return;
       }
       if (path === '/projects') {
-        if (!this.can('menu.projects')) {
+        if (!this.can('menu.tasks')) {
           this.pushRoute(this.firstAllowedRoute());
           return;
         }
-        this.activeView = 'project-list';
+        this.pushRoute('/tasks');
         return;
       }
       if (path === '/skii-repository') {
-        if (!this.can('menu.repository')) {
-          this.pushRoute(this.firstAllowedRoute());
-          return;
-        }
-        this.activeView = 'skii-repository';
+        this.pushRoute('/skills/assets');
         return;
       }
       const skillRouteMatch = path.match(/^\/skills(?:\/(list|members|validations|events|assets))?$/);
       const adminSkillRouteMatch = path.match(/^\/admin\/skills(?:\/(list|members|validations|events|assets))?$/);
       if (skillRouteMatch || adminSkillRouteMatch || path === '/skill-inventory') {
-        if (!this.can('menu.skillList') && !this.can('menu.skillValidations') && !this.can('menu.skillEvents')) {
+        if (!this.can('menu.skillList')) {
           this.pushRoute(this.firstAllowedRoute());
           return;
         }
         const matchedSkillTab = skillRouteMatch?.[1] || adminSkillRouteMatch?.[1] || '';
+        if (['validations', 'events'].includes(matchedSkillTab)) {
+          this.pushRoute('/skills/assets');
+          return;
+        }
         const routeTab = matchedSkillTab === 'members' ? 'assets' : matchedSkillTab || 'assets';
         const tab = routeTab === 'list' ? 'assets' : routeTab;
         const requiredPermission = {
           list: 'menu.skillList',
-          validations: 'menu.skillValidations',
-          events: 'menu.skillEvents',
-          assets: this.can('menu.skillEvents') ? 'menu.skillEvents' : 'menu.skillList'
+          assets: 'menu.skillList'
         }[tab] || 'menu.skillList';
         if (!this.can(requiredPermission)) {
           this.pushRoute(this.firstAllowedRoute());
@@ -3846,6 +4227,7 @@ export default {
         }
         this.skillInventoryTab = tab;
         this.activeView = 'skill-inventory';
+        this.ensureActiveViewData('skill-inventory');
         this.$nextTick(() => this.ensureSkillInventoryTabData(tab));
         return;
       }
@@ -3855,6 +4237,7 @@ export default {
           return;
         }
         this.activeView = 'ai-members';
+        this.ensureActiveViewData('ai-members');
         return;
       }
       if (path === '/tasks') {
@@ -3863,15 +4246,6 @@ export default {
           return;
         }
         this.activeView = 'tasks';
-        if (!this.businessTasks.length && !this.loading.tasks) this.refreshTasks();
-        return;
-      }
-      if (path === '/ai-archive') {
-        if (!this.can('menu.aiArchive')) {
-          this.pushRoute(this.firstAllowedRoute());
-          return;
-        }
-        this.activeView = 'ai-archive';
         return;
       }
       if (path === '/codex-config') {
@@ -3880,6 +4254,7 @@ export default {
           return;
         }
         this.activeView = 'codex-config';
+        this.ensureActiveViewData('codex-config');
         this.loadCodexConfig();
         return;
       }
@@ -3889,14 +4264,11 @@ export default {
           return;
         }
         this.activeView = 'runs';
+        this.ensureActiveViewData('runs');
         return;
       }
-      if (path === '/workflow-designer') {
-        if (!this.can('menu.workflowDesigner')) {
-          this.pushRoute(this.firstAllowedRoute());
-          return;
-        }
-        this.activeView = 'workflow-designer';
+      if (path === '/ai-archive' || path === '/workflow-designer') {
+        this.pushRoute(this.firstAllowedRoute());
         return;
       }
       if (path === '/user-access') {
@@ -3905,6 +4277,7 @@ export default {
           return;
         }
         this.activeView = 'user-access';
+        this.ensureActiveViewData('user-access');
         return;
       }
       if (path === '/role-management') {
@@ -3913,6 +4286,7 @@ export default {
           return;
         }
         this.activeView = 'role-management';
+        this.ensureActiveViewData('role-management');
         return;
       }
       if (path === '/operation-logs') {
@@ -3921,21 +4295,20 @@ export default {
           return;
         }
         this.activeView = 'operation-logs';
-        if (!this.operationLogs.length && !this.loading.operationLogs) this.refreshOperationLogs();
+        this.ensureActiveViewData('operation-logs');
         return;
       }
       if (projectMatch) {
-        if (!this.can('menu.repository')) {
+        if (!this.can('menu.skillList')) {
           this.pushRoute(this.firstAllowedRoute());
           return;
         }
         this.selectedProjectId = projectMatch[1];
         this.activeView = 'project-detail';
-        if (!this.scans[this.selectedProjectId]) this.scanProject(this.selectedProjectId);
         return;
       }
       if (taskResultMatch) {
-        if (!this.can('menu.repository')) {
+        if (!this.can('menu.skillList')) {
           this.pushRoute(this.firstAllowedRoute());
           return;
         }
@@ -3964,7 +4337,7 @@ export default {
     },
 
     async ensureTaskRoute(taskPath, options = {}) {
-      if (!this.scans[this.selectedProjectId]) await this.scanProject(this.selectedProjectId);
+      if (!this.scans[this.selectedProjectId]) await this.loadProjectScanCacheForInventory();
       const task = (this.scans[this.selectedProjectId]?.tasks || []).find(item => item.path === taskPath || encodeURIComponent(item.path) === taskPath);
       if (task) {
         this.prepareTaskResult(task);
@@ -4027,10 +4400,6 @@ export default {
     },
 
     clearDeprecatedWorkbenchDisplayCache() {
-      [
-        'skillValidationRows',
-        'artProgressEvents'
-      ].forEach(key => localStorage.removeItem(this.workbenchDisplayCacheKey(key)));
     },
 
     saveWorkbenchDisplayCache(key = '', value) {
@@ -4072,10 +4441,17 @@ export default {
     restoreWorkbenchDisplayCache() {
       [
         'businessTasks',
+        'projects',
         'bugs',
         'taskReviews',
+        'taskProcessingNotes',
         'scans',
         'aiAssetSheetRows',
+        'aiMembersSnapshot',
+        'runs',
+        'artProgressEvents',
+        'skillValidationRows',
+        'operationLogs',
         'artProgressSummary',
         'usageCounters'
       ].forEach(key => this.restoreWorkbenchDisplayCacheKey(key));
@@ -4133,47 +4509,24 @@ export default {
         delete this.platformEventRefreshTimers[key];
         try {
           await callback();
-        } catch {}
+        } catch (error) {
+          console.warn(`${key} 自动刷新失败`, error);
+        }
       }, delay);
     },
 
     handlePlatformEvent(event = {}) {
-      const type = event.type || '';
-      if (type === 'skill-validations.changed' && this.can('menu.skillValidations')) {
-        this.skillValidationDirty = true;
-        if (this.activeView === 'skill-inventory' && this.skillInventoryTab === 'validations') {
-          this.schedulePlatformRefresh('skill-validations', () => this.refreshSkillValidations({ silent: true }));
-        }
+      const type = String(event.type || '').trim();
+      if (type === 'skill-version-overrides.changed' && this.can('menu.skillList')) {
+        this.schedulePlatformRefresh('skill-version-overrides', async () => {
+          await this.refreshSkillVersionOverrides();
+          this.saveWorkbenchDisplayCache('scans', this.scans);
+        });
       }
-      if (type === 'art-progress-events.changed' && this.can('menu.skillEvents')) {
-        this.schedulePlatformRefresh('art-progress-events', () => this.refreshArtProgressEvents());
-      }
-      if (type === 'art-project-sheet.changed' && this.can('menu.projects')) {
-        this.schedulePlatformRefresh('art-project-sheet', () => this.refreshArtProjectSheet());
-      }
-      if ((type === 'task-art-brief.changed' || type === 'tasks.changed') && this.can('menu.tasks')) {
-        this.schedulePlatformRefresh('tasks', () => this.refreshTasks());
-      }
-      if (type === 'task-processing-notes.changed' && this.can('menu.tasks')) {
-        this.schedulePlatformRefresh('task-processing-notes', () => this.refreshTaskProcessingNotes());
-      }
-      if (type === 'task-art-brief.changed' && this.selectedBusinessTaskId) {
-        this.schedulePlatformRefresh('selected-task-brief', () => this.refreshSelectedBusinessTaskBrief(), 350);
-      }
-      if (type === 'access-control.changed') {
-        this.schedulePlatformRefresh('auth-me', () => this.refreshCurrentUserPermissions(), 500);
-        this.schedulePlatformRefresh('roles', () => this.refreshRoles(), 650);
-        this.schedulePlatformRefresh('users', () => this.refreshUsers(), 650);
-      }
-      if (type === 'operation-logs.changed' && this.can('api.operationLogs.read')) {
-        this.logPulse += 1;
-        if (this.activeView === 'operation-logs') this.schedulePlatformRefresh('operation-logs', () => this.refreshOperationLogs());
-      }
-      if ((type === 'operation-logs.changed' || type === 'task-art-brief.changed') && this.canViewSkillUsageLogs) {
-        this.schedulePlatformRefresh('task-art-brief-usage', () => this.refreshTaskArtBriefUsageLogs(), 500);
-      }
-      if (type === 'skill-version-overrides.changed' && (this.can('menu.skillList') || this.can('menu.skillEvents') || this.can('menu.skillValidations'))) {
-        this.schedulePlatformRefresh('skill-version-overrides', () => this.refreshSkillVersionOverrides(), 350);
+      if (type === 'project-scan-cache.changed' && this.can('menu.skillList')) {
+        this.schedulePlatformRefresh('project-scan-cache', async () => {
+          await this.loadProjectScanCacheForInventory();
+        }, 400);
       }
     },
 
@@ -4188,7 +4541,6 @@ export default {
       this.currentUser = result.user;
       this.forcePasswordDialog = this.currentUser?.mustChangePassword === true;
       this.syncRoute();
-      this.startPlatformEventSync();
     },
 
     async refreshConfig() {
@@ -4207,7 +4559,7 @@ export default {
 
     startZentaoAutoSyncPolling() {
       if (!this.currentUser || this.zentaoAutoSyncPollTimer) return;
-      this.zentaoAutoSyncWasRunning = Boolean(this.appConfig.zentaoAutoSync?.running);
+      this.zentaoAutoSyncWasRunning = this.zentaoSyncRunning;
       this.zentaoAutoSyncPollTimer = window.setInterval(() => {
         this.refreshZentaoAutoSyncStatus();
       }, 5000);
@@ -4222,15 +4574,16 @@ export default {
 
     async refreshZentaoAutoSyncStatus() {
       if (!this.currentUser || this.activeView !== 'tasks' || document.visibilityState === 'hidden') return;
-      const wasRunning = Boolean(this.appConfig.zentaoAutoSync?.running || this.zentaoAutoSyncWasRunning);
+      const wasRunning = Boolean(this.zentaoSyncRunning || this.zentaoAutoSyncWasRunning);
       try {
         await this.refreshConfig();
       } catch {
         return;
       }
-      const isRunning = Boolean(this.appConfig.zentaoAutoSync?.running);
+      const isRunning = this.zentaoSyncRunning;
       if (wasRunning && !isRunning) {
         await Promise.all([this.refreshTasks(), this.refreshBugs()]);
+        this.stopZentaoAutoSyncPolling();
       }
       this.zentaoAutoSyncWasRunning = isRunning;
     },
@@ -4416,12 +4769,13 @@ export default {
       this.loading.projects = true;
       try {
         this.projects = await this.api('/api/projects');
+        this.saveWorkbenchDisplayCache('projects', this.projects);
         if (this.selectedProjectId && !this.projects.some(project => project.id === this.selectedProjectId)) {
           this.selectedProjectId = this.projects[0]?.id || '';
         }
         if (!this.selectedProjectId && this.projects[0]) this.selectedProjectId = this.projects[0].id;
-        this.runForm.projectId = this.selectedProjectId || this.projects[0]?.id || '';
-        if (this.activeView === 'skill-inventory') {
+        if (!this.runDrawer && !this.runForm.projectId) this.runForm.projectId = this.selectedProjectId || this.projects[0]?.id || '';
+        if (this.isSkillInventoryViewActive) {
           this.$nextTick(() => this.ensureSkillInventoryTabData(this.skillInventoryTab || 'assets'));
         }
       } finally {
@@ -4658,6 +5012,7 @@ export default {
 	        }
         this.skillValidationRows = this.filterVisibleSkillValidationRecords(result.records);
 	        this.skillValidationMeta = result;
+          this.saveWorkbenchDisplayCache('skillValidationRows', this.skillValidationRows);
           this.skillValidationLastRefreshAt = Date.now();
           this.skillValidationDirty = false;
           this.clearValidationMatchCache();
@@ -4691,8 +5046,8 @@ export default {
     },
 
     async ensureValidationMappingSources() {
-      if (!this.aiMembersSnapshot && !this.loading.aiMembers) await this.refreshAiMembers();
-      if (!this.aiAssetSheetRows.length && !this.loading.aiAssetSheet) await this.refreshAiAssetSheet();
+      this.restoreWorkbenchDisplayCacheKey('aiMembersSnapshot');
+      this.restoreWorkbenchDisplayCacheKey('aiAssetSheetRows');
     },
 
     openSkillValidationCreate() {
@@ -4836,6 +5191,7 @@ export default {
         this.skillValidationMeta = result;
         this.clearValidationMatchCache();
         this.clearSkillUsageLogCache();
+        this.refreshUsageCounters();
         this.closeSkillValidationDialog();
         ElMessage.success('验证回填已保存');
       } catch (error) {
@@ -4864,6 +5220,7 @@ export default {
         this.skillValidationMeta = result;
         this.clearValidationMatchCache();
         this.clearSkillUsageLogCache();
+        this.refreshUsageCounters();
         ElMessage.success('验证回填已删除');
       } catch (error) {
         ElMessage.error(this.readApiError(error) || '验证回填删除失败');
@@ -4874,11 +5231,11 @@ export default {
 
 
     canEditAiAsset(row = {}) {
-      return this.canManageSkillAssets;
+      return this.canCreateSkillInventoryAsset;
     },
 
     canRestoreAiAsset(row = {}) {
-      return this.canManageSkillAssets;
+      return this.canCreateSkillInventoryAsset;
     },
 
     shouldValidateAiAsset(row = {}) {
@@ -4891,6 +5248,7 @@ export default {
       this.aiAssetDialog = {
         visible: true,
         readonly: true,
+        mode: 'asset',
         form: emptyAiAssetForm(row)
       };
     },
@@ -4903,12 +5261,13 @@ export default {
       this.aiAssetDialog = {
         visible: true,
         readonly: false,
+        mode: 'asset',
         form: emptyAiAssetForm(row)
       };
     },
 
     closeAiAssetDialog() {
-      this.aiAssetDialog = { visible: false, readonly: false, form: emptyAiAssetForm() };
+      this.aiAssetDialog = { visible: false, readonly: false, mode: 'asset', form: emptyAiAssetForm() };
     },
 
     async saveAiAsset() {
@@ -4918,12 +5277,23 @@ export default {
         return;
       }
       const payload = { ...form };
+      if (Array.isArray(payload.owner)) {
+        payload.owner = payload.owner.join('、');
+      }
+      if (this.aiAssetDialog.mode === 'manualSkill') {
+        payload.progressStatus = payload.progressStatus || '待验证';
+        payload.publicStatus = payload.publicStatus || '否';
+        payload.skillPath = payload.skillPath || payload.finalPath || '';
+        payload.fileLink = payload.fileLink || payload.finalPath || '';
+        payload.templateNote = payload.templateNote || '手动创建';
+      }
       if (!this.canManageSkillAssetOwner) {
         const original = this.aiAssetSheetRows.find(row => row.id === payload.id);
-        payload.owner = original?.owner || form.owner || '';
+        payload.owner = original?.owner || payload.owner || '';
       }
       this.loading.aiAssetSheet = true;
       try {
+        const isManualSkill = this.aiAssetDialog.mode === 'manualSkill';
         const result = await this.api('/api/ai-asset-sheet/rows', {
           method: 'POST',
           body: JSON.stringify(payload)
@@ -4931,7 +5301,7 @@ export default {
         this.aiAssetSheetRows = result.rows || [];
         this.aiAssetSheetMeta = result;
         this.closeAiAssetDialog();
-        ElMessage.success('人工研究记录已保存');
+        ElMessage.success(isManualSkill ? '技能已保存' : '人工研究记录已保存');
       } catch (error) {
         ElMessage.error(this.readApiError(error) || '人工研究记录保存失败');
       } finally {
@@ -5094,6 +5464,7 @@ export default {
         this.artProgressEvents = events;
         this.clearSkillUsageLogCache();
         this.saveWorkbenchDisplayCache('artProgressSummary', this.artProgressSummary);
+        this.saveWorkbenchDisplayCache('artProgressEvents', this.artProgressEvents);
         this.artProgressPage = 1;
         this.artProgressLogPage = 1;
         if (this.canViewArtProgressAccessLogs) await this.refreshArtProgressLifecycleLogs();
@@ -5594,6 +5965,7 @@ export default {
       this.loading.aiMembers = true;
       try {
         this.aiMembersSnapshot = await this.api('/api/ai-members');
+        this.saveWorkbenchDisplayCache('aiMembersSnapshot', this.aiMembersSnapshot);
       } catch (error) {
         ElMessage.error(this.readApiError(error) || 'AI 部门成员数据读取失败');
       } finally {
@@ -5601,10 +5973,427 @@ export default {
       }
     },
 
+    ensureAiMemberScoreData() {
+      this.restoreWorkbenchDisplayCacheKey('projects');
+      this.restoreWorkbenchDisplayCacheKey('scans');
+      this.restoreWorkbenchDisplayCacheKey('artProgressEvents');
+      this.restoreWorkbenchDisplayCacheKey('skillValidationRows');
+      this.restoreWorkbenchDisplayCacheKey('runs');
+      this.restoreWorkbenchDisplayCacheKey('aiAssetSheetRows');
+      this.restoreWorkbenchDisplayCacheKey('usageCounters');
+    },
+
+    aiScoreMonthKey(value = new Date()) {
+      const date = value instanceof Date ? value : new Date(value);
+      if (Number.isNaN(date.getTime())) return '';
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    },
+
+    isAiScoreMonthTime(value = '') {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return false;
+      return this.aiScoreMonthKey(date) === this.aiScoreMonthLabel;
+    },
+
+    normalizeAiScorePersonKey(value = '') {
+      return normalizePersonName(this.canonicalArtDeptPerson(value) || value);
+    },
+
+    dedupeAiScoreMembers(members = []) {
+      const map = new Map();
+      for (const member of Array.isArray(members) ? members : []) {
+        const name = this.canonicalArtDeptPerson(member.name || member.realname || member.account) || member.name || member.realname || member.account || '';
+        const key = this.normalizeAiScorePersonKey(name || member.account);
+        if (!key) continue;
+        const existing = map.get(key) || {};
+        map.set(key, {
+          ...member,
+          ...existing,
+          name: existing.name || name,
+          account: existing.account || member.account || '',
+          level: existing.level || member.level || '',
+          status: existing.status || member.status || ''
+        });
+      }
+      return [...map.values()];
+    },
+
+    aiScoreExcludedOwnerKeys() {
+      const members = Array.isArray(this.aiMembersSnapshot?.members) ? this.aiMembersSnapshot.members : [];
+      const ownerValues = [
+        this.defaultSkillInventoryOwnerName(),
+        ...members
+          .filter(member => member.role === 'owner' || member.isOwner === true)
+          .flatMap(member => [member.name, member.realname, member.account])
+      ];
+      if (!ownerValues.some(value => samePerson(value, '张倩文') || samePerson(value, 'zhangqw'))) {
+        ownerValues.push('张倩文', 'zhangqw');
+      }
+      return new Set(ownerValues.map(value => this.normalizeAiScorePersonKey(value)).filter(Boolean));
+    },
+
+    isAiScoreOwnerMember(member = {}) {
+      const excluded = this.aiScoreExcludedOwnerKeys();
+      const values = [member.name, member.realname, member.account];
+      return values.some(value => excluded.has(this.normalizeAiScorePersonKey(value)));
+    },
+
+    isIndependentAiScoreMember(memberName = '', account = '') {
+      return [memberName, account].some(value => samePerson(value, '余盛威') || samePerson(value, 'yushengwei') || samePerson(value, 'ysw'));
+    },
+
+    aiMemberScoreRow(member = {}, summary = null) {
+      const name = this.canonicalArtDeptPerson(member.name || member.realname || member.account) || member.name || member.realname || member.account || '-';
+      const account = member.account || '';
+      const independentScoreMode = this.isIndependentAiScoreMember(name, account);
+      const productItems = this.aiMemberScoreProductItems(member, summary);
+      const productRows = this.aiMemberScoreProductRows(name, summary);
+      const monthUsageLogs = this.aiMemberScoreEffectiveUsageLogs(name, productRows);
+      const monthUsageCount = Math.max(monthUsageLogs.length, this.aiMemberScoreHistoricalUsageCount(name, productRows));
+      const monthValidations = independentScoreMode ? [] : this.aiMemberScoreValidationRows(name, productRows);
+      const monthRuns = this.aiMemberScoreRunRows(name, account);
+      const productValue = this.aiMemberScoreProductValue(productRows, productItems, independentScoreMode);
+      const blockedSources = independentScoreMode
+        ? [
+          ...monthRuns.map(run => run.status),
+          ...monthUsageLogs.map(log => `${log.type || ''} ${log.content || ''} ${log.summary || ''}`)
+        ]
+        : [
+        ...monthRuns.map(run => run.status),
+        ...monthUsageLogs.map(log => `${log.type || ''} ${log.content || ''} ${log.summary || ''}`),
+        ...monthValidations.map(row => `${row.status || ''} ${row.validationResult || ''} ${row.notes || ''}`)
+        ];
+      const blockedCount = blockedSources.filter(text => /failed|blocked|失败|阻塞|不可用|不通过|返工/i.test(String(text || ''))).length;
+
+      const productScore = productValue.score;
+      const usedProductCount = new Set(monthUsageLogs.map(log => log.productKey || log.target).filter(Boolean)).size;
+      const validationProductCount = new Set(monthValidations.map(row => row.productKey || row.artifactKey || row.id).filter(Boolean)).size;
+      const usageScore = independentScoreMode
+        ? Math.min(20, monthUsageCount * 5 + usedProductCount * 5)
+        : Math.min(35, monthUsageCount * 3 + usedProductCount * 5 + validationProductCount * 4);
+      const runScore = independentScoreMode
+        ? Math.min(15, monthRuns.length * 8)
+        : Math.min(25, monthRuns.length * 6 + Math.min(7, usedProductCount) * 2);
+      const penalty = Math.min(12, blockedCount * 3);
+      const score = Math.max(0, Math.min(100, Math.round(productScore + usageScore + runScore - penalty)));
+      return {
+        name,
+        account,
+        level: member.level || '',
+        status: member.status || '',
+        score,
+        productScore,
+        usageScore,
+        runScore,
+        penalty,
+        productCount: productItems.length,
+        productValueScore: productValue.raw,
+        productValueLevel: productValue.level,
+        monthUsageCount,
+        monthValidationCount: monthValidations.length,
+        monthRunCount: monthRuns.length,
+        blockedCount,
+        topProducts: productItems.slice(0, 3),
+        latestActivityAt: [
+          ...monthUsageLogs.map(log => log.time),
+          ...monthValidations.map(row => row.submittedAt || row.updatedAt || row.createdAt),
+          ...monthRuns.map(run => run.finishedAt || run.startedAt || run.createdAt)
+        ].filter(Boolean).sort().pop() || '',
+        reason: independentScoreMode
+          ? '独立产物口径：产物价值、个人使用和执行活跃综合计算'
+          : '常规口径：按有效产物价值、闭环使用、互验去重和执行活跃综合计算'
+      };
+    },
+
+    aiMemberScoreProductValue(productRows = [], productItems = [], independentScoreMode = false) {
+      const cap = independentScoreMode ? 60 : 40;
+      const rows = Array.isArray(productRows) ? productRows.filter(row => row && row.hidden !== true) : [];
+      const rowValueTotal = rows
+        .map(row => this.aiScoreProductRowValue(row).value)
+        .reduce((sum, value) => sum + value, 0);
+      const unmatchedCount = Math.max(0, (Array.isArray(productItems) ? productItems.length : 0) - rows.length);
+      const fallbackValue = unmatchedCount * (independentScoreMode ? 4 : 3);
+      const raw = Math.round((rowValueTotal + fallbackValue) * 10) / 10;
+      return {
+        raw,
+        score: Math.min(cap, Math.round(raw)),
+        level: raw >= cap * 0.8 ? '高价值' : raw >= cap * 0.45 ? '可复用' : '基础沉淀'
+      };
+    },
+
+    aiScoreProductRowValue(row = {}) {
+      const usage = this.skillInventoryUsageStatsForList(row);
+      const quality = Number(this.skillQualityScore(row) ?? 0);
+      const usageCount = Number(usage.count || row.usageCount || 0);
+      const peopleCount = Number(usage.peopleCount || row.usagePeopleCount || 0);
+      const usageRate = Number(usage.rate || row.usageRate || 0);
+      const versionMajor = Number(this.skillInventoryVersionMajor(row));
+      const isSkill = this.isSkillInventorySkillProduct(row);
+      const isStandard = this.isSkillInventoryStandardProduct(row);
+      const sceneText = this.skillSceneText(row, '');
+      const fullTeamIntent = /全员|部门|通用|公共|统一|规范|标准|流程|复用|多人|批量|自动|工作流/i.test([
+        row.productDisplayName,
+        row.productFileName,
+        row.title,
+        sceneText,
+        row.skill?.description,
+        row.skill?.summary
+      ].join('\n'));
+      const base = isSkill ? 3.5 : isStandard ? 3 : 2.5;
+      const qualityBonus = quality >= 85 ? 2.5 : quality >= 70 ? 1.5 : quality >= 55 ? 0.8 : 0;
+      const peopleBonus = peopleCount >= 6 ? 6 : peopleCount >= 3 ? 3.5 : peopleCount >= 1 ? 1.4 : 0;
+      const usageBonus = usageCount >= 20 ? 4 : usageCount >= 10 ? 3 : usageCount >= 3 ? 1.8 : usageCount >= 1 ? 0.8 : 0;
+      const rateBonus = usageRate >= 85 ? 2 : usageRate >= 45 ? 1 : 0;
+      const versionBonus = versionMajor >= 3 ? 3 : versionMajor >= 2 ? 1.5 : 0;
+      const scopeBonus = fullTeamIntent ? 2 : 0;
+      const riskMultiplier = this.aiScoreProductValueMultiplier(row, { usageCount, peopleCount, usageRate, fullTeamIntent });
+      return {
+        value: Math.max(0, Math.min(16, (base + qualityBonus + peopleBonus + usageBonus + rateBonus + versionBonus + scopeBonus) * riskMultiplier)),
+        usageCount,
+        peopleCount,
+        quality,
+        usageRate,
+        versionMajor,
+        riskMultiplier
+      };
+    },
+
+    aiScoreProductValueMultiplier(row = {}, stats = {}) {
+      if (row.hidden === true) return 0;
+      const text = [
+        row.productDisplayName,
+        row.productFileName,
+        row.title,
+        this.skillSceneText(row, ''),
+        row.skill?.description,
+        row.skill?.summary,
+        row.statusLabel
+      ].map(value => String(value || '')).join('\n');
+      const isDeprecated = /作废|废弃|不用|不再使用|已替代|被替代|淘汰/i.test(text);
+      if (isDeprecated) return 0;
+      const isNarrow = /专项|单人|个人|临时|一次性|仅.*项目|只.*项目|针对.*单|针对.*任务|复用率低|针对性不强/i.test(text);
+      const lowReuse = Number(stats.peopleCount || 0) <= 1 && Number(stats.usageCount || 0) <= 2 && !stats.fullTeamIntent;
+      if (isNarrow && lowReuse) return 0.45;
+      if (isNarrow) return 0.65;
+      if (lowReuse) return 0.75;
+      return 1;
+    },
+
+    aiMemberScoreProductItems(member = {}, summary = null) {
+      const boardItems = Array.isArray(summary?.purposes)
+        ? summary.purposes
+        : this.visibleAiBoardMemberProductItems(member);
+      const inventoryItems = this.aiMemberScoreInventoryProductItems(member.name || member.realname || member.account || '', summary);
+      return this.dedupeMemberProductItems([...boardItems, ...inventoryItems]);
+    },
+
+    aiMemberScoreInventoryProductItems(memberName = '', summary = null) {
+      const rows = Array.isArray(summary?.inventoryRows) ? summary.inventoryRows : this.aiMemberScoreProductRows(memberName, summary);
+      return this.dedupeMemberProductItems(
+        rows
+          .filter(row => row.hidden !== true)
+          .map(row => this.skillInventoryRowProductName(row))
+          .filter(Boolean)
+      );
+    },
+
+    aiMemberScoreProductRows(memberName = '', summary = null) {
+      const rows = Array.isArray(summary?.inventoryRows) ? summary.inventoryRows.filter(row => row.hidden !== true) : [];
+      const directRows = this.skillInventoryAssetRows
+        .filter(row => row.hidden !== true)
+        .filter(row => this.isFinishedSkillInventoryRow(row))
+        .filter(row => this.skillInventoryRowBelongsToMember(row, memberName, summary?.purposes || [], []));
+      const map = new Map();
+      [...rows, ...directRows].forEach(row => {
+        const key = this.skillInventoryProductNameKey(row);
+        if (key && !map.has(key)) map.set(key, row);
+      });
+      return [...map.values()];
+    },
+
+    aiMemberScoreUsageLogs(memberName = '', productRows = []) {
+      const personKey = this.normalizeAiScorePersonKey(memberName);
+      const logs = [];
+      for (const row of productRows) {
+        for (const log of this.skillUsageLogs(row)) {
+          if (this.normalizeAiScorePersonKey(log.person) === personKey) {
+            logs.push({
+              ...log,
+              productKey: this.skillInventoryProductNameKey(row) || this.skillInventoryRowProductName(row) || log.target || row.id || ''
+            });
+          }
+        }
+      }
+      const seen = new Set();
+      return logs.filter(log => {
+        const key = log.id || `${log.time}:${log.target}:${log.summary}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    },
+
+    aiMemberScoreEffectiveUsageLogs(memberName = '', productRows = []) {
+      const logs = this.aiMemberScoreUsageLogs(memberName, productRows)
+        .filter(log => this.isAiScoreMonthTime(log.time))
+        .filter(log => this.isAiScoreClosedLoopUsageLog(log));
+      const seen = new Set();
+      return logs.filter(log => {
+        const productKey = String(log.productKey || log.target || '').trim();
+        const taskKey = String(log.task || log.code || this.aiScoreMonthLabel || '').trim();
+        const dayKey = String(log.time || '').slice(0, 10);
+        const key = `${productKey}::${taskKey || dayKey}::${String(log.summary || '').trim()}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    },
+
+    isAiScoreClosedLoopUsageLog(log = {}) {
+      const text = [
+        log.type,
+        log.summary,
+        log.content,
+        log.matchReason,
+        log.raw?.summary,
+        log.raw?.title,
+        log.raw?.status,
+        log.raw?.validationResult,
+        log.raw?.metadata?.result,
+        log.raw?.metadata?.output,
+        log.raw?.metadata?.artifactPath,
+        log.raw?.metadata?.artifactLocation
+      ].map(value => String(value || '')).join('\n');
+      const hasUseSignal = /调用|使用|复用|验证|执行|实验|测试|figma|mcp|生成|写入|导出/i.test(text);
+      const hasResultSignal = /已完成|完成|通过|失败|可用|不可用|结论|反馈|回馈|结果|输出|生成|写入|导出|发现问题|建议|适用|不适用/i.test(text);
+      return hasUseSignal && hasResultSignal;
+    },
+
+    aiMemberScoreHistoricalUsageCount(memberName = '', productRows = []) {
+      const personKey = this.normalizeAiScorePersonKey(memberName);
+      if (!personKey) return 0;
+      let count = 0;
+      for (const row of productRows) {
+        const historical = this.usageCounterStatsForRow(row);
+        Object.entries(historical.people || {}).forEach(([person, personCount]) => {
+          if (this.normalizeAiScorePersonKey(person) === personKey) {
+            count += Number(personCount || 0);
+          }
+        });
+      }
+      return count;
+    },
+
+    aiMemberScoreValidationRows(memberName = '', productRows = []) {
+      const personKey = this.normalizeAiScorePersonKey(memberName);
+      const productOwnerKeysByProductKey = new Map();
+      productRows.forEach(row => {
+        const productKey = this.skillInventoryProductNameKey(row) || this.skillInventoryRowProductName(row) || row.id || '';
+        if (!productKey) return;
+        const ownerKeys = [
+            ...this.canonicalPersonList(row.owner),
+            ...this.canonicalPersonList(row.uploader),
+            ...this.canonicalPersonList(row.flowOwner),
+            ...this.canonicalPersonList(row.skill?.owner),
+            ...this.canonicalPersonList(row.skill?.uploaderName),
+            this.uploaderFromSource(row.source)
+          ]
+          .map(person => this.normalizeAiScorePersonKey(person))
+          .filter(Boolean);
+        productOwnerKeysByProductKey.set(productKey, new Set(ownerKeys));
+      });
+      const productKeyByValidationKey = new Map();
+      productRows.forEach(row => {
+        const key = this.skillInventoryProductNameKey(row) || this.skillInventoryRowProductName(row) || row.id || '';
+        this.validationRowFileKeys(row).forEach(validationKey => {
+          if (validationKey && key) productKeyByValidationKey.set(validationKey, key);
+        });
+      });
+      const seen = new Set();
+      return (this.skillValidationRows || [])
+        .filter(row => this.isAiScoreMonthTime(row.submittedAt || row.updatedAt || row.createdAt || row.importedAt))
+        .filter(row => {
+          const people = [
+            row.validator,
+            row.walkthroughOwner,
+            row.owner,
+            row.memberName,
+            row.memberAccount,
+            row.updatedBy
+          ];
+          return people.some(person => this.normalizeAiScorePersonKey(person) === personKey);
+        })
+        .map(row => {
+          const matchedKey = this.validationNameCandidatesFromRecord(row)
+            .map(value => this.normalizeValidationMatchText(value))
+            .find(key => productKeyByValidationKey.has(key));
+          const productKey = productKeyByValidationKey.get(matchedKey) || this.skillValidationArtifactCountKey(row) || matchedKey || row.id || '';
+          return { ...row, productKey, artifactKey: productKey };
+        })
+        .filter(row => {
+          const owners = [
+            ...this.canonicalPersonList(row.owner),
+            ...this.canonicalPersonList(row.walkthroughOwner),
+            ...this.validationOwnerListFromMemberProducts(row)
+          ].map(person => this.normalizeAiScorePersonKey(person)).filter(Boolean);
+          const rowOwnerKeys = productOwnerKeysByProductKey.get(row.productKey) || new Set();
+          const verifiesOwnProduct = owners.includes(personKey) || rowOwnerKeys.has(personKey);
+          return !verifiesOwnProduct;
+        })
+        .filter(row => {
+          const key = `${personKey}::${row.productKey || row.artifactKey || row.id}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+    },
+
+    aiMemberScoreRunRows(memberName = '', account = '') {
+      const personKey = this.normalizeAiScorePersonKey(memberName);
+      const accountKey = this.normalizeAiScorePersonKey(account);
+      return (this.runs || [])
+        .filter(run => this.isAiScoreMonthTime(run.finishedAt || run.startedAt || run.createdAt))
+        .filter(run => this.isAiScoreCompletedRun(run))
+        .filter(run => {
+          const people = [
+            run.developer,
+            run.createdBy,
+            run.startedBy,
+            run.ownerUserId
+          ];
+          return people.some(person => {
+            const key = this.normalizeAiScorePersonKey(person);
+            return key && (key === personKey || key === accountKey);
+          });
+        });
+    },
+
+    isAiScoreCompletedRun(run = {}) {
+      const statusText = String(run.status || run.platformStatus || run.resultStatus || '').toLowerCase();
+      if (/cancel|canceled|cancelled|failed|blocked|error|deleted|draft|pending|queued|running|in_progress|wait/.test(statusText)) return false;
+      if (/done|success|passed|completed|finished|approved|完成|通过|成功/.test(statusText)) return true;
+      return Boolean(run.finishedAt || run.completedAt || run.resultPath || run.artifactRoot);
+    },
+
+    aiScoreClass(score = 0) {
+      if (score >= 85) return 'is-good';
+      if (score >= 70) return 'is-stable';
+      if (score >= 55) return 'is-watch';
+      return 'is-low';
+    },
+
+    aiScoreLevelLabel(score = 0) {
+      if (score >= 85) return '优秀';
+      if (score >= 70) return '稳定';
+      if (score >= 55) return '待提升';
+      return '需关注';
+    },
+
     async refreshRuns() {
       this.loading.runs = true;
       try {
         this.runs = await this.api('/api/runs');
+        this.saveWorkbenchDisplayCache('runs', this.runs);
         if (!this.selectedRunId && this.runs[0]) this.selectedRunId = this.runs[0].id;
         if (this.selectedRunId) await this.loadSelectedRunLog();
       } finally {
@@ -5637,6 +6426,7 @@ export default {
       try {
         const notes = await this.api('/api/task-processing-notes');
         this.taskProcessingNotes = Object.fromEntries((Array.isArray(notes) ? notes : []).map(note => [note.taskId, note]));
+        this.saveWorkbenchDisplayCache('taskProcessingNotes', this.taskProcessingNotes);
       } catch {
         console.warn('任务处理记录读取失败，已保留当前列表');
       }
@@ -5784,13 +6574,14 @@ export default {
         this.operationLogTotal = Number(result.total || 0);
         this.operationLogPage = Number(result.page || this.operationLogPage);
         this.operationLogPageSize = Number(result.pageSize || this.operationLogPageSize);
+        this.saveWorkbenchDisplayCache('operationLogs', this.operationLogs);
       } finally {
         this.loading.operationLogs = false;
       }
     },
 
     async refreshUsageCounters() {
-      if (!this.canViewSkillUsageLogs && !this.can('menu.skillList') && !this.can('menu.skillEvents') && !this.can('menu.skillValidations')) {
+      if (!this.canViewSkillUsageLogs && !this.can('menu.skillList')) {
         this.usageCounters = null;
         return null;
       }
@@ -5811,10 +6602,56 @@ export default {
         userId: '',
         module: '',
         result: '',
-        keyword: ''
+        keyword: '',
+        from: '',
+        to: ''
       };
       this.operationLogPage = 1;
       this.refreshOperationLogs();
+    },
+
+    operationLogActiveDeleteFilters() {
+      const filters = {};
+      Object.entries(this.operationLogFilters || {}).forEach(([key, value]) => {
+        const text = String(value ?? '').trim();
+        if (text) filters[key] = text;
+      });
+      return filters;
+    },
+
+    async deleteOperationLogsByCurrentFilters() {
+      if (!this.can('api.operationLogs.delete')) {
+        ElMessage.warning('当前角色不能删除操作日志。');
+        return;
+      }
+      const filters = this.operationLogActiveDeleteFilters();
+      const hasFilters = Object.keys(filters).length > 0;
+      const rangeText = hasFilters ? '当前筛选范围内' : '全部';
+      const confirmed = await ElMessageBox.confirm(
+        `确认删除${rangeText}操作日志？删除后不会继续占用后台日志数据量。`,
+        '删除操作日志',
+        {
+          confirmButtonText: hasFilters ? '删除当前范围' : '删除全部日志',
+          cancelButtonText: '取消',
+          type: 'warning',
+          confirmButtonClass: 'el-button--danger'
+        }
+      ).then(() => true).catch(() => false);
+      if (!confirmed) return;
+      this.loading.operationLogs = true;
+      try {
+        const result = await this.api('/api/operation-logs', {
+          method: 'DELETE',
+          body: JSON.stringify({ filters })
+        });
+        this.operationLogPage = 1;
+        await this.refreshOperationLogs();
+        ElMessage.success(`已删除 ${Number(result.deletedCount || 0)} 条操作日志`);
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || '操作日志删除失败');
+      } finally {
+        this.loading.operationLogs = false;
+      }
     },
 
     openOperationLogDetail(row) {
@@ -5934,8 +6771,12 @@ export default {
       const scenes = this.skillScenes(skill);
       const version = String(skill.version || '1.0').trim() || '1.0';
       const relativePath = skill.git?.relativePath || skill.relativePath || skill.path || '';
-      const productFileName = this.fileNameFromPath(relativePath) || this.fileNameFromPath(skill.path) || skill.id;
-      const productDisplayName = skill.title || productFileName;
+      const isDirectoryProduct = skill.directoryProduct === true || skill.inventoryKind === 'directory';
+      const directoryName = isDirectoryProduct
+        ? (skill.productDisplayName || skill.productFileName || this.fileNameFromPath(skill.relativePath) || this.fileNameFromPath(skill.path))
+        : '';
+      const productFileName = directoryName || skill.productFileName || skill.displayName || this.fileNameFromPath(relativePath) || this.fileNameFromPath(skill.path) || skill.id;
+      const productDisplayName = directoryName || skill.productDisplayName || skill.displayName || skill.title || productFileName;
       const aliases = this.normalizeSkillAliasList([
         ...(Array.isArray(skill.aliases) ? skill.aliases : []),
         ...this.generateSkillAliases({ ...skill, relativePath })
@@ -5969,9 +6810,19 @@ export default {
         uploadedAt: skill.uploadedAt || skill.git?.uploadedAt || '',
         skill: { ...skill, aliases }
       };
-      const usage = this.skillInventoryUsageStats(baseRow);
+      const metrics = this.skillInventoryRowMetrics(baseRow);
       return {
         ...baseRow,
+        ...metrics
+      };
+    },
+
+    skillInventoryRowMetrics(row = {}) {
+      const key = this.skillInventoryRowMetricsKey(row);
+      const cached = key ? this.skillInventoryMetricsCache?.[key] : null;
+      if (cached) return cached;
+      const usage = this.skillInventoryUsageStats(row);
+      const metrics = {
         usageCount: usage.count,
         usageRate: usage.rate,
         usagePeopleCount: usage.peopleCount,
@@ -5979,6 +6830,21 @@ export default {
         validationCount: usage.validationCount,
         researchSyncCount: usage.researchSyncCount
       };
+      if (key) this.skillInventoryMetricsCache[key] = metrics;
+      return metrics;
+    },
+
+    skillInventoryRowMetricsKey(row = {}) {
+      return [
+        row.uid || row.id || row.productDisplayName || row.title || '',
+        row.relativePath || row.path || '',
+        row.version || row.skill?.version || '',
+        row.hidden === true ? 'hidden' : 'visible',
+        this.usageCounters?.updatedAt || '',
+        this.artProgressEvents.length,
+        this.artProgressOperationLogRows.length,
+        this.taskArtBriefUsageLogs.length
+      ].join('::');
     },
 
     buildSkillInventoryValidationCandidateRow(projectRow = {}, skill = {}) {
@@ -6044,6 +6910,10 @@ export default {
 
     skillInventoryDedupeKey(row = {}) {
       if (this.isTaskArtBriefAssetRow(row)) return 'zentao-art-brief-product';
+      if (row.skillInventoryKind === 'directory' || row.skill?.inventoryKind === 'directory' || row.skill?.directoryProduct === true || row.skill?.fileProduct === true) {
+        const fileName = row.productFileName || this.fileNameFromPath(row.relativePath) || this.fileNameFromPath(row.path) || row.productDisplayName || row.title;
+        return this.normalizeValidationMatchText(fileName) || this.normalizeValidationMatchText(row.id || row.uid || '');
+      }
       const names = [
         row.productDisplayName,
         row.productFileName,
@@ -6075,19 +6945,62 @@ export default {
 
     skillInventoryUsageStatsForList(row = {}) {
       const historical = this.usageCounterStatsForRow(row);
-      const validationRows = this.skillValidationRows || [];
-      const validationLogs = validationRows.filter(item => this.skillInventoryRecordMatch(row, item, 'validation').matched);
-      const people = new Set(validationLogs.map(item => this.canonicalArtDeptPerson(item.validator || item.walkthroughOwner) || item.validator).filter(Boolean));
+      const people = new Set();
       Object.keys(historical.people || {}).forEach(person => {
         if (person) people.add(person);
       });
-      const validationCoverage = this.skillUsageCoverageStats(row, validationLogs.map(item => ({ raw: item })));
-      const validationCount = validationLogs.length + Number(historical.validationCount || 0);
-      const researchSyncCount = Number(historical.researchSyncCount || 0);
-      const count = validationCount + researchSyncCount + Number(historical.usageCount || 0);
-      const rate = validationCoverage.rate;
+      const hasHistorical = this.hasUsageCounterStats(historical);
+      const fallbackLogs = hasHistorical ? [] : this.skillUsageLogs(row);
+      if (!hasHistorical) {
+        fallbackLogs.forEach(item => {
+          if (item.person) people.add(item.person);
+        });
+      }
+      const count = hasHistorical ? Number(historical.count || 0) : fallbackLogs.length;
+      const targetCount = 7;
+      const rate = targetCount ? Math.min(100, Math.round((people.size / targetCount) * 100)) : 0;
       const average = people.size ? Math.round((count / people.size) * 10) / 10 : 0;
-      return { count, rate, peopleCount: people.size, average, validationCoverage, validationCount, researchSyncCount };
+      return {
+        count,
+        rate,
+        peopleCount: people.size,
+        average,
+        validationCoverage: { rate, targetCount, validatedCount: Math.min(people.size, targetCount) },
+        validationCount: 0,
+        researchSyncCount: 0
+      };
+    },
+
+    isExcludedSkillVersionUsagePerson(person = '') {
+      const name = this.canonicalArtDeptPerson(person) || String(person || '').trim();
+      const raw = String(person || '').trim().toLowerCase();
+      const current = this.currentAccountPrimaryPersonName || this.currentUser?.displayName || this.currentUser?.realname || this.currentUser?.username || '';
+      if (name && current && samePerson(name, current)) return true;
+      if (samePerson(name, '余盛威') || samePerson(name, '盛威') || samePerson(raw, 'ysw') || samePerson(raw, 'yushengwei')) return true;
+      return /^(ysw|yushengwei|yu\s*sheng\s*wei)$/i.test(raw);
+    },
+
+    skillEffectiveUsagePeople(row = {}) {
+      const people = new Set();
+      const addPerson = person => {
+        const name = this.canonicalArtDeptPerson(person) || String(person || '').trim();
+        if (!name || name === '-' || this.isExcludedSkillVersionUsagePerson(name)) return;
+        people.add(name);
+      };
+      this.skillUsageLogs(row).forEach(item => addPerson(item.person));
+      const historical = this.usageCounterStatsForRow(row);
+      Object.keys(historical.people || {}).forEach(addPerson);
+      return [...people];
+    },
+
+    skillInventoryVersionMajor(rowOrVersion = {}) {
+      if (rowOrVersion && typeof rowOrVersion === 'object') {
+        const peopleCount = this.skillEffectiveUsagePeople(rowOrVersion).length;
+        if (peopleCount >= 6) return '3';
+        if (peopleCount >= 3) return '2';
+        return '1';
+      }
+      return this.skillVersionMajor(rowOrVersion);
     },
 
     skillInventoryUsageStatsForDetail(row = {}) {
@@ -6098,19 +7011,21 @@ export default {
         if (person) people.add(person);
       });
       const validationCoverage = this.skillUsageCoverageStats(row, usageLogs);
-      const count = usageLogs.length + historical.count;
-      const liveValidationCount = usageLogs.filter(item => item.type === '验证回填').length;
-      const liveResearchSyncCount = usageLogs.filter(item => item.type !== '验证回填').length;
-      const validationCount = liveValidationCount + Number(historical.validationCount || 0);
-      const researchSyncCount = liveResearchSyncCount + Number(historical.researchSyncCount || 0);
+      const count = this.hasUsageCounterStats(historical) ? Number(historical.count || 0) : usageLogs.length;
       const rate = validationCoverage.rate;
       const average = people.size ? Math.round((count / people.size) * 10) / 10 : 0;
-      return { count, rate, peopleCount: people.size, average, validationCoverage, validationCount, researchSyncCount };
+      return { count, rate, peopleCount: people.size, average, validationCoverage, validationCount: 0, researchSyncCount: 0 };
+    },
+
+    hasUsageCounterStats(stats = {}) {
+      return Number(stats.bucketCount || 0) > 0
+        || Number(stats.count || 0) > 0
+        || Object.keys(stats.people || {}).length > 0;
     },
 
     usageCounterStatsForRow(row = {}) {
       const buckets = this.usageCounters?.buckets || {};
-      if (!buckets || typeof buckets !== 'object') return { count: 0, people: {}, usageCount: 0, validationCount: 0, researchSyncCount: 0 };
+      if (!buckets || typeof buckets !== 'object') return { count: 0, people: {}, usageCount: 0, validationCount: 0, researchSyncCount: 0, bucketCount: 0 };
       const keys = this.usageRowExplicitTargetKeys(row);
       if (this.isTaskArtBriefAssetRow(row)) keys.push('zentaoartbriefproduct');
       const seen = new Set();
@@ -6133,7 +7048,7 @@ export default {
           people[person] = Number(people[person] || 0) + Number(personCount || 0);
         });
       });
-      return { count, people, usageCount, validationCount, researchSyncCount };
+      return { count, people, usageCount, validationCount, researchSyncCount, bucketCount: seen.size };
     },
 
     skillUsageCoveragePeople() {
@@ -6172,45 +7087,20 @@ export default {
     },
 
     skillUsageCoverageStats(row = {}, logs = []) {
-      const isTaskArtBrief = this.isTaskArtBriefAssetRow(row);
-      const isMemberReporter = this.isMemberArtReporterRow(row);
-      const targetPeople = isMemberReporter
-        ? this.memberArtReporterCoveragePeople()
-        : isTaskArtBrief
-          ? this.taskArtBriefCoveragePeople()
-          : this.skillUsageCoveragePeople();
-      const ownerPeople = this.personList(row.uploader || row.owner || row.skill?.ownerOverride || row.skill?.owner || '');
+      const targetCount = 7;
       const effectivePeople = new Set();
-      let specialSingleUserCount = 0;
       logs.forEach(record => {
         if (!this.isPositiveSkillUsageRecord(record)) return;
         const person = this.canonicalArtDeptPerson(record.person || record.raw?.validator || record.raw?.walkthroughOwner || record.raw?.memberName || record.raw?.memberAccount || '');
         if (!person) return;
-        if (isMemberReporter) {
-          if (targetPeople.some(target => samePerson(target, person))) effectivePeople.add(normalizePersonName(person));
-          return;
-        }
-        if (this.isSpecialSingleUserCoveragePerson(person)) {
-          specialSingleUserCount += 1;
-          return;
-        }
-        if (!isTaskArtBrief && this.isExcludedSkillUsageCoveragePerson(person)) return;
-        if (!targetPeople.some(target => samePerson(target, person))) return;
         effectivePeople.add(normalizePersonName(person));
       });
-      const targetCount = targetPeople.length || 6;
       const effectiveCount = Math.min(effectivePeople.size, targetCount);
-      const peopleRate = targetCount ? Math.min(100, Math.round((effectiveCount / targetCount) * 100)) : 0;
-      const specialRate = specialSingleUserCount >= 20 ? 100 : Math.min(100, Math.round((specialSingleUserCount / 20) * 100));
-      const ownerIsSpecialOnly = ownerPeople.length > 0 && ownerPeople.every(person => this.isSpecialSingleUserCoveragePerson(person));
-      const rate = ownerIsSpecialOnly && specialSingleUserCount > 0
-        ? Math.max(peopleRate, specialRate)
-        : peopleRate;
       return {
         targetCount,
         validatedCount: effectiveCount,
-        specialSingleUserCount,
-        rate
+        specialSingleUserCount: 0,
+        rate: targetCount ? Math.min(100, Math.round((effectiveCount / targetCount) * 100)) : 0
       };
     },
 
@@ -6235,10 +7125,11 @@ export default {
     },
 
     aiAssetUsageStats(row = {}) {
-      const usageLogs = this.skillUsageLogs(this.aiAssetAsSkillUsageRow(row));
+      const usageRow = this.aiAssetAsSkillUsageRow(row);
+      const historical = this.usageCounterStatsForRow(usageRow);
       return {
-        count: usageLogs.length,
-        peopleCount: new Set(usageLogs.map(item => item.person).filter(Boolean)).size
+        count: Number(historical.count || 0),
+        peopleCount: Object.keys(historical.people || {}).length
       };
     },
 
@@ -6372,6 +7263,42 @@ export default {
       return output.slice(0, 12);
     },
 
+    extractSkillAliasesFromContent(content = '') {
+      const raw = String(content || '');
+      if (!raw.trim()) return [];
+      const aliases = [];
+      const pushList = value => {
+        String(value || '')
+          .replace(/[；;]/g, '、')
+          .split(/[、,，\n\r]+/)
+          .map(item => item.trim().replace(/^[-*]\s*/, '').replace(/^["“”'‘’]+|["“”'‘’。；;]+$/g, ''))
+          .filter(Boolean)
+          .forEach(item => aliases.push(item));
+      };
+      const linePatterns = [
+        /(?:触发(?:意图|场景|关键词|词)?|调用(?:别名|词|方式|语)?|唤起词|关键词|适用场景|使用场景)[：:]\s*(.+)$/i,
+        /(?:用户|成员|使用者|组员)(?:通常|可以|会|可能)?(?:说|输入|提到|描述)[：:]\s*(.+)$/i,
+        /(?:可以这样说|常用说法|示例(?:指令|话术|提问)?|Prompt)[：:]\s*(.+)$/i,
+        /^Use when\s+(.+)$/i
+      ];
+      raw.split(/\r?\n/).forEach(line => {
+        const text = line.trim();
+        if (!text || text.length > 220) return;
+        for (const pattern of linePatterns) {
+          const match = text.match(pattern);
+          if (match?.[1]) {
+            pushList(match[1]);
+            break;
+          }
+        }
+      });
+      const quoted = [...raw.matchAll(/[“"']([^“”"'\n]{2,60})[”"']/g)]
+        .map(match => match[1])
+        .filter(text => /使用|调用|检查|生成|修复|优化|同步|执行|验证|走查|处理|帮我|请/.test(text));
+      pushList(quoted.join('、'));
+      return this.normalizeSkillAliasList(aliases);
+    },
+
     generateSkillAliases(skill = {}) {
       const pathValue = String(skill.git?.relativePath || skill.relativePath || skill.path || '').replace(/\\/g, '/').trim();
       const fileName = this.fileNameFromPath(pathValue);
@@ -6380,12 +7307,16 @@ export default {
       const fileBase = this.cleanSkillAliasName(fileName.replace(/\.(md|markdown)$/i, ''));
       const parentAlias = this.cleanSkillAliasName(parentName);
       const titleAlias = this.cleanSkillAliasName(skill.title);
+      const displayAlias = this.cleanSkillAliasName(skill.productDisplayName || skill.productFileName || skill.name);
       const preferredName = this.isGenericSkillAliasName(fileBase) ? parentAlias : fileBase;
       const values = [
+        displayAlias,
         preferredName,
         titleAlias && titleAlias !== preferredName ? titleAlias : '',
         parentAlias && this.isGenericSkillAliasName(fileBase) ? `${parentAlias} Skill` : '',
-        preferredName && !/(文档|规范|规则|清单|流程|指南|标准|模板|说明)$/i.test(preferredName) ? `${preferredName}文档` : ''
+        preferredName && !/(文档|规范|规则|清单|流程|指南|标准|模板|说明)$/i.test(preferredName) ? `${preferredName}文档` : '',
+        ...(Array.isArray(skill.triggers) ? skill.triggers : []),
+        ...(Array.isArray(skill.previewAliases) ? skill.previewAliases : [])
       ];
       return this.normalizeSkillAliasList(values);
     },
@@ -6407,11 +7338,121 @@ export default {
     },
 
     skillVersionClass(version = '') {
+      if (version && typeof version === 'object') {
+        return `version-${this.skillInventoryVersionMajor(version)}`;
+      }
       const normalized = String(version || '').trim();
-      if (/^1(?:\.0)?$/.test(normalized)) return 'version-1';
-      if (/^2(?:\.0)?$/.test(normalized)) return 'version-2';
-      if (/^3(?:\.0)?$/.test(normalized)) return 'version-3';
+      if (/^v?1(?:\.0)?$/i.test(normalized)) return 'version-1';
+      if (/^v?2(?:\.0)?$/i.test(normalized)) return 'version-2';
+      if (/^v?3(?:\.0)?$/i.test(normalized)) return 'version-3';
       return 'version-custom';
+    },
+
+    skillVersionMajor(version = '') {
+      const normalized = String(version || '1.0').trim();
+      const matched = normalized.match(/([123])(?:\.0)?/);
+      return matched?.[1] || '1';
+    },
+
+    canEditSkillInventoryOwnerRow(row = {}) {
+      if (!this.canOperateSkillInventoryOwner) return false;
+      const sourceType = String(this.projectRows.find(project => project.id === row.projectId)?.sourceType || '').toLowerCase();
+      return row.skill?.directoryProduct === true
+        || row.skillInventoryKind === 'directory'
+        || ['local', 'shared'].includes(sourceType);
+    },
+
+    skillVersionDisplayLabel(version = '') {
+      const major = this.skillInventoryVersionMajor(version);
+      if (major === '3') return '3.0';
+      if (major === '2') return '2.0';
+      return '1.0';
+    },
+
+    skillVersionShortLabel(version = '') {
+      return `${this.skillInventoryVersionMajor(version)}.0`;
+    },
+
+    skillVersionDescription(version = '') {
+      const major = this.skillInventoryVersionMajor(version);
+      if (version && typeof version === 'object') {
+        const peopleCount = this.skillEffectiveUsagePeople(version).length;
+        if (major === '3') return `3.0：已有 ${peopleCount} 位有效成员使用，达到 6 人使用标准。`;
+        if (major === '2') return `2.0：已有 ${peopleCount} 位有效成员使用，达到 3 人使用标准。`;
+        return `1.0：已有贡献或自己使用，当前 ${peopleCount} 位有效成员使用。`;
+      }
+      if (major === '3') return '3.0：达到 6 人使用标准。';
+      if (major === '2') return '2.0：达到 3 人使用标准。';
+      return '1.0：已有贡献或自己使用。';
+    },
+
+    skillQualityScore(row = {}) {
+      const skill = row.skill || row;
+      const explicit = [
+        skill.auditScore,
+        skill.score,
+        row.auditScore,
+        row.score
+      ].map(value => Number(value)).find(value => Number.isFinite(value) && value >= 0);
+      if (explicit !== undefined) return Math.max(0, Math.min(100, Math.round(explicit > 90 ? explicit : (explicit / 90) * 100)));
+
+      const text = [
+        skill.description,
+        skill.summary,
+        skill.content,
+        skill.readme,
+        skill.preview,
+        skill.raw,
+        row.description,
+        row.summary,
+        row.content,
+        row.readme,
+        row.preview,
+        row.title,
+        row.productDisplayName,
+        row.productFileName,
+        row.relativePath,
+        row.path,
+        ...(Array.isArray(skill.triggers) ? skill.triggers : []),
+        ...(Array.isArray(skill.aliases) ? skill.aliases : []),
+        ...(Array.isArray(row.aliases) ? row.aliases : []),
+        ...(Array.isArray(row.scenes) ? row.scenes : [])
+      ].join('\n').toLowerCase();
+      const has = pattern => pattern.test(text);
+      const path = String(row.relativePath || row.path || skill.path || '').toLowerCase();
+      const isSkill = this.isSkillInventorySkillProduct(row);
+      const hasSkillFile = /(^|\/)skill\.md$/i.test(path) || isSkill;
+      const sceneCount = Array.isArray(row.scenes) ? row.scenes.filter(Boolean).length : 0;
+      const aliasCount = Array.isArray(row.aliases) ? row.aliases.filter(Boolean).length : 0;
+      const triggerCount = Array.isArray(skill.triggers) ? skill.triggers.filter(Boolean).length : 0;
+      const versionMajor = Number(this.skillVersionMajor(row.version || skill.version));
+      const usageCount = Number(row.usageCount || 0);
+      const peopleCount = Number(row.usagePeopleCount || 0);
+      const score90 =
+        (hasSkillFile || text.length > 20 ? 7 : 3) +
+        (has(/交付|输出|产物|结果|成功|验收|report|deliver|output/) ? 8 : text.length > 80 ? 5 : 3) +
+        (has(/步骤|流程|阶段|先|然后|最后|workflow|step|checklist/) ? 8 : 4) +
+        ((path ? 3 : 0) + (has(/script|scripts|tool|mcp|figma|npm|node|python|命令|工具|路径/) ? 5 : 1)) +
+        ((aliasCount || triggerCount || sceneCount) ? 7 : 3) +
+        (has(/失败|异常|缺失|权限|报错|回退|fallback|error|blocked/) ? 8 : 3) +
+        (has(/确认|暂停|等待|人工|负责人|审批|confirm|approval/) ? 7 : 3) +
+        ((usageCount > 0 ? 3 : 0) + (peopleCount > 0 ? 2 : 0) + (has(/验证|测试|检查|截图|构建|自检|test|verify|screenshot/) ? 5 : 2)) +
+        (has(/不要|不得|禁止|不能|不要做|风险|黑名单|delete|reset|destructive/) ? 8 : 3);
+      const versionBonus = versionMajor >= 3 ? 4 : versionMajor >= 2 ? 2 : 0;
+      return Math.max(0, Math.min(100, Math.round((Math.min(90, score90) / 90) * 100 + versionBonus)));
+    },
+
+    skillQualityScoreClass(score = 0) {
+      const value = Number(score || 0);
+      if (value >= 85) return 'is-good';
+      if (value >= 70) return 'is-stable';
+      if (value >= 55) return 'is-watch';
+      return 'is-low';
+    },
+
+    skillQualityScoreText(row = {}) {
+      const score = this.skillQualityScore(row);
+      return `质量分 ${score}：按 skill-auditor 9 维口径估算，包含触发清晰度、目标产物、工作流、工具资源、可执行性、失败模式、人工卡口、验证机制和风险黑名单。`;
     },
 
     skillCategory(skill = {}) {
@@ -7663,13 +8704,18 @@ export default {
     },
 
     async scanProject(id) {
+      if (!this.canRefreshSkillInventoryScan) {
+        ElMessage.warning('当前角色没有刷新库存扫描的权限');
+        return;
+      }
       this.loading.scan = true;
       this.scanOutput = '扫描中...';
       try {
-        const scan = await this.api(`/api/projects/${encodeURIComponent(id)}/scan`);
+        const scan = await this.api(`/api/projects/${encodeURIComponent(id)}/scan?refresh=1`);
         const nextScan = this.mergeProjectScanResult(id, scan);
         this.scans = { ...this.scans, [id]: nextScan };
         this.clearValidationMatchCache();
+        this.clearSkillUsageLogCache();
         this.saveWorkbenchDisplayCache('scans', this.scans);
         if (id === this.selectedProjectId) {
           const rows = Array.isArray(nextScan.tasks) ? nextScan.tasks : [];
@@ -7697,6 +8743,7 @@ export default {
             lastFailedAt: new Date().toISOString()
           };
           this.scans = { ...this.scans, [id]: preserved };
+          this.clearSkillUsageLogCache();
           this.saveWorkbenchDisplayCache('scans', this.scans);
           this.scanOutput = preserved.lastError;
         } else {
@@ -7709,20 +8756,33 @@ export default {
     },
 
     async loadProjectScanCacheForInventory() {
-      if (!this.projects.length || this.loading.scan) return;
-      this.loading.scan = true;
+      if (this.loading.skillInventoryCache) return;
+      this.loading.skillInventoryCache = true;
       this.scanOutput = '正在读取库存缓存...';
       try {
-        const result = await this.api('/api/project-scan-cache');
+        if (!this.projects.length) {
+          this.projects = await this.apiWithTimeout('/api/projects', {}, {}, 15000);
+          this.saveWorkbenchDisplayCache('projects', this.projects);
+          if (!this.selectedProjectId && this.projects[0]) this.selectedProjectId = this.projects[0].id;
+        }
+        const result = await this.apiWithTimeout('/api/project-scan-cache', {}, {}, 15000);
         const scans = result?.scans && typeof result.scans === 'object' ? result.scans : {};
+        this.skillInventoryScanCacheLoaded = true;
         if (Object.keys(scans).length) {
           const scanMap = {};
-          for (const project of this.projects) {
-            if (!scans[project.id]) continue;
-            scanMap[project.id] = this.mergeProjectScanResult(project.id, scans[project.id]);
+          const knownProjectIds = new Set(this.projects.map(project => project.id));
+          for (const [projectId, scan] of Object.entries(scans)) {
+            if (!scan || typeof scan !== 'object') continue;
+            scanMap[projectId] = this.mergeProjectScanResult(projectId, scan);
+            if (!knownProjectIds.has(projectId)) {
+              this.projects.push(this.projectFromCachedScan(projectId, scan));
+              knownProjectIds.add(projectId);
+            }
           }
           this.scans = { ...this.scans, ...scanMap };
           this.clearValidationMatchCache();
+          this.clearSkillUsageLogCache();
+          this.saveWorkbenchDisplayCache('projects', this.projects);
           this.saveWorkbenchDisplayCache('scans', this.scans);
           const selectedScan = this.scans[this.selectedProjectId];
           this.scanOutput = selectedScan
@@ -7730,26 +8790,126 @@ export default {
             : '已读取库存缓存。';
           return;
         }
-        if (!this.skillInventoryRows.length) await this.scanAllProjects();
+        if (!this.skillInventoryRows.length) this.scanOutput = '暂无库存缓存，请点击刷新库存后读取。';
       } catch (error) {
+        this.skillInventoryScanCacheLoaded = true;
         const hasCachedRows = this.skillInventoryRows.length > 0;
         this.scanOutput = hasCachedRows
           ? '库存缓存读取失败，已保留当前清单。'
-          : '库存缓存读取失败，正在重新扫描。';
-        if (!hasCachedRows) await this.scanAllProjects();
+          : '库存缓存读取失败，请点击刷新库存后重新读取。';
       } finally {
-        this.loading.scan = false;
+        this.loading.skillInventoryCache = false;
       }
     },
 
-    async scanAllProjects() {
-      if (!this.projects.length) return;
-      this.loading.scan = true;
-      this.scanOutput = '正在索引全部项目...';
+    async ensureRunProjectScanCache(projectId = '') {
+      const id = String(projectId || this.runForm.projectId || this.selectedProjectId || '').trim();
+      if (!id || this.scans[id]) return;
+      if (!this.projects.length) {
+        this.projects = await this.apiWithTimeout('/api/projects', {}, {}, 15000);
+        this.saveWorkbenchDisplayCache('projects', this.projects);
+        if (!this.selectedProjectId && this.projects[0]) this.selectedProjectId = this.projects[0].id;
+      }
+      const result = await this.apiWithTimeout('/api/project-scan-cache', {}, {}, 15000);
+      const scans = result?.scans && typeof result.scans === 'object' ? result.scans : {};
+      if (!scans[id]) return;
+      this.scans = { ...this.scans, [id]: this.mergeProjectScanResult(id, scans[id]) };
+      this.clearValidationMatchCache();
+      this.clearSkillUsageLogCache();
+      this.saveWorkbenchDisplayCache('scans', this.scans);
+    },
+
+    async loadSkillInventorySavedSnapshot(options = {}) {
+      const force = options.force === true;
+      const silent = options.silent === true;
+      if (this.loading.skillInventoryCache) return;
+      if (this.skillInventoryRows.length) {
+        this.skillInventoryScanCacheLoaded = true;
+        if (!force) return;
+      }
+      this.loading.skillInventoryCache = true;
+      if (!silent) this.scanOutput = '正在读取上次库存数据...';
       try {
-        const entries = await Promise.all(this.projects.map(async project => {
+        if (!this.projects.length) {
+          this.projects = await this.apiWithTimeout('/api/projects', {}, {}, 15000);
+          this.saveWorkbenchDisplayCache('projects', this.projects);
+          if (!this.selectedProjectId && this.projects[0]) this.selectedProjectId = this.projects[0].id;
+        }
+        const result = await this.apiWithTimeout('/api/project-scan-cache', {}, {}, 15000);
+        const scans = result?.scans && typeof result.scans === 'object' ? result.scans : {};
+        const scanMap = {};
+        const knownProjectIds = new Set(this.projects.map(project => project.id));
+        for (const [projectId, scan] of Object.entries(scans)) {
+          if (!scan || typeof scan !== 'object') continue;
+          scanMap[projectId] = this.mergeProjectScanResult(projectId, scan);
+          if (!knownProjectIds.has(projectId)) {
+            this.projects.push(this.projectFromCachedScan(projectId, scan));
+            knownProjectIds.add(projectId);
+          }
+        }
+        this.scans = { ...this.scans, ...scanMap };
+        this.clearValidationMatchCache();
+        this.clearSkillUsageLogCache();
+        this.saveWorkbenchDisplayCache('projects', this.projects);
+        this.saveWorkbenchDisplayCache('scans', this.scans);
+        this.skillInventoryScanCacheLoaded = true;
+        if (!silent) this.scanOutput = Object.keys(scanMap).length
+          ? '已读取上次库存数据。'
+          : '暂无上次库存数据，请由有权限账号点击刷新库存。';
+      } catch (error) {
+        this.skillInventoryScanCacheLoaded = true;
+        this.restoreWorkbenchDisplayCacheKey('projects');
+        this.restoreWorkbenchDisplayCacheKey('scans');
+        if (!silent) this.scanOutput = this.skillInventoryRows.length
+          ? '库存数据读取失败，已保留当前清单。'
+          : '库存数据读取失败，请稍后重试或由有权限账号刷新库存。';
+      } finally {
+        this.loading.skillInventoryCache = false;
+      }
+    },
+
+    projectFromCachedScan(projectId = '', scan = {}) {
+      return {
+        id: projectId,
+        name: scan.projectName || scan.name || projectId,
+        rootPath: scan.rootPath || '',
+        framework: scan.framework || scan.detected?.framework || '未知',
+        sourceType: scan.sourceType || 'git',
+        createdAt: scan.scannedAt || scan.cachedAt || ''
+      };
+    },
+
+    async scanAllProjects() {
+      if (!this.canRefreshSkillInventoryScan) {
+        ElMessage.warning('当前角色没有刷新库存扫描的权限');
+        return;
+      }
+      if (this.loading.scan) return;
+      if (!this.projects.length) {
+        this.projects = await this.apiWithTimeout('/api/projects', {}, {}, 15000);
+        this.saveWorkbenchDisplayCache('projects', this.projects);
+        if (!this.selectedProjectId && this.projects[0]) this.selectedProjectId = this.projects[0].id;
+      }
+      if (!this.projects.length) {
+        this.scanOutput = '暂无扫描源，请先接入 Git、本地目录或共享盘路径。';
+        ElMessage.warning(this.scanOutput);
+        return;
+      }
+      await this.loadSkillInventorySavedSnapshot({ force: true, silent: true });
+      this.loading.scan = true;
+      this.scanOutput = '正在同步美术资料库 Git 仓库并索引库存...';
+      try {
+        const previousInventoryRows = this.skillInventoryRows.map(row => ({ ...row, skill: { ...(row.skill || {}) } }));
+        const previousRowCount = previousInventoryRows.length;
+        const artGitProject = this.projects.find(project => {
+          const rootPath = String(project.rootPath || '');
+          const remoteUrl = String(project.git?.remoteUrl || '');
+          return rootPath.endsWith('/data/art-git') || /art-project\/Art\.git/i.test(remoteUrl);
+        });
+        const scanProjects = artGitProject ? [artGitProject] : this.projects;
+        const entries = await Promise.all(scanProjects.map(async project => {
           try {
-            const scan = await this.api(`/api/projects/${encodeURIComponent(project.id)}/scan?refresh=1`);
+            const scan = await this.apiWithTimeout(`/api/projects/${encodeURIComponent(project.id)}/scan?refresh=1`, {}, {}, 45000);
             return [project.id, this.mergeProjectScanResult(project.id, scan)];
           } catch (error) {
             const previous = this.scans[project.id];
@@ -7761,26 +8921,31 @@ export default {
                 lastFailedAt: new Date().toISOString()
               }];
             }
-            return [project.id, {
-              projectId: project.id,
-              rootPath: project.rootPath,
-              framework: project.framework || '未知',
-              configs: {},
-              skills: [],
-              tasks: [],
-              detected: {},
-              error: error.message || '扫描失败'
-            }];
+            return null;
           }
         }));
-        const scanMap = Object.fromEntries(entries);
+        const scanMap = Object.fromEntries(entries.filter(Boolean));
+        if (!Object.keys(scanMap).length) {
+          this.scanOutput = previousRowCount
+            ? '刷新库存失败，已保留上次扫描内容。'
+            : '刷新库存失败，暂无可展示的上次扫描内容。';
+          ElMessage.warning(this.scanOutput);
+          return;
+        }
         this.scans = { ...this.scans, ...scanMap };
         this.clearValidationMatchCache();
+        this.clearSkillUsageLogCache();
         this.saveWorkbenchDisplayCache('scans', this.scans);
-        const rows = Array.isArray(scanMap[this.selectedProjectId]?.tasks) ? scanMap[this.selectedProjectId].tasks : [];
+        this.skillInventoryScanCacheLoaded = true;
+        if (artGitProject && this.selectedProjectId !== artGitProject.id) {
+          this.selectedProjectId = artGitProject.id;
+        }
+        const activeProjectId = artGitProject?.id || this.selectedProjectId;
+        const rows = Array.isArray(scanMap[activeProjectId]?.tasks) ? scanMap[activeProjectId].tasks : [];
         this.detailProjectTasks = rows;
         this.detailPagedProjectTasks = rows.slice(0, this.taskPageSize);
-        const selectedScan = this.scans[this.selectedProjectId];
+        const selectedScan = this.scans[activeProjectId];
+        const scanChangeSummary = this.skillInventoryScanChangeSummary(previousInventoryRows, scanMap);
         this.scanOutput = selectedScan
           ? JSON.stringify({
             configs: selectedScan.configs,
@@ -7789,10 +8954,79 @@ export default {
             detected: selectedScan.detected,
             error: selectedScan.error
           }, null, 2)
-          : '已完成全部项目索引。';
+          : '已完成美术资料库库存同步。';
+        const nextRows = this.skillInventoryRows.length;
+        const changeText = [
+          scanChangeSummary.added ? `新增 ${scanChangeSummary.added}` : '',
+          scanChangeSummary.changed ? `变更 ${scanChangeSummary.changed}` : '',
+          scanChangeSummary.removed ? `删除 ${scanChangeSummary.removed}` : ''
+        ].filter(Boolean).join('，');
+        ElMessage.success(changeText ? `库存扫描已更新：${changeText}` : (nextRows === previousRowCount ? '库存扫描已完成，未发现内容变化' : '库存扫描已更新'));
+      } catch (error) {
+        this.scanOutput = this.skillInventoryRows.length
+          ? '刷新库存超时或失败，已保留上次扫描内容。'
+          : (this.readApiError(error) || '刷新库存失败，请稍后重试。');
+        ElMessage.warning(this.scanOutput);
       } finally {
         this.loading.scan = false;
       }
+    },
+
+    skillInventoryScanChangeSummary(previousRows = [], nextScanMap = {}) {
+      const scannedProjectIds = new Set(Object.keys(nextScanMap || {}));
+      const previousByKey = new Map();
+      for (const row of Array.isArray(previousRows) ? previousRows : []) {
+        if (scannedProjectIds.size && !scannedProjectIds.has(String(row.projectId || ''))) continue;
+        const key = this.skillInventoryChangeKey(row);
+        if (key) previousByKey.set(key, this.skillInventoryChangeFingerprint(row));
+      }
+      const nextByKey = new Map();
+      for (const [projectId, scan] of Object.entries(nextScanMap || {})) {
+        const projectRow = this.projectRows.find(project => project.id === projectId) || this.projectFromCachedScan(projectId, scan);
+        const skills = Array.isArray(scan?.skills) ? scan.skills : [];
+        for (const skill of skills) {
+          const row = this.buildSkillInventoryRow(projectRow, skill);
+          const key = this.skillInventoryChangeKey(row);
+          if (key) nextByKey.set(key, this.skillInventoryChangeFingerprint(row));
+        }
+      }
+      let added = 0;
+      let changed = 0;
+      let removed = 0;
+      for (const [key, fingerprint] of nextByKey.entries()) {
+        if (!previousByKey.has(key)) {
+          added += 1;
+          continue;
+        }
+        if (previousByKey.get(key) !== fingerprint) changed += 1;
+      }
+      for (const key of previousByKey.keys()) {
+        if (!nextByKey.has(key)) removed += 1;
+      }
+      return { added, changed, removed };
+    },
+
+    skillInventoryChangeKey(row = {}) {
+      return [
+        row.projectId || '',
+        row.skill?.git?.relativePath || row.relativePath || row.path || '',
+        row.id || row.uid || row.productDisplayName || row.title || ''
+      ].join('::');
+    },
+
+    skillInventoryChangeFingerprint(row = {}) {
+      const skill = row.skill || row;
+      return [
+        skill.git?.commit || '',
+        skill.git?.uploadedAt || '',
+        skill.commitSubject || '',
+        skill.uploadedAt || row.uploadedAt || '',
+        skill.version || row.version || '',
+        skill.hidden === true || row.hidden === true ? 'hidden' : 'visible',
+        skill.title || row.title || '',
+        skill.description || row.description || '',
+        String(skill.preview || row.preview || '').slice(0, 2400)
+      ].join('\n');
     },
 
     mergeProjectScanResult(projectId = '', scan = {}) {
@@ -8598,27 +9832,7 @@ export default {
             raw: item
           };
         });
-      const validations = (this.skillValidationRows || [])
-        .map(item => ({ item, match: this.skillInventoryRecordMatch(row, item, 'validation') }))
-        .filter(entry => entry.match.matched)
-        .map(({ item, match }) => {
-          const person = this.canonicalArtDeptPerson(item.validator || item.walkthroughOwner) || item.validator || '-';
-          const target = this.skillUsageLogTarget(row, item, 'validation', assetName);
-          return {
-            id: item.id,
-            type: '验证回填',
-            person,
-            time: this.validationRecordDisplayTime(item),
-            target,
-            task: item.validationTask || '验证回填',
-            summary: `${person} 验证了 ${target}`,
-            content: item.validationResult || item.notes || item.status || '-',
-            code: item.sourceRef || item.id || '',
-            matchReason: match.reason || '',
-            raw: item
-          };
-        });
-      const rows = this.dedupeSkillUsageLogRows([...taskArtBriefLogs, ...events, ...validations])
+      const rows = this.dedupeSkillUsageLogRows([...taskArtBriefLogs, ...events])
         .sort((a, b) => String(b.time || '').localeCompare(String(a.time || '')));
       this.skillUsageLogCacheSet(cacheKey, rows);
       return rows;
@@ -8630,7 +9844,6 @@ export default {
         row.relativePath || row.path || '',
         this.artProgressEvents.length,
         this.artProgressOperationLogRows.length,
-        this.skillValidationRows.length,
         this.taskArtBriefUsageLogs.length
       ].join('::');
     },
@@ -8650,6 +9863,7 @@ export default {
 
     clearSkillUsageLogCache() {
       if (this._skillUsageLogCache) this._skillUsageLogCache.clear();
+      this.skillInventoryMetricsCache = {};
     },
 
     artProgressRecordDisplayTime(record = {}) {
@@ -8690,8 +9904,8 @@ export default {
     },
 
     openSkillUsageDetail(row = {}) {
-      if (!this.canViewSkillUsageLogs) {
-        ElMessage.warning('当前角色没有查看使用明细的权限');
+      if (!this.canViewSkillInventoryDetail) {
+        ElMessage.warning('当前角色没有查看产物明细的权限');
         return;
       }
       this.skillUsageDialog = this.buildSkillUsageDialogState(row, { visible: true });
@@ -8709,8 +9923,56 @@ export default {
       Object.keys(historical.people || {}).forEach(person => {
         if (person) people.add(person);
       });
+      const effectivePeople = this.skillEffectiveUsagePeople(row);
       const validationCoverage = this.skillUsageCoverageStats(row, logs);
-      const totalCount = logs.length + historical.count;
+      const hasHistorical = this.hasUsageCounterStats(historical);
+      const totalCount = hasHistorical ? Number(historical.count || 0) : logs.length;
+      const memberStatsMap = new Map();
+      if (!hasHistorical) {
+        for (const item of logs) {
+          const person = this.canonicalArtDeptPerson(item.person) || item.person || '';
+          if (!person || person === '-') continue;
+          const existing = memberStatsMap.get(person) || {
+            name: person,
+            count: 0,
+            latestTime: '',
+            types: new Set()
+          };
+          existing.count += 1;
+          if (item.type) existing.types.add(item.type);
+          if (!existing.latestTime || String(item.time || '').localeCompare(String(existing.latestTime || '')) > 0) {
+            existing.latestTime = item.time || existing.latestTime;
+          }
+          memberStatsMap.set(person, existing);
+        }
+      }
+      Object.entries(historical.people || {}).forEach(([personName, count]) => {
+        const person = this.canonicalArtDeptPerson(personName) || personName;
+        if (!person) return;
+        const existing = memberStatsMap.get(person) || {
+          name: person,
+          count: 0,
+          latestTime: '',
+          types: new Set()
+        };
+        existing.count += Number(count || 0);
+        memberStatsMap.set(person, existing);
+      });
+      const memberStats = [...memberStatsMap.values()]
+        .map(item => ({
+          ...item,
+          types: [...item.types].filter(Boolean).join('、') || '使用记录'
+        }))
+        .sort((a, b) => b.count - a.count || String(b.latestTime || '').localeCompare(String(a.latestTime || '')));
+      const versionEntries = (Array.isArray(row.skill?.git?.history) ? row.skill.git.history : []).map(item => ({
+        title: item.subject || row.skill?.commitSubject || '未填写提交说明',
+        author: this.canonicalArtDeptPerson(item.authorName || item.authorEmail) || item.authorName || '-',
+        email: item.authorEmail || '',
+        time: item.committedAt || '',
+        commit: item.shortCommit || String(item.commit || '').slice(0, 8),
+        fullCommit: item.commit || '',
+        summary: item.subject || '未填写提交说明'
+      })).sort((left, right) => String(right.time || '').localeCompare(String(left.time || '')));
       const pageSize = previous.pageSize || 10;
       const maxPage = Math.max(1, Math.ceil(logs.length / pageSize));
       return {
@@ -8721,9 +9983,12 @@ export default {
         page: Math.min(previous.page || 1, maxPage),
         pageSize,
         logs,
+        memberStats,
+        effectivePeopleCount: effectivePeople.length,
+        versionEntries,
         metrics: [
           { label: '调用次数', value: totalCount || 0 },
-          { label: '去重调用人数', value: people.size },
+          { label: '计入等级人数', value: effectivePeople.length },
           { label: '人均次数', value: people.size ? Math.round((totalCount / people.size) * 10) / 10 : 0 },
           { label: '有效占比', value: `${validationCoverage.rate}%` }
         ]
@@ -8798,8 +10063,8 @@ export default {
     },
 
     openSkillOwnerDialog(row = {}) {
-      if (!this.canOperateSkillInventoryOwner) {
-        ElMessage.warning('当前角色只能查看产物版本，不能编辑归属。');
+      if (!this.canEditSkillInventoryOwnerRow(row)) {
+        ElMessage.warning('只有本地路径或共享盘扫描产物可以手动调整贡献人。');
         return;
       }
       this.skillOwnerDialog = {
@@ -8812,11 +10077,11 @@ export default {
     },
 
     async saveSkillOwnerOverride() {
-      if (!this.canOperateSkillInventoryOwner) {
-        ElMessage.warning('当前角色只能查看产物版本，不能编辑归属。');
+      const row = this.skillOwnerDialog.row || {};
+      if (!this.canEditSkillInventoryOwnerRow(row)) {
+        ElMessage.warning('只有本地路径或共享盘扫描产物可以手动调整贡献人。');
         return;
       }
-      const row = this.skillOwnerDialog.row || {};
       const owner = Array.isArray(this.skillOwnerDialog.owner)
         ? this.displayPersonList(this.skillOwnerDialog.owner.join('、'))
         : this.displayPersonList(this.skillOwnerDialog.owner);
@@ -8856,12 +10121,12 @@ export default {
 
     async deleteSkillInventoryRow(row = {}) {
       if (!this.canOperateSkillInventoryManage) {
-        ElMessage.warning('当前角色只能查看产物版本，不能隐藏。');
+        ElMessage.warning('当前角色只能查看产物版本，不能作废。');
         return;
       }
       const title = row.productDisplayName || row.title || row.id || '该产物';
-      const confirmed = await ElMessageBox.confirm(`确认从工作台隐藏「${title}」？不会删除源文件或共享盘内容。`, '隐藏产物', {
-        confirmButtonText: '隐藏',
+      const confirmed = await ElMessageBox.confirm(`确认作废「${title}」？作废后不计入 AI 评分，不会删除源文件或共享盘内容。`, '作废产物', {
+        confirmButtonText: '作废',
         cancelButtonText: '取消',
         type: 'warning',
         confirmButtonClass: 'el-button--danger'
@@ -8893,28 +10158,29 @@ export default {
         });
         this.patchSkillVisibilityInScans(row, result.hidden === true, result);
         this.saveWorkbenchDisplayCache('scans', this.scans);
-        ElMessage.success(hidden ? '已从工作台隐藏该产物' : '产物已恢复');
+        ElMessage.success(hidden ? '产物已作废，已从 AI 评分中排除' : '产物已恢复');
       } catch (error) {
-        ElMessage.error(this.readApiError(error) || (hidden ? '产物隐藏失败' : '产物恢复失败'));
+        ElMessage.error(this.readApiError(error) || (hidden ? '产物作废失败' : '产物恢复失败'));
       } finally {
         this.loading.skillVersion = false;
       }
     },
 
     openManualSkillCreate() {
-      if (!this.canManageSkillAssets) {
+      if (!this.canCreateSkillInventoryAsset) {
         ElMessage.warning('当前角色只能查看产物版本，不能手动创建。');
         return;
       }
-      this.skillInventoryTab = 'events';
-      this.pushRoute('/skills/events');
       this.aiAssetDialog = {
         visible: true,
+        readonly: false,
+        mode: 'manualSkill',
         form: emptyAiAssetForm({
-          owner: this.currentAccountPrimaryPersonName || '',
+          owner: this.currentAccountPrimaryPersonName ? [this.currentAccountPrimaryPersonName] : [],
           progressStatus: '待验证',
           publicStatus: '否',
-          source: 'manual'
+          source: 'manual',
+          verifyStatus: '1.0'
         })
       };
     },
@@ -8922,13 +10188,27 @@ export default {
 
     async openSkillPreview(skill) {
       this.skillPreview = { visible: true, skill, html: '' };
-      this.skillPreviewVersionDraft = String(skill?.version || '1.0');
       const savedAliases = this.normalizeSkillAliasList(skill?.aliases || []);
-      this.skillPreviewAliasesDraft = (savedAliases.length ? savedAliases : this.generateSkillAliases(skill || {})).join('、');
+      const baseAliases = this.normalizeSkillAliasList([
+        ...(savedAliases.length ? savedAliases : []),
+        ...this.generateSkillAliases(skill || {})
+      ]);
+      this.skillPreviewAliasesDraft = baseAliases.join('、');
       const content = await this.loadSkillContent(skill);
+      const contentAliases = this.extractSkillAliasesFromContent(content);
+      const nextSkill = {
+        ...skill,
+        previewAliases: contentAliases
+      };
+      const nextAliases = this.normalizeSkillAliasList([
+        ...(savedAliases.length ? savedAliases : []),
+        ...this.generateSkillAliases(nextSkill || {}),
+        ...contentAliases
+      ]);
+      this.skillPreviewAliasesDraft = nextAliases.join('、');
       this.skillPreview = {
         visible: true,
-        skill,
+        skill: nextSkill,
         html: this.renderMarkdown(content || '技能内容读取失败。', this.resolveSkillAbsPath(skill), { preserveMetadata: true })
       };
     },
@@ -9029,6 +10309,7 @@ export default {
         };
       }
       this.scans = scans;
+      this.clearSkillUsageLogCache();
     },
 
     patchSkillOwnerInScans(row = {}, owner = '') {
@@ -9059,6 +10340,7 @@ export default {
         };
       }
       this.scans = scans;
+      this.clearSkillUsageLogCache();
       if (this.skillUsageDialog.visible && this.skillUsageDialog.row) {
         const dialogRow = this.skillUsageDialog.row;
         const dialogPath = String(dialogRow.skill?.git?.relativePath || dialogRow.relativePath || dialogRow.path || '');
@@ -9099,11 +10381,13 @@ export default {
         };
       }
       this.scans = scans;
+      this.clearSkillUsageLogCache();
     },
 
     async loadSkillContent(skill) {
       if (!skill?.path) return '';
       if (skill.inventoryKind === 'directory') return skill.preview || `产物目录：${skill.title || skill.relativePath || skill.path}`;
+      if ((skill.directoryProduct || skill.skillPath) && skill.preview) return skill.preview;
       const relativePath = String(skill.git?.relativePath || skill.relativePath || skill.path || '').replaceAll('\\', '/').replace(/^\/+/, '');
       try {
         const projectId = this.selectedProjectId || this.selectedProject?.id || this.selectedScan?.projectId || '';
@@ -9129,34 +10413,67 @@ export default {
 
     async selectProject(project) {
       this.selectedProjectId = project.id;
-      await this.scanProject(project.id);
+      if (!this.scans[project.id]) await this.loadProjectScanCacheForInventory();
     },
 
     switchView(view) {
+      if (['skill-assets', 'skill-inventory'].includes(view)) {
+        this.skillInventoryTab = 'assets';
+        this.activeView = 'skill-inventory';
+        this.ensureSkillInventoryTabData('assets');
+        this.pushRoute('/skills/assets');
+        this.recordWorkbenchViewLog(view, '/skills/assets');
+        return;
+      }
       const routes = {
-        workspace: '/workspace',
-        'project-list': '/projects',
-        'skii-repository': '/skii-repository',
+        workspace: '/tasks',
+        'project-list': '/tasks',
+        'skii-repository': '/skills/assets',
         'skill-list': '/skills/assets',
-        'skill-validations': '/skills/validations',
-        'skill-events': '/skills/events',
         'skill-assets': '/skills/assets',
         'skill-inventory': '/skills/assets',
         'ai-members': '/ai-members',
         tasks: '/tasks',
-        'ai-archive': '/ai-archive',
         'codex-config': '/codex-config',
-        'workflow-designer': '/workflow-designer',
         'user-access': '/user-access',
         'role-management': '/role-management',
         'operation-logs': '/operation-logs',
         runs: '/runs'
       };
-      this.pushRoute(routes[view] || '/workspace');
+      this.pushRoute(routes[view] || '/tasks');
+      this.recordWorkbenchViewLog(view, routes[view] || '/tasks');
+    },
+
+    recordWorkbenchViewLog(view = '', route = '') {
+      if (!this.currentUser || !view || view === 'operation-logs') return;
+      const now = Date.now();
+      const key = `${view}:${route}`;
+      if (this._lastWorkbenchViewLogKey === key && now - Number(this._lastWorkbenchViewLogAt || 0) < 3000) return;
+      this._lastWorkbenchViewLogKey = key;
+      this._lastWorkbenchViewLogAt = now;
+      const viewName = {
+        tasks: '任务中心',
+        'skill-assets': 'AI 产物清单',
+        'skill-inventory': 'AI 产物清单',
+        'skii-repository': 'AI 产物清单',
+        'ai-members': 'AI部门看板',
+        'codex-config': 'Codex 配置',
+        runs: '美术执行台',
+        'user-access': '用户管理',
+        'role-management': '角色管理'
+      }[view] || view;
+      this.api('/api/operation-logs/view', {
+        method: 'POST',
+        body: JSON.stringify({
+          view,
+          viewName,
+          path: route
+        })
+      }).catch(() => {});
     },
 
     goProjectList() {
-      this.pushRoute('/skii-repository');
+      this.pushRoute('/skills/assets');
     },
 
     goProjectDetail() {
@@ -9165,7 +10482,7 @@ export default {
     },
 
     goAiArchive() {
-      this.pushRoute('/ai-archive');
+      this.switchView('runs');
     },
 
     goTaskResult() {
@@ -9184,6 +10501,15 @@ export default {
     },
 
     async createProject() {
+      const isEditing = Boolean(this.projectForm.id);
+      if (isEditing && !this.canEditSkillInventorySource) {
+        ElMessage.warning('当前角色没有编辑扫描来源的权限');
+        return;
+      }
+      if (!isEditing && !this.canConnectSkillInventorySource) {
+        ElMessage.warning('当前角色没有接入扫描来源的权限');
+        return;
+      }
       const sourceType = this.projectForm.sourceType || 'local';
       const gitUrl = String(this.projectForm.git?.remoteUrl || '').trim();
       const rootPath = String(this.projectForm.rootPath || '').trim();
@@ -9199,7 +10525,6 @@ export default {
         ElMessage.warning('请填写本地或共享盘路径');
         return;
       }
-      const isEditing = Boolean(this.projectForm.id);
       const payload = projectPayload(this.projectForm);
       const project = await this.api('/api/projects', {
         method: 'POST',
@@ -9209,12 +10534,29 @@ export default {
       this.projectForm = emptyProjectForm();
       await this.refreshProjects();
       await this.openProjectDetail(project);
-      await this.scanProject(project.id);
-      ElMessage.success(isEditing ? '项目已保存，已刷新扫描结果' : '项目已接入，已完成初次扫描');
+      await this.loadProjectScanCacheForInventory();
+      ElMessage.success(isEditing ? '项目已保存，库存保持上次扫描结果；需要更新请点刷新库存' : '项目已接入，库存保持上次扫描结果；需要读取新增内容请点刷新库存');
     },
 
     openProjectCreateDrawer() {
       this.projectForm = emptyProjectForm();
+      this.projectDrawer = true;
+    },
+
+    openAssetScanConnect() {
+      if (!this.canConnectSkillInventorySource) {
+        ElMessage.warning('当前角色不能接入扫描源。');
+        return;
+      }
+      this.projectForm = {
+        ...emptyProjectForm(),
+        name: 'AI 产物扫描源',
+        sourceType: 'git',
+        agentConfigPath: '',
+        skillConfigPath: '',
+        taskDir: '',
+        git: emptyGitForm()
+      };
       this.projectDrawer = true;
     },
 
@@ -9231,6 +10573,10 @@ export default {
     },
 
     openProjectEditDrawer(project) {
+      if (!this.canEditSkillInventorySource) {
+        ElMessage.warning('当前角色没有编辑扫描来源的权限');
+        return;
+      }
       this.projectForm = {
         ...emptyProjectForm(),
         ...project,
@@ -9244,6 +10590,10 @@ export default {
     },
 
     async deleteProject(project) {
+      if (!this.canDeleteSkillInventorySource) {
+        ElMessage.warning('当前角色没有删除扫描来源的权限');
+        return;
+      }
       if (!project?.id) return;
       const runningRuns = this.runs.filter(run => run.projectId === project.id && this.isRunInProgress(run));
       if (runningRuns.length) {
@@ -9652,11 +11002,11 @@ export default {
         this.aiArchiveBugSyncLastAt = { ...this.aiArchiveBugSyncLastAt, [projectId]: Date.now() };
         await this.refreshBugs();
         if ((result.created || 0) || (result.updated || 0) || (result.removed || 0)) {
-          ElMessage.success(`AI 档案 Bug 已自动同步：新增 ${result.created || 0}，更新 ${result.updated || 0}`);
+          ElMessage.success(`任务 Bug 记录已自动同步：新增 ${result.created || 0}，更新 ${result.updated || 0}`);
         }
       } catch (error) {
         this.aiArchiveBugSyncLastAt = { ...this.aiArchiveBugSyncLastAt, [projectId]: Date.now() };
-        ElMessage.warning(this.readApiError(error) || 'AI 档案 Bug 自动同步失败，请稍后手动同步');
+        ElMessage.warning(this.readApiError(error) || '任务 Bug 记录自动同步失败，请稍后手动同步');
       } finally {
         this.loading.aiArchiveBugSync = false;
       }
@@ -9665,7 +11015,7 @@ export default {
     async autoSyncAiArchiveTasks(options = {}) {
       if (!this.can('task.sync')) return;
       const projectId = this.archiveFilters.projectId || this.selectedProjectId || this.projects[0]?.id || '';
-      if (!projectId || this.loading.aiArchiveTaskSync || this.appConfig.zentaoAutoSync?.running) return;
+      if (!projectId || this.loading.aiArchiveTaskSync || this.zentaoSyncRunning) return;
       const cooldownMs = 5 * 60 * 1000;
       const lastAt = Number(this.aiArchiveTaskSyncLastAt[projectId] || 0);
       if (!options.force && lastAt && Date.now() - lastAt < cooldownMs) return;
@@ -9683,11 +11033,11 @@ export default {
         this.aiArchiveTaskSyncLastAt = { ...this.aiArchiveTaskSyncLastAt, [projectId]: Date.now() };
         await Promise.all([this.refreshTasks(), this.refreshAiFlowRecords(), this.refreshConfig()]);
         if ((result.created || 0) || (result.updated || 0) || result.detailRefresh?.refreshed) {
-          ElMessage.success(`AI 档案任务已自动同步：新增 ${result.created || 0}，更新 ${result.updated || 0}`);
+          ElMessage.success(`任务记录已自动同步：新增 ${result.created || 0}，更新 ${result.updated || 0}`);
         }
       } catch (error) {
         this.aiArchiveTaskSyncLastAt = { ...this.aiArchiveTaskSyncLastAt, [projectId]: Date.now() };
-        ElMessage.warning(this.readApiError(error) || 'AI 档案任务自动同步失败，请稍后手动同步');
+        ElMessage.warning(this.readApiError(error) || '任务记录自动同步失败，请稍后手动同步');
       } finally {
         this.loading.aiArchiveTaskSync = false;
       }
@@ -9697,18 +11047,21 @@ export default {
       if (this.zentaoSyncTimer) clearTimeout(this.zentaoSyncTimer);
       this.zentaoSyncTimer = setTimeout(async () => {
         await this.refreshConfig();
-        if (this.appConfig.zentaoAutoSync?.running) {
+        if (this.zentaoSyncRunning) {
           this.pollZentaoSync();
           return;
         }
+        this.stopZentaoAutoSyncPolling();
         const sync = this.appConfig.zentaoAutoSync || {};
-        if (sync.lastError) {
-          ElMessage.error(`同步失败：${this.zentaoSyncFailureText(sync.lastError)}`);
+        await Promise.all([this.refreshTasks(), this.refreshBugs()]);
+        const errorText = this.zentaoSyncLastError;
+        if (errorText) {
+          ElMessage.warning(`同步已结束，部分数据保留上次结果：${this.zentaoSyncFailureText(errorText)}`);
           return;
         }
-        await Promise.all([this.refreshTasks(), this.refreshBugs()]);
-        const summary = sync.lastSummary || {};
-        ElMessage.success(`同步完成：新增 ${summary.created || 0}，更新 ${summary.updated || 0}`);
+        const tasks = sync.tasks?.lastSummary || sync.lastSummary || {};
+        const bugs = sync.bugs?.lastSummary || sync.lastSummary?.bugs || {};
+        ElMessage.success(`同步完成：任务新增 ${tasks.created || 0}，更新 ${tasks.updated || 0}；Bug 新增 ${bugs.created || 0}，更新 ${bugs.updated || 0}`);
       }, 2500);
     },
 
@@ -9757,7 +11110,6 @@ export default {
         filters.projectId
         || filters.zentaoStatus
         || filters.platformStatus
-        || filters.executionStatus
         || filters.metric
         || filters.keyword
         || person.person
@@ -9773,7 +11125,6 @@ export default {
       if (filters.metric) parts.push(`指标：${this.taskMetricLabel(filters.metric)}`);
       if (filters.zentaoStatus) parts.push(`禅道状态：${this.zentaoStatusLabel(filters.zentaoStatus)}`);
       if (filters.platformStatus) parts.push(`交付状态：${this.businessTaskStatusLabel(filters.platformStatus)}`);
-      if (filters.executionStatus) parts.push(`执行记录：${filters.executionStatus === 'executed' ? '有执行记录' : '未执行'}`);
       if (person.person) parts.push(`${this.isPlatformAdmin ? '负责人' : '人员'}：${person.person}`);
       if (person.type === 'dueToday') parts.push('人员统计：今日截止');
       if (person.type === 'risk') parts.push('人员统计：卡点');
@@ -9785,24 +11136,24 @@ export default {
 
     filteredBusinessTaskRowsForView(_revision = 0) {
       const { filters, person } = this.taskCenterFilterState();
-      if (!this.hasActiveTaskFiltersForView(_revision)) return this.taskCenterCurrentBusinessTaskRows;
+      if (!this.hasActiveTaskFiltersForView(_revision)) return this.taskCenterCurrentArtMemberTaskRows;
       const keyword = String(filters.keyword || '').trim().toLowerCase();
       const today = localDateKey(new Date());
       const includeNonCurrent = filters.metric === 'nonCurrentTasks' || Boolean(keyword);
-      const sourceRows = includeNonCurrent ? this.taskCenterBusinessTaskRows : this.taskCenterCurrentBusinessTaskRows;
+      const sourceRows = includeNonCurrent
+        ? this.taskCenterArtMemberTaskRows
+        : this.taskCenterCurrentArtMemberTaskRows;
       return sourceRows.filter(task => {
         const projectMatched = !filters.projectId || task.projectId === filters.projectId;
         const zentaoStatusMatched = !filters.zentaoStatus || task.zentaoStatus === filters.zentaoStatus;
         const platformStatusMatched = !filters.platformStatus || task.platformStatus === filters.platformStatus;
         const taskModeMetricMatched = !filters.metric || this.taskMetricMode(filters.metric) === 'task';
-        const executionStatusMatched = !filters.executionStatus
-          || (filters.executionStatus === 'executed' ? task.runCount > 0 : task.runCount === 0);
         const metricMatched = this.taskMetricMatchedForView(task, filters.metric);
         const personMatched = this.taskBelongsToPerson(task, person.person);
         const dueMatched = person.type !== 'dueToday' || task.deadline === today;
         const riskMatched = person.type !== 'risk' || this.isArtTaskRisk(task);
         const haystack = `${task.taskNo || ''}\n${task.title || ''}\n${task.displayTitle || ''}\n${task.developer || ''}\n${(task.zentao?.risks || []).join(' ')}`.toLowerCase();
-        return taskModeMetricMatched && projectMatched && zentaoStatusMatched && platformStatusMatched && executionStatusMatched && metricMatched && personMatched && dueMatched && riskMatched && (!keyword || haystack.includes(keyword));
+        return taskModeMetricMatched && projectMatched && zentaoStatusMatched && platformStatusMatched && metricMatched && personMatched && dueMatched && riskMatched && (!keyword || haystack.includes(keyword));
       });
     },
 
@@ -9887,7 +11238,6 @@ export default {
         keyword: '',
         zentaoStatus: '',
         platformStatus: '',
-        executionStatus: '',
         metric: ''
       };
       this.personStatFilter = { person, type };
@@ -9916,7 +11266,6 @@ export default {
         metric: '',
         zentaoStatus: '',
         platformStatus: '',
-        executionStatus: '',
         keyword: ''
       };
       this.personStatFilter = { person: '', type: '' };
@@ -9936,7 +11285,6 @@ export default {
         keyword: '',
         zentaoStatus: '',
         platformStatus: '',
-        executionStatus: '',
         metric: sameMetric ? '' : metric
       };
       this.businessTaskPage = 1;
@@ -9993,7 +11341,6 @@ export default {
         projectId: '',
         zentaoStatus: '',
         platformStatus: '',
-        executionStatus: '',
         metric: '',
         keyword: ''
       };
@@ -10018,7 +11365,6 @@ export default {
         keyword: task.taskNo,
         zentaoStatus: '',
         platformStatus: '',
-        executionStatus: '',
         metric: ''
       };
       this.personStatFilter = { person: '', type: '' };
@@ -10028,17 +11374,203 @@ export default {
 
     selectBusinessTask(task) {
       this.selectedBusinessTaskId = task.id;
+      this.taskProcessingSheetOpen = true;
       this.seedTaskReviewForm(task);
       this.refreshSelectedBusinessTaskBrief();
     },
 
+    toggleTaskProcessingSheet() {
+      this.taskProcessingSheetOpen = !this.taskProcessingSheetOpen;
+    },
+
+    getTaskAssigneeAccount(person = {}) {
+      const name = person.name || person.realname || person.account || '';
+      const member = [...DEFAULT_ART_DEPT_PEOPLE, ...this.artDepartmentUsers]
+        .find(item => samePerson(item.realname, name) || samePerson(item.name, name) || samePerson(item.account, name));
+      return member?.account || '';
+    },
+
+    getTaskAssigneeName(account = '') {
+      const member = [...DEFAULT_ART_DEPT_PEOPLE, ...this.artDepartmentUsers]
+        .find(item => String(item.account || '') === String(account || ''));
+      return member?.realname || member?.name || account;
+    },
+
+    startTaskAssignDrag(task, event) {
+      const taskKey = this.taskOperationKey(task);
+      if (!this.canAssignTaskByDrag || !taskKey) return;
+      this.draggingTaskId = taskKey;
+      this.draggingTask = task;
+      if (event?.dataTransfer) {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', taskKey);
+      }
+    },
+
+    clearTaskAssignDrag() {
+      this.draggingTaskId = '';
+      this.draggingTask = null;
+    },
+
+    async handleTaskDropToPerson(person = {}) {
+      const task = this.draggingTask;
+      this.clearTaskAssignDrag();
+      const taskKey = this.taskOperationKey(task);
+      if (!taskKey || !this.canAssignTaskByDrag) return;
+      const account = this.getTaskAssigneeAccount(person);
+      try {
+        this.loading.taskAssign = true;
+        const updated = await this.api(`/api/tasks/${encodeURIComponent(taskKey)}/assign-zentao`, {
+          method: 'POST',
+          body: JSON.stringify({
+            assignedTo: account,
+            assignedName: person.name || this.getTaskAssigneeName(account),
+            taskId: task.id || '',
+            taskNo: task.taskNo || task.zentao?.id || ''
+          })
+        });
+        this.applyUpdatedBusinessTask(updated);
+        if (updated.zentaoAssignSynced === false || updated.zentaoAssignError) {
+          ElMessage.warning(`已指派给 ${person.name || this.getTaskAssigneeName(account)}，工作台已更新；禅道写回待后续同步。`);
+        } else {
+          ElMessage.success(`已指派给 ${person.name || this.getTaskAssigneeName(account)}，并写入禅道。`);
+        }
+        this.refreshTasks().catch(() => {});
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || '任务指派失败');
+      } finally {
+        this.loading.taskAssign = false;
+      }
+    },
+
+    applyUpdatedBusinessTask(updated = {}) {
+      if (!updated?.id) return;
+      const updatedTaskNo = String(updated.taskNo || updated.zentao?.id || '').trim();
+      const index = this.businessTasks.findIndex(item => item.id === updated.id
+        || (updatedTaskNo
+          && String(item.projectId || '') === String(updated.projectId || '')
+          && String(item.taskNo || item.zentao?.id || '').trim() === updatedTaskNo));
+      if (index >= 0) this.businessTasks.splice(index, 1, { ...this.businessTasks[index], ...updated });
+      else this.businessTasks.unshift(updated);
+      this.bumpTaskCenterRevision();
+    },
+
+    shouldShowTaskSplitButton(task = {}) {
+      if (!this.isPlatformAdmin || !this.can('task.sync')) return false;
+      if (this.isSgProjectTask(task)) return false;
+      if (!this.isArtOwnerPerson(task.developer || task.zentao?.assignedToName || task.zentao?.assignedToRealName || task.assignedTo)) return false;
+      return !this.hasTaskRunRecords(task);
+    },
+
+    taskOperationKey(task = {}) {
+      const candidates = [task.taskNo, task.zentao?.id, task.zentaoId, task.id];
+      return String(candidates.find(value => String(value || '').trim()) || '').trim();
+    },
+
+    isSgProjectTask(task = {}) {
+      const text = [
+        task.projectName,
+        task.title,
+        task.displayTitle,
+        task.summary,
+        task.requirement,
+        task.zentao?.storyTitle,
+        task.zentao?.parentName,
+        task.zentao?.executionName
+      ].map(value => String(value || '')).join('\n');
+      return /(?:^|[^A-Za-z0-9])SG(?:[^A-Za-z0-9]|$)|SG版本需求|SG项目|SG翡翠绿|翡翠绿/i.test(text);
+    },
+
+    async openTaskSplitDialog(task = {}) {
+      if (!this.shouldShowTaskSplitButton(task)) return;
+      try {
+        this.loading.taskSplit = true;
+        const taskKey = this.taskOperationKey(task);
+        const plan = await this.api(`/api/tasks/${encodeURIComponent(taskKey)}/split-plan`, { method: 'POST' });
+        this.taskSplitDialog = {
+          visible: true,
+          task,
+          assignees: Array.isArray(plan.assignees) ? plan.assignees : [],
+          plan: {
+            ...plan,
+            children: (Array.isArray(plan.children) ? plan.children : []).map((row, index) => ({
+              id: row.id || `child-${index + 1}`,
+              enabled: row.enabled !== false,
+              name: row.name || '',
+              assignedTo: row.assignedTo || '',
+              deadline: row.deadline || plan.deadline || '',
+              estimate: Number(row.estimate || 0),
+              executionId: row.executionId || plan.executionId || '',
+              parent: row.parent || plan.parent || plan.taskId || ''
+            }))
+          }
+        };
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || '生成拆单方案失败');
+      } finally {
+        this.loading.taskSplit = false;
+      }
+    },
+
+    addTaskSplitChild() {
+      const plan = this.taskSplitDialog.plan;
+      const next = (plan.children || []).length + 1;
+      plan.children.push({
+        id: `manual-${Date.now()}-${next}`,
+        enabled: true,
+        name: `【制作单】${plan.title || '子单'}-${next}`,
+        assignedTo: plan.mainAssignee || this.taskSplitDialog.assignees[0]?.account || '',
+        deadline: plan.deadline || '',
+        estimate: 0,
+        executionId: plan.executionId || '',
+        parent: plan.parent || plan.taskId || ''
+      });
+    },
+
+    removeTaskSplitChild(index) {
+      this.taskSplitDialog.plan.children.splice(index, 1);
+    },
+
+    async submitTaskSplitPlan() {
+      const task = this.taskSplitDialog.task;
+      const taskKey = this.taskOperationKey(task);
+      if (!taskKey) return;
+      const enabledChildren = (this.taskSplitDialog.plan.children || []).filter(row => row.enabled !== false);
+      if (!this.taskSplitDialog.plan.mainAssignee && !enabledChildren.length) {
+        ElMessage.warning('请至少选择主单负责人或保留一条子单。');
+        return;
+      }
+      try {
+        await ElMessageBox.confirm('确认后会直接写入禅道，包含主单指派和启用的子单。是否继续？', '确认拆单', {
+          type: 'warning',
+          confirmButtonText: '确认写入',
+          cancelButtonText: '取消'
+        });
+      } catch {
+        return;
+      }
+      try {
+        this.loading.taskSplit = true;
+        await this.api(`/api/tasks/${encodeURIComponent(taskKey)}/split-apply`, {
+          method: 'POST',
+          body: JSON.stringify({ plan: this.taskSplitDialog.plan })
+        });
+        this.taskSplitDialog.visible = false;
+        ElMessage.success('拆单已写入禅道。');
+        await this.refreshTasks();
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || '拆单写入失败');
+      } finally {
+        this.loading.taskSplit = false;
+      }
+    },
+
     handleVisibilityRefresh() {
-      if (document.visibilityState === 'visible') this.refreshVisibleTaskBriefs();
+      return;
     },
 
     refreshVisibleTaskBriefs() {
-      if (this.effectiveTaskCenterMode !== 'task') return;
-      this.refreshTasks().catch(() => {});
+      return;
     },
 
     async refreshSelectedBusinessTaskBrief() {
@@ -10092,6 +11624,7 @@ export default {
       }
       if (!task?.id) return;
       try {
+        this.loading.taskNotes = true;
         const result = await this.api('/api/task-processing-notes', {
           method: 'POST',
           body: JSON.stringify({
@@ -10106,6 +11639,8 @@ export default {
         ElMessage.success(this.isPlatformAdmin ? '处理备注已保存并同步给团队' : '处理备注已保存');
       } catch (error) {
         ElMessage.error(this.readApiError(error) || '处理备注保存失败');
+      } finally {
+        this.loading.taskNotes = false;
       }
     },
 
@@ -10394,10 +11929,10 @@ export default {
       }
       this.selectBusinessTask(task);
       this.selectedAiArchiveTaskId = task.id;
-      this.activeView = 'ai-archive';
-      this.pushRoute('/ai-archive');
+      this.activeView = 'tasks';
+      this.pushRoute('/tasks');
       this.$nextTick(() => {
-        this.scrollAiArchiveSection('runs');
+        document.querySelector('.task-processing-sheet')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       });
     },
 
@@ -10416,7 +11951,6 @@ export default {
         projectId: task.projectId || '',
         zentaoStatus: '',
         platformStatus: '',
-        executionStatus: '',
         metric: ''
       };
       this.personStatFilter = { person: '', type: '' };
@@ -10671,12 +12205,29 @@ export default {
       }[decision] || 'info';
     },
 
+    newRunForm(overrides = {}) {
+      return {
+        ...emptyRunForm(),
+        projectId: this.selectedProjectId || this.projects[0]?.id || '',
+        developer: this.defaultRunDeveloperName,
+        ...overrides
+      };
+    },
+
+    async openRunCreateDrawer(overrides = {}) {
+      const form = this.newRunForm(overrides);
+      this.runForm = form;
+      if (form.projectId && !this.scans[form.projectId]) {
+        await this.ensureRunProjectScanCache(form.projectId);
+      }
+      this.runDrawer = true;
+    },
+
     createRunFromTask(task) {
       const workloadLevel = this.isLowEffortArtAcceptanceTask(task)
         ? 'XS'
         : task.workloadEstimate?.level || inferTaskWorkloadLevel(task, this.projects.find(item => item.id === task.projectId))?.level || 'M';
-      this.runForm = {
-        ...emptyRunForm(),
+      this.openRunCreateDrawer({
         taskId: task.id,
         projectId: task.projectId,
         executionMode: 'level-process',
@@ -10684,17 +12235,51 @@ export default {
         workflowLevel: workloadLevel,
         title: this.taskDisplayTitle(task),
         zentaoId: task.taskNo || '',
-        developer: task.developer || '',
+        developer: task.developer || this.defaultRunDeveloperName,
         requirement: executionInstructionForTask(task),
         sourceType: 'task'
-      };
-      this.runDrawer = true;
+      });
+    },
+
+    createRunFromSkillInventoryRow(row = {}) {
+      const projectId = row.projectId || this.selectedProjectId || this.projects[0]?.id || '';
+      const skillPath = row.skill?.git?.relativePath || row.relativePath || row.skill?.relativePath || row.path || row.skill?.path || row.id || '';
+      const productName = row.productDisplayName || row.productFileName || row.title || this.fileNameFromPath(skillPath) || row.id || 'AI 产物';
+      const ownerText = this.displayChinesePersonList(row.uploader || row.owner || '');
+      const owner = ownerText && ownerText !== '-' ? ownerText : this.defaultRunDeveloperName;
+      const scene = this.skillSceneText(row, '');
+      const sourceLines = [
+        skillPath ? `产物路径：${skillPath}` : '',
+        row.source ? `来源：${row.source}` : '',
+        owner ? `贡献人：${owner}` : '',
+        scene ? `适用场景：${scene}` : ''
+      ].filter(Boolean);
+      this.openRunCreateDrawer({
+        projectId,
+        sourceMode: 'zentao-task',
+        executionMode: 'single-skill',
+        workflow: 'art-single-skill',
+        workflowLevel: 'XS',
+        stage: skillPath,
+        title: `执行 ${productName}`,
+        developer: owner,
+        targetPage: skillPath || productName,
+        showdocHints: skillPath,
+        selectedMaterialHints: skillPath ? [skillPath] : [],
+        requirement: [
+          `请基于 AI 产物清单中的「${productName}」发起单个规范 / Skill 执行。`,
+          ...sourceLines,
+          '执行时优先读取该 md / SKILL.md 或产物路径，按当前对话补充要求处理，并在产物明细中保留执行依据和结果。'
+        ].join('\n'),
+        sourceType: 'skill-inventory'
+      });
+      this.activeView = 'runs';
+      this.pushRoute('/runs');
     },
 
     createRunFromBug(bug) {
       const workloadLevel = bug.workloadEstimate?.level || inferBugWorkloadLevel(bug, this.projects.find(item => item.id === bug.projectId))?.level || 'S';
-      this.runForm = {
-        ...emptyRunForm(),
+      this.openRunCreateDrawer({
         projectId: bug.projectId,
         executionMode: 'bug-fix',
         workflow: 'bug-fix',
@@ -10702,7 +12287,7 @@ export default {
         stage: 'bug-fix',
         title: this.bugDisplayTitle(bug),
         zentaoId: bug.bugNo || '',
-        developer: bug.developer || bug.assignedTo || '',
+        developer: bug.developer || bug.assignedTo || this.defaultRunDeveloperName,
         targetPage: bug.targetPage || '',
         figmaLinks: bug.figmaLinks || '',
         showdocHints: bug.showdocHints || '',
@@ -10715,8 +12300,7 @@ export default {
           '请按 Bug 修复流程执行：复现/定位、最小修复、针对性验证、回归说明。'
         ].filter(Boolean).join('\n'),
         sourceType: 'bug'
-      };
-      this.runDrawer = true;
+      });
     },
 
     resetWorkflowDesigner() {
@@ -10894,8 +12478,7 @@ export default {
         ElMessage.warning('请先保存模板后再发起执行');
         return;
       }
-      this.runForm = {
-        ...emptyRunForm(),
+      this.openRunCreateDrawer({
         projectId: saved.projectId || this.selectedProjectId || '',
         executionMode: 'custom-workflow',
         workflow: 'custom-workflow',
@@ -10904,8 +12487,7 @@ export default {
         title: saved.name,
         requirement: saved.description || '请按自定义工作流模板执行，并在每个阶段记录产物与结论。',
         sourceType: 'task'
-      };
-      this.runDrawer = true;
+      });
     },
 
     async openDirectoryPicker() {
@@ -11000,6 +12582,14 @@ export default {
         ElMessage.warning('请选择项目并填写任务标题');
         return;
       }
+      if (this.runForm.sourceMode === 'figma-link' && !String(this.runForm.figmaLinks || '').trim()) {
+        ElMessage.warning('请填写 Figma 界面链接');
+        return;
+      }
+      if (this.runForm.sourceMode === 'completed-task' && !String(this.runForm.zentaoId || '').trim()) {
+        ElMessage.warning('请填写已完成任务 ID 或禅道 ID');
+        return;
+      }
       if (this.isSingleSkillRun && !this.runForm.stage) {
         ElMessage.warning('请选择规范 / Skill / 执行类型');
         return;
@@ -11026,9 +12616,50 @@ export default {
       this.runDrawer = false;
       this.activeView = 'runs';
       this.pushRoute('/runs');
-      this.runForm = { ...emptyRunForm(), projectId: this.selectedProjectId || '' };
+      this.runForm = this.newRunForm({ projectId: this.selectedProjectId || '' });
       await Promise.all([this.refreshTasks(), this.refreshRuns()]);
       ElMessage.success('任务已创建');
+    },
+
+    async submitRunChatInstruction() {
+      const sourceRun = this.selectedRun;
+      const instruction = String(this.runChatInput || '').trim();
+      if (!sourceRun || !instruction) return;
+      if (this.isRunInProgress(sourceRun)) {
+        ElMessage.warning('当前执行仍在运行中，完成或中断后再继续沟通。');
+        return;
+      }
+      this.runChatSubmitting = true;
+      try {
+        const run = await this.api(`/api/runs/${encodeURIComponent(sourceRun.id)}/retry`, {
+          method: 'POST',
+          body: JSON.stringify({
+            title: `${sourceRun.title || '美术执行'} · 追加沟通`,
+            requirement: [
+              sourceRun.requirement || '',
+              '',
+              '## 工作台追加沟通',
+              instruction,
+              '',
+              '请基于上一轮执行的产物、资料.md、Figma 线索、规范 md / Skill 线索继续处理；不要重复无关步骤，结果继续写入本次新的 artifactRoot。'
+            ].filter(Boolean).join('\n'),
+            figmaLinks: sourceRun.figmaLinks || '',
+            showdocHints: sourceRun.showdocHints || '',
+            targetPage: sourceRun.targetPage || '',
+            stage: sourceRun.stage || ''
+          })
+        });
+        this.runs = [run, ...this.runs.filter(item => item.id !== run.id)];
+        this.selectedRunId = run.id;
+        this.runChatInput = '';
+        await this.startRun(run.id);
+        this.runLogCollapse = ['raw-log'];
+        ElMessage.success('已创建新的 Codex 执行');
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || '发送执行要求失败');
+      } finally {
+        this.runChatSubmitting = false;
+      }
     },
 
     openRun(run) {
@@ -11091,7 +12722,18 @@ export default {
     },
 
     taskDisplayTitle(task) {
-      return [task.taskNo, task.title].filter(Boolean).join(' ');
+      return [task.taskNo, this.cleanTaskCenterDisplayTitle(task.title)].filter(Boolean).join(' ');
+    },
+
+    cleanTaskCenterDisplayTitle(title = '') {
+      return String(title || '')
+        .replace(/【\s*制作单\s*】/g, '')
+        .replace(/\[\s*制作单\s*\]/gi, '')
+        .replace(/制作单/g, '')
+        .replace(/跨弧/g, '')
+        .replace(/\s{2,}/g, ' ')
+        .replace(/^[\s·:：\-—_]+|[\s·:：\-—_]+$/g, '')
+        .trim();
     },
 
     isUrgentTask(task = {}) {
@@ -11365,7 +13007,7 @@ export default {
       if (['blocked', 'failed'].includes(status) && blockerReason && !this.isPlaceholderResultText(blockerReason)) {
         return this.humanizeRunResultText(blockerReason);
       }
-      if (status === 'passed') return '下一步：进入 AI 档案查看报告，并按业务任务做验收确认。';
+      if (status === 'passed') return '下一步：回到任务中心查看关联任务，并按业务任务做验收确认。';
       if (status === 'conditional_pass') return '下一步：优先确认风险项和运行证据，确认后再视为交付完成。';
       if (status === 'skipped') return '下一步：确认跳过阶段是否符合本次任务范围。';
       if (status === 'blocked') return '下一步：先解决阻塞项，再重新发起执行。';
@@ -11395,25 +13037,22 @@ export default {
         this.selectedAiArchiveTaskId = task.id;
         this.seedTaskReviewForm(task);
       }
-      this.activeView = 'ai-archive';
-      this.pushRoute('/ai-archive');
-      this.$nextTick(() => {
-        document.querySelector('[data-ai-archive-section="runs"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      });
+      this.activeView = task ? 'tasks' : 'runs';
+      this.pushRoute(task ? '/tasks' : '/runs');
     },
 
     openRunBusinessTaskReview(run = this.selectedRun) {
       const task = this.businessTaskForRun(run);
       if (!task) {
-        ElMessage.warning('没有找到关联的业务任务，先查看 AI 档案。');
+        ElMessage.warning('没有找到关联的业务任务，已回到美术执行台。');
         this.openRunArchive(run);
         return;
       }
       this.selectedBusinessTaskId = task.id;
       this.selectedAiArchiveTaskId = task.id;
       this.seedTaskReviewForm(task);
-      this.activeView = 'ai-archive';
-      this.pushRoute('/ai-archive');
+      this.activeView = 'tasks';
+      this.pushRoute('/tasks');
       this.$nextTick(() => {
         document.querySelector('.task-review-section')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       });
@@ -11557,6 +13196,259 @@ export default {
         }
       }
       return stages;
+    },
+
+    runChainTask(run = this.selectedRun) {
+      if (!run) return null;
+      const taskNo = String(run.zentaoId || run.taskNo || '').trim();
+      return this.businessTaskRows.find(task => task.id === run.taskId)
+        || this.businessTasks.find(task => task.id === run.taskId)
+        || this.businessTaskRows.find(task => taskNo && String(task.taskNo || task.zentao?.id || '').trim() === taskNo)
+        || this.businessTasks.find(task => taskNo && String(task.taskNo || task.zentao?.id || '').trim() === taskNo)
+        || null;
+    },
+
+    runChainTaskNo(run = this.selectedRun) {
+      const task = this.runChainTask(run);
+      return String(run?.zentaoId || run?.taskNo || task?.taskNo || task?.zentao?.id || '').trim();
+    },
+
+    runChainEvents(run = this.selectedRun) {
+      if (!run) return [];
+      const taskNo = this.runChainTaskNo(run);
+      const task = this.runChainTask(run);
+      return (this.artProgressEvents || [])
+        .filter(event => {
+          const eventTaskNo = String(event.zentaoTaskId || event.taskNo || event.zentaoId || '').trim();
+          return event.runId === run.id
+            || (run.id && event.metadata?.runId === run.id)
+            || (taskNo && eventTaskNo === taskNo)
+            || (task?.id && event.taskId === task.id);
+        })
+        .sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+    },
+
+    runChainAiFlowRecord(run = this.selectedRun) {
+      const task = this.runChainTask(run);
+      const taskNo = this.runChainTaskNo(run);
+      return (this.aiFlowRecords || []).find(record => record.status !== 'deleted' && record.projectId === run?.projectId && taskNo && String(record.taskNo || '').trim() === taskNo)
+        || (this.aiFlowRecords || []).find(record => record.status !== 'deleted' && task?.id && record.taskId === task.id)
+        || null;
+    },
+
+    runChainReviews(run = this.selectedRun) {
+      const task = this.runChainTask(run);
+      const taskNo = this.runChainTaskNo(run);
+      return (this.taskReviews || [])
+        .filter(review => review.runId === run?.id || (task?.id && review.taskId === task.id) || (taskNo && review.taskNo === taskNo))
+        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    },
+
+    runChainSkillActions(run = this.selectedRun) {
+      const events = this.runChainEvents(run);
+      const actionMap = new Map();
+      for (const event of events) {
+        const rawName = event.skillName || event.skillId || event.stage || event.title || '';
+        const key = this.normalizeRunActionSkillKey(rawName);
+        if (!key) continue;
+        const item = actionMap.get(key) || {
+          key,
+          name: this.displayRunActionSkillName(key, rawName),
+          count: 0,
+          status: 'pending',
+          people: new Set(),
+          lastAt: '',
+          summaries: [],
+          records: []
+        };
+        item.count += 1;
+        if (event.memberName || event.memberAccount) item.people.add(this.canonicalArtDeptPerson(event.memberName || event.memberAccount) || event.memberName || event.memberAccount);
+        item.lastAt = String(event.createdAt || '').localeCompare(String(item.lastAt || '')) > 0 ? event.createdAt : item.lastAt;
+        const status = this.runActionStatusFromEvent(event);
+        item.status = this.mergeRunActionStatus(item.status, status);
+        const summary = String(event.summary || event.title || event.stage || '').trim();
+        if (summary && !item.summaries.includes(summary)) item.summaries.push(summary);
+        item.records.push(event);
+        actionMap.set(key, item);
+      }
+      return [...actionMap.values()].map(item => ({
+        ...item,
+        people: [...item.people],
+        summary: item.summaries[0] || this.defaultRunActionSummary(item.key),
+        type: this.runActionTypeLabel(item.key)
+      })).sort((a, b) => String(b.lastAt || '').localeCompare(String(a.lastAt || '')) || b.count - a.count);
+    },
+
+    highlightedRunSkillActions(run = this.selectedRun) {
+      const existing = this.runChainSkillActions(run);
+      const byKey = new Map(existing.map(item => [item.key, item]));
+      return ['sameipimage', 'uifinalize'].map(key => byKey.get(key) || {
+        key,
+        name: this.displayRunActionSkillName(key),
+        type: this.runActionTypeLabel(key),
+        count: 0,
+        status: 'pending',
+        people: [],
+        lastAt: '',
+        summary: this.defaultRunActionSummary(key),
+        records: []
+      });
+    },
+
+    otherRunSkillActions(run = this.selectedRun) {
+      return this.runChainSkillActions(run).filter(item => !['sameipimage', 'uifinalize'].includes(item.key)).slice(0, 8);
+    },
+
+    normalizeRunActionSkillKey(value = '') {
+      const normalized = this.normalizeUsageMatchText(value).replace(/\.(md|markdown)$/i, '');
+      if (!normalized) return '';
+      if (/sameipimage|同ip|固定人设|人物一致|角色一致|换动作|多场景角色/.test(normalized)) return 'sameipimage';
+      if (/uifinalize|ui收尾|界面收尾|交付前检查|figma界面收尾|ui规范复核|交付检查/.test(normalized)) return 'uifinalize';
+      if (this.isGenericUsageNeedle(normalized)) return '';
+      return normalized;
+    },
+
+    displayRunActionSkillName(key = '', fallback = '') {
+      if (key === 'sameipimage') return 'same-ip-image';
+      if (key === 'uifinalize') return 'ui-finalize';
+      return String(fallback || key || 'Skill').trim();
+    },
+
+    runActionTypeLabel(key = '') {
+      if (key === 'sameipimage') return '同 IP 生图';
+      if (key === 'uifinalize') return 'UI 收尾检查';
+      return 'Skill / 工具调用';
+    },
+
+    defaultRunActionSummary(key = '') {
+      if (key === 'sameipimage') return '用于角色一致性、固定人设、多场景生成或换动作。';
+      if (key === 'uifinalize') return '用于 Figma 界面收尾和交付前检查。';
+      return '其它 skill 或工具动作。';
+    },
+
+    runActionStatusFromEvent(event = {}) {
+      const text = `${event.status || ''} ${event.eventType || ''} ${event.summary || ''}`;
+      if (/blocked|阻塞|卡点/.test(text)) return 'blocked';
+      if (/failed|fail|error|失败|不可用|不通过/.test(text)) return 'failed';
+      if (/completed|done|success|通过|完成|可复用|可交付/.test(text)) return 'completed';
+      if (/running|progress|started|执行中|进行中/.test(text)) return 'running';
+      return 'recorded';
+    },
+
+    mergeRunActionStatus(current = 'pending', next = 'pending') {
+      const rank = { failed: 6, blocked: 5, running: 4, completed: 3, recorded: 2, pending: 1 };
+      return (rank[next] || 0) > (rank[current] || 0) ? next : current;
+    },
+
+    runActionStatusLabel(status = '') {
+      return {
+        completed: '已完成',
+        recorded: '已记录',
+        running: '执行中',
+        blocked: '有阻塞',
+        failed: '未通过',
+        pending: '未记录'
+      }[status] || '未记录';
+    },
+
+    runActionTagType(status = '') {
+      if (status === 'completed' || status === 'recorded') return 'success';
+      if (status === 'running') return 'warning';
+      if (status === 'blocked' || status === 'failed') return 'danger';
+      return 'info';
+    },
+
+    runChainReferenceItems(run = this.selectedRun) {
+      const items = [];
+      const push = (value, source = '引用') => {
+        const text = String(value || '').trim();
+        if (!text) return;
+        const matches = text.match(/(?:[^\s`"'<>，。；;、]+\/)?[\u4e00-\u9fa5A-Za-z0-9_.-]+(?:\.(?:md|markdown)|\/SKILL\.md)/gi) || [];
+        for (const match of matches) {
+          const path = String(match || '').trim();
+          if (!path || this.isGenericUsageFileTarget(path)) continue;
+          const key = this.normalizeUsageMatchText(path);
+          if (items.some(item => item.key === key)) continue;
+          items.push({ key, label: this.fileNameFromPath(path) || path, path, source });
+        }
+      };
+      [
+        run?.requirement,
+        run?.figmaLinks,
+        run?.showdocHints,
+        run?.materialPath,
+        this.logText,
+        ...(this.runChainEvents(run).flatMap(event => [event.repoPath, event.summary, event.metadata?.path, event.metadata?.filePath, event.metadata?.skillPath, event.metadata?.artifactPath]) || [])
+      ].forEach(value => push(value, '执行链路'));
+      return items.slice(0, 10);
+    },
+
+    runChainTimeline(run = this.selectedRun) {
+      if (!run) return [];
+      const task = this.runChainTask(run);
+      const aiFlow = this.runChainAiFlowRecord(run);
+      const reviews = this.runChainReviews(run);
+      const events = this.runChainEvents(run);
+      const skillActions = this.runChainSkillActions(run);
+      const references = this.runChainReferenceItems(run);
+      const steps = [
+        {
+          key: 'requirement',
+          title: '1. 任务需求',
+          status: task || run.requirement ? 'completed' : 'pending',
+          time: task?.createdAt || run.createdAt || '',
+          summary: task?.displayTitle || task?.title || run.title || '执行记录已创建',
+          meta: [this.runChainTaskNo(run) ? `禅道 ${this.runChainTaskNo(run)}` : '', run.projectName || this.projectName(run.projectId)].filter(Boolean)
+        },
+        {
+          key: 'manual-context',
+          title: '2. 人工补充',
+          status: aiFlow ? 'completed' : 'pending',
+          time: aiFlow?.updatedAt || aiFlow?.createdAt || '',
+          summary: aiFlow ? '已有人工全流程记录' : '暂无人工补充记录',
+          meta: aiFlow ? [aiFlow.flowCompletion ? `完成度 ${aiFlow.flowCompletion}%` : '', aiFlow.agentModel ? '已记录模型' : ''].filter(Boolean) : []
+        },
+        {
+          key: 'ai-run',
+          title: '3. AI 自动执行',
+          status: this.isRunInProgress(run) ? 'running' : this.hasRunExecuted(run) ? 'completed' : 'pending',
+          time: run.startedAt || run.createdAt || '',
+          summary: this.workflowRunLabel(run),
+          meta: [`阶段 ${this.displayRunStages(run).length || 0}`]
+        },
+        {
+          key: 'skill-actions',
+          title: '4. Skill / 工具动作',
+          status: skillActions.length ? 'completed' : 'pending',
+          time: skillActions[0]?.lastAt || '',
+          summary: skillActions.length ? `${skillActions.length} 类动作，合计 ${skillActions.reduce((sum, item) => sum + item.count, 0)} 次` : '暂无 skill / 工具动作',
+          meta: skillActions.map(item => item.type).slice(0, 5)
+        },
+        {
+          key: 'references',
+          title: '5. md / 文件引用',
+          status: references.length ? 'completed' : 'pending',
+          time: '',
+          summary: references.length ? `${references.length} 个引用` : '暂无 md 或 SKILL.md 引用',
+          meta: references.length ? ['明细在产物列表查看'] : []
+        },
+        {
+          key: 'review',
+          title: '6. 验证与验收',
+          status: reviews.length ? 'completed' : this.selectedRun?.resultSummary ? 'recorded' : 'pending',
+          time: reviews[0]?.createdAt || run.finishedAt || run.updatedAt || '',
+          summary: reviews[0] ? this.taskReviewDecisionLabel(reviews[0].decision) : this.resultStatusLabel(this.effectiveResultStatus(run)),
+          meta: reviews[0] ? [`评分 ${reviews[0].score ?? '-'}`, reviews[0].needsRework ? '需返工' : '无返工标记'] : []
+        }
+      ];
+      return steps;
+    },
+
+    runChainStepClass(status = '') {
+      if (status === 'completed' || status === 'recorded') return 'is-completed';
+      if (status === 'running') return 'is-running';
+      if (status === 'failed' || status === 'blocked') return 'is-problem';
+      return 'is-pending';
     },
 
     isCurrentRunStage(stage, index) {
@@ -13061,6 +14953,19 @@ export default {
       return response.json();
     },
 
+    async apiWithTimeout(url, options = {}, meta = {}, timeoutMs = 30000) {
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        return await this.api(url, { ...options, signal: controller.signal }, meta);
+      } catch (error) {
+        if (error?.name === 'AbortError') throw new Error('请求超时');
+        throw error;
+      } finally {
+        window.clearTimeout(timer);
+      }
+    },
+
     readApiError(error) {
       return this.readApiErrorPayload(error).error;
     },
@@ -13276,6 +15181,7 @@ const ART_PERSON_ALIASES = new Map([
   ['lihaling', '李华玲'],
   ['zhangzb', '张宗斌'],
   ['zzb', '张宗斌'],
+  ['alan', '兰韩界'],
   ['lanhj', '兰韩界'],
   ['lhj', '兰韩界']
 ]);
@@ -13305,6 +15211,8 @@ const SKILL_VALIDATION_PERSON_ALIASES = new Map([
 function canonicalSkillValidationPerson(value = '') {
   const text = String(value || '').trim();
   if (!text) return '';
+  const normalized = normalizePersonName(text);
+  if (ART_PERSON_ALIASES.has(normalized)) return ART_PERSON_ALIASES.get(normalized);
   for (const [alias, name] of SKILL_VALIDATION_PERSON_ALIASES.entries()) {
     if (text === alias || text.includes(alias)) return name;
   }
@@ -13313,6 +15221,7 @@ function canonicalSkillValidationPerson(value = '') {
 
 function emptyRunForm() {
   return {
+    sourceMode: 'zentao-task',
     taskId: '',
     projectId: '',
     executionMode: 'level-process',
@@ -13326,6 +15235,7 @@ function emptyRunForm() {
     targetPage: '',
     figmaLinks: '',
     showdocHints: '',
+    selectedMaterialHints: [],
     requirement: '',
     sourceType: 'task'
   };
@@ -13486,7 +15396,8 @@ function emptyAiAssetForm(input = {}) {
     skillPath: input.skillPath || '',
     flowOwner: input.flowOwner || '',
     fileLink: input.fileLink || '',
-    templateNote: input.templateNote || ''
+    templateNote: input.templateNote || '',
+    source: input.source || ''
   };
 }
 

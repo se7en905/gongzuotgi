@@ -598,6 +598,30 @@ export async function deleteOperationLog(id) {
   return normalizeOperationLog(log);
 }
 
+export async function deleteOperationLogsByFilters(filters = {}) {
+  const logs = await readJson(paths.operationLogs, []);
+  const keyword = String(filters.keyword || '').trim().toLowerCase();
+  const from = filters.from ? Date.parse(filters.from) : 0;
+  const to = filters.to ? Date.parse(filters.to) : 0;
+  const actions = Array.isArray(filters.actions)
+    ? filters.actions
+    : String(filters.actions || '').split(/[,，、\s]+/).filter(Boolean);
+  const deleted = [];
+  const kept = [];
+  for (const log of logs) {
+    if (operationLogMatchesFilters(log, filters, { keyword, from, to, actions })) {
+      deleted.push(log);
+    } else {
+      kept.push(log);
+    }
+  }
+  if (deleted.length) await writeJson(paths.operationLogs, kept);
+  return {
+    deletedCount: deleted.length,
+    deleted: deleted.map(log => normalizeOperationLog(log))
+  };
+}
+
 export async function ensureTaskForRun(input) {
   if (input.taskId) {
     const existing = await getTask(input.taskId);
@@ -646,6 +670,16 @@ export async function getUsageCounters() {
 
 export async function recordUsageCountersForExpiredSkillValidations(records = []) {
   const targets = records.flatMap(record => usageTargetsFromSkillValidation(record));
+  if (targets.length) await updateUsageCounters(targets);
+}
+
+export async function recordUsageCountersForArtProgressEvent(record = {}) {
+  const targets = usageTargetsFromArtProgressEvent(record);
+  if (targets.length) await updateUsageCounters(targets);
+}
+
+export async function recordUsageCountersForSkillValidation(record = {}) {
+  const targets = usageTargetsFromSkillValidation(record);
   if (targets.length) await updateUsageCounters(targets);
 }
 
@@ -1208,6 +1242,7 @@ function normalizeTask(input) {
     taskNo,
     title,
     developer: input.developer || '',
+    assignedTo: input.assignedTo || input.zentao?.assignedTo || '',
     source: input.source || 'manual',
     status: input.status || 'pending',
     zentaoStatus: input.zentaoStatus || '',
@@ -1875,7 +1910,7 @@ function normalizeUsageCounterBucket(input = {}, fallbackKey = '') {
   const count = Math.max(0, Number(input.count ?? input.usageCount ?? 0));
   const researchSyncCount = Math.max(0, Number(input.researchSyncCount || input.researchCount || 0));
   const validationCount = Math.max(0, Number(input.validationCount || 0));
-  const usageCount = Math.max(0, Number(input.usageOnlyCount ?? input.directUsageCount ?? 0));
+  const usageCount = Math.max(0, Number(input.usageOnlyCount ?? input.directUsageCount ?? input.usageCount ?? input.count ?? 0));
   return {
     key,
     target: cleanString(input.target || input.targetName || fallbackKey),
@@ -1883,6 +1918,7 @@ function normalizeUsageCounterBucket(input = {}, fallbackKey = '') {
     usageCount,
     researchSyncCount,
     validationCount,
+    eventKeys: Array.isArray(input.eventKeys) ? input.eventKeys.map(cleanString).filter(Boolean) : [],
     people: normalizedPeople,
     peopleCount: Number(input.peopleCount || Object.keys(normalizedPeople).length),
     firstAt: cleanString(input.firstAt),
@@ -1906,6 +1942,8 @@ async function updateUsageCounters(targets = []) {
     const key = usageCounterKey(target.key || target.target);
     if (!key) continue;
     const bucket = normalizeUsageCounterBucket(counters.buckets[key] || { key, target: target.target }, key);
+    const eventKey = cleanString(target.eventKey);
+    if (eventKey && bucket.eventKeys.includes(eventKey)) continue;
     bucket.target = bucket.target || target.target || key;
     bucket.count = Number(bucket.count || 0) + Number(target.count || 1);
     const kind = cleanString(target.kind || target.source);
@@ -1917,6 +1955,7 @@ async function updateUsageCounters(targets = []) {
       bucket.usageCount = Number(bucket.usageCount || 0) + Number(target.count || 1);
     }
     if (target.person) bucket.people[target.person] = Number(bucket.people[target.person] || 0) + Number(target.count || 1);
+    if (eventKey) bucket.eventKeys = [...bucket.eventKeys, eventKey].slice(-500);
     bucket.peopleCount = Object.keys(bucket.people).length;
     const at = target.at || '';
     bucket.firstAt = bucket.firstAt && at ? (String(bucket.firstAt).localeCompare(String(at)) <= 0 ? bucket.firstAt : at) : (bucket.firstAt || at);
@@ -1945,14 +1984,16 @@ function usageTargetsFromSkillValidation(record = {}) {
   return buildUsageTargets(targetValues, {
     person: cleanString(record.validator || record.walkthroughOwner),
     at: cleanString(record.createdAt || record.submittedAt || record.importedAt),
-    source: 'skill-validation'
-    , kind: 'validation'
+    source: 'skill-validation',
+    kind: 'validation',
+    eventKey: usageEventKey('validation', record.id || record.sourceRef || record.artifactName, record.createdAt || record.submittedAt || record.importedAt)
   });
 }
 
 function usageTargetsFromArtProgressEvent(event = {}) {
   if (!isUsageLikeArtProgressEvent(event)) return [];
   const metadata = event.metadata && typeof event.metadata === 'object' ? event.metadata : {};
+  const defaultCount = Math.max(1, Number(metadata.usageCount || metadata.count || 1) || 1);
   const targetValues = [
     event.skillId,
     event.skillName,
@@ -1964,16 +2005,28 @@ function usageTargetsFromArtProgressEvent(event = {}) {
     metadata.artifactPath,
     metadata.artifactLocation,
     ...(Array.isArray(metadata.artifactPaths) ? metadata.artifactPaths : []),
-    ...(Array.isArray(metadata.artifactNames) ? metadata.artifactNames : []),
-    ...(Array.isArray(metadata.calledArtifacts) ? metadata.calledArtifacts.flatMap(item => [item.id, item.name, item.path]) : []),
-    ...(Array.isArray(metadata.matchedArtifacts) ? metadata.matchedArtifacts.flatMap(item => [item.id, item.name, item.path]) : [])
+    ...(Array.isArray(metadata.artifactNames) ? metadata.artifactNames : [])
   ];
-  return buildUsageTargets(targetValues, {
+  const targets = buildUsageTargets(targetValues, {
     person: cleanString(event.memberName || event.memberAccount),
     at: cleanString(event.createdAt),
     source: 'art-progress',
-    kind: 'research-sync'
+    kind: 'research-sync',
+    count: defaultCount,
+    eventKey: usageEventKey('art-progress', event.id || event.skillName || event.title, event.createdAt)
   });
+  const artifactTargets = [
+    ...(Array.isArray(metadata.calledArtifacts) ? metadata.calledArtifacts : []),
+    ...(Array.isArray(metadata.matchedArtifacts) ? metadata.matchedArtifacts : [])
+  ].flatMap((item, index) => buildUsageTargets([item?.id, item?.name, item?.path], {
+    person: cleanString(event.memberName || event.memberAccount),
+    at: cleanString(event.createdAt),
+    source: 'art-progress',
+    kind: 'research-sync',
+    count: Math.max(1, Number(item?.count || defaultCount) || 1),
+    eventKey: usageEventKey('art-progress-artifact', `${event.id || event.skillName || event.title}:${index}`, event.createdAt)
+  }));
+  return [...targets, ...artifactTargets];
 }
 
 function usageTargetsFromOperationLog(log = {}) {
@@ -1982,16 +2035,19 @@ function usageTargetsFromOperationLog(log = {}) {
     person: cleanString(log.displayName || log.username),
     at: cleanString(log.createdAt),
     source: 'operation-log',
-    kind: 'usage'
+    kind: 'usage',
+    eventKey: usageEventKey('operation-log', log.id || log.targetId || log.targetName, log.createdAt)
   });
 }
 
 function isUsageLikeArtProgressEvent(event = {}) {
   const type = cleanString(event.eventType);
-  const status = cleanString(event.status).toLowerCase();
-  if (/failed|fail|error|blocked|cancel/.test(status)) return false;
-  if (['skill_called', 'tool_used', 'research_artifact', 'research_summary', 'research_finding', 'task_completed', 'reporter_test', 'reporter_installed'].includes(type)) return true;
+  if (['reporter_test', 'reporter_installed'].includes(type)) return false;
+  const metadata = event.metadata && typeof event.metadata === 'object' ? event.metadata : {};
+  if (metadata.source === 'codex-session-summary') return false;
+  if (['skill_called', 'tool_used', 'research_artifact', 'research_summary', 'research_finding', 'task_completed'].includes(type)) return true;
   const text = `${event.skillId || ''} ${event.skillName || ''} ${event.summary || ''} ${event.title || ''}`;
+  if (/member-art-reporter|art-progress-reporter|art-workbench-sync-reporter|美术工作台 AI 研究沉淀|研究沉淀安装|安装测试|安装完成|自动整理|Codex 研究整理/i.test(text)) return false;
   return /使用|调用|验证|复用|产物|skill|tool/i.test(text);
 }
 
@@ -2030,9 +2086,15 @@ function normalizeUsageTargets(targets = []) {
     const dedupeKey = [key, person, at, item.source || ''].join('::');
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
-    output.push({ key, target, person, at, count: Math.max(1, Number(item.count || 1)), kind: cleanString(item.kind || item.source) });
+    output.push({ key, target, person, at, count: Math.max(1, Number(item.count || 1)), kind: cleanString(item.kind || item.source), eventKey: cleanString(item.eventKey) });
   }
   return output;
+}
+
+function usageEventKey(source = '', id = '', at = '') {
+  const text = [source, id, at].map(cleanString).join('::');
+  if (!text.replace(/:/g, '')) return '';
+  return createHash('sha1').update(text).digest('hex').slice(0, 24);
 }
 
 function mergeArtProgressEvents(records = []) {
