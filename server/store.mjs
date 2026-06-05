@@ -683,6 +683,11 @@ export async function recordUsageCountersForSkillValidation(record = {}) {
   if (targets.length) await updateUsageCounters(targets);
 }
 
+export async function recordUsageCountersForOperationLog(log = {}) {
+  const targets = usageTargetsFromOperationLog(log);
+  if (targets.length) await updateUsageCounters(targets);
+}
+
 export async function upsertCodexConfig(input = {}) {
   const existing = await getCodexConfig();
   const apiKeyInput = String(input.apiKey || '').trim();
@@ -2043,8 +2048,26 @@ function usageTargetsFromArtProgressEvent(event = {}) {
 }
 
 function usageTargetsFromOperationLog(log = {}) {
-  if (!isTaskArtBriefUsageOperationLog(log)) return [];
-  return buildUsageTargets(['zentao-art-brief-product', log.targetName, log.targetId], {
+  if (!isUsageLikeOperationLog(log)) return [];
+  const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
+  const values = [
+    isTaskArtBriefUsageOperationLog(log) ? 'zentao-art-brief-product' : '',
+    log.targetName,
+    log.targetId,
+    metadata.productName,
+    metadata.artifactName,
+    metadata.skillName,
+    metadata.operationName,
+    metadata.alias,
+    metadata.path,
+    metadata.filePath,
+    metadata.skillPath,
+    metadata.artifactPath,
+    ...(Array.isArray(metadata.aliases) ? metadata.aliases : []),
+    ...(Array.isArray(metadata.artifactNames) ? metadata.artifactNames : []),
+    ...(Array.isArray(metadata.artifactPaths) ? metadata.artifactPaths : [])
+  ];
+  return buildUsageTargets(values, {
     person: cleanString(log.displayName || log.username),
     at: cleanString(log.createdAt),
     source: 'operation-log',
@@ -2070,6 +2093,21 @@ function isTaskArtBriefUsageOperationLog(log = {}) {
   const text = `${log.actionName || ''} ${log.description || ''} ${log.targetName || ''}`;
   return ['GENERATE_ZENTAO_ART_BRIEF', 'REUSE_ZENTAO_ART_BRIEF', 'REGENERATE_ZENTAO_ART_BRIEF'].includes(action)
     || /禅道美术摘要|美术摘要/.test(text);
+}
+
+function isUsageLikeOperationLog(log = {}) {
+  if (cleanString(log.result).toLowerCase() === 'fail') return false;
+  if (isTaskArtBriefUsageOperationLog(log)) return true;
+  const action = cleanString(log.action);
+  const actionName = cleanString(log.actionName);
+  const targetType = cleanString(log.targetType);
+  const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
+  if (metadata.countAsSkillUsage === true || metadata.countAsProductUsage === true) return true;
+  if (metadata.countAsSkillUsage === false || metadata.countAsProductUsage === false) return false;
+  if (['START_RUN', 'RETRY_RUN'].includes(action)) return true;
+  const text = `${action} ${actionName} ${targetType} ${log.targetName || ''} ${log.description || ''}`;
+  return /(生成|执行|启动|复用|调用|使用|generate|execute|start|reuse|run)/i.test(text)
+    && !/(删除|作废|恢复|隐藏|展示|编辑|修改|保存|登录|退出|同步任务|同步 Bug|刷新库存)/i.test(text);
 }
 
 function buildUsageTargets(values = [], common = {}) {

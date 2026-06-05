@@ -5712,15 +5712,23 @@ button {
 }
 
 .skill-usage-drawer .skill-usage-member-item {
-  align-items: stretch;
+  align-items: center;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 6px;
   display: grid;
   gap: 6px;
   grid-template-columns: minmax(0, 1fr) auto;
-  min-height: 46px;
+  min-height: 40px;
   padding: 7px 9px;
+}
+
+.skill-usage-drawer .skill-usage-member-item > div:nth-child(2) {
+  align-items: baseline;
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+  white-space: nowrap;
 }
 
 .skill-usage-drawer .skill-usage-version-badge {
@@ -5855,7 +5863,6 @@ button {
   }
 
   .skill-usage-drawer .skill-usage-metrics,
-  .skill-usage-drawer .skill-usage-member-item,
   .skill-usage-drawer .skill-usage-version-item,
   .skill-usage-drawer .skill-usage-filter-row,
   .skill-usage-drawer .skill-usage-filters,
@@ -8969,20 +8976,20 @@ body,
 .el-drawer.rtl,
 .art-progress-log-drawer.el-drawer.rtl,
 .skill-usage-drawer.el-drawer.rtl {
-  border-radius: 24px 0 0 24px !important;
+  border-radius: 0 !important;
   overflow: hidden !important;
 }
 
 .el-drawer.rtl .el-drawer__header,
 .art-progress-log-drawer.el-drawer.rtl .el-drawer__header,
 .skill-usage-drawer.el-drawer.rtl .el-drawer__header {
-  border-radius: 24px 0 0 0 !important;
+  border-radius: 0 !important;
 }
 
 .el-drawer.rtl .el-drawer__body,
 .art-progress-log-drawer.el-drawer.rtl .el-drawer__body,
 .skill-usage-drawer.el-drawer.rtl .el-drawer__body {
-  border-radius: 0 0 0 24px !important;
+  border-radius: 0 !important;
   overflow: hidden auto !important;
 }
 

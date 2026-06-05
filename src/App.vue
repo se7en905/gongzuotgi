@@ -239,13 +239,11 @@
         <div class="skill-usage-member-stats">
           <div class="skill-usage-member-stats-head">
             <strong>成员调用统计</strong>
-            <span>版本按有效使用人数计算，当前 {{ skillUsageDialog.effectivePeopleCount || 0 }} 位成员计入等级</span>
           </div>
           <div v-if="skillUsageDialog.memberStats?.length" class="skill-usage-member-list">
             <article v-for="member in skillUsageDialog.memberStats" :key="member.name" class="skill-usage-member-item">
               <div>
                 <strong>{{ member.name }}</strong>
-                <span>{{ member.latestTime ? formatDateSecond(member.latestTime) : '历史累计' }}</span>
               </div>
               <div>
                 <b>{{ member.count }}</b>
@@ -699,6 +697,9 @@ export default {
       skillInventoryMetricsCache: {},
       skillOwnerOverrides: {},
       skillDisplayNameOverrides: {},
+      skillAliasOverrides: {},
+      skillInventoryKindOverrides: {},
+      skillSourceDisplayDrafts: {},
       skillPreview: {
         visible: false,
         skill: null,
@@ -4863,6 +4864,8 @@ export default {
         const overrides = result.overrides || {};
         const ownerOverrides = {};
         const displayNameOverrides = {};
+        const aliasOverrides = {};
+        const inventoryKindOverrides = {};
         for (const [key, record] of Object.entries(overrides)) {
           const owner = this.displayPersonList(record?.owner || record?.uploader || '');
           const overrideKeys = [
@@ -4886,12 +4889,32 @@ export default {
               displayNameOverrides[itemKey] = displayName;
             });
           }
+          if (Array.isArray(record?.aliases)) {
+            const aliasKeys = String(key || '').startsWith('alias:') || String(record?.key || '').startsWith('alias:')
+              ? [key, record?.key].map(value => String(value || '').trim()).filter(Boolean)
+              : overrideKeys;
+            aliasKeys.forEach(itemKey => {
+              aliasOverrides[itemKey] = record.aliases;
+            });
+          }
+          if (Object.prototype.hasOwnProperty.call(record || {}, 'inventoryKind')) {
+            const kindKeys = String(key || '').startsWith('kind:') || String(record?.key || '').startsWith('kind:')
+              ? [key, record?.key].map(value => String(value || '').trim()).filter(Boolean)
+              : overrideKeys;
+            kindKeys.forEach(itemKey => {
+              inventoryKindOverrides[itemKey] = record.inventoryKind;
+            });
+          }
         }
         this.skillOwnerOverrides = ownerOverrides;
         this.skillDisplayNameOverrides = displayNameOverrides;
+        this.skillAliasOverrides = aliasOverrides;
+        this.skillInventoryKindOverrides = inventoryKindOverrides;
       } catch {
         this.skillOwnerOverrides = this.skillOwnerOverrides || {};
         this.skillDisplayNameOverrides = this.skillDisplayNameOverrides || {};
+        this.skillAliasOverrides = this.skillAliasOverrides || {};
+        this.skillInventoryKindOverrides = this.skillInventoryKindOverrides || {};
       }
     },
 
@@ -6780,12 +6803,43 @@ export default {
     },
 
     skillInventoryKind(skill = {}) {
+      const override = this.skillInventoryKindOverrideFor(skill);
+      if (override) return override;
       if (['skill', 'document', 'directory'].includes(skill.inventoryKind)) return skill.inventoryKind;
       const relativePath = String(skill.git?.relativePath || skill.path || '').replace(/\\/g, '/');
       const fileName = relativePath.split('/').pop() || '';
       const inSkillDir = relativePath.startsWith('skills/') || relativePath.startsWith('入口图/');
       const isReference = /(^|\/)(references|Design|skins|规范类|\.claude)(\/|$)/i.test(relativePath);
       return fileName === 'SKILL.md' && inSkillDir && !isReference ? 'skill' : 'document';
+    },
+
+    skillInventoryKindOverrideKeys(input = {}) {
+      const skill = input.skill || {};
+      const projectId = String(input.projectId || skill.projectId || '').trim();
+      const keys = [
+        input.git?.relativePath,
+        skill.git?.relativePath,
+        skill.relativePath,
+        input.relativePath,
+        input.key,
+        skill.path,
+        input.path,
+        input.overrideKey,
+        input.uid,
+        skill.id,
+        input.id
+      ].map(value => String(value || '').trim()).filter(Boolean);
+      const scopedKeys = projectId ? keys.map(key => `kind:${projectId}:${key}`) : [];
+      return [...scopedKeys, ...keys];
+    },
+
+    skillInventoryKindOverrideFor(input = {}) {
+      const overrides = this.skillInventoryKindOverrides || {};
+      for (const key of this.skillInventoryKindOverrideKeys(input)) {
+        const kind = String(overrides[key] || '').trim();
+        if (['skill', 'directory'].includes(kind)) return kind;
+      }
+      return '';
     },
 
     skillOwnerOverrideKeys(input = {}) {
@@ -6846,6 +6900,34 @@ export default {
       return null;
     },
 
+    skillAliasOverrideKeys(input = {}) {
+      const skill = input.skill || {};
+      const projectId = String(input.projectId || skill.projectId || '').trim();
+      const keys = [
+        input.git?.relativePath,
+        skill.git?.relativePath,
+        skill.relativePath,
+        input.relativePath,
+        input.key,
+        skill.path,
+        input.path,
+        input.overrideKey,
+        input.uid,
+        skill.id,
+        input.id
+      ].map(value => String(value || '').trim()).filter(Boolean);
+      const scopedKeys = projectId ? keys.map(key => `alias:${projectId}:${key}`) : [];
+      return [...scopedKeys, ...keys];
+    },
+
+    skillAliasOverrideFor(input = {}) {
+      const overrides = this.skillAliasOverrides || {};
+      for (const key of this.skillAliasOverrideKeys(input)) {
+        if (Array.isArray(overrides[key])) return overrides[key];
+      }
+      return null;
+    },
+
     gitHistoryOwnerNames(skill = {}) {
       const history = Array.isArray(skill.git?.history) ? skill.git.history : [];
       const orderedHistory = [...history]
@@ -6902,10 +6984,12 @@ export default {
         : '';
       const productFileName = directoryFileName || skill.productFileName || skill.displayName || this.fileNameFromPath(relativePath) || this.fileNameFromPath(skill.path) || skill.id;
       const productDisplayName = directoryDisplayName || skill.productDisplayName || skill.displayName || skill.title || productFileName;
+      const aliasOverride = this.skillAliasOverrideFor({ ...skill, projectId: projectRow.id });
       const aliases = this.normalizeSkillAliasList([
-        ...(Array.isArray(skill.aliases) ? skill.aliases : []),
+        ...(Array.isArray(aliasOverride) ? aliasOverride : (Array.isArray(skill.aliases) ? skill.aliases : [])),
         ...this.generateSkillAliases({ ...skill, relativePath })
       ]);
+      const inventoryKind = this.skillInventoryKind({ ...skill, projectId: projectRow.id });
       const baseRow = {
         uid: `${projectRow.id}:${skill.id}:${skill.path || ''}`,
         id: skill.id,
@@ -6938,9 +7022,9 @@ export default {
         displayHiddenBy: skill.displayHiddenBy || '',
         displayRestoredAt: skill.displayRestoredAt || '',
         displayRestoredBy: skill.displayRestoredBy || '',
-        skillInventoryKind: this.skillInventoryKind(skill),
+        skillInventoryKind: inventoryKind,
         uploadedAt: skill.uploadedAt || skill.git?.uploadedAt || '',
-        skill: { ...skill, aliases }
+        skill: { ...skill, aliases, inventoryKind }
       };
       const metrics = this.skillInventoryRowMetrics(baseRow);
       return {
@@ -6970,6 +7054,9 @@ export default {
       return [
         row.uid || row.id || row.productDisplayName || row.title || '',
         row.relativePath || row.path || '',
+        row.productDisplayName || '',
+        (Array.isArray(row.aliases) ? row.aliases : []).join('|'),
+        (Array.isArray(row.skill?.aliases) ? row.skill.aliases : []).join('|'),
         row.version || row.skill?.version || '',
         row.hidden === true ? 'hidden' : 'visible',
         this.usageCounters?.updatedAt || '',
@@ -7105,8 +7192,7 @@ export default {
     isExcludedSkillVersionUsagePerson(person = '') {
       const name = this.canonicalArtDeptPerson(person) || String(person || '').trim();
       const raw = String(person || '').trim().toLowerCase();
-      const current = this.currentAccountPrimaryPersonName || this.currentUser?.displayName || this.currentUser?.realname || this.currentUser?.username || '';
-      if (name && current && samePerson(name, current)) return true;
+      if (samePerson(name, this.defaultSkillInventoryOwnerName()) || samePerson(name, '张倩文') || samePerson(raw, 'zhangqw') || samePerson(raw, 'admin')) return true;
       if (samePerson(name, '余盛威') || samePerson(name, '盛威') || samePerson(raw, 'ysw') || samePerson(raw, 'yushengwei')) return true;
       return /^(ysw|yushengwei|yu\s*sheng\s*wei)$/i.test(raw);
     },
@@ -7210,13 +7296,13 @@ export default {
         ...(Array.isArray(row.aliases) ? row.aliases : []),
         ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : [])
       ]
-        .map(value => this.normalizeUsageMatchText(value).replace(/\.(md|markdown)$/i, ''))
+        .map(value => this.usageCounterKeyForProduct(value))
         .filter(value => value && value.length >= 4 && !this.isGenericUsageNeedle(value) && !buckets[value]);
       if (!missingAliasKeys.length) return [];
       const seen = new Set();
       return (Array.isArray(logs) ? logs : []).filter(item => {
-        const target = this.normalizeUsageMatchText(item.target || item.raw?.skillName || item.raw?.title || item.summary || '');
-        const reason = this.normalizeUsageMatchText(item.matchReason || '');
+        const target = this.usageCounterKeyForProduct(item.target || item.raw?.skillName || item.raw?.title || item.summary || '');
+        const reason = this.usageCounterKeyForProduct(item.matchReason || '');
         const matched = missingAliasKeys.some(alias => target.includes(alias) || reason.includes(`别名命中${alias}`) || reason.includes(alias));
         if (!matched) return false;
         const key = [item.id, item.time, item.person, item.target, item.summary].map(value => String(value || '').trim()).join('::');
@@ -9545,9 +9631,14 @@ export default {
       return [
         row.productFileName,
         row.productDisplayName,
+        row.displayName,
+        row.commonName,
         row.title,
         ...(Array.isArray(row.aliases) ? row.aliases : []),
         ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : []),
+        row.skill?.productDisplayName,
+        row.skill?.displayName,
+        row.skill?.commonName,
         this.fileNameFromPath(row.relativePath),
         this.fileNameFromPath(row.path),
         this.fileNameFromPath(row.skill?.git?.relativePath),
@@ -9556,14 +9647,27 @@ export default {
         ...this.usageConcreteNamesFromPath(row.skill?.git?.relativePath),
         ...this.usageConcreteNamesFromPath(row.skill?.path)
       ]
-        .map(value => this.normalizeUsageMatchText(value).replace(/\.(md|markdown)$/i, ''))
+        .map(value => this.usageCounterKeyForProduct(value))
         .filter(value => value && value.length >= 4 && !this.isGenericUsageNeedle(value))
         .filter((value, index, array) => array.indexOf(value) === index);
     },
 
+    usageCounterKeyForProduct(value = '') {
+      const text = String(value || '')
+        .trim()
+        .replace(/\\/g, '/')
+        .split('/')
+        .filter(Boolean)
+        .pop()
+        ?.replace(/\.(md|markdown)$/i, '')
+        .toLowerCase()
+        .replace(/[_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '') || '';
+      return text;
+    },
+
     usageRecordTargetsInventoryRow(item = {}, row = {}, source = 'art-progress') {
       const targets = this.usageExplicitTargetsFromRecord(item, source)
-        .map(value => this.normalizeUsageMatchText(value).replace(/\.(md|markdown)$/i, ''))
+        .map(value => this.usageCounterKeyForProduct(value))
         .filter(value => value && value.length >= 4 && !this.isGenericUsageNeedle(value));
       if (!targets.length) return true;
       const rowKeys = this.usageRowExplicitTargetKeys(row);
@@ -10435,6 +10539,7 @@ export default {
         visible: true,
         keyword: ''
       };
+      this.resetSkillSourceDisplayDrafts();
     },
 
     async toggleSkillSourceDisplay(row = {}, visible = true) {
@@ -10527,6 +10632,63 @@ export default {
         && (row.skill?.directoryProduct === true || row.skillInventoryKind === 'directory' || row.skill?.inventoryKind === 'directory');
     },
 
+    skillSourceDisplayDraftKey(row = {}) {
+      return [
+        row.projectId || '',
+        row.skill?.git?.relativePath || row.relativePath || row.path || '',
+        row.id || row.uid || ''
+      ].map(value => String(value || '').trim()).join('::');
+    },
+
+    resetSkillSourceDisplayDrafts() {
+      const drafts = {};
+      for (const row of this.skillSourceDisplayRows || []) {
+        const key = this.skillSourceDisplayDraftKey(row);
+        if (!key) continue;
+        drafts[key] = {
+          name: row.productDisplayName || row.productFileName || row.title || '',
+          aliases: this.skillSourceDisplayAliasText(row)
+        };
+      }
+      this.skillSourceDisplayDrafts = drafts;
+    },
+
+    skillSourceDisplayNameDraft(row = {}) {
+      const key = this.skillSourceDisplayDraftKey(row);
+      const draft = key ? this.skillSourceDisplayDrafts?.[key]?.name : '';
+      return draft !== undefined ? draft : (row.productDisplayName || row.productFileName || row.title || '');
+    },
+
+    updateSkillSourceDisplayNameDraft(row = {}, value = '') {
+      const key = this.skillSourceDisplayDraftKey(row);
+      if (!key) return;
+      this.skillSourceDisplayDrafts = {
+        ...(this.skillSourceDisplayDrafts || {}),
+        [key]: {
+          ...(this.skillSourceDisplayDrafts?.[key] || {}),
+          name: String(value ?? '')
+        }
+      };
+    },
+
+    skillSourceDisplayAliasDraft(row = {}) {
+      const key = this.skillSourceDisplayDraftKey(row);
+      const draft = key ? this.skillSourceDisplayDrafts?.[key]?.aliases : '';
+      return draft !== undefined ? draft : this.skillSourceDisplayAliasText(row);
+    },
+
+    updateSkillSourceDisplayAliasDraft(row = {}, value = '') {
+      const key = this.skillSourceDisplayDraftKey(row);
+      if (!key) return;
+      this.skillSourceDisplayDrafts = {
+        ...(this.skillSourceDisplayDrafts || {}),
+        [key]: {
+          ...(this.skillSourceDisplayDrafts?.[key] || {}),
+          aliases: String(value ?? '')
+        }
+      };
+    },
+
     async saveSkillSourceDisplayName(row = {}, nameValue = '') {
       if (!this.canManageSkillSourceDisplay) {
         ElMessage.warning('当前角色没有管理扫描来源展示的权限');
@@ -10540,6 +10702,7 @@ export default {
       const displayName = String(nameValue || '').trim();
       const currentName = String(row.productDisplayName || '').trim();
       if (displayName === currentName) return;
+      this.updateSkillSourceDisplayNameDraft(row, displayName);
       this.loading.skillVersion = true;
       try {
         const result = await this.api('/api/skill-version', {
@@ -10561,10 +10724,67 @@ export default {
           relativePath: result.relativePath || row.relativePath,
           overrideKey: result.key || ''
         }, result.displayName ?? result.commonName ?? displayName);
+        this.updateSkillSourceDisplayNameDraft(row, result.displayName ?? result.commonName ?? displayName);
         this.saveWorkbenchDisplayCache('scans', this.scans);
-        ElMessage.success(displayName ? '常用名称已保存' : '常用名称已恢复为文件夹名称');
+        ElMessage.success(displayName ? '产物名称已保存' : '产物名称已恢复为文件夹名称');
       } catch (error) {
-        ElMessage.error(this.readApiError(error) || '常用名称保存失败');
+        ElMessage.error(this.readApiError(error) || '产物名称保存失败');
+      } finally {
+        this.loading.skillVersion = false;
+      }
+    },
+
+    skillSourceDisplayAliasText(row = {}) {
+      return this.normalizeSkillAliasList([
+        ...(Array.isArray(row.aliases) ? row.aliases : []),
+        ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : [])
+      ]).join('、');
+    },
+
+    async saveSkillSourceDisplayAliases(row = {}, aliasValue = '') {
+      if (!this.can('skill.alias.manage')) {
+        ElMessage.warning('当前角色不能编辑调用别名。');
+        return;
+      }
+      const sourceType = String(this.projectRows.find(project => project.id === row.projectId)?.sourceType || row.projectSourceType || '').toLowerCase();
+      if (!['local', 'shared'].includes(sourceType)) {
+        ElMessage.warning('只有本地路径或共享盘扫描产物可以修改调用别名。');
+        return;
+      }
+      const aliases = this.normalizeSkillAliasList(aliasValue);
+      const currentAliases = this.normalizeSkillAliasList([
+        ...(Array.isArray(row.aliases) ? row.aliases : []),
+        ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : [])
+      ]);
+      if (aliases.join('｜') === currentAliases.join('｜')) return;
+      this.updateSkillSourceDisplayAliasDraft(row, aliases.join('、'));
+      this.loading.skillVersion = true;
+      try {
+        const result = await this.api('/api/skill-version', {
+          method: 'PATCH',
+          body: JSON.stringify({
+            id: row.id,
+            projectId: row.projectId,
+            sourceType,
+            title: row.title || row.productDisplayName,
+            path: row.path,
+            relativePath: row.skill?.git?.relativePath || row.relativePath || row.path || '',
+            aliases
+          })
+        });
+        const savedAliases = Array.isArray(result.aliases) ? result.aliases : aliases;
+        this.updateSkillSourceDisplayAliasDraft(row, this.normalizeSkillAliasList(savedAliases).join('、'));
+        this.patchSkillVersionInScans({
+          ...row,
+          id: result.id || row.id,
+          path: result.relativePath || row.path,
+          relativePath: result.relativePath || row.relativePath,
+          overrideKey: result.key || ''
+        }, row.version || row.skill?.version || '', savedAliases);
+        this.saveWorkbenchDisplayCache('scans', this.scans);
+        ElMessage.success(savedAliases.length ? '调用别名已保存' : '调用别名已清空');
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || '调用别名保存失败');
       } finally {
         this.loading.skillVersion = false;
       }
@@ -10738,6 +10958,12 @@ export default {
       const targetPath = String(skill.git?.relativePath || skill.relativePath || skill.path || '');
       const targetId = String(skill.id || '');
       const normalizedAliases = this.normalizeSkillAliasList(aliases);
+      const aliasOverrideKeys = this.skillAliasOverrideKeys(skill);
+      if (normalizedAliases.length || aliasOverrideKeys.length) {
+        const nextAliasOverrides = { ...(this.skillAliasOverrides || {}) };
+        for (const key of aliasOverrideKeys) nextAliasOverrides[key] = normalizedAliases;
+        this.skillAliasOverrides = nextAliasOverrides;
+      }
       const scans = {};
       for (const [projectId, scan] of Object.entries(this.scans || {})) {
         scans[projectId] = {

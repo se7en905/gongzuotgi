@@ -95,15 +95,29 @@
               </div>
             </template>
           </ElTableColumn>
-          <ElTableColumn label="常用名称" min-width="210">
+          <ElTableColumn label="产物名称" min-width="210">
             <template #default="{ row }">
               <ElInput
-                :model-value="row.productDisplayName || row.productFileName || row.title || ''"
+                :model-value="app.skillSourceDisplayNameDraft(row)"
                 clearable
                 placeholder="默认使用文件夹名称"
                 :disabled="app.loading.skillVersion || !app.canManageSkillSourceDisplay"
+                @input="value => app.updateSkillSourceDisplayNameDraft(row, value)"
                 @change="value => app.saveSkillSourceDisplayName(row, value)"
                 @keyup.enter="event => app.saveSkillSourceDisplayName(row, event.target.value)"
+              />
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="调用别名" min-width="240">
+            <template #default="{ row }">
+              <ElInput
+                :model-value="app.skillSourceDisplayAliasDraft(row)"
+                clearable
+                placeholder="多个别名用顿号或逗号隔开"
+                :disabled="app.loading.skillVersion || !app.can('skill.alias.manage')"
+                @input="value => app.updateSkillSourceDisplayAliasDraft(row, value)"
+                @change="value => app.saveSkillSourceDisplayAliases(row, value)"
+                @keyup.enter="event => app.saveSkillSourceDisplayAliases(row, event.target.value)"
               />
             </template>
           </ElTableColumn>
@@ -132,7 +146,15 @@
           </ElTableColumn>
           <ElTableColumn label="类型" width="110">
             <template #default="{ row }">
-              <span class="skill-table-text">{{ row.skillInventoryKind === 'skill' ? 'Skill' : '文件夹产物' }}</span>
+              <ElSelect
+                class="skill-source-type-select"
+                :model-value="row.skillInventoryKind === 'skill' ? 'skill' : 'directory'"
+                :disabled="app.loading.skillVersion || !app.canManageSkillSourceDisplay"
+                @change="value => app.saveSkillSourceDisplayType(row, value)"
+              >
+                <ElOption label="Skill" value="skill" />
+                <ElOption label="文件夹产物" value="directory" />
+              </ElSelect>
             </template>
           </ElTableColumn>
           <ElTableColumn label="状态" width="110">
@@ -429,7 +451,6 @@
               <article v-for="member in app.skillUsageDialog.memberStats" :key="member.name" class="skill-usage-member-item">
                 <div>
                   <strong>{{ member.name }}</strong>
-                  <span>{{ member.latestTime ? app.formatDateSecond(member.latestTime) : '历史累计' }}</span>
                 </div>
                 <div>
                   <b>{{ member.count }}</b>
@@ -1752,14 +1773,14 @@ export default {
   }
 
   .skill-usage-member-item {
-    align-items: stretch;
+    align-items: center;
     border: 1px solid var(--line);
     border-radius: 6px;
     background: var(--card);
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 6px;
-    min-height: 46px;
+    min-height: 40px;
     padding: 7px 9px;
   }
 
@@ -1768,6 +1789,14 @@ export default {
     display: grid;
     gap: 2px;
     min-width: 0;
+  }
+
+  .skill-usage-member-item > div:nth-child(2) {
+    align-items: baseline;
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+    white-space: nowrap;
   }
 
   .skill-usage-member-item strong {
