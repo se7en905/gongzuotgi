@@ -3002,15 +3002,19 @@ async function applySkillVersionOverridesToScan(scan = {}) {
         || overrides[skill.git?.relativePath]
         || overrides[skill.path]
         || overrides[skill.id];
-      if (!override?.version && !Array.isArray(override?.aliases) && !override?.owner && override?.hidden !== true) return skill;
+      const hasVisibilityOverride = Object.prototype.hasOwnProperty.call(override || {}, 'hidden');
+      if (!override?.version && !Array.isArray(override?.aliases) && !override?.owner && !hasVisibilityOverride) return skill;
+      const hidden = hasVisibilityOverride ? override.hidden === true : skill.hidden === true;
       return {
         ...skill,
         version: override.version || skill.version,
         aliases: Array.isArray(override.aliases) ? override.aliases : skill.aliases,
         ownerOverride: override.owner || '',
-        hidden: override.hidden === true,
-        hiddenAt: override.hiddenAt || '',
-        hiddenBy: override.hiddenBy || ''
+        hidden,
+        hiddenAt: hidden ? (override.hiddenAt || '') : '',
+        hiddenBy: hidden ? (override.hiddenBy || '') : '',
+        restoredAt: override.restoredAt || '',
+        restoredBy: override.restoredBy || ''
       };
     })
   };

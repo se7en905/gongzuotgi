@@ -197,7 +197,7 @@
       </ElTableColumn>
       <ElTableColumn label="有效占比" width="88">
         <template #default="{ row }">
-          <span class="skill-table-number">{{ row.usageRate || 0 }}%</span>
+          <span class="skill-table-number">{{ app.skillUsageRateDisplay(row) }}</span>
         </template>
       </ElTableColumn>
       <ElTableColumn label="质量分" width="88">
@@ -2030,6 +2030,12 @@ export default {
   .skill-version-pill.version-1 {
     background: rgba(100, 116, 139, 0.1);
     color: var(--text);
+  }
+
+  .skill-version-pill.version-hidden {
+    border-color: rgba(148, 163, 184, 0.2);
+    background: rgba(148, 163, 184, 0.16);
+    color: #94a3b8;
   }
 
   .skill-version-pill.version-2 {

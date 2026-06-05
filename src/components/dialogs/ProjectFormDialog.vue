@@ -31,7 +31,7 @@
         <ElFormItem v-else label="Git 仓库地址" class="is-required-field">
           <ElInput v-model="app.projectForm.git.remoteUrl" placeholder="http://git.example.com/group/project.git" />
         </ElFormItem>
-        <ElButton v-if="app.can(app.projectForm.id ? 'project.edit' : 'project.create')" type="primary" class="full-button" @click="app.createProject">{{ app.projectForm.id ? '保存修改并扫描' : '开始扫描' }}</ElButton>
+        <ElButton v-if="app.can(app.projectForm.id ? 'project.edit' : 'project.create')" type="primary" class="full-button" :loading="app.loading.scan" @click="app.createProject">{{ app.projectForm.id ? '保存修改' : '开始扫描' }}</ElButton>
       </ElForm>
     </section>
 
@@ -41,7 +41,6 @@
           <h3>已接入来源</h3>
           <p>AI 产物清单从这些来源去重读取，页面不再单独展开来源列表。</p>
         </div>
-        <ElButton :loading="app.loading.scan" @click="app.scanAllProjects">刷新库存</ElButton>
       </div>
       <ElTable
         class="fill-table skill-source-table"

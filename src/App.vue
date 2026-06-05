@@ -1979,10 +1979,13 @@ export default {
         const completion = tasks.length
           ? Math.round(tasks.reduce((sum, task) => sum + (task.audit?.completion || 0), 0) / tasks.length)
           : 0;
+        const sourceScanOnly = ['local', 'shared'].includes(String(sourceType || '').toLowerCase());
         const health = scanError
           ? '扫描失败'
           : !scan
             ? '待扫描'
+            : sourceScanOnly
+              ? '已扫描'
             : configOk && skillCount && tasks.length
               ? '已接入'
               : configOk && skillCount
@@ -2010,7 +2013,7 @@ export default {
           reportCount,
           completion,
           health,
-          healthType: health === '已接入' ? 'success' : health === '扫描失败' ? 'danger' : health === '待完善' ? 'warning' : 'info',
+          healthType: ['已接入', '已扫描'].includes(health) ? 'success' : health === '扫描失败' ? 'danger' : health === '待完善' ? 'warning' : 'info',
           latestTaskName: latestTask?.name || '暂无任务',
           latestTaskTime: latestTask?.updatedAt ? formatDateTime(latestTask.updatedAt) : '-',
           lastSyncedAtText: scan?.scannedAt ? formatDateTime(scan.scannedAt) : (scan ? '已扫描' : '待扫描'),
@@ -6952,22 +6955,21 @@ export default {
         if (person) people.add(person);
       });
       const hasHistorical = this.hasUsageCounterStats(historical);
-      const fallbackLogs = hasHistorical ? [] : this.skillUsageLogs(row);
-      if (!hasHistorical) {
-        fallbackLogs.forEach(item => {
-          if (item.person) people.add(item.person);
-        });
-      }
-      const count = hasHistorical ? Number(historical.count || 0) : fallbackLogs.length;
-      const targetCount = 7;
-      const rate = targetCount ? Math.min(100, Math.round((people.size / targetCount) * 100)) : 0;
+      const currentLogs = this.skillUsageLogs(row);
+      const supplementalLogs = this.skillUsageSupplementalLogs(row, currentLogs, hasHistorical);
+      supplementalLogs.forEach(item => {
+        if (item.person) people.add(item.person);
+      });
+      const count = (hasHistorical ? Number(historical.count || 0) : 0) + supplementalLogs.length;
+      const coverage = this.skillUsageCoverageStats(row, currentLogs, { historicalPeople: people });
+      const rate = coverage.rate;
       const average = people.size ? Math.round((count / people.size) * 10) / 10 : 0;
       return {
         count,
         rate,
         peopleCount: people.size,
         average,
-        validationCoverage: { rate, targetCount, validatedCount: Math.min(people.size, targetCount) },
+        validationCoverage: coverage,
         validationCount: 0,
         researchSyncCount: 0
       };
@@ -6997,6 +6999,7 @@ export default {
 
     skillInventoryVersionMajor(rowOrVersion = {}) {
       if (rowOrVersion && typeof rowOrVersion === 'object') {
+        if (rowOrVersion.hidden === true) return '1';
         const peopleCount = this.skillEffectiveUsagePeople(rowOrVersion).length;
         if (peopleCount >= 6) return '3';
         if (peopleCount >= 3) return '2';
@@ -7053,6 +7056,49 @@ export default {
       return { count, people, usageCount, validationCount, researchSyncCount, bucketCount: seen.size };
     },
 
+    usageCounterEventKeySetForRow(row = {}) {
+      const buckets = this.usageCounters?.buckets || {};
+      if (!buckets || typeof buckets !== 'object') return new Set();
+      const keys = this.usageRowExplicitTargetKeys(row);
+      if (this.isTaskArtBriefAssetRow(row)) keys.push('zentaoartbriefproduct');
+      const seen = new Set();
+      const eventKeys = new Set();
+      keys.forEach(key => {
+        const normalizedKey = this.normalizeUsageMatchText(key).replace(/\.(md|markdown)$/i, '');
+        const bucket = buckets[normalizedKey];
+        if (!bucket || seen.has(normalizedKey)) return;
+        seen.add(normalizedKey);
+        (Array.isArray(bucket.eventKeys) ? bucket.eventKeys : []).forEach(eventKey => {
+          if (eventKey) eventKeys.add(String(eventKey));
+        });
+      });
+      return eventKeys;
+    },
+
+    skillUsageSupplementalLogs(row = {}, logs = [], hasHistorical = false) {
+      if (!hasHistorical) return Array.isArray(logs) ? logs : [];
+      const buckets = this.usageCounters?.buckets || {};
+      const rowKeys = this.usageRowExplicitTargetKeys(row);
+      const missingAliasKeys = [
+        ...(Array.isArray(row.aliases) ? row.aliases : []),
+        ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : [])
+      ]
+        .map(value => this.normalizeUsageMatchText(value).replace(/\.(md|markdown)$/i, ''))
+        .filter(value => value && value.length >= 4 && !this.isGenericUsageNeedle(value) && !buckets[value]);
+      if (!missingAliasKeys.length) return [];
+      const seen = new Set();
+      return (Array.isArray(logs) ? logs : []).filter(item => {
+        const target = this.normalizeUsageMatchText(item.target || item.raw?.skillName || item.raw?.title || item.summary || '');
+        const reason = this.normalizeUsageMatchText(item.matchReason || '');
+        const matched = missingAliasKeys.some(alias => target.includes(alias) || reason.includes(`别名命中${alias}`) || reason.includes(alias));
+        if (!matched) return false;
+        const key = [item.id, item.time, item.person, item.target, item.summary].map(value => String(value || '').trim()).join('::');
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    },
+
     skillUsageCoveragePeople() {
       const people = this.artDeptDisplayPeople
         .map(person => this.canonicalArtDeptPerson(person) || person)
@@ -7088,13 +7134,47 @@ export default {
         || samePerson(person, 'ysw');
     },
 
-    skillUsageCoverageStats(row = {}, logs = []) {
+    isOwnerYushengwei(row = {}) {
+      const people = [
+        ...this.personList(row.uploader),
+        ...this.personList(row.owner),
+        ...this.personList(row.flowOwner),
+        ...this.personList(row.skill?.uploaderName),
+        ...this.personList(row.skill?.owner),
+        ...this.personList(row.skill?.git?.authorName),
+        ...this.personList(row.skill?.git?.committerName),
+        this.uploaderFromSource(row.source)
+      ].filter(Boolean);
+      return people.some(person => samePerson(person, '余盛威') || samePerson(person, '盛威') || samePerson(person, 'yushengwei') || samePerson(person, 'ysw'));
+    },
+
+    skillUsageRateDisplay(row = {}) {
+      if (this.isOwnerYushengwei(row)) return '-';
+      return `${Number(row.usageRate || 0)}%`;
+    },
+
+    skillUsageCoverageStats(row = {}, logs = [], options = {}) {
       const targetCount = 7;
+      if (this.isOwnerYushengwei(row)) {
+        return {
+          targetCount,
+          validatedCount: 0,
+          specialSingleUserCount: 0,
+          rate: 0,
+          excluded: true
+        };
+      }
       const effectivePeople = new Set();
+      const historicalPeople = options.historicalPeople instanceof Set ? [...options.historicalPeople] : [];
+      historicalPeople.forEach(personName => {
+        const person = this.canonicalArtDeptPerson(personName) || String(personName || '').trim();
+        if (!person || this.isExcludedSkillUsageCoveragePerson(person)) return;
+        effectivePeople.add(normalizePersonName(person));
+      });
       logs.forEach(record => {
         if (!this.isPositiveSkillUsageRecord(record)) return;
         const person = this.canonicalArtDeptPerson(record.person || record.raw?.validator || record.raw?.walkthroughOwner || record.raw?.memberName || record.raw?.memberAccount || '');
-        if (!person) return;
+        if (!person || this.isExcludedSkillUsageCoveragePerson(person)) return;
         effectivePeople.add(normalizePersonName(person));
       });
       const effectiveCount = Math.min(effectivePeople.size, targetCount);
@@ -7341,6 +7421,7 @@ export default {
 
     skillVersionClass(version = '') {
       if (version && typeof version === 'object') {
+        if (version.hidden === true) return 'version-hidden';
         return `version-${this.skillInventoryVersionMajor(version)}`;
       }
       const normalized = String(version || '').trim();
@@ -7372,12 +7453,14 @@ export default {
     },
 
     skillVersionShortLabel(version = '') {
+      if (version && typeof version === 'object' && version.hidden === true) return '1.0';
       return `${this.skillInventoryVersionMajor(version)}.0`;
     },
 
     skillVersionDescription(version = '') {
       const major = this.skillInventoryVersionMajor(version);
       if (version && typeof version === 'object') {
+        if (version.hidden === true) return '1.0：该产物已作废，暂不计入 AI 评分；恢复后按真实使用人数更新版本。';
         const peopleCount = this.skillEffectiveUsagePeople(version).length;
         if (major === '3') return `3.0：已有 ${peopleCount} 位有效成员使用，达到 6 人使用标准。`;
         if (major === '2') return `2.0：已有 ${peopleCount} 位有效成员使用，达到 3 人使用标准。`;
@@ -8757,6 +8840,46 @@ export default {
       }
     },
 
+    async scanSingleSkillSource(project = {}) {
+      if (!project?.id) return null;
+      if (!this.canRefreshSkillInventoryScan) {
+        ElMessage.warning('当前角色没有库存扫描权限');
+        return null;
+      }
+      const previous = this.scans[project.id];
+      this.loading.scan = true;
+      this.scanOutput = `正在扫描来源「${project.name || project.id}」...`;
+      try {
+        const scan = await this.apiWithTimeout(`/api/projects/${encodeURIComponent(project.id)}/scan?refresh=1`, {}, {}, 45000);
+        const nextScan = this.mergeProjectScanResult(project.id, scan);
+        this.scans = { ...this.scans, [project.id]: nextScan };
+        this.clearValidationMatchCache();
+        this.clearSkillUsageLogCache();
+        this.saveWorkbenchDisplayCache('scans', this.scans);
+        this.skillInventoryScanCacheLoaded = true;
+        this.scanOutput = `已扫描来源「${project.name || project.id}」：${nextScan.skills?.length || 0} 个产物。`;
+        return nextScan;
+      } catch (error) {
+        if (previous) {
+          this.scans = {
+            ...this.scans,
+            [project.id]: {
+              ...previous,
+              preserved: true,
+              lastError: this.readApiError(error) || error.message || '扫描失败',
+              lastFailedAt: new Date().toISOString()
+            }
+          };
+          this.saveWorkbenchDisplayCache('scans', this.scans);
+        }
+        this.scanOutput = previous ? '扫描失败，已保留该来源上次库存。' : (this.readApiError(error) || '扫描失败');
+        ElMessage.warning(this.scanOutput);
+        return null;
+      } finally {
+        this.loading.scan = false;
+      }
+    },
+
     async loadProjectScanCacheForInventory() {
       if (this.loading.skillInventoryCache) return;
       this.loading.skillInventoryCache = true;
@@ -9934,10 +10057,11 @@ export default {
       const effectivePeople = this.skillEffectiveUsagePeople(row);
       const validationCoverage = this.skillUsageCoverageStats(row, logs);
       const hasHistorical = this.hasUsageCounterStats(historical);
-      const totalCount = hasHistorical ? Number(historical.count || 0) : logs.length;
+      const supplementalLogs = this.skillUsageSupplementalLogs(row, logs, hasHistorical);
+      const totalCount = (hasHistorical ? Number(historical.count || 0) : 0) + supplementalLogs.length;
       const memberStatsMap = new Map();
-      if (!hasHistorical) {
-        for (const item of logs) {
+      if (!hasHistorical || supplementalLogs.length) {
+        for (const item of hasHistorical ? supplementalLogs : logs) {
           const person = this.canonicalArtDeptPerson(item.person) || item.person || '';
           if (!person || person === '-') continue;
           const existing = memberStatsMap.get(person) || {
@@ -10368,6 +10492,7 @@ export default {
     patchSkillVisibilityInScans(row = {}, hidden = true, result = {}) {
       const targetPath = String(row.skill?.git?.relativePath || row.relativePath || row.path || '');
       const targetId = String(row.id || '');
+      let updatedDialogRow = null;
       const scans = {};
       for (const [projectId, scan] of Object.entries(this.scans || {})) {
         scans[projectId] = {
@@ -10376,12 +10501,17 @@ export default {
             ? scan.skills.map(item => {
               const itemPath = String(item.git?.relativePath || item.relativePath || item.path || '');
               if ((targetPath && itemPath === targetPath) || (!targetPath && targetId && item.id === targetId)) {
-                return {
+                const nextItem = {
                   ...item,
                   hidden,
-                  hiddenAt: result.hiddenAt || item.hiddenAt || '',
-                  hiddenBy: result.hiddenBy || item.hiddenBy || ''
+                  hiddenAt: hidden ? (result.hiddenAt || item.hiddenAt || '') : '',
+                  hiddenBy: hidden ? (result.hiddenBy || item.hiddenBy || '') : '',
+                  restoredAt: result.restoredAt || item.restoredAt || '',
+                  restoredBy: result.restoredBy || item.restoredBy || ''
                 };
+                const projectRow = this.projectRows.find(project => project.id === projectId) || this.projectFromCachedScan(projectId, scan);
+                updatedDialogRow = this.buildSkillInventoryRow(projectRow, nextItem);
+                return nextItem;
               }
               return item;
             })
@@ -10390,6 +10520,13 @@ export default {
       }
       this.scans = scans;
       this.clearSkillUsageLogCache();
+      if (this.skillUsageDialog.visible && this.skillUsageDialog.row && updatedDialogRow) {
+        const dialogRow = this.skillUsageDialog.row;
+        const dialogPath = String(dialogRow.skill?.git?.relativePath || dialogRow.relativePath || dialogRow.path || '');
+        if ((targetPath && dialogPath === targetPath) || (!targetPath && targetId && dialogRow.id === targetId)) {
+          this.skillUsageDialog = this.buildSkillUsageDialogState(updatedDialogRow, this.skillUsageDialog);
+        }
+      }
     },
 
     async loadSkillContent(skill) {
@@ -10534,16 +10671,27 @@ export default {
         return;
       }
       const payload = projectPayload(this.projectForm);
-      const project = await this.api('/api/projects', {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      });
-      this.projectDrawer = false;
-      this.projectForm = emptyProjectForm();
-      await this.refreshProjects();
-      await this.openProjectDetail(project);
-      await this.loadProjectScanCacheForInventory();
-      ElMessage.success(isEditing ? '项目已保存，库存保持上次扫描结果；需要更新请点刷新库存' : '项目已接入，库存保持上次扫描结果；需要读取新增内容请点刷新库存');
+      this.loading.scan = !isEditing;
+      try {
+        const project = await this.api('/api/projects', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+        await this.refreshProjects();
+        if (!isEditing) {
+          await this.scanSingleSkillSource(project);
+        } else {
+          await this.loadProjectScanCacheForInventory();
+        }
+        this.projectDrawer = false;
+        this.projectForm = emptyProjectForm();
+        this.selectedProjectId = project.id || this.selectedProjectId;
+        ElMessage.success(isEditing ? '扫描源已保存，库存保持上次扫描结果' : '扫描源已接入并完成扫描');
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || (isEditing ? '扫描源保存失败' : '扫描源接入失败'));
+      } finally {
+        this.loading.scan = false;
+      }
     },
 
     openProjectCreateDrawer() {
