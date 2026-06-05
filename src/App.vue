@@ -2097,6 +2097,18 @@ export default {
         .sort((a, b) => String(a.projectName || '').localeCompare(String(b.projectName || ''), 'zh-Hans-CN') || String(a.productDisplayName || a.title || '').localeCompare(String(b.productDisplayName || b.title || ''), 'zh-Hans-CN'));
     },
 
+    skillSourceDisplayAllVisible() {
+      const rows = this.skillSourceDisplayRows;
+      return rows.length > 0 && rows.every(row => row.displayHidden !== true);
+    },
+
+    skillSourceDisplayPartlyVisible() {
+      const rows = this.skillSourceDisplayRows;
+      if (!rows.length) return false;
+      const visibleCount = rows.filter(row => row.displayHidden !== true).length;
+      return visibleCount > 0 && visibleCount < rows.length;
+    },
+
     skillInventoryDocumentRows() {
       return [];
     },
@@ -6763,7 +6775,8 @@ export default {
 
     skillOwnerOverrideKeys(input = {}) {
       const skill = input.skill || {};
-      return [
+      const projectId = String(input.projectId || skill.projectId || '').trim();
+      const keys = [
         input.git?.relativePath,
         skill.git?.relativePath,
         skill.relativePath,
@@ -6776,6 +6789,8 @@ export default {
         skill.id,
         input.id
       ].map(value => String(value || '').trim()).filter(Boolean);
+      const scopedKeys = projectId ? keys.map(key => `owner:${projectId}:${key}`) : [];
+      return [...scopedKeys, ...keys];
     },
 
     skillOwnerOverrideFor(input = {}) {
@@ -6827,7 +6842,7 @@ export default {
       const fallbackOwner = inferredDirectoryOwner || (source === '本地项目' ? projectRow.name : '');
       const uploader = this.isMemberArtReporterRow(skill)
         ? this.defaultSkillInventoryOwnerName()
-        : this.displayPersonList(this.mergedSkillInventoryOwner({ ...skill, source }, fallbackOwner));
+        : this.displayPersonList(this.mergedSkillInventoryOwner({ ...skill, source, projectId: projectRow.id }, fallbackOwner));
       const statusLabel = skill.statusLabel || this.skillStatusLabel(skill);
       const scenes = this.skillScenes(skill);
       const version = String(skill.version || '1.0').trim() || '1.0';
@@ -10289,6 +10304,7 @@ export default {
           method: 'PATCH',
           body: JSON.stringify({
             id: row.id,
+            projectId: row.projectId,
             title: row.title,
             path: row.path,
             relativePath: row.skill?.git?.relativePath || row.relativePath || row.path || '',
@@ -10364,10 +10380,6 @@ export default {
         ElMessage.warning('当前角色没有管理扫描来源展示的权限');
         return;
       }
-      if (!this.skillSourceDisplaySourceRows.length) {
-        ElMessage.warning('暂无本地路径或共享盘扫描产物，请先接入并扫描来源。');
-        return;
-      }
       this.skillSourceDisplayDialog = {
         visible: true,
         keyword: ''
@@ -10403,6 +10415,85 @@ export default {
         ElMessage.success(result.displayHidden ? '产物已从清单隐藏' : '产物已恢复展示');
       } catch (error) {
         ElMessage.error(this.readApiError(error) || '产物展示状态保存失败');
+      } finally {
+        this.loading.skillVersion = false;
+      }
+    },
+
+    async toggleAllSkillSourceDisplay(visible = true) {
+      if (!this.canManageSkillSourceDisplay) {
+        ElMessage.warning('当前角色没有管理扫描来源展示的权限');
+        return;
+      }
+      const rows = this.skillSourceDisplayRows.filter(row => (row.displayHidden !== true) !== (visible === true));
+      if (!rows.length) {
+        ElMessage.info(visible ? '当前列表已全部展示' : '当前列表已全部取消展示');
+        return;
+      }
+      this.loading.skillVersion = true;
+      let saved = 0;
+      try {
+        for (const row of rows) {
+          const sourceType = String(this.projectRows.find(project => project.id === row.projectId)?.sourceType || row.projectSourceType || '').toLowerCase();
+          if (!['local', 'shared'].includes(sourceType)) continue;
+          const result = await this.api('/api/skill-inventory/display-visibility', {
+            method: 'PATCH',
+            body: JSON.stringify({
+              id: row.id,
+              projectId: row.projectId,
+              sourceType,
+              title: row.title || row.productDisplayName,
+              path: row.path,
+              relativePath: row.skill?.git?.relativePath || row.relativePath || row.path || row.id || '',
+              displayHidden: visible !== true
+            })
+          });
+          this.patchSkillDisplayVisibilityInScans(row, result.displayHidden === true, result);
+          saved += 1;
+        }
+        this.saveWorkbenchDisplayCache('scans', this.scans);
+        ElMessage.success(visible ? `已展示 ${saved} 个产物` : `已取消展示 ${saved} 个产物`);
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || '批量展示状态保存失败');
+      } finally {
+        this.loading.skillVersion = false;
+      }
+    },
+
+    async saveSkillSourceDisplayOwner(row = {}, ownerValue = '') {
+      if (!this.canEditSkillInventoryOwnerRow(row)) {
+        ElMessage.warning('只有本地路径或共享盘扫描产物可以调整贡献人。');
+        return;
+      }
+      const owner = this.displayPersonList(ownerValue);
+      if (!owner || owner === '-') {
+        ElMessage.warning('请选择贡献人');
+        return;
+      }
+      this.loading.skillVersion = true;
+      try {
+        const result = await this.api('/api/skill-version', {
+          method: 'PATCH',
+          body: JSON.stringify({
+            id: row.id,
+            projectId: row.projectId,
+            title: row.title || row.productDisplayName,
+            path: row.path,
+            relativePath: row.skill?.git?.relativePath || row.relativePath || row.path || '',
+            owner
+          })
+        });
+        this.patchSkillOwnerInScans({
+          ...row,
+          id: result.id || row.id,
+          path: result.relativePath || row.path,
+          relativePath: result.relativePath || row.relativePath,
+          overrideKey: result.key || ''
+        }, result.owner || owner);
+        this.saveWorkbenchDisplayCache('scans', this.scans);
+        ElMessage.success('贡献人已保存');
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || '贡献人保存失败');
       } finally {
         this.loading.skillVersion = false;
       }
@@ -10561,6 +10652,7 @@ export default {
       const nextOverrides = { ...(this.skillOwnerOverrides || {}) };
       for (const key of targetKeys) nextOverrides[key] = normalizedOwner;
       this.skillOwnerOverrides = nextOverrides;
+      const targetProjectId = String(row.projectId || '');
       const targetPath = String(row.skill?.git?.relativePath || row.relativePath || row.path || '');
       const targetId = String(row.id || '');
       const scans = {};
@@ -10570,7 +10662,8 @@ export default {
           skills: Array.isArray(scan.skills)
             ? scan.skills.map(item => {
               const itemPath = String(item.git?.relativePath || item.relativePath || item.path || '');
-              if ((targetPath && itemPath === targetPath) || (!targetPath && targetId && item.id === targetId)) {
+              const projectMatches = !targetProjectId || String(projectId) === targetProjectId;
+              if (projectMatches && ((targetPath && itemPath === targetPath) || (!targetPath && targetId && item.id === targetId))) {
                 return {
                   ...item,
                   ownerOverride: normalizedOwner
@@ -10833,6 +10926,7 @@ export default {
         let scanResult = null;
         if (shouldScanAfterSave || !isEditing) {
           scanResult = await this.scanSingleSkillSource(project);
+          if (!scanResult && shouldScanAfterSave) return;
         } else {
           await this.loadProjectScanCacheForInventory({ force: true, silent: true });
         }

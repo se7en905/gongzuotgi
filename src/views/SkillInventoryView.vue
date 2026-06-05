@@ -61,6 +61,14 @@
             clearable
             placeholder="搜索产物、来源或路径"
           />
+          <ElCheckbox
+            :model-value="app.skillSourceDisplayAllVisible"
+            :indeterminate="app.skillSourceDisplayPartlyVisible"
+            :disabled="app.loading.skillVersion || !app.skillSourceDisplayRows.length"
+            @change="checked => app.toggleAllSkillSourceDisplay(checked)"
+          >
+            全选展示
+          </ElCheckbox>
           <span>取消展示后，产物不会出现在 AI 产物清单；源文件不会被删除。</span>
         </div>
         <ElTable
@@ -68,7 +76,7 @@
           :data="app.skillSourceDisplayRows"
           row-key="uid"
           max-height="560"
-          empty-text="暂无本地路径或共享盘产物"
+          empty-text="暂无本地路径或共享盘扫描产物，请先确认路径可读取并完成扫描"
         >
           <ElTableColumn label="展示" width="86" align="center">
             <template #default="{ row }">
@@ -90,6 +98,20 @@
           <ElTableColumn label="来源" width="180">
             <template #default="{ row }">
               <span class="skill-table-text">{{ row.projectName || row.source || '-' }}</span>
+            </template>
+          </ElTableColumn>
+          <ElTableColumn label="贡献人" width="170">
+            <template #default="{ row }">
+              <ElSelect
+                :model-value="app.personList(row.uploader)[0] || ''"
+                filterable
+                clearable
+                placeholder="选择贡献人"
+                :disabled="app.loading.skillVersion || !app.canEditSkillInventoryOwnerRow(row)"
+                @change="value => app.saveSkillSourceDisplayOwner(row, value)"
+              >
+                <ElOption v-for="member in app.skillOwnerCandidateMembers" :key="member.name" :label="member.name" :value="member.name" />
+              </ElSelect>
             </template>
           </ElTableColumn>
           <ElTableColumn label="类型" width="110">
@@ -878,6 +900,7 @@ export default {
     display: flex;
     align-items: center;
     gap: 12px;
+    flex-wrap: wrap;
   }
 
   .skill-source-display-toolbar .el-input {

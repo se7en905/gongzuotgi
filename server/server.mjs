@@ -1245,6 +1245,7 @@ async function handleApi(req, res, url) {
       sendJson(res, 404, { error: 'project not found' });
       return;
     }
+    await cleanupDeletedProjectScanCache(result.project);
     await writeOperationLog(req, {
       user: currentUser,
       module: 'project',
@@ -2861,16 +2862,23 @@ async function readProjectScanFromCache(project = {}) {
 }
 
 async function scanProjectWithStableCache(project = {}, options = {}) {
-  const cache = await loadProjectScanCache();
+  let cache = await loadProjectScanCache();
   try {
     const scan = await applySkillVersionOverridesToScan(await scanProject(project, options));
     const previousScan = cache[project.id]?.scan || null;
     const stableScan = mergeStableProjectScan(project, previousScan, scan);
-    cache[project.id] = {
+    const nextEntry = {
       projectId: project.id,
       cachedAt: new Date().toISOString(),
       scan: stableScan
     };
+    cache = {
+      ...cache,
+      [project.id]: nextEntry
+    };
+    if (isLocalOrSharedScanSource(project)) {
+      await cleanupRemovedScanSourceProductData(project, previousScan, stableScan, cache);
+    }
     await writeProjectScanCache(cache);
     broadcastPlatformEvent('project-scan-cache.changed', { projectId: project.id, module: 'skill-inventory' });
     return stableScan;
@@ -2886,6 +2894,20 @@ async function scanProjectWithStableCache(project = {}, options = {}) {
       lastFailedAt: new Date().toISOString()
     });
   }
+}
+
+async function cleanupDeletedProjectScanCache(project = {}) {
+  if (!project?.id) return { removed: false };
+  const cache = await loadProjectScanCache();
+  const previousScan = cache[project.id]?.scan || null;
+  if (!previousScan) return { removed: false };
+  delete cache[project.id];
+  if (isLocalOrSharedScanSource(project)) {
+    await cleanupRemovedScanSourceProductData(project, previousScan, { ...previousScan, skills: [], tasks: [] }, cache);
+  }
+  await writeProjectScanCache(cache);
+  broadcastPlatformEvent('project-scan-cache.changed', { projectId: project.id, module: 'skill-inventory' });
+  return { removed: true };
 }
 
 function emptyPreservedProjectScan(project = {}, error = null) {
@@ -2908,7 +2930,7 @@ function emptyPreservedProjectScan(project = {}, error = null) {
 function mergeStableProjectScan(project = {}, previousScan = null, nextScan = {}) {
   const previousSkills = Array.isArray(previousScan?.skills) ? previousScan.skills : [];
   const nextSkills = Array.isArray(nextScan?.skills) ? nextScan.skills : [];
-  if (previousSkills.length && !nextSkills.length) {
+  if (previousSkills.length && !nextSkills.length && !shouldReplaceProjectScan(project)) {
     return {
       ...previousScan,
       ...nextScan,
@@ -2930,7 +2952,11 @@ function mergeStableProjectScan(project = {}, previousScan = null, nextScan = {}
 
 function shouldReplaceProjectScan(project = {}) {
   const sourceType = String(project.sourceType || '').toLowerCase();
-  return project.id === artProjectId || sourceType === 'git' || sourceType === 'research' || Boolean(project.git?.remoteUrl);
+  return project.id === artProjectId || sourceType === 'git' || sourceType === 'research' || sourceType === 'local' || sourceType === 'shared' || Boolean(project.git?.remoteUrl);
+}
+
+function isLocalOrSharedScanSource(project = {}) {
+  return ['local', 'shared'].includes(String(project.sourceType || '').toLowerCase());
 }
 
 function mergeStableScanSkills(previousSkills = [], nextSkills = []) {
@@ -2953,8 +2979,245 @@ function stableScanSkillKey(skill = {}) {
   return String(skill.git?.relativePath || skill.relativePath || skill.path || skill.id || skill.title || '').trim();
 }
 
+async function cleanupRemovedScanSourceProductData(project = {}, previousScan = null, nextScan = {}, nextCache = {}) {
+  const previousSkills = Array.isArray(previousScan?.skills) ? previousScan.skills : [];
+  if (!previousSkills.length) return { removed: 0 };
+  const nextKeys = new Set((Array.isArray(nextScan?.skills) ? nextScan.skills : []).map(stableScanSkillKey).filter(Boolean));
+  const removedSkills = previousSkills.filter(skill => {
+    const key = stableScanSkillKey(skill);
+    return key && !nextKeys.has(key);
+  });
+  if (!removedSkills.length) return { removed: 0 };
+  const [overrideCleanup, usageCleanup] = await Promise.all([
+    cleanupRemovedSkillVersionOverrides(project, removedSkills, nextCache),
+    cleanupRemovedUsageCounters(removedSkills, nextCache)
+  ]);
+  return {
+    removed: removedSkills.length,
+    overrides: overrideCleanup.removed || 0,
+    usageCounters: usageCleanup.removed || 0
+  };
+}
+
+async function cleanupRemovedSkillVersionOverrides(project = {}, removedSkills = [], nextCache = {}) {
+  const overrides = await loadSkillVersionOverrides();
+  const keys = Object.keys(overrides || {});
+  if (!keys.length) return { removed: 0 };
+  const projectId = String(project.id || '').trim();
+  const removedKeys = new Set(removedSkills.flatMap(skill => skillOverrideCandidateKeys(skill)));
+  const remainingKeys = collectScanOverrideCandidateKeys(nextCache);
+  let removed = 0;
+  for (const key of keys) {
+    const record = overrides[key] || {};
+    const scopedKey = scopedOverrideTargetKey(key, projectId);
+    const recordKeys = skillOverrideCandidateKeys(record);
+    const matchesRemoved = (scopedKey && removedKeys.has(scopedKey))
+      || recordKeys.some(item => removedKeys.has(item));
+    if (!matchesRemoved) continue;
+    const scopedToProject = key.startsWith(`display:${projectId}:`)
+      || key.startsWith(`owner:${projectId}:`)
+      || String(record.projectId || '') === projectId;
+    const canRemoveUnscoped = !scopedToProject
+      && recordKeys.some(item => removedKeys.has(item) && !remainingKeys.has(item));
+    if (!scopedToProject && !canRemoveUnscoped) continue;
+    delete overrides[key];
+    removed += 1;
+  }
+  if (removed) await writeSkillVersionOverrides(overrides);
+  return { removed };
+}
+
+function scopedOverrideTargetKey(key = '', projectId = '') {
+  const text = String(key || '').trim();
+  const id = String(projectId || '').trim();
+  if (!text || !id) return '';
+  for (const prefix of [`display:${id}:`, `owner:${id}:`]) {
+    if (text.startsWith(prefix)) return text.slice(prefix.length);
+  }
+  return '';
+}
+
+function collectScanOverrideCandidateKeys(cache = {}) {
+  const keys = new Set();
+  for (const entry of Object.values(cache || {})) {
+    const scan = entry?.scan || entry;
+    for (const skill of Array.isArray(scan?.skills) ? scan.skills : []) {
+      skillOverrideCandidateKeys(skill).forEach(key => keys.add(key));
+    }
+  }
+  return keys;
+}
+
+function skillOverrideCandidateKeys(input = {}) {
+  const values = [
+    input.git?.relativePath,
+    input.relativePath,
+    input.path,
+    input.uid,
+    input.key,
+    input.overrideKey
+  ];
+  const id = String(input.id || '').trim();
+  if (id && !/^directory$/i.test(id)) values.push(id);
+  return values
+    .map(value => skillVersionOverrideKey({ relativePath: value }))
+    .filter(value => value && value.length >= 2)
+    .filter((value, index, array) => array.indexOf(value) === index);
+}
+
+async function cleanupRemovedUsageCounters(removedSkills = [], nextCache = {}) {
+  let counters = null;
+  try {
+    const raw = await fs.readFile(paths.usageCounters, 'utf8');
+    counters = JSON.parse(raw);
+  } catch {
+    return { removed: 0 };
+  }
+  const buckets = counters?.buckets;
+  if (!buckets || typeof buckets !== 'object') return { removed: 0 };
+  const removedKeys = new Set(removedSkills.flatMap(skill => skillUsageCandidateKeys(skill)));
+  if (!removedKeys.size) return { removed: 0 };
+  const remainingKeys = new Set([
+    ...collectScanUsageCandidateKeys(nextCache),
+    ...await collectNonScanUsageCandidateKeys()
+  ]);
+  let removed = 0;
+  for (const key of removedKeys) {
+    if (remainingKeys.has(key) || !Object.prototype.hasOwnProperty.call(buckets, key)) continue;
+    delete buckets[key];
+    removed += 1;
+  }
+  if (removed) {
+    counters.updatedAt = new Date().toISOString();
+    await fs.writeFile(paths.usageCounters, `${JSON.stringify(counters, null, 2)}\n`);
+  }
+  return { removed };
+}
+
+async function collectNonScanUsageCandidateKeys() {
+  const keys = new Set();
+  const addValues = values => {
+    for (const value of values) {
+      const key = usageCounterKeyForScanProduct(value);
+      if (key) keys.add(key);
+    }
+  };
+  try {
+    const raw = await fs.readFile(aiAssetSheetPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
+    rows.forEach(row => {
+      if (row?.deleted === true) return;
+      addValues([
+        row.title,
+        row.suites,
+        row.finalPath,
+        row.projectName,
+        row.skillPath,
+        row.fileLink
+      ]);
+    });
+  } catch {}
+  try {
+    const raw = await fs.readFile(skillValidationsPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    const records = Array.isArray(parsed.records)
+      ? parsed.records
+      : [
+          ...(Array.isArray(parsed.googleRecords) ? parsed.googleRecords : []),
+          ...(Array.isArray(parsed.manualRecords) ? parsed.manualRecords : [])
+        ];
+    records.forEach(record => addValues([
+      record.artifactName,
+      record.researchName,
+      record.artifactLocation,
+      record.sourceRef,
+      record.workflowScene,
+      record.scope
+    ]));
+  } catch {}
+  try {
+    const raw = await fs.readFile(paths.artProgressEvents, 'utf8');
+    const events = JSON.parse(raw);
+    if (Array.isArray(events)) {
+      events.forEach(event => {
+        const metadata = event?.metadata && typeof event.metadata === 'object' ? event.metadata : {};
+        addValues([
+          event.skillId,
+          event.skillName,
+          event.repoPath,
+          event.title,
+          metadata.path,
+          metadata.filePath,
+          metadata.finalPath,
+          metadata.skillPath,
+          metadata.artifactPath,
+          metadata.artifactLocation,
+          ...(Array.isArray(metadata.artifactPaths) ? metadata.artifactPaths : []),
+          ...(Array.isArray(metadata.artifactNames) ? metadata.artifactNames : []),
+          ...(Array.isArray(metadata.calledArtifacts) ? metadata.calledArtifacts.flatMap(item => [item?.id, item?.name, item?.path]) : []),
+          ...(Array.isArray(metadata.matchedArtifacts) ? metadata.matchedArtifacts.flatMap(item => [item?.id, item?.name, item?.path]) : [])
+        ]);
+      });
+    }
+  } catch {}
+  return keys;
+}
+
+function collectScanUsageCandidateKeys(cache = {}) {
+  const keys = new Set();
+  for (const entry of Object.values(cache || {})) {
+    const scan = entry?.scan || entry;
+    for (const skill of Array.isArray(scan?.skills) ? scan.skills : []) {
+      skillUsageCandidateKeys(skill).forEach(key => keys.add(key));
+    }
+  }
+  return keys;
+}
+
+function skillUsageCandidateKeys(skill = {}) {
+  return [
+    skill.productFileName,
+    skill.productDisplayName,
+    skill.displayName,
+    skill.title,
+    ...(Array.isArray(skill.aliases) ? skill.aliases : []),
+    path.basename(String(skill.relativePath || '').replace(/\\/g, '/')),
+    path.basename(String(skill.path || '').replace(/\\/g, '/')),
+    path.basename(String(skill.git?.relativePath || '').replace(/\\/g, '/'))
+  ]
+    .map(usageCounterKeyForScanProduct)
+    .filter(Boolean)
+    .filter((value, index, array) => array.indexOf(value) === index);
+}
+
+function usageCounterKeyForScanProduct(value = '') {
+  const text = String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .pop()
+    ?.replace(/\.(md|markdown)$/i, '')
+    .toLowerCase()
+    .replace(/[_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '') || '';
+  if (!text || text.length < 3 || isGenericUsageCounterProductKey(text)) return '';
+  return text;
+}
+
+function isGenericUsageCounterProductKey(value = '') {
+  return /^(skill|skills|readme|agents|agent|memory|安装说明|安装包|同步器|上报器|执行|试用|文件本体|文档|工具|资源|图片|素材)$/i.test(String(value || '').trim());
+}
+
 function skillVersionOverrideKey(input = {}) {
   return String(input.relativePath || input.path || input.uid || input.id || '').trim();
+}
+
+function scopedSkillOwnerOverrideKey(input = {}) {
+  const projectId = String(input.projectId || '').trim();
+  const key = skillVersionOverrideKey(input);
+  if (!projectId || !key) return '';
+  return `owner:${projectId}:${key}`;
 }
 
 function hasSkillVersionOwnerChange(input = {}) {
@@ -2963,7 +3226,9 @@ function hasSkillVersionOwnerChange(input = {}) {
 }
 
 async function saveSkillVersionOverride(input = {}) {
-  const key = skillVersionOverrideKey(input);
+  const ownerChange = hasSkillVersionOwnerChange(input);
+  const scopedOwnerKey = ownerChange ? scopedSkillOwnerOverrideKey(input) : '';
+  const key = scopedOwnerKey || skillVersionOverrideKey(input);
   const allowVersion = input.allowVersion !== false;
   const allowAliases = input.allowAliases === true || input.aliases !== undefined;
   const version = String(input.version || '').trim();
@@ -2978,6 +3243,7 @@ async function saveSkillVersionOverride(input = {}) {
     ...previous,
     key,
     id: String(input.id || '').trim(),
+    projectId: String(input.projectId || previous.projectId || '').trim(),
     title: String(input.title || '').trim(),
     relativePath: String(input.relativePath || input.path || '').trim(),
     version: allowVersion ? (version || previous.version || '') : (previous.version || ''),
@@ -3086,24 +3352,30 @@ async function applySkillVersionOverridesToScan(scan = {}) {
         path: skill.path || '',
         id: skill.id || ''
       });
-      const override = overrides[key]
+      const ownerKey = scopedSkillOwnerOverrideKey({
+        projectId: scan.projectId || '',
+        relativePath: skill.git?.relativePath || skill.relativePath || '',
+        path: skill.path || '',
+        id: skill.id || ''
+      });
+      const baseOverride = overrides[key]
         || overrides[skill.relativePath]
         || overrides[skill.git?.relativePath]
         || overrides[skill.path]
         || overrides[skill.id];
-      const baseOverride = override || {};
+      const ownerOverride = overrides[ownerKey]?.owner ? overrides[ownerKey] : null;
       const displayOverride = overrides[displayKey];
       const hasVisibilityOverride = Object.prototype.hasOwnProperty.call(baseOverride, 'hidden');
-      const hasDisplayVisibilityOverride = Object.prototype.hasOwnProperty.call(displayOverride || override || {}, 'displayHidden');
-      if (!override?.version && !Array.isArray(override?.aliases) && !override?.owner && !hasVisibilityOverride && !hasDisplayVisibilityOverride) return skill;
+      const hasDisplayVisibilityOverride = Object.prototype.hasOwnProperty.call(displayOverride || baseOverride || {}, 'displayHidden');
+      if (!baseOverride?.version && !Array.isArray(baseOverride?.aliases) && !baseOverride?.owner && !ownerOverride?.owner && !hasVisibilityOverride && !hasDisplayVisibilityOverride) return skill;
       const hidden = hasVisibilityOverride ? baseOverride.hidden === true : skill.hidden === true;
-      const displaySource = displayOverride || override || {};
+      const displaySource = displayOverride || baseOverride || {};
       const displayHidden = hasDisplayVisibilityOverride ? displaySource.displayHidden === true : skill.displayHidden === true;
       return {
         ...skill,
         version: baseOverride.version || skill.version,
         aliases: Array.isArray(baseOverride.aliases) ? baseOverride.aliases : skill.aliases,
-        ownerOverride: baseOverride.owner || '',
+        ownerOverride: ownerOverride?.owner || baseOverride.owner || '',
         hidden,
         hiddenAt: hidden ? (baseOverride.hiddenAt || '') : '',
         hiddenBy: hidden ? (baseOverride.hiddenBy || '') : '',
