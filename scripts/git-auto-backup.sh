@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# 自动备份只依赖本机 Git/GitHub 凭据，不使用 AI、Codex 或 OpenAI 环境变量。
+unset OPENAI_API_KEY OPENAI_BASE_URL ANTHROPIC_API_KEY CODEX_API_KEY CODEX_AUTH_TOKEN
+
 ROOT="${ART_PLATFORM_ROOT:-/Users/se7en/ArtProject/platform}"
 REMOTE="${ART_PLATFORM_BACKUP_REMOTE:-platform-backup}"
 BRANCH="${ART_PLATFORM_BACKUP_BRANCH:-main}"
