@@ -1620,34 +1620,37 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const project = await requireProject(body.projectId);
     requireProjectAccess(currentUser, project.id, 'developer', 'api.runs.execute');
+    const syncKind = normalizeZentaoSyncKind(body.syncKind || body.kind || body.mode);
     if (body.wait === true) {
-      const result = await syncZentaoTasksWithStats(project, body);
+      const result = await syncZentaoTasksWithStats(project, { ...body, syncKind });
       await writeOperationLog(req, {
         user: currentUser,
         module: 'task',
-        action: 'SYNC_ZENTAO_TASKS',
-        actionName: '同步禅道任务',
+        action: syncKind === 'bug' ? 'SYNC_ZENTAO_BUGS' : syncKind === 'task' ? 'SYNC_ZENTAO_TASKS_ONLY' : 'SYNC_ZENTAO_TASKS',
+        actionName: syncKind === 'bug' ? '同步禅道 Bug' : syncKind === 'task' ? '同步禅道任务' : '同步禅道任务和 Bug',
         targetType: 'project',
         targetId: project.id,
         targetName: project.name,
         metadata: result,
-        description: `${currentUser.displayName || currentUser.username} 同步项目「${project.name || project.id}」的禅道任务`
+        description: `${currentUser.displayName || currentUser.username} 同步项目「${project.name || project.id}」的${syncKind === 'bug' ? '禅道 Bug' : syncKind === 'task' ? '禅道任务' : '禅道任务和 Bug'}`
       });
-      broadcastPlatformEvent('tasks.changed', { projectId: project.id, module: 'task-sync' });
+      broadcastPlatformEvent('tasks.changed', { projectId: project.id, module: syncKind === 'bug' ? 'bug-sync' : 'task-sync' });
       sendJson(res, 200, result);
       return;
     }
-    const result = triggerZentaoTaskSync(project, body, 'manual');
+    const result = syncKind === 'bug'
+      ? triggerZentaoBugSyncOnly(project, body, 'manual')
+      : triggerZentaoTaskSync(project, { ...body, includeBugs: syncKind !== 'task' }, 'manual');
     await writeOperationLog(req, {
       user: currentUser,
       module: 'task',
-      action: 'TRIGGER_ZENTAO_TASK_SYNC',
-      actionName: '触发禅道任务同步',
+      action: syncKind === 'bug' ? 'TRIGGER_ZENTAO_BUG_SYNC' : syncKind === 'task' ? 'TRIGGER_ZENTAO_TASK_SYNC_ONLY' : 'TRIGGER_ZENTAO_TASK_SYNC',
+      actionName: syncKind === 'bug' ? '触发禅道 Bug 同步' : syncKind === 'task' ? '触发禅道任务同步' : '触发禅道任务和 Bug 同步',
       targetType: 'project',
       targetId: project.id,
       targetName: project.name,
       metadata: result,
-      description: `${currentUser.displayName || currentUser.username} 触发项目「${project.name || project.id}」的禅道任务同步`
+      description: `${currentUser.displayName || currentUser.username} 触发项目「${project.name || project.id}」的${syncKind === 'bug' ? '禅道 Bug' : syncKind === 'task' ? '禅道任务' : '禅道任务和 Bug'}同步`
     });
     sendJson(res, 202, result);
     return;
@@ -4556,7 +4559,11 @@ async function syncZentaoTasks(project, options = {}) {
   };
   try {
     const interactive = options.interactive === true || options.mode === 'interactive';
-    const syncOptions = interactive
+    const syncProfile = String(options.syncProfile || options.profile || '').trim().toLowerCase();
+    const fullScan = options.fullScan === true || ['full', 'full-scan', 'deep'].includes(syncProfile) || options.mode === 'full';
+    const quickSync = !fullScan && (options.quick === true || ['quick', 'fast', 'manual-quick'].includes(syncProfile));
+    const widenInteractiveScan = interactive && !quickSync;
+    const syncOptions = widenInteractiveScan
       ? {
           ...options,
           executionMaxPages: Math.max(Number(options.executionMaxPages || 0), 20),
@@ -4565,7 +4572,15 @@ async function syncZentaoTasks(project, options = {}) {
           detailConcurrency: Math.max(Number(options.detailConcurrency || 0), 6),
           executionScanLimit: Math.max(Number(options.executionScanLimit || 0), 120)
         }
-      : options;
+      : {
+          ...options,
+          executionMaxPages: options.executionMaxPages ?? (quickSync ? 5 : options.executionMaxPages),
+          maxPages: options.maxPages ?? (quickSync ? 3 : options.maxPages),
+          limit: options.limit ?? 100,
+          detailConcurrency: options.detailConcurrency ?? (quickSync ? 6 : options.detailConcurrency),
+          executionScanLimit: options.executionScanLimit ?? (quickSync ? 24 : options.executionScanLimit),
+          detailRefreshScope: options.detailRefreshScope || (quickSync ? 'current' : options.detailRefreshScope)
+        };
     const limit = Math.min(Math.max(Number(syncOptions.limit || 100), 1), 200);
     const maxPages = Math.min(Math.max(Number(syncOptions.maxPages || 5), 1), 50);
     const detailConcurrency = Math.min(Math.max(Number(syncOptions.detailConcurrency || (interactive ? 6 : 4)), 1), 10);
@@ -4595,9 +4610,13 @@ async function syncZentaoTasks(project, options = {}) {
       throw error;
     });
     const executionScanLimit = Math.min(Math.max(Number(syncOptions.executionScanLimit || (interactive ? 24 : executions.length || 1)), 1), 200);
+    const detailRefreshScope = String(syncOptions.detailRefreshScope || 'tracked').trim().toLowerCase();
+    const detailRefreshTaskNos = detailRefreshScope === 'current'
+      ? zentaoCurrentDetailRefreshTaskNos(existingZentaoTasks, artSnapshotTasks, artSeenCandidateTaskNos, aiFlowTaskNos)
+      : existingZentaoTaskNos;
     const allTasks = [];
     const executionSummaries = [];
-    const detailRefresh = await refreshTrackedZentaoTasks(project, existingZentaoTaskNos, existingZentaoTaskByNo, artAccounts, userNames, detailConcurrency);
+    const detailRefresh = await refreshTrackedZentaoTasks(project, detailRefreshTaskNos, existingZentaoTaskByNo, artAccounts, userNames, detailConcurrency);
     const refreshedCurrentExecutionIds = new Set(detailRefresh.tasks
       .filter(task => task.isCurrent !== false)
       .map(task => String(task.zentao?.execution || '').trim())
@@ -4701,6 +4720,9 @@ async function syncZentaoTasks(project, options = {}) {
       },
       executions: executionSummaries,
       interactive,
+      syncProfile: quickSync ? 'quick' : fullScan ? 'full' : interactive ? 'interactive' : 'standard',
+      detailRefreshScope,
+      detailRefreshCandidates: detailRefreshTaskNos.size,
       scannedExecutions: scanExecutions.length,
       preservedExistingCurrentTasks: preserveExistingCurrentTasks,
       syncedAt
@@ -4771,13 +4793,16 @@ function triggerZentaoTaskSync(project, options = {}, reason = 'manual') {
       console.error(`ZenTao ${reason} sync failed:`, message);
     });
   }
-  const bugTrigger = triggerZentaoBugSync(project, {
-    products: options.products || options.product || options.productIds || zentaoBugProductIds,
-    limit: options.bugLimit || 100,
-    maxPages: options.bugMaxPages || 10,
-    refreshTracked: options.bugRefreshTracked !== false,
-    trackedConcurrency: options.bugTrackedConcurrency || 4
-  }, reason);
+  const includeBugs = options.includeBugs !== false;
+  const bugTrigger = includeBugs
+    ? triggerZentaoBugSync(project, {
+      products: options.products || options.product || options.productIds || zentaoBugProductIds,
+      limit: options.bugLimit || 100,
+      maxPages: options.bugMaxPages || 10,
+      refreshTracked: options.bugRefreshTracked !== false,
+      trackedConcurrency: options.bugTrackedConcurrency || 4
+    }, reason)
+    : { accepted: false, running: false, message: '本次只同步任务' };
   return {
     accepted: true,
     running: hasRunningZentaoQueue(),
@@ -4792,25 +4817,35 @@ function triggerZentaoTaskSync(project, options = {}, reason = 'manual') {
 }
 
 async function syncZentaoTasksWithStats(project, options = {}) {
-  const [tasksResult, bugsResult] = await Promise.allSettled([
-    syncZentaoTasks(project, { ...options, trigger: options.trigger || 'manual' }),
-    syncZentaoBugs(project, {
+  const syncKind = normalizeZentaoSyncKind(options.syncKind || options.kind || options.mode);
+  const jobs = [];
+  if (syncKind !== 'bug') {
+    jobs.push(['tasks', syncZentaoTasks(project, { ...options, trigger: options.trigger || 'manual' })]);
+  }
+  if (syncKind !== 'task') {
+    jobs.push(['bugs', syncZentaoBugs(project, {
       products: options.products || options.product || options.productIds || zentaoBugProductIds,
       limit: options.bugLimit || 100,
       maxPages: options.bugMaxPages || 10,
       refreshTracked: options.bugRefreshTracked !== false,
       trackedConcurrency: options.bugTrackedConcurrency || 4,
       trigger: options.trigger || 'manual'
-    })
-  ]);
-  if (tasksResult.status === 'rejected' && bugsResult.status === 'rejected') throw tasksResult.reason;
-  const tasks = tasksResult.status === 'fulfilled' ? tasksResult.value : {
-    error: zentaoSyncErrorMessage(tasksResult.reason),
-    preservedExistingTasks: true
-  };
-  const bugs = bugsResult.status === 'fulfilled' ? bugsResult.value : {
-    error: zentaoSyncErrorMessage(bugsResult.reason)
-  };
+    })]);
+  }
+  const settled = await Promise.allSettled(jobs.map(([, promise]) => promise));
+  const byType = Object.fromEntries(jobs.map(([type], index) => [type, settled[index]]));
+  if (settled.length && settled.every(result => result.status === 'rejected')) throw settled[0].reason;
+  const tasks = byType.tasks
+    ? byType.tasks.status === 'fulfilled' ? byType.tasks.value : {
+      error: zentaoSyncErrorMessage(byType.tasks.reason),
+      preservedExistingTasks: true
+    }
+    : { skipped: true };
+  const bugs = byType.bugs
+    ? byType.bugs.status === 'fulfilled' ? byType.bugs.value : {
+      error: zentaoSyncErrorMessage(byType.bugs.reason)
+    }
+    : { skipped: true };
   const finishedAt = new Date().toISOString();
   zentaoAutoSyncState = {
     ...zentaoAutoSyncState,
@@ -4825,6 +4860,34 @@ async function syncZentaoTasksWithStats(project, options = {}) {
     })
   };
   return { ...tasks, bugs, zentaoAutoSync: compactZentaoAutoSyncState(zentaoAutoSyncState) };
+}
+
+function triggerZentaoBugSyncOnly(project, options = {}, reason = 'manual') {
+  const bugTrigger = triggerZentaoBugSync(project, {
+    products: options.products || options.product || options.productIds || zentaoBugProductIds,
+    limit: options.bugLimit || options.limit || 100,
+    maxPages: options.bugMaxPages || options.maxPages || 10,
+    refreshTracked: options.bugRefreshTracked !== false && options.refreshTracked !== false,
+    trackedConcurrency: options.bugTrackedConcurrency || options.trackedConcurrency || 4
+  }, reason);
+  return {
+    accepted: true,
+    running: hasRunningZentaoQueue(),
+    startedAt: bugTrigger.startedAt || new Date().toISOString(),
+    queues: {
+      tasks: { accepted: false, running: false, message: '本次只同步 Bug' },
+      bugs: bugTrigger
+    },
+    message: bugTrigger.accepted ? '已开始同步禅道 Bug' : bugTrigger.message || 'Bug 同步正在执行',
+    zentaoAutoSync: compactZentaoAutoSyncState(zentaoAutoSyncState)
+  };
+}
+
+function normalizeZentaoSyncKind(value = '') {
+  const text = String(value || '').trim().toLowerCase();
+  if (['bug', 'bugs'].includes(text)) return 'bug';
+  if (['task', 'tasks'].includes(text)) return 'task';
+  return 'all';
 }
 
 function triggerZentaoBugSync(project, options = {}, reason = 'manual') {
@@ -4989,6 +5052,8 @@ function compactZentaoQueueState(state = {}) {
 
 function syncTriggerMessage(taskTrigger = {}, bugTrigger = {}) {
   if (taskTrigger.accepted && bugTrigger.accepted) return '任务和 Bug 同步已分别开始';
+  if (taskTrigger.accepted && bugTrigger.running === false) return '已开始同步禅道任务';
+  if (bugTrigger.accepted && taskTrigger.running === false) return '已开始同步禅道 Bug';
   if (taskTrigger.accepted) return '任务同步已开始，Bug 同步已有队列在执行';
   if (bugTrigger.accepted) return 'Bug 同步已开始，任务同步已有队列在执行';
   return '已有同步队列正在执行';
@@ -5965,6 +6030,20 @@ async function listArtSeenCandidateTaskNos() {
     }
   }
   return [...taskNos];
+}
+
+function zentaoCurrentDetailRefreshTaskNos(existingZentaoTasks = [], artSnapshotTasks = [], _artSeenCandidateTaskNos = [], aiFlowTaskNos = []) {
+  const taskNos = new Set();
+  for (const task of existingZentaoTasks) {
+    if (task?.taskNo && task.isCurrent !== false) taskNos.add(String(task.taskNo));
+  }
+  for (const task of artSnapshotTasks) {
+    if (task?.taskNo && task.isCurrent !== false) taskNos.add(String(task.taskNo));
+  }
+  for (const taskNo of aiFlowTaskNos) {
+    if (taskNo) taskNos.add(String(taskNo));
+  }
+  return taskNos;
 }
 
 function artSeenCandidateTaskNo(item = {}) {

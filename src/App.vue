@@ -713,6 +713,7 @@ export default {
       zentaoSyncTimer: null,
       zentaoAutoSyncPollTimer: null,
       zentaoAutoSyncWasRunning: false,
+      manualZentaoSyncPending: false,
       taskBriefRealtimeTimer: null,
       taskBriefRealtimeRunning: false,
       taskBriefRealtimeLastAt: 0,
@@ -979,7 +980,7 @@ export default {
 
     zentaoSyncRunning() {
       const sync = this.appConfig.zentaoAutoSync || {};
-      return Boolean(sync.running || sync.tasks?.running || sync.bugs?.running);
+      return Boolean(this.manualZentaoSyncPending || sync.running || sync.tasks?.running || sync.bugs?.running);
     },
 
     zentaoSyncLastError() {
@@ -1756,7 +1757,8 @@ export default {
     },
 
     taskSyncButtonText() {
-      return '同步禅道';
+      if (this.loading.syncTasks || this.zentaoSyncRunning) return '同步中...';
+      return this.effectiveTaskCenterMode === 'bug' ? '同步 Bug' : '同步任务';
     },
 
     zentaoStatusOptions() {
@@ -10949,19 +10951,25 @@ export default {
         ElMessage.warning('当前没有可同步的项目');
         return;
       }
+      const syncKind = this.effectiveTaskCenterMode === 'bug' ? 'bug' : 'task';
       this.taskSyncForm = {
         projectId,
         products: this.taskSyncForm.products || DEFAULT_ZENTAO_BUG_PRODUCTS
       };
       this.loading.syncTasks = true;
+      this.manualZentaoSyncPending = true;
       try {
         const result = await this.api('/api/tasks/sync-zentao', {
           method: 'POST',
           body: JSON.stringify({
             projectId,
             products: this.taskSyncForm.products,
+            syncKind,
             wait: false,
             interactive: true,
+            syncProfile: 'quick',
+            quick: true,
+            detailRefreshScope: 'current',
             limit: 100,
             maxPages: 3,
             executionMaxPages: 5,
@@ -10978,12 +10986,11 @@ export default {
           this.appConfig = { ...this.appConfig, zentaoAutoSync: result.zentaoAutoSync };
         }
         this.startZentaoAutoSyncPolling();
-        this.pollZentaoSync();
-        ElMessage.success(result.message || '已开始同步禅道，完成后会自动刷新列表');
+        this.pollZentaoSync(syncKind);
+        ElMessage.info(result.message || `已开始同步${syncKind === 'bug' ? ' Bug' : '任务'}，完成后会自动刷新列表`);
       } catch (error) {
+        this.manualZentaoSyncPending = false;
         ElMessage.error(this.readApiError(error) || '禅道同步失败');
-      } finally {
-        this.loading.syncTasks = false;
       }
     },
 
@@ -11049,25 +11056,51 @@ export default {
       }
     },
 
-    pollZentaoSync() {
+    pollZentaoSync(syncKind = 'task') {
       if (this.zentaoSyncTimer) clearTimeout(this.zentaoSyncTimer);
       this.zentaoSyncTimer = setTimeout(async () => {
-        await this.refreshConfig();
-        if (this.zentaoSyncRunning) {
-          this.pollZentaoSync();
-          return;
+        try {
+          await this.refreshConfig();
+          const sync = this.appConfig.zentaoAutoSync || {};
+          const stillRunning = syncKind === 'bug'
+            ? Boolean(sync.bugs?.running)
+            : syncKind === 'task'
+              ? Boolean(sync.tasks?.running)
+              : Boolean(sync.running || sync.tasks?.running || sync.bugs?.running);
+          if (stillRunning) {
+            this.pollZentaoSync(syncKind);
+            return;
+          }
+          this.manualZentaoSyncPending = false;
+          this.stopZentaoAutoSyncPolling();
+          if (syncKind === 'bug') {
+            await Promise.all([this.refreshBugs(), this.refreshConfig()]);
+          } else if (syncKind === 'task') {
+            await Promise.all([this.refreshTasks(), this.refreshConfig()]);
+          } else {
+            await Promise.all([this.refreshTasks(), this.refreshBugs(), this.refreshConfig()]);
+          }
+          const finalSync = this.appConfig.zentaoAutoSync || sync;
+          const errorText = this.zentaoSyncLastError;
+          if (errorText) {
+            ElMessage.warning(`同步已结束，部分数据保留上次结果：${this.zentaoSyncFailureText(errorText)}`);
+            return;
+          }
+          const tasks = finalSync.tasks?.lastSummary || finalSync.lastSummary || {};
+          const bugs = finalSync.bugs?.lastSummary || finalSync.lastSummary?.bugs || {};
+          if (syncKind === 'bug') {
+            ElMessage.success(`同步 Bug 完成：新增 ${bugs.created || 0}，更新 ${bugs.updated || 0}`);
+          } else if (syncKind === 'task') {
+            ElMessage.success(`同步任务完成：新增 ${tasks.created || 0}，更新 ${tasks.updated || 0}`);
+          } else {
+            ElMessage.success(`同步完成：任务新增 ${tasks.created || 0}，更新 ${tasks.updated || 0}；Bug 新增 ${bugs.created || 0}，更新 ${bugs.updated || 0}`);
+          }
+        } catch (error) {
+          this.manualZentaoSyncPending = false;
+          ElMessage.warning(this.readApiError(error) || '同步状态刷新失败，请稍后查看任务列表。');
+        } finally {
+          this.loading.syncTasks = false;
         }
-        this.stopZentaoAutoSyncPolling();
-        const sync = this.appConfig.zentaoAutoSync || {};
-        await Promise.all([this.refreshTasks(), this.refreshBugs()]);
-        const errorText = this.zentaoSyncLastError;
-        if (errorText) {
-          ElMessage.warning(`同步已结束，部分数据保留上次结果：${this.zentaoSyncFailureText(errorText)}`);
-          return;
-        }
-        const tasks = sync.tasks?.lastSummary || sync.lastSummary || {};
-        const bugs = sync.bugs?.lastSummary || sync.lastSummary?.bugs || {};
-        ElMessage.success(`同步完成：任务新增 ${tasks.created || 0}，更新 ${tasks.updated || 0}；Bug 新增 ${bugs.created || 0}，更新 ${bugs.updated || 0}`);
       }, 2500);
     },
 
