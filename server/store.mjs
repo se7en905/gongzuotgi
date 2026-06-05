@@ -39,7 +39,8 @@ export const paths = {
   codexConfig: path.join(dataDir, 'codex-config.json'),
   taskCenterConfig: path.join(dataDir, 'task-center-config.json'),
   artProgressEvents: path.join(dataDir, 'art-progress-events.json'),
-  usageCounters: path.join(dataDir, 'usage-counters.json')
+  usageCounters: path.join(dataDir, 'usage-counters.json'),
+  agentWorkers: path.join(dataDir, 'agent-workers.json')
 };
 
 const mysqlCollections = new Map([
@@ -759,6 +760,16 @@ export async function createRun(input) {
     agentModel: input.agentModel || task.agentModel || '',
     figmaLinks: input.figmaLinks || '',
     showdocHints: input.showdocHints || '',
+    selectedMaterialHints: normalizeLineList(input.selectedMaterialHints),
+    primarySkillPath: input.primarySkillPath || input.skillPath || input.stage || '',
+    figmaWriteMode: input.figmaWriteMode || '',
+    assignedToUserId: input.assignedToUserId || input.assigneeUserId || '',
+    assignedToName: input.assignedToName || input.assigneeName || input.developer || task.developer || '',
+    claimedByDeviceId: input.claimedByDeviceId || '',
+    claimedAt: input.claimedAt || '',
+    workerStatus: input.workerStatus || '',
+    workerCapabilities: normalizeLineList(input.workerCapabilities),
+    executionMode: input.executionMode || '',
     requirement: input.requirement || '',
     sourceType: input.sourceType || (workflow === 'bug-fix' ? 'bug' : 'task'),
     status: 'pending',
@@ -784,6 +795,79 @@ export async function createRun(input) {
   await writeJson(paths.runs, runs);
   await fs.mkdir(getRunWorkspace(run.id), { recursive: true });
   return run;
+}
+
+export async function listAgentWorkers(filters = {}) {
+  const workers = await readJson(paths.agentWorkers, []);
+  return workers
+    .map(normalizeAgentWorker)
+    .filter(worker => !filters.userId || worker.userId === String(filters.userId))
+    .sort((a, b) => String(b.lastHeartbeatAt || '').localeCompare(String(a.lastHeartbeatAt || '')));
+}
+
+export async function upsertAgentWorker(input = {}) {
+  const workers = await readJson(paths.agentWorkers, []);
+  const worker = normalizeAgentWorker(input);
+  const index = workers.findIndex(item => item.id === worker.id);
+  if (index >= 0) workers[index] = { ...workers[index], ...worker, createdAt: workers[index].createdAt || worker.createdAt };
+  else workers.push(worker);
+  await writeJson(paths.agentWorkers, workers);
+  return index >= 0 ? normalizeAgentWorker(workers[index]) : worker;
+}
+
+export async function claimNextAgentRun(input = {}) {
+  const userId = String(input.userId || '').trim();
+  const deviceId = String(input.deviceId || '').trim();
+  if (!userId || !deviceId) return null;
+  const capabilities = normalizeLineList(input.capabilities);
+  if (!capabilities.includes('codex.exec') || !capabilities.includes('figma.mcp.write')) return null;
+  const allowedProjectIds = normalizeLineList(input.allowedProjectIds);
+  const canAccessAllProjects = input.canAccessAllProjects === true || allowedProjectIds.includes('*');
+  const runs = await readJson(paths.runs, []);
+  const now = new Date().toISOString();
+  const candidateIndex = runs.findIndex(run => isClaimableAgentRun(run, userId, { allowedProjectIds, canAccessAllProjects }));
+  if (candidateIndex === -1) return null;
+  const run = {
+    ...runs[candidateIndex],
+    status: 'claimed',
+    workerStatus: 'claimed',
+    claimedByDeviceId: deviceId,
+    claimedAt: now,
+    startedBy: userId,
+    workerCapabilities: capabilities,
+    updatedAt: now
+  };
+  runs[candidateIndex] = run;
+  await writeJson(paths.runs, runs);
+  return hydrateRunStages(run);
+}
+
+export async function updateAgentRunFromWorker(runId, input = {}) {
+  const runs = await readJson(paths.runs, []);
+  const index = runs.findIndex(item => item.id === runId);
+  if (index === -1) return null;
+  const now = new Date().toISOString();
+  const existing = runs[index];
+  const patch = {
+    workerStatus: input.workerStatus || input.status || existing.workerStatus || '',
+    status: normalizeWorkerRunStatus(input.status || input.workerStatus || existing.status),
+    currentStage: input.currentStage ?? existing.currentStage,
+    blocker: input.blocker ?? existing.blocker,
+    resultSummary: input.resultSummary ?? existing.resultSummary,
+    exitCode: input.exitCode ?? existing.exitCode,
+    finishedAt: input.finishedAt || (/completed|blocked|failed|cancelled/.test(String(input.status || input.workerStatus || '')) ? now : existing.finishedAt),
+    workerResult: input.workerResult ?? existing.workerResult,
+    figmaWriteResult: input.figmaWriteResult ?? existing.figmaWriteResult,
+    updatedAt: now
+  };
+  if (input.pid !== undefined) patch.pid = input.pid;
+  if (input.startedAt) patch.startedAt = input.startedAt;
+  if (input.logPath) patch.logPath = input.logPath;
+  if (input.promptPath) patch.promptPath = input.promptPath;
+  if (input.artifactRoot) patch.artifactRoot = input.artifactRoot;
+  runs[index] = { ...existing, ...patch };
+  await writeJson(paths.runs, runs);
+  return hydrateRunStages(runs[index]);
 }
 
 export async function cloneRunForRetry(id, overrides = {}) {
@@ -2209,6 +2293,58 @@ function usageCounterKey(value = '') {
     .replace(/[_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '') || '';
   if (!text || text.length < 3 || isGenericUsageTarget(text)) return '';
   return text;
+}
+
+function normalizeAgentWorker(input = {}) {
+  const now = new Date().toISOString();
+  const userId = cleanString(input.userId);
+  const deviceId = cleanString(input.deviceId || input.id);
+  const id = [userId, deviceId].filter(Boolean).join(':') || cleanString(input.id) || randomUUID();
+  const capabilities = normalizeLineList(input.capabilities);
+  const checks = input.checks && typeof input.checks === 'object' ? input.checks : {};
+  return {
+    id,
+    userId,
+    userName: cleanString(input.userName || input.displayName),
+    deviceId,
+    deviceName: cleanString(input.deviceName || input.hostname || os.hostname()),
+    hostname: cleanString(input.hostname || os.hostname()),
+    platform: cleanString(input.platform || os.platform()),
+    codexReady: input.codexReady === true || capabilities.includes('codex.exec'),
+    figmaMcpReady: input.figmaMcpReady === true || capabilities.includes('figma.mcp.write'),
+    capabilities,
+    checks,
+    currentRunId: cleanString(input.currentRunId),
+    status: cleanString(input.status || 'online'),
+    lastHeartbeatAt: cleanString(input.lastHeartbeatAt || now),
+    createdAt: cleanString(input.createdAt || now),
+    updatedAt: now
+  };
+}
+
+function normalizeLineList(value = []) {
+  if (Array.isArray(value)) return [...new Set(value.map(item => String(item || '').trim()).filter(Boolean))];
+  return String(value || '')
+    .split(/\n|,|，/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function isClaimableAgentRun(run = {}, userId = '', access = {}) {
+  if (run.sourceType !== 'direct-skill' && run.executionMode !== 'direct-skill') return false;
+  if (!['pending', 'queued'].includes(String(run.status || '').toLowerCase())) return false;
+  const assignee = String(run.assignedToUserId || run.ownerUserId || '').trim();
+  if (assignee && assignee !== userId) return false;
+  if (access.canAccessAllProjects) return true;
+  return normalizeLineList(access.allowedProjectIds).includes(String(run.projectId || '').trim());
+}
+
+function normalizeWorkerRunStatus(value = '') {
+  const status = String(value || '').trim().toLowerCase();
+  if (['running', 'claimed', 'completed', 'blocked', 'failed', 'cancelled', 'pending'].includes(status)) return status;
+  if (status === 'done' || status === 'success') return 'completed';
+  if (status === 'error') return 'failed';
+  return status || 'running';
 }
 
 function isGenericUsageTarget(value = '') {

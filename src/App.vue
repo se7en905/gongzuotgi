@@ -705,6 +705,15 @@ export default {
         skill: null,
         html: ''
       },
+      directSkillRunDialog: {
+        visible: false,
+        row: null,
+        figmaLinks: '',
+        figmaWriteMode: 'target-node',
+        assignedToUserId: '',
+        requirement: '',
+        submitting: false
+      },
       skillUsageDialog: { visible: false, row: null, metrics: [], logs: [], start: '', end: '', page: 1, pageSize: 10 },
       skillHistoryDialog: { visible: false, row: null, entries: [] },
       skillOwnerDialog: { visible: false, row: null, owner: [] },
@@ -972,6 +981,20 @@ export default {
       return this.roles.filter(role => role.disabled !== true);
     },
 
+    directSkillAssigneeOptions() {
+      const rows = this.can('api.users.manage') && this.users.length
+        ? this.users
+        : [this.currentUser].filter(Boolean);
+      return rows
+        .filter(user => user && user.disabled !== true)
+        .map(user => ({
+          id: user.id,
+          username: user.username || '',
+          displayName: user.displayName || user.realname || user.name || user.username || user.id,
+          role: user.role || ''
+        }));
+    },
+
     permissionSet() {
       return new Set(this.currentUser?.permissions || []);
     },
@@ -1109,6 +1132,7 @@ export default {
     },
 
     selectedRunActionLabel() {
+      if (this.isDirectSkillRun(this.selectedRun)) return this.selectedRun?.status === 'pending' ? '等待本机' : '本机执行';
       if (this.isRunInProgress(this.selectedRun)) return '执行中';
       return this.hasRunExecuted(this.selectedRun) ? '再次执行' : '发起执行';
     },
@@ -9515,6 +9539,92 @@ export default {
       await this.openSkillPreview(row.skill || row);
     },
 
+    openDirectSkillRunDialog(row = this.skillPreview.skill || {}) {
+      if (!this.can('api.runs.execute')) {
+        ElMessage.warning('当前账号没有创建直接执行的权限');
+        return;
+      }
+      const projectId = row.projectId || this.selectedProjectId || this.projects[0]?.id || '';
+      if (projectId && !this.scans[projectId]) this.ensureRunProjectScanCache(projectId).catch(() => {});
+      if (this.can('api.users.manage') && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
+      const currentUserId = this.currentUser?.id || '';
+      this.directSkillRunDialog = {
+        visible: true,
+        row: { ...row, projectId },
+        figmaLinks: '',
+        figmaWriteMode: 'target-node',
+        assignedToUserId: currentUserId,
+        requirement: '',
+        submitting: false
+      };
+    },
+
+    async createDirectSkillRun() {
+      const dialog = this.directSkillRunDialog;
+      const row = dialog.row || {};
+      const projectId = row.projectId || this.selectedProjectId || this.projects[0]?.id || '';
+      const skillPath = this.directSkillPath(row);
+      const figmaLinks = String(dialog.figmaLinks || '').trim();
+      if (!projectId) {
+        ElMessage.warning('请先选择项目');
+        return;
+      }
+      if (!skillPath) {
+        ElMessage.warning('当前产物缺少可执行的 Skill 或 md 路径');
+        return;
+      }
+      if (!figmaLinks) {
+        ElMessage.warning('请填写 Figma 链接');
+        return;
+      }
+      const assignee = this.directSkillAssigneeOptions.find(user => user.id === dialog.assignedToUserId) || this.currentUser || {};
+      const productName = row.productDisplayName || row.productFileName || row.title || this.fileNameFromPath(skillPath) || 'AI 产物';
+      dialog.submitting = true;
+      try {
+        const run = await this.api('/api/runs/direct-skill', {
+          method: 'POST',
+          body: JSON.stringify({
+            projectId,
+            title: `直接执行 ${productName}`,
+            primarySkillPath: skillPath,
+            stage: skillPath,
+            selectedMaterialHints: [skillPath],
+            figmaLinks,
+            figmaWriteMode: dialog.figmaWriteMode || 'target-node',
+            assignedToUserId: assignee.id || this.currentUser?.id || '',
+            assignedToName: assignee.displayName || assignee.username || this.defaultRunDeveloperName,
+            developer: assignee.displayName || assignee.username || this.defaultRunDeveloperName,
+            requirement: dialog.requirement,
+            sourceType: 'direct-skill',
+            executionMode: 'direct-skill'
+          })
+        });
+        this.runs = [run, ...this.runs.filter(item => item.id !== run.id)];
+        this.selectedRunId = run.id;
+        this.directSkillRunDialog.visible = false;
+        this.skillPreview.visible = false;
+        this.activeView = 'runs';
+        this.pushRoute('/runs');
+        await this.refreshRuns();
+        ElMessage.success('直接执行已创建，等待对应组员本机 Worker 领取');
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || '直接执行创建失败');
+      } finally {
+        dialog.submitting = false;
+      }
+    },
+
+    directSkillPath(row = {}) {
+      return row.skill?.git?.relativePath
+        || row.relativePath
+        || row.skill?.relativePath
+        || row.path
+        || row.skill?.path
+        || row.finalPath
+        || row.skillPath
+        || '';
+    },
+
     normalizeUsageMatchText(value = '') {
       return String(value || '').replace(/\\/g, '/').toLowerCase();
     },
@@ -13655,6 +13765,10 @@ export default {
       return /running|in_progress/i.test(String(run?.status || ''));
     },
 
+    isDirectSkillRun(run = null) {
+      return run?.sourceType === 'direct-skill' || run?.executionMode === 'direct-skill';
+    },
+
     businessTasksForProject(projectId) {
       return this.businessTasks.filter(task => !projectId || task.projectId === projectId);
     },
@@ -13999,6 +14113,7 @@ export default {
     runStatusLabel(status = '') {
       const value = String(status || '').toLowerCase();
       if (/conditional/.test(value)) return '有条件通过';
+      if (/claimed/.test(value)) return '已领取';
       if (/running|in_progress/.test(value)) return '执行中';
       if (/pending|created|queued/.test(value)) return '待启动';
       if (/done|success|passed|completed/.test(value)) return '已完成';
@@ -14447,6 +14562,8 @@ export default {
 
     currentRunStageText(run = null) {
       if (!run) return '等待启动';
+      if (this.isDirectSkillRun(run) && String(run.status || '').toLowerCase() === 'pending') return '等待执行人本机 Worker 领取';
+      if (this.isDirectSkillRun(run) && String(run.status || '').toLowerCase() === 'claimed') return '执行人本机已领取';
       if (!this.isRunInProgress(run)) {
         if (this.hasRunExecuted(run)) return '执行完成';
         return '等待启动';
@@ -14461,7 +14578,7 @@ export default {
       if (/conditional/.test(value)) return 'is-conditional';
       if (/failed|error/.test(value)) return 'is-failed';
       if (/blocked|cancelled|canceled/.test(value)) return 'is-blocked';
-      if (/running|in_progress/.test(value)) return 'is-running';
+      if (/running|in_progress|claimed/.test(value)) return 'is-running';
       if (/done|success|passed|completed/.test(value)) return 'is-success';
       return 'is-pending';
     },

@@ -56,7 +56,10 @@ import {
   getTask,
   getTaskCenterConfig,
   getUsageCounters,
+  appendRunLog,
+  claimNextAgentRun,
   listCustomWorkflows,
+  listAgentWorkers,
   listOperationLogs,
   listBugs,
   listAiFlowRecords,
@@ -82,6 +85,8 @@ import {
   upsertTask,
   upsertTaskProcessingNote,
   updateArtProgressEvent,
+  updateAgentRunFromWorker,
+  upsertAgentWorker,
   upsertTasks,
   upsertAiFlowRecord,
   upsertArtBrief,
@@ -1230,6 +1235,105 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/agent-workers') {
+    requirePermission(currentUser, 'api.runs.execute');
+    const workers = await listAgentWorkers(url.searchParams.get('mine') === '1' ? { userId: currentUser.id } : {});
+    sendJson(res, 200, workers);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/agent-workers/heartbeat') {
+    requirePermission(currentUser, 'api.runs.execute');
+    const body = await readBody(req);
+    const worker = await upsertAgentWorker({
+      ...body,
+      userId: currentUser.id,
+      userName: currentUser.displayName || currentUser.username,
+      lastHeartbeatAt: new Date().toISOString()
+    });
+    sendJson(res, 200, worker);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/agent-runs/next') {
+    requirePermission(currentUser, 'api.runs.execute');
+    const body = await readBody(req).catch(() => ({}));
+    const worker = await upsertAgentWorker({
+      ...body,
+      userId: currentUser.id,
+      userName: currentUser.displayName || currentUser.username,
+      status: 'online',
+      lastHeartbeatAt: new Date().toISOString()
+    });
+    const run = await claimNextAgentRun({
+      userId: currentUser.id,
+      deviceId: worker.deviceId,
+      capabilities: worker.capabilities,
+      allowedProjectIds: currentUser.projectIds || [],
+      canAccessAllProjects: currentUser.role === 'admin'
+    });
+    if (!run) {
+      sendJson(res, 200, { run: null, worker });
+      return;
+    }
+    await writeOperationLog(req, {
+      user: currentUser,
+      module: 'run',
+      action: 'CLAIM_DIRECT_SKILL_RUN',
+      actionName: '本机领取直接执行',
+      targetType: 'run',
+      targetId: run.id,
+      targetName: run.title,
+      after: run,
+      metadata: { deviceId: worker.deviceId, capabilities: worker.capabilities },
+      description: `${currentUser.displayName || currentUser.username} 的本机 Worker 领取直接执行「${run.title}」`
+    });
+    broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, module: 'agent-run' });
+    sendJson(res, 200, { run, worker });
+    return;
+  }
+
+  const agentRunLog = url.pathname.match(/^\/api\/agent-runs\/([^/]+)\/log$/);
+  if (req.method === 'POST' && agentRunLog) {
+    const run = await requireRun(agentRunLog[1]);
+    requireProjectAccess(currentUser, run.projectId, 'developer', 'api.runs.execute');
+    ensureWorkerCanUpdateRun(currentUser, run);
+    const body = await readBody(req).catch(() => ({}));
+    const chunk = String(body.chunk || body.text || '').slice(0, 20000);
+    if (chunk) await appendRunLog(run.id, chunk);
+    broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, module: 'agent-run-log' });
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  const agentRunStatus = url.pathname.match(/^\/api\/agent-runs\/([^/]+)\/status$/);
+  if (req.method === 'POST' && agentRunStatus) {
+    const run = await requireRun(agentRunStatus[1]);
+    requireProjectAccess(currentUser, run.projectId, 'developer', 'api.runs.execute');
+    ensureWorkerCanUpdateRun(currentUser, run);
+    const body = await readBody(req).catch(() => ({}));
+    const updated = await updateAgentRunFromWorker(run.id, body);
+    await writeOperationLog(req, {
+      user: currentUser,
+      module: 'run',
+      action: 'UPDATE_DIRECT_SKILL_RUN',
+      actionName: '回传直接执行状态',
+      targetType: 'run',
+      targetId: run.id,
+      targetName: run.title,
+      before: run,
+      after: updated,
+      metadata: {
+        status: body.status || body.workerStatus || '',
+        figmaWritten: body.figmaWriteResult?.written === true || body.resultSummary?.figmaWritten === true
+      },
+      description: `${currentUser.displayName || currentUser.username} 回传直接执行「${run.title}」状态：${body.status || body.workerStatus || 'running'}`
+    });
+    broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, module: 'agent-run-status' });
+    sendJson(res, 200, updated);
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/projects') {
     const body = await readBody(req);
     const before = body.id ? await getProject(body.id) : null;
@@ -1813,11 +1917,67 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/runs/direct-skill') {
+    const body = await readBody(req);
+    const project = await requireProject(body.projectId);
+    requireProjectAccess(currentUser, project.id, 'developer', 'api.runs.execute');
+    const figmaLinks = String(body.figmaLinks || body.figmaUrl || '').trim();
+    const primarySkillPath = String(body.primarySkillPath || body.skillPath || body.stage || '').trim();
+    if (!figmaLinks) throw new HttpError(400, '请先填写 Figma 链接。');
+    if (!primarySkillPath) throw new HttpError(400, '请先选择要执行的 Skill 或 md。');
+    const assigneeUserId = String(body.assignedToUserId || body.assigneeUserId || currentUser.id || '').trim();
+    const assigneeName = String(body.assignedToName || body.assigneeName || body.developer || currentUser.displayName || currentUser.username || '').trim();
+    const run = await createRun({
+      ...body,
+      projectId: project.id,
+      title: body.title || `直接执行：${path.basename(primarySkillPath)}`,
+      workflow: 'art-single-skill',
+      workflowLevel: body.workflowLevel || 'XS',
+      executionMode: 'direct-skill',
+      sourceType: 'direct-skill',
+      stage: primarySkillPath,
+      primarySkillPath,
+      showdocHints: [primarySkillPath, ...(Array.isArray(body.selectedMaterialHints) ? body.selectedMaterialHints : [])].filter(Boolean).join('\n'),
+      selectedMaterialHints: body.selectedMaterialHints || [primarySkillPath],
+      figmaLinks,
+      figmaWriteMode: body.figmaWriteMode || 'target-node',
+      developer: assigneeName,
+      assignedToUserId: assigneeUserId,
+      assignedToName: assigneeName,
+      requirement: buildDirectSkillRequirement(body),
+      createdBy: currentUser.id,
+      ownerUserId: assigneeUserId || currentUser.id
+    });
+    await writeOperationLog(req, {
+      user: currentUser,
+      module: 'run',
+      action: 'CREATE_DIRECT_SKILL_RUN',
+      actionName: '创建直接执行',
+      targetType: 'run',
+      targetId: run.id,
+      targetName: run.title,
+      after: run,
+      metadata: {
+        primarySkillPath,
+        figmaLinks,
+        assigneeUserId,
+        figmaWriteMode: run.figmaWriteMode || ''
+      },
+      description: `${currentUser.displayName || currentUser.username} 创建直接执行「${run.title}」，指派给 ${assigneeName || assigneeUserId || '未指定成员'}`
+    });
+    broadcastPlatformEvent('runs.changed', { projectId: project.id, runId: run.id, module: 'direct-skill-run' });
+    sendJson(res, 201, run);
+    return;
+  }
+
   const runStart = url.pathname.match(/^\/api\/runs\/([^/]+)\/start$/);
   if (req.method === 'POST' && runStart) {
     const run = await requireRun(runStart[1]);
     const project = await requireProject(run.projectId);
     requireProjectAccess(currentUser, project.id, 'developer', 'run.codex.execute');
+    if (run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill') {
+      throw new HttpError(409, '直接执行任务只能由执行人本机 Worker 领取，不能在平台服务器启动。');
+    }
     const codexConfig = redactCodexConfig(await getCodexConfig());
     const started = await startRun(project, { ...run, startedBy: currentUser.id });
     await writeOperationLog(req, {
@@ -1990,6 +2150,35 @@ function redactProject(project = {}) {
     ...project,
     git: project.git ? { ...project.git } : undefined
   };
+}
+
+function ensureWorkerCanUpdateRun(user = {}, run = {}) {
+  const userId = String(user.id || '').trim();
+  const assignee = String(run.assignedToUserId || run.ownerUserId || '').trim();
+  if (!assignee || assignee === userId || hasPermission(user, 'api.runs.delete')) return;
+  throw new HttpError(403, '只能回传分配给自己的直接执行任务。');
+}
+
+function buildDirectSkillRequirement(body = {}) {
+  const manual = String(body.requirement || '').trim();
+  const skillPath = String(body.primarySkillPath || body.skillPath || body.stage || '').trim();
+  const figmaLinks = String(body.figmaLinks || body.figmaUrl || '').trim();
+  const writeMode = String(body.figmaWriteMode || 'target-node').trim();
+  return [
+    manual,
+    '',
+    '## 直接执行约束',
+    '',
+    `- 主执行 Skill / md：${skillPath}`,
+    `- Figma 链接：${figmaLinks}`,
+    `- Figma 写入方式：${writeMode === 'create-page' ? '新建页面或新建 Frame' : '写入指定节点'}`,
+    '- 本次任务必须在执行人本机 Codex 环境中运行，使用执行人自己的 Figma MCP 和 Figma 授权。',
+    '- 平台不提供 Figma token；如果本机 Figma MCP 未授权、缺少写入工具或没有 Figma 权限，必须停止并回传阻塞原因。',
+    '- 必须先读取指定 Skill / md，再按 Figma 链接解析 fileKey、node-id 和目标区域。',
+    '- 只处理本次指定 Skill / md 和 Figma 目标，不扩展为无关代码改造。',
+    '- 只有 Figma 写入工具真实返回 createdNodeIds 或 mutatedNodeIds，才允许判定为已写入。',
+    '- 执行报告必须记录使用的 Skill / md、Figma URL、写入节点、阻塞原因和人工复核建议。'
+  ].filter(Boolean).join('\n');
 }
 
 function subscribePlatformEvents(req, res, user = {}) {

@@ -52,7 +52,7 @@
           <p>{{ app.selectedRun ? '查看阶段进度、关键动作概览和任务链路。产物明细请到产物列表查看。' : '请先从左侧选择一条执行记录。' }}</p>
         </div>
         <div class="run-actions">
-          <ElButton v-if="app.can('run.codex.execute')" type="primary" @click="app.startSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun)" :loading="app.isRunInProgress(app.selectedRun)">{{ app.selectedRunActionLabel }}</ElButton>
+          <ElButton v-if="app.can('run.codex.execute')" type="primary" @click="app.startSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun) || app.isDirectSkillRun(app.selectedRun)" :loading="app.isRunInProgress(app.selectedRun)">{{ app.selectedRunActionLabel }}</ElButton>
           <ElButton v-if="app.can('run.codex.execute')" @click="app.cancelSelectedRun" :disabled="!app.selectedRun || !app.isRunInProgress(app.selectedRun)">中断</ElButton>
           <ElButton v-if="app.can('run.delete')" type="danger" plain @click="app.deleteSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun)">删除</ElButton>
         </div>
