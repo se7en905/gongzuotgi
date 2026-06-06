@@ -5344,7 +5344,12 @@ async function syncZentaoTasks(project, options = {}) {
     const limit = Math.min(Math.max(Number(syncOptions.limit || 100), 1), 200);
     const maxPages = Math.min(Math.max(Number(syncOptions.maxPages || 5), 1), 50);
     const detailConcurrency = Math.min(Math.max(Number(syncOptions.detailConcurrency || (interactive ? 6 : 4)), 1), 10);
-    const { artAccounts, userNames } = await getZentaoArtUsers();
+    if (quickSync) {
+      syncOptions.executionScanLimit = Math.max(Number(syncOptions.executionScanLimit || 0), 80);
+      syncOptions.executionMaxPages = Math.max(Number(syncOptions.executionMaxPages || 0), 5);
+      syncOptions.maxPages = Math.max(Number(syncOptions.maxPages || 0), 3);
+    }
+    const { artAccounts, userNames, artUserSource } = await getZentaoArtUsers();
     const artSnapshotTasks = await listArtSnapshotTasks(project.id).catch(() => []);
     const artSeenCandidateTaskNos = await listArtSeenCandidateTaskNos().catch(() => []);
     const existingZentaoTasks = (await listTasks({ projectId: project.id }))
@@ -5471,6 +5476,7 @@ async function syncZentaoTasks(project, options = {}) {
       ...snapshot,
       artDeptId: zentaoArtDeptId,
       artUserCount: artAccounts.size,
+      artUserSource,
       artSeenCandidateTasks: artSeenCandidateTaskNos.length,
       aiFlowTrackedTasks: aiFlowTaskNos.length,
       detailRefresh: {
@@ -6428,18 +6434,41 @@ async function getZentaoArtUsers() {
     if (!pageUsers.length || users.length >= total) break;
     page += 1;
   }
-  const artUsers = users.filter(user => Number(user.dept) === zentaoArtDeptId);
-  const artAccounts = new Set();
-  for (const user of artUsers) {
-    if (user.account) artAccounts.add(user.account);
+  const artUsers = users.filter(user => zentaoArtDeptIds.has(zentaoUserDeptId(user)));
+  const artAccounts = new Set(artUsers.map(user => zentaoUserAccount(user)).filter(Boolean));
+  let source = 'zentao-users';
+  if (!artAccounts.size) {
+    const fallbackUsers = await fallbackArtDepartmentUsers();
+    for (const user of fallbackUsers) {
+      const account = zentaoUserAccount(user);
+      if (account) artAccounts.add(account);
+    }
+    source = 'platform-fallback';
   }
   if (!artAccounts.size) {
     throw new HttpError(502, `ZenTao 同步失败：未获取到部门 ID=${zentaoArtDeptId} 的美术人员，已保留现有任务列表。`);
   }
+  const fallbackNames = source === 'platform-fallback' ? await fallbackArtDepartmentUsers() : [];
   return {
     artAccounts,
-    userNames: new Map(users.map(user => [user.account, user.realname || user.account]))
+    artUserSource: source,
+    userNames: new Map([
+      ...fallbackNames.map(user => [zentaoUserAccount(user), user.realname || user.name || zentaoUserAccount(user)]),
+      ...users.map(user => [zentaoUserAccount(user), user.realname || user.name || zentaoUserAccount(user)])
+    ].filter(([account]) => account))
   };
+}
+
+function zentaoUserAccount(user = {}) {
+  return accountName(user.account || user.user || user.id || user.username);
+}
+
+function zentaoUserDeptId(user = {}) {
+  const raw = user.dept ?? user.deptID ?? user.deptId ?? user.departmentID ?? user.departmentId ?? user.department?.id ?? user.dept?.id ?? '';
+  if (raw && typeof raw === 'object') return zentaoUserDeptId(raw);
+  if (typeof raw === 'number') return raw;
+  const match = String(raw || '').match(/\d+/);
+  return match ? Number(match[0]) : NaN;
 }
 
 function normalizeZentaoArtDeptIds(value = '') {
@@ -6683,12 +6712,12 @@ async function fetchZentaoDepartmentUsers(deptId = null) {
       page += 1;
     }
     return sortArtDepartmentUsers(users
-      .filter(user => deptIds.has(Number(user.dept)))
+      .filter(user => deptIds.has(zentaoUserDeptId(user)))
       .map(user => ({
-        account: user.account,
+        account: zentaoUserAccount(user),
         realname: user.realname || user.name || user.account,
         role: user.account === 'zhangqw' ? 'owner' : 'member',
-        dept: Number(user.dept)
+        dept: zentaoUserDeptId(user)
       }))
       .filter(user => user.account));
   } catch (error) {

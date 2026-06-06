@@ -16,12 +16,23 @@ const artDashboardDataDir = process.env.ART_DASHBOARD_DATA_DIR || path.join(root
 const api = await getZentaoApi();
 const zentao = await getZentaoModules();
 const users = await listZentaoUsers();
-const artUsers = users.filter(user => Number(user.dept) === artDeptId);
-const artAccounts = new Set(artUsers.map(user => user.account).filter(Boolean));
+const artUsers = users.filter(user => zentaoUserDeptId(user) === artDeptId);
+const artAccounts = new Set(artUsers.map(user => zentaoUserAccount(user)).filter(Boolean));
+let artUserSource = 'zentao-users';
+if (!artAccounts.size) {
+  for (const user of await fallbackArtDepartmentUsers()) {
+    const account = zentaoUserAccount(user);
+    if (account) artAccounts.add(account);
+  }
+  artUserSource = 'platform-fallback';
+}
 if (!artAccounts.size) {
   throw new Error(`ZenTao 同步失败：未获取到部门 ID=${artDeptId} 的美术人员，已保留现有任务列表。`);
 }
-const userNames = new Map(users.map(user => [user.account, user.realname || user.account]));
+const userNames = new Map([
+  ...(await fallbackArtDepartmentUsers()).map(user => [zentaoUserAccount(user), user.realname || user.name || zentaoUserAccount(user)]),
+  ...users.map(user => [zentaoUserAccount(user), user.realname || user.name || zentaoUserAccount(user)])
+].filter(([account]) => account));
 
 const executionsResult = await zentao.listExecutions(api, { page: 1, limit: limitExecutions });
 const executions = executionsResult?.result?.executions || [];
@@ -151,6 +162,8 @@ console.log(JSON.stringify({
   projectId,
   artDeptId,
   artUserCount: artUsers.length,
+  artAccountCount: artAccounts.size,
+  artUserSource,
   artSeenCandidateTasks: artSeenCandidateTaskNos.length,
   executionCount: executions.length,
   scope: taskScope,
@@ -463,6 +476,62 @@ function accountOf(value) {
   if (typeof value === 'string') return value;
   if (typeof value === 'object') return value.account || '';
   return String(value);
+}
+
+function zentaoUserAccount(user = {}) {
+  return accountOf(user.account || user.user || user.username || user.id);
+}
+
+function zentaoUserDeptId(user = {}) {
+  const raw = user.dept ?? user.deptID ?? user.deptId ?? user.departmentID ?? user.departmentId ?? user.department?.id ?? user.dept?.id ?? '';
+  if (raw && typeof raw === 'object') return zentaoUserDeptId(raw);
+  if (typeof raw === 'number') return raw;
+  const match = String(raw || '').match(/\d+/);
+  return match ? Number(match[0]) : NaN;
+}
+
+async function fallbackArtDepartmentUsers() {
+  const snapshot = await latestArtSnapshot();
+  const report = snapshot?.report || {};
+  const owner = {
+    account: report.owner_account || 'zhangqw',
+    realname: report.owner_summary?.name || '张倩文',
+    role: 'owner'
+  };
+  const defaults = [
+    owner,
+    { account: 'fengshuqi', realname: '冯淑琪' },
+    { account: 'yushengwei', realname: '余盛威' },
+    { account: 'yejunbo', realname: '叶君博' },
+    { account: 'huangjianrong', realname: '黄剑荣' },
+    { account: 'lilh', realname: '李华玲' },
+    { account: 'zhangzb', realname: '张宗斌' },
+    { account: 'lanhj', realname: '兰韩界' }
+  ];
+  const members = (report.managed_members || report.art_members || defaults)
+    .filter(user => user?.account && user.account !== owner.account)
+    .map(user => ({
+      account: user.account,
+      realname: user.realname || user.name || user.account,
+      role: 'member'
+    }));
+  const byAccount = new Map(defaults.map(user => [user.account, user]));
+  byAccount.set(owner.account, owner);
+  for (const member of members) byAccount.set(member.account, member);
+  return [...byAccount.values()];
+}
+
+async function latestArtSnapshot() {
+  try {
+    const files = await fs.readdir(artDashboardDataDir);
+    const snapshots = files.filter(name => /^art_tasks_\d{4}-\d{2}-\d{2}\.json$/.test(name)).sort();
+    if (!snapshots.length) return null;
+    const snapshotPath = path.join(artDashboardDataDir, snapshots.at(-1));
+    const report = JSON.parse(await fs.readFile(snapshotPath, 'utf8'));
+    return { report, snapshotPath };
+  } catch {
+    return null;
+  }
 }
 
 async function listZentaoUsers() {
