@@ -128,6 +128,7 @@ const zentaoBugProductIds = process.env.ZENTAO_BUG_PRODUCT_IDS || 'all';
 const zentaoAutoSyncIntervalMs = Number(process.env.ZENTAO_AUTO_SYNC_INTERVAL_MS || 30 * 60 * 1000);
 const zentaoAutoSyncInitialDelayMs = Number(process.env.ZENTAO_AUTO_SYNC_INITIAL_DELAY_MS || 5000);
 const zentaoAutoSyncProjectId = process.env.ZENTAO_AUTO_SYNC_PROJECT_ID || 'art_department';
+const defaultRunLogTailBytes = Number(process.env.RUN_LOG_TAIL_BYTES || 128 * 1024);
 const artProjectId = process.env.ART_PLATFORM_PROJECT_ID || zentaoAutoSyncProjectId;
 const zentaoAutoSyncScript = path.join(paths.root, 'scripts', 'sync-zentao-art-tasks.mjs');
 const zentaoBugSyncScript = path.join(paths.root, 'scripts', 'sync-zentao-art-bugs.mjs');
@@ -2150,7 +2151,8 @@ async function handleApi(req, res, url) {
     const run = await requireRun(runLog[1]);
     requireProjectAccess(currentUser, run.projectId, 'viewer');
     const fallbackLogPath = path.join(paths.workspaceDir, run.id, 'run.log');
-    await serveArtifact(res, run.logPath || fallbackLogPath, currentUser);
+    const tailBytes = clampNumber(url.searchParams.get('tailBytes'), 16 * 1024, 1024 * 1024, defaultRunLogTailBytes);
+    await serveRunLog(res, run.logPath || fallbackLogPath, currentUser, { tailBytes });
     return;
   }
 
@@ -5022,6 +5024,56 @@ async function serveArtifact(res, file, currentUser, options = {}) {
   const content = await fs.readFile(abs);
   res.writeHead(200, { 'Content-Type': mimeType(abs) });
   res.end(content);
+}
+
+async function serveRunLog(res, file, currentUser, options = {}) {
+  if (!file) {
+    sendJson(res, 400, { error: 'path is required' });
+    return;
+  }
+  const abs = path.resolve(file);
+  const allowedRoot = path.resolve(paths.workspaceDir);
+  if (!(abs === allowedRoot || abs.startsWith(`${allowedRoot}${path.sep}`))) {
+    sendJson(res, 403, { error: 'run log path is outside platform workspace' });
+    return;
+  }
+  const runs = await listRuns();
+  const matchedRun = runs.find(run => {
+    const roots = [run.logPath, path.join(paths.workspaceDir, run.id, 'run.log')].filter(Boolean).map(item => path.resolve(item));
+    return roots.some(root => abs === root || abs.startsWith(`${root}${path.sep}`));
+  });
+  if (matchedRun) requireProjectAccess(currentUser, matchedRun.projectId, 'viewer');
+  let stat;
+  try {
+    stat = await fs.stat(abs);
+  } catch {
+    sendJson(res, 404, { error: '日志文件不存在。', code: 'ENOENT' });
+    return;
+  }
+  if (!stat.isFile()) {
+    sendJson(res, 404, { error: '日志路径不是文件。', code: 'ENOTFILE' });
+    return;
+  }
+  const tailBytes = Math.max(0, Number(options.tailBytes || defaultRunLogTailBytes));
+  const start = tailBytes > 0 && stat.size > tailBytes ? stat.size - tailBytes : 0;
+  const handle = await fs.open(abs, 'r');
+  try {
+    const length = stat.size - start;
+    const buffer = Buffer.alloc(length);
+    if (length > 0) await handle.read(buffer, 0, length, start);
+    const prefix = start > 0
+      ? `...已省略前半段原始日志，仅返回最近 ${formatBytes(length)}。完整日志仍保存在服务器 run.log。\n`
+      : '';
+    res.writeHead(200, {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'X-Run-Log-Bytes': String(stat.size),
+      'X-Run-Log-Returned-Bytes': String(length),
+      'X-Run-Log-Truncated': start > 0 ? '1' : '0'
+    });
+    res.end(prefix + buffer.toString('utf8'));
+  } finally {
+    await handle.close();
+  }
 }
 
 async function serveRunFilePreview(res, project, file, version = 'current') {
@@ -8263,6 +8315,12 @@ function formatBytes(value) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(number)));
 }
 
 class HttpError extends Error {

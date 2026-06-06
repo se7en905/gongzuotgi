@@ -298,7 +298,12 @@
             <small v-else>调试用，默认收起</small>
           </span>
         </template>
-        <article ref="runLogBody" :class="['log-markdown markdown-report', { 'is-live': app.isRunInProgress(app.selectedRun) }]" v-html="app.logHtml"></article>
+        <article
+          v-if="Array.isArray(app.runLogCollapse) && app.runLogCollapse.includes('raw-log')"
+          ref="runLogBody"
+          :class="['log-markdown markdown-report', { 'is-live': app.isRunInProgress(app.selectedRun) }]"
+          v-html="app.logHtml"
+        ></article>
       </ElCollapseItem>
     </ElCollapse>
   </ElCard>

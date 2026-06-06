@@ -520,6 +520,11 @@ const AI_FLOW_STAGE_FIELDS = [
   { key: 'autoFix', label: '自动修复' }
 ];
 const CODEX_MODEL_OPTIONS = ['gpt-5.5', 'gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2'];
+const RUN_LOG_FETCH_TAIL_BYTES = 128 * 1024;
+const RUN_LOG_BUFFER_MAX_CHARS = 160 * 1024;
+const RUN_LOG_RENDER_MAX_CHARS = 80 * 1024;
+const RUN_LOG_RENDER_MAX_LINES = 400;
+const RUN_LOG_LINE_MAX_CHARS = 2400;
 
 const roleLevelPermissionPresets = {
   4: [
@@ -16122,11 +16127,11 @@ export default {
       source.onmessage = event => {
         const payload = JSON.parse(event.data);
         if (payload.text) {
-          this.logText += payload.text;
+          this.logText = trimRunLogBuffer(this.logText + payload.text);
           this.logPulse += 1;
         }
         if (payload.message) {
-          this.logText += `\n[${payload.type}] ${payload.message}\n`;
+          this.logText = trimRunLogBuffer(`${this.logText}\n[${payload.type}] ${payload.message}\n`);
           this.logPulse += 1;
         }
         if (payload.status) this.patchRun(runId, { status: payload.status, exitCode: payload.exitCode });
@@ -16152,9 +16157,10 @@ export default {
         return;
       }
       try {
-        const response = await fetch(`/api/runs/${encodeURIComponent(run.id)}/log`);
+        const response = await fetch(`/api/runs/${encodeURIComponent(run.id)}/log?tailBytes=${RUN_LOG_FETCH_TAIL_BYTES}`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        this.logText = await response.text() || (run.status === 'running' ? '执行中，暂无日志输出。' : '暂无日志。');
+        const text = await response.text();
+        this.logText = trimRunLogBuffer(text || (run.status === 'running' ? '执行中，暂无日志输出。' : '暂无日志。'));
       } catch {
         this.logText = run.status === 'running' ? '执行中，日志暂未可读。' : '日志读取失败。';
       }
@@ -18114,12 +18120,138 @@ function diffTokenClass(token = '') {
 }
 
 function normalizeLogMarkdown(value = '') {
-  const cleanedLines = String(value || '')
-    .replace(/\u001b\[[0-9;]*m/g, '')
-    .split(/\r?\n/)
-    .filter(line => shouldKeepRunLogLine(line));
-  const text = cleanedLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  const source = String(value || '').replace(/\u001b\[[0-9;]*m/g, '');
+  const cleanedLines = [];
+  let omittedHeavy = 0;
+  let omittedFiltered = 0;
+  for (const line of source.split(/\r?\n/)) {
+    const result = normalizeRunLogLine(line);
+    if (result.keep) {
+      cleanedLines.push(result.text);
+    } else if (result.reason === 'heavy') {
+      omittedHeavy += 1;
+    } else {
+      omittedFiltered += 1;
+    }
+  }
+  let visibleLines = cleanedLines;
+  const extraLines = Math.max(0, visibleLines.length - RUN_LOG_RENDER_MAX_LINES);
+  if (extraLines > 0) visibleLines = visibleLines.slice(-RUN_LOG_RENDER_MAX_LINES);
+  let text = visibleLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  if (text.length > RUN_LOG_RENDER_MAX_CHARS) {
+    text = `已省略前半段执行日志，仅展示最近 ${Math.round(RUN_LOG_RENDER_MAX_CHARS / 1024)} KB 摘要。\n\n${text.slice(-RUN_LOG_RENDER_MAX_CHARS)}`;
+  }
+  const notices = [];
+  if (extraLines > 0) notices.push(`已省略较早的 ${extraLines} 行执行日志。`);
+  if (omittedHeavy > 0) notices.push(`已省略 ${omittedHeavy} 行 Figma 截图、base64 或大段工具 JSON。`);
+  if (notices.length) text = `${notices.join(' ')}\n\n${text}`.trim();
   return text || '暂无关键执行日志。原始日志仍保存在 run.log，可在需要排查时查看。';
+}
+
+function normalizeRunLogLine(line = '') {
+  const text = String(line || '');
+  const trimmed = text.trim();
+  if (!trimmed) return { keep: true, text: '' };
+  if (isLargeToolPayload(trimmed)) return { keep: true, text: summarizeLargeToolPayload(trimmed) };
+  if (isHeavyRunLogLine(trimmed)) return { keep: false, reason: 'heavy' };
+  if (trimmed.startsWith('{') && trimmed.includes('"type"')) {
+    const summary = summarizeCodexJsonLine(trimmed);
+    if (summary) return { keep: true, text: summary };
+    return { keep: false, reason: 'filtered' };
+  }
+  if (shouldKeepRunLogLine(text)) {
+    return { keep: true, text: limitRunLogLine(text) };
+  }
+  return { keep: false, reason: 'filtered' };
+}
+
+function summarizeCodexJsonLine(line = '') {
+  try {
+    const event = JSON.parse(line);
+    return summarizeCodexEvent(event);
+  } catch {
+    return null;
+  }
+}
+
+function summarizeCodexEvent(event = {}) {
+  const type = String(event.type || '');
+  const item = event.item || {};
+  if (type === 'turn.completed') {
+    const total = event.usage?.input_tokens || event.usage?.output_tokens
+      ? `，输入 ${event.usage.input_tokens || 0} / 输出 ${event.usage.output_tokens || 0}`
+      : '';
+    return `- Codex 执行结束${total}`;
+  }
+  if (!type.startsWith('item.')) return '';
+  if (item.type === 'agent_message' && item.text) return limitRunLogLine(String(item.text || ''));
+  if (item.type === 'command_execution') {
+    const command = String(item.command || '').trim();
+    const status = item.status ? `状态：${item.status}` : '';
+    const exitCode = item.exit_code !== null && item.exit_code !== undefined ? `退出码：${item.exit_code}` : '';
+    const output = limitRunLogLine(String(item.aggregated_output || '').trim(), 1200);
+    return [
+      command ? `- 命令：\`${command}\`` : '- 命令执行',
+      [status, exitCode].filter(Boolean).join('，'),
+      output ? `输出：${output}` : ''
+    ].filter(Boolean).join('\n');
+  }
+  if (item.type === 'mcp_tool_call') {
+    const server = item.server || 'mcp';
+    const tool = item.tool || 'tool';
+    const status = item.status || (event.error ? 'failed' : 'completed');
+    const hasImage = /screenshot|image|base64/i.test(`${tool}\n${JSON.stringify(item.result || '').slice(0, 400)}`);
+    const detail = hasImage ? '截图/图片内容已省略' : '大段工具参数或返回已摘要';
+    const error = event.error ? `，错误：${limitRunLogLine(JSON.stringify(event.error), 600)}` : '';
+    return `- 工具调用：${server}.${tool} ${status}，${detail}${error}`;
+  }
+  if (item.type === 'todo_list' && Array.isArray(item.items)) {
+    const done = item.items.filter(row => row.completed).length;
+    return `- 执行清单：${done}/${item.items.length} 已完成`;
+  }
+  return '';
+}
+
+function isLargeToolPayload(text = '') {
+  if (text.length <= RUN_LOG_LINE_MAX_CHARS) return false;
+  return text.includes('"type":"mcp_tool_call"') || text.includes('"type":"tool_call"') || text.includes('"mcp_tool_call"');
+}
+
+function summarizeLargeToolPayload(text = '') {
+  const server = extractJsonStringField(text, 'server') || 'mcp';
+  const tool = extractJsonStringField(text, 'tool') || 'tool';
+  const status = extractJsonStringField(text, 'status') || 'completed';
+  const isImagePayload = /get_screenshot|screenshot|image\/png|base64|data:image/i.test(text);
+  const detail = isImagePayload ? '截图/图片内容已省略，原始日志仍保存在 run.log' : '大段工具参数或返回已省略，原始日志仍保存在 run.log';
+  return `- 工具调用：${server}.${tool} ${status}，${detail}`;
+}
+
+function extractJsonStringField(text = '', field = '') {
+  const pattern = new RegExp(`"${field}"\\s*:\\s*"([^"]+)"`);
+  return text.match(pattern)?.[1] || '';
+}
+
+function isHeavyRunLogLine(text = '') {
+  if (text.length <= RUN_LOG_LINE_MAX_CHARS) return false;
+  if (/base64|mimeType|image\/png|data:image|structured_content|get_screenshot|screenshot/i.test(text)) return true;
+  const compact = text.replace(/\s/g, '');
+  if (compact.length > RUN_LOG_LINE_MAX_CHARS && /^[A-Za-z0-9+/=]+$/.test(compact.slice(0, Math.min(compact.length, 8000)))) return true;
+  return text.length > RUN_LOG_RENDER_MAX_CHARS;
+}
+
+function limitRunLogLine(text = '', max = RUN_LOG_LINE_MAX_CHARS) {
+  const value = String(text || '');
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}\n...已截断超长日志行，原始内容仍保存在 run.log。`;
+}
+
+function trimRunLogBuffer(value = '') {
+  const text = String(value || '');
+  if (text.length <= RUN_LOG_BUFFER_MAX_CHARS) return text;
+  const tail = text.slice(-RUN_LOG_BUFFER_MAX_CHARS);
+  const firstBreak = tail.search(/\r?\n/);
+  const safeTail = firstBreak >= 0 ? tail.slice(firstBreak + 1) : tail;
+  return `...已省略较早的实时日志，原始内容仍保存在 run.log。\n${safeTail}`;
 }
 
 function shouldKeepRunLogLine(line = '') {
