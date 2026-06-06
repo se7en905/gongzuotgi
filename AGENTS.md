@@ -46,6 +46,7 @@
   - `src/components/dialogs/RunCreateDialog.vue`：新建美术执行弹窗。
   - `src/views/RunsView.vue`：美术执行台、执行详情、直接执行的本机状态提示。
   - `src/views/AgentWorkersView.vue`：本机执行状态页，展示 Worker 心跳、自检和执行明细。
+  - `src/views/AiArchiveView.vue`：AI档案页，展示完整 AI 执行明细、筛选和范围删除。
   - `src/views/RoleManagementView.vue`：角色管理和细粒度权限配置。
   - `src/styles.scss`：全局展示兜底样式、抽屉、评分面板、弹窗分段控件样式。
   - `scripts/art-direct-worker.mjs`：组员本机直接执行 Worker。
@@ -156,10 +157,17 @@
   - `Worker 心跳` 卡片里的组员名称必须优先使用平台账号展示名绑定 Worker `userId`；例如 admin 账号如果展示名是负责人姓名，卡片显示负责人姓名，不得只显示 `admin`。
   - `Worker 心跳` 模块内必须展示组员名称、设备信息、Codex 是否就绪、Figma MCP 是否就绪、最近心跳、待领取数量、执行中数量和已完成数量。
   - `Worker 心跳` 的心电图表现必须以“该组员本机是否可以直接执行”为依据：只有 Worker 在线且 Codex 与 Figma MCP 都可用时，才显示绿色动态心跳；没有心跳或任一能力未就绪时，显示红色直线。
-  - Worker 心跳不得高频写入工作台数据：默认任务轮询间隔为 30 秒，默认最近心跳刷新间隔为 2 分钟，前端在线阈值为 3 分钟；空轮询没有任务时不得反复写入 `agent-workers` 状态文件。
+  - Worker 心跳不得高频写入工作台数据：Worker 必须以工作台实时事件唤醒为主，默认兜底任务轮询间隔为 5 分钟，默认最近心跳刷新间隔为 5 分钟，前端在线阈值为 10 分钟；空轮询没有任务时不得反复写入 `agent-workers` 状态文件。
+  - 平台创建或更新直接执行时，必须通过实时事件唤醒在线 Worker 立即检查任务；5 分钟轮询只作为实时事件断线或网络抖动后的兜底，不得作为主要执行触发方式。
   - Worker 启动后必须先上报一次准备状态；后续只在定时心跳、实际领取任务或执行结束后刷新 Worker 状态。降低心跳频率不得影响组员登录工作台、准备就绪和领取直接执行任务。
+  - Worker 不能依赖组员浏览器网页是否置顶或是否正在操作工作台；只要组员电脑启动 Worker 且登录成功，就必须能接收直接执行任务。
+  - 工作台前端的 Worker 状态自动刷新必须克制：只有浏览器标签页可见，且当前在美术执行台或本机执行状态页时，才因 `agent-workers.changed` 事件刷新 Worker 状态；后台标签页或无关页面不得自动刷新 Worker 状态。
   - `准备就绪` 不再作为独立模块展示；准备状态并入 `Worker 心跳` 组员卡片。
   - `执行明细` 是固定模块名，不得再改回 `直接执行队列`；该模块必须展示所有人从 Skill / md 发起的直接执行记录，包含执行内容、操作人、执行人、状态、领取设备、本机 Worker、Figma 链接、创建时间和更新时间。
+  - `/agent-workers` 本机执行状态页的 `执行明细` 只展示最近 10 条直接执行记录；完整执行明细必须放在左侧一级菜单 `AI档案`。
+  - `AI档案` 是一级菜单，用于展示完整 AI 执行明细；必须支持关键词、人员、类型、状态、开始时间和结束时间筛选。
+  - `AI档案` 支持按当前筛选时间范围删除明细；删除必须清理后端 `runs` 执行记录、对应工作区和产物目录，不得只是前端隐藏。
+  - 删除 AI档案明细不得回退或清零 AI产物清单的累计调用次数；调用次数只累计，不因明细清理减少。后续新增明细再次命中产物名、展示名或调用别名时，继续在原累计值上增加。
   - 启动命令栏不得展示“可复制给该组员在自己电脑执行”这类提示；是否能复制由按钮和权限表达。组员可复制自己的 Worker 命令，管理者可复制当前实验账号或被授权对象的命令。
   - Worker 启动命令必须支持双平台：
     - 页面只保留 `复制手动启动` 和 `复制开机自启` 两个按钮。
@@ -268,13 +276,14 @@
   - Worker 日志回传要限制单次长度，避免日志过大拖慢平台。
   - Worker 轮询间隔必须可配置，默认不低于 5 秒，避免高频打爆平台。
 - 权限：
-  - 负责人可刷新库存、作废/恢复产物、调整贡献人、调整展示管理、修改展示名称或别名、查看全员本机执行状态、复制 Worker 启动命令、创建直接执行、配置角色权限。
+  - 负责人可刷新库存、作废/恢复产物、调整贡献人、调整展示管理、修改展示名称或别名、查看全员本机执行状态、复制 Worker 启动命令、创建直接执行、查看并范围删除 AI档案、配置角色权限。
   - 组员可读取平台缓存。
   - 组员在AI产物清单只显示明细按钮。
   - 不得让组员端因为没有本机扫描能力而显示 `待接入`。
   - 新界面、新按钮、新接口必须同步进入角色管理权限目录，不得只在前端写死。
   - 与直接执行相关的权限必须拆分，不得全部复用 `api.runs.execute`：
     - `menu.agentWorkers`：查看本机执行状态页。
+    - `menu.aiArchive`：查看 AI档案页。
     - `run.directSkill.create`：创建直接执行。
     - `run.directSkill.workerCommand`：复制 Worker 手动启动或开机自启命令。
     - `api.agentRuns.create`：创建直接执行 API。
@@ -283,13 +292,15 @@
     - `api.agentRuns.claim`：Worker 领取直接执行 API。
     - `api.agentRuns.log`：Worker 回传日志 API。
     - `api.agentRuns.status`：Worker 回传状态 API。
-  - `menu.runs` 只代表美术执行台页面；`menu.agentWorkers` 只代表本机执行状态页面，两者不得混用。
+    - `api.aiArchive.delete`：AI档案范围删除 API。
+  - `menu.runs` 只代表美术执行台页面；`menu.agentWorkers` 只代表本机执行状态页面；`menu.aiArchive` 只代表 AI档案完整明细页面，三者不得混用。
   - `api.runs.execute` 保留给普通执行任务创建、启动、中断等旧执行能力；直接执行创建和 Worker 流程必须使用专门权限。
   - 能复制 Worker 命令不等于能管理账号；全员账号、展示密码等敏感数据仍应受账号管理权限控制。
 - 已使用/需保持的接口：
   - `/api/project-scan-cache`：读取部门库存缓存。
   - `/api/projects/:id/scan?refresh=1`：负责人主动刷新库存时触发扫描。
   - `/api/runs`：创建普通执行；当 `sourceType` 或 `executionMode` 为 `direct-skill` 时创建直接执行。
+  - `DELETE /api/runs?from=...&to=...`：AI档案按筛选范围删除执行明细；只允许有 `api.aiArchive.delete` 权限的账号调用。
   - `/api/runs/direct-skill`：创建直接执行。
   - `/api/agent-workers`：读取 Worker 状态。
   - `/api/agent-workers/heartbeat`：Worker 心跳。

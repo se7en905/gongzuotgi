@@ -68,6 +68,12 @@
             </ElIcon>
           <span>本机执行状态</span>
         </ElMenuItem>
+        <ElMenuItem v-if="can('menu.aiArchive')" index="ai-archive">
+            <ElIcon>
+              <Clock />
+            </ElIcon>
+          <span>AI档案</span>
+        </ElMenuItem>
         <ElMenuItem v-if="can('menu.users')" index="user-access">
             <ElIcon>
               <User />
@@ -196,6 +202,7 @@
 
         <RunsView v-if="activeView === 'runs'" :app="appBridge" />
         <AgentWorkersView v-if="activeView === 'agent-workers'" :app="appBridge" />
+        <AiArchiveView v-if="activeView === 'ai-archive'" :app="appBridge" />
 
         <TaskResultView v-if="activeView === 'task-result'" :app="appBridge" />
 
@@ -480,6 +487,7 @@ import AiMembersView from './views/AiMembersView.vue';
 import ProjectDetailView from './views/ProjectDetailView.vue';
 import RunsView from './views/RunsView.vue';
 import AgentWorkersView from './views/AgentWorkersView.vue';
+import AiArchiveView from './views/AiArchiveView.vue';
 import TaskResultView from './views/TaskResultView.vue';
 import ManualReviewView from './views/ManualReviewView.vue';
 import LoginView from './views/LoginView.vue';
@@ -515,22 +523,22 @@ const CODEX_MODEL_OPTIONS = ['gpt-5.5', 'gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2'];
 
 const roleLevelPermissionPresets = {
   4: [
-    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.users', 'menu.roles', 'menu.operationLogs',
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive', 'menu.users', 'menu.roles', 'menu.operationLogs',
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy', 'task.personPressure.view',
     'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'run.start', 'run.cancel', 'run.delete', 'review.submit', 'review.image.submit',
     'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.source.delete', 'skill.asset.create', 'skill.asset.void', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
     'codex.config.manage', 'user.manage', 'role.manage',
-    'api.skillSources.manage', 'api.skillSources.delete', 'api.skillScan.run', 'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.runs.delete', 'api.reviews.submit', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.skillAsset.void', 'api.codex.config.read', 'api.codex.config.manage', 'api.users.manage', 'api.roles.manage', 'api.taskCenter.config.manage', 'api.operationLogs.read', 'api.operationLogs.delete'
+    'api.skillSources.manage', 'api.skillSources.delete', 'api.skillScan.run', 'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.runs.delete', 'api.aiArchive.delete', 'api.reviews.submit', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.skillAsset.void', 'api.codex.config.read', 'api.codex.config.manage', 'api.users.manage', 'api.roles.manage', 'api.taskCenter.config.manage', 'api.operationLogs.read', 'api.operationLogs.delete'
   ],
   3: [
-    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers',
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive',
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy',
     'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'run.start', 'run.cancel', 'review.submit', 'review.image.submit',
     'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.asset.create', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
     'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.reviews.submit', 'api.codex.config.read', 'api.skillSources.manage', 'api.skillScan.run', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create'
   ],
   2: [
-    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.runs',
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.runs', 'menu.aiArchive',
     'task.codexPrompt.copy', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'api.reviews.submit', 'api.skillAlias.manage'
   ],
   1: ['menu.tasks', 'menu.skillList', 'menu.aiMembers', 'skill.usageLogs.view']
@@ -544,6 +552,7 @@ export default {
     ProjectDetailView,
     RunsView,
     AgentWorkersView,
+    AiArchiveView,
     TaskResultView,
     ManualReviewView,
     LoginView,
@@ -723,6 +732,14 @@ export default {
         assignedToUserId: '',
         requirement: '',
         submitting: false
+      },
+      aiExecutionArchiveFilters: {
+        keyword: '',
+        userId: '',
+        status: '',
+        sourceType: '',
+        from: '',
+        to: ''
       },
       skillUsageDialog: { visible: false, row: null, metrics: [], logs: [], start: '', end: '', page: 1, pageSize: 10 },
       skillHistoryDialog: { visible: false, row: null, entries: [] },
@@ -1021,6 +1038,47 @@ export default {
     directSkillRunRows() {
       return (this.runs || [])
         .filter(run => this.isDirectSkillRun(run))
+        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    },
+
+    recentDirectSkillRunRows() {
+      return this.directSkillRunRows.slice(0, 10);
+    },
+
+    aiExecutionArchiveRunRows() {
+      const filters = this.aiExecutionArchiveFilters || {};
+      const keyword = String(filters.keyword || '').trim().toLowerCase();
+      const userId = String(filters.userId || '').trim();
+      const status = String(filters.status || '').trim();
+      const sourceType = String(filters.sourceType || '').trim();
+      const from = filters.from ? Date.parse(filters.from) : 0;
+      const to = filters.to ? Date.parse(filters.to) : 0;
+      return (this.runs || [])
+        .filter(run => !sourceType || run.sourceType === sourceType || run.executionMode === sourceType)
+        .filter(run => !status || String(run.status || '') === status)
+        .filter(run => {
+          if (!userId) return true;
+          return [run.createdBy, run.ownerUserId, run.assignedToUserId, run.startedBy].map(value => String(value || '')).includes(userId);
+        })
+        .filter(run => {
+          const time = Date.parse(run.createdAt || run.updatedAt || run.finishedAt || run.startedAt || '');
+          if (from && (!time || time < from)) return false;
+          if (to && (!time || time > to)) return false;
+          return true;
+        })
+        .filter(run => {
+          if (!keyword) return true;
+          return [
+            run.title,
+            run.primarySkillPath,
+            run.stage,
+            run.assignedToName,
+            run.developer,
+            run.figmaLinks,
+            run.requirement,
+            run.status
+          ].map(value => String(value || '').toLowerCase()).join(' ').includes(keyword);
+        })
         .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
     },
 
@@ -4027,6 +4085,10 @@ export default {
         if (!this.agentWorkers.length && !this.loading.agentWorkers) this.refreshAgentWorkers().catch(() => {});
         if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
       }
+      if (view === 'ai-archive') {
+        if (!this.runs.length && !this.loading.runs) this.refreshRuns().catch(() => {});
+        if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
+      }
       if (view === 'operation-logs') {
         if (!this.operationLogs.length && !this.loading.operationLogs) this.refreshOperationLogs().catch(() => {});
       }
@@ -4357,6 +4419,7 @@ export default {
         ['menu.aiMembers', '/ai-members'],
         ['menu.runs', '/runs'],
         ['menu.agentWorkers', '/agent-workers'],
+        ['menu.aiArchive', '/ai-archive'],
         ['menu.codexConfig', '/codex-config'],
         ['menu.users', '/user-access'],
         ['menu.roles', '/role-management'],
@@ -4502,7 +4565,16 @@ export default {
         this.ensureActiveViewData('agent-workers');
         return;
       }
-      if (path === '/ai-archive' || path === '/workflow-designer') {
+      if (path === '/ai-archive') {
+        if (!this.can('menu.aiArchive')) {
+          this.pushRoute(this.firstAllowedRoute());
+          return;
+        }
+        this.activeView = 'ai-archive';
+        this.ensureActiveViewData('ai-archive');
+        return;
+      }
+      if (path === '/workflow-designer') {
         this.pushRoute(this.firstAllowedRoute());
         return;
       }
@@ -4769,6 +4841,8 @@ export default {
         }, 300);
       }
       if (type === 'agent-workers.changed' && this.can('menu.agentWorkers')) {
+        if (document.visibilityState === 'hidden') return;
+        if (!['agent-workers', 'runs'].includes(this.activeView)) return;
         this.schedulePlatformRefresh('agent-workers', async () => {
           await this.refreshAgentWorkers();
         }, 500);
@@ -6691,6 +6765,58 @@ export default {
         console.warn('本机 Worker 状态读取失败', error);
       } finally {
         this.loading.agentWorkers = false;
+      }
+    },
+
+    resetAiExecutionArchiveFilters() {
+      this.aiExecutionArchiveFilters = {
+        keyword: '',
+        userId: '',
+        status: '',
+        sourceType: '',
+        from: '',
+        to: ''
+      };
+    },
+
+    async deleteAiExecutionArchiveRunsByCurrentFilters() {
+      if (!this.can('api.aiArchive.delete')) {
+        ElMessage.warning('当前账号没有删除 AI档案明细的权限');
+        return;
+      }
+      const filters = this.aiExecutionArchiveFilters || {};
+      if (!filters.from || !filters.to) {
+        ElMessage.warning('请选择要删除的开始时间和结束时间');
+        return;
+      }
+      const count = this.aiExecutionArchiveRunRows.filter(run => !this.isRunInProgress(run)).length;
+      if (!count) {
+        ElMessage.warning('当前筛选范围没有可删除的执行明细');
+        return;
+      }
+      await ElMessageBox.confirm(
+        `确认删除当前筛选范围内 ${count} 条 AI 执行明细？后端执行记录、执行工作区和产物目录会一起清理，但 AI产物清单的累计调用次数不会回退。`,
+        '删除 AI档案明细',
+        {
+          confirmButtonText: '删除',
+          cancelButtonText: '取消',
+          type: 'warning',
+          confirmButtonClass: 'el-button--danger'
+        }
+      );
+      const query = new URLSearchParams();
+      for (const [key, value] of Object.entries(filters)) {
+        if (String(value || '').trim()) query.set(key, String(value).trim());
+      }
+      this.loading.runs = true;
+      try {
+        const result = await this.api(`/api/runs?${query.toString()}`, { method: 'DELETE' });
+        const ids = new Set(result.deletedIds || []);
+        this.runs = this.runs.filter(run => !ids.has(run.id));
+        if (this.selectedRunId && ids.has(this.selectedRunId)) this.selectedRunId = this.runs[0]?.id || null;
+        ElMessage.success(`已删除 ${result.deletedCount || ids.size || 0} 条 AI 执行明细`);
+      } finally {
+        this.loading.runs = false;
       }
     },
 
@@ -9757,6 +9883,8 @@ export default {
           body: JSON.stringify({
             projectId,
             title: `直接执行 ${productName}`,
+            productName,
+            sourceTitle: row.title || row.productDisplayName || row.productFileName || '',
             primarySkillPath: skillPath,
             primarySkillContent,
             stage: skillPath,
@@ -14005,7 +14133,7 @@ export default {
     directSkillWorkerOnline(worker = null) {
       if (!worker?.lastHeartbeatAt) return false;
       const last = Date.parse(worker.lastHeartbeatAt);
-      return Boolean(last && Date.now() - last < 180000);
+      return Boolean(last && Date.now() - last < 600000);
     },
 
     directSkillWorkerStatusText(run = null) {
@@ -14063,8 +14191,8 @@ export default {
           '$env:ART_PLATFORM_USERNAME = ' + this.powershellQuote(username || '组员账号'),
           '$env:ART_PLATFORM_PASSWORD = ' + this.powershellQuote(safePassword),
           '$env:ART_WORKER_HOME = $root',
-          '$env:ART_WORKER_POLL_INTERVAL_MS = ' + this.powershellQuote('30000'),
-          '$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = ' + this.powershellQuote('120000'),
+          '$env:ART_WORKER_POLL_INTERVAL_MS = ' + this.powershellQuote('300000'),
+          '$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = ' + this.powershellQuote('300000'),
           'node "$root\\scripts\\art-direct-worker.mjs"'
         ].join('\n');
       }
@@ -14076,8 +14204,8 @@ export default {
         `ART_PLATFORM_USERNAME=${this.shellQuote(username || '组员账号')} \\`,
         `ART_PLATFORM_PASSWORD=${this.shellQuote(safePassword)} \\`,
         'ART_WORKER_HOME="$WORKER_HOME" \\',
-        'ART_WORKER_POLL_INTERVAL_MS=30000 \\',
-        'ART_WORKER_HEARTBEAT_INTERVAL_MS=120000 \\',
+        'ART_WORKER_POLL_INTERVAL_MS=300000 \\',
+        'ART_WORKER_HEARTBEAT_INTERVAL_MS=300000 \\',
         'node "$WORKER_HOME/scripts/art-direct-worker.mjs"'
       ].join('\n');
     },
@@ -14107,8 +14235,8 @@ export default {
           '$env:ART_PLATFORM_USERNAME = ' + this.powershellQuote(username || '组员账号'),
           '$env:ART_PLATFORM_PASSWORD = ' + this.powershellQuote(safePassword),
           '$env:ART_WORKER_HOME = $root',
-          '$env:ART_WORKER_POLL_INTERVAL_MS = ' + this.powershellQuote('30000'),
-          '$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = ' + this.powershellQuote('120000'),
+          '$env:ART_WORKER_POLL_INTERVAL_MS = ' + this.powershellQuote('300000'),
+          '$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = ' + this.powershellQuote('300000'),
           'powershell -NoProfile -ExecutionPolicy Bypass -File "$root\\scripts\\install_art_direct_worker_windows.ps1"'
         ].join('\n');
       }
@@ -14121,8 +14249,8 @@ export default {
         `ART_PLATFORM_USERNAME=${this.shellQuote(username || '组员账号')} \\`,
         `ART_PLATFORM_PASSWORD=${this.shellQuote(safePassword)} \\`,
         'ART_WORKER_HOME="$WORKER_HOME" \\',
-        'ART_WORKER_POLL_INTERVAL_MS=30000 \\',
-        'ART_WORKER_HEARTBEAT_INTERVAL_MS=120000 \\',
+        'ART_WORKER_POLL_INTERVAL_MS=300000 \\',
+        'ART_WORKER_HEARTBEAT_INTERVAL_MS=300000 \\',
         'bash "$WORKER_HOME/scripts/install_art_direct_worker_launch_agent.sh"'
       ].join('\n');
     },

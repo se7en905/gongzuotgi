@@ -8,14 +8,16 @@ const apiBase = normalizeBaseUrl(process.env.ART_PLATFORM_API || process.env.API
 const username = process.env.ART_PLATFORM_USERNAME || process.env.AWP_USERNAME || '';
 const password = process.env.ART_PLATFORM_PASSWORD || process.env.AWP_PASSWORD || '';
 const deviceId = process.env.ART_WORKER_DEVICE_ID || `${os.hostname()}-${os.userInfo().username}`;
-const pollIntervalMs = Math.max(10000, Number(process.env.ART_WORKER_POLL_INTERVAL_MS || 30000));
-const heartbeatIntervalMs = Math.max(pollIntervalMs, Number(process.env.ART_WORKER_HEARTBEAT_INTERVAL_MS || 120000));
+const pollIntervalMs = Math.max(60000, Number(process.env.ART_WORKER_POLL_INTERVAL_MS || 300000));
+const heartbeatIntervalMs = Math.max(60000, Number(process.env.ART_WORKER_HEARTBEAT_INTERVAL_MS || 300000));
 const codexPath = process.env.CODEX_CLI_PATH || 'codex';
 const defaultProjectRoot = process.env.ART_WORKER_PROJECT_ROOT || process.env.ART_WORKER_HOME || process.cwd();
 
 let cookie = '';
 let currentUser = null;
 let lastHeartbeatAt = 0;
+let checkingRuns = false;
+let eventSyncStarted = false;
 let localChecks = {
   codexReady: false,
   figmaMcpReady: false,
@@ -35,14 +37,11 @@ async function main() {
   console.log(`[worker] Codex: ${localChecks.codexMessage}`);
   console.log(`[worker] Figma MCP: ${localChecks.figmaMessage}`);
   await heartbeat(true);
+  startPlatformEventSync();
   while (true) {
     try {
       await heartbeat();
-      const run = await claimNextRun();
-      if (run) {
-        await executeRun(run);
-        await heartbeat(true);
-      }
+      await checkAndExecuteNextRun();
     } catch (error) {
       console.error(`[worker] ${error.message}`);
       if (/401|登录态|认证/.test(error.message)) await login();
@@ -80,6 +79,71 @@ async function claimNextRun() {
     body: workerPayload()
   });
   return result.run || null;
+}
+
+async function checkAndExecuteNextRun() {
+  if (checkingRuns) return;
+  checkingRuns = true;
+  try {
+    while (true) {
+      const run = await claimNextRun();
+      if (!run) break;
+      await executeRun(run);
+      await heartbeat(true);
+    }
+  } finally {
+    checkingRuns = false;
+  }
+}
+
+function startPlatformEventSync() {
+  if (eventSyncStarted) return;
+  eventSyncStarted = true;
+  void platformEventLoop();
+}
+
+async function platformEventLoop() {
+  while (true) {
+    try {
+      await readPlatformEvents();
+    } catch (error) {
+      console.error(`[worker] 平台事件监听断开：${error.message}`);
+      if (/401|登录态|认证/.test(error.message)) await login();
+      await sleep(30000);
+    }
+  }
+}
+
+async function readPlatformEvents() {
+  const response = await fetch(`${apiBase}/api/platform-events`, {
+    headers: cookie ? { Cookie: cookie } : {}
+  });
+  if (!response.ok) throw new Error(`平台事件连接失败：HTTP ${response.status}`);
+  if (!response.body) throw new Error('平台事件连接不可读。');
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for await (const chunk of response.body) {
+    buffer += decoder.decode(chunk, { stream: true });
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      const block = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      handlePlatformEventBlock(block);
+      boundary = buffer.indexOf('\n\n');
+    }
+  }
+}
+
+function handlePlatformEventBlock(block = '') {
+  const dataLine = String(block || '').split(/\r?\n/).find(line => line.startsWith('data:'));
+  if (!dataLine) return;
+  let event = null;
+  try {
+    event = JSON.parse(dataLine.slice(5).trim());
+  } catch {
+    return;
+  }
+  if (event?.type === 'runs.changed') void checkAndExecuteNextRun();
 }
 
 async function executeRun(run) {

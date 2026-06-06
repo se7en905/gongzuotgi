@@ -56,9 +56,9 @@ cat > "${PLIST}" <<PLIST
     <key>ART_WORKER_PROJECT_ROOT</key>
     <string>${ART_WORKER_PROJECT_ROOT:-${ROOT}}</string>
     <key>ART_WORKER_POLL_INTERVAL_MS</key>
-    <string>${ART_WORKER_POLL_INTERVAL_MS:-30000}</string>
+    <string>${ART_WORKER_POLL_INTERVAL_MS:-300000}</string>
     <key>ART_WORKER_HEARTBEAT_INTERVAL_MS</key>
-    <string>${ART_WORKER_HEARTBEAT_INTERVAL_MS:-120000}</string>
+    <string>${ART_WORKER_HEARTBEAT_INTERVAL_MS:-300000}</string>
     <key>CODEX_CLI_PATH</key>
     <string>${CODEX_CLI_PATH:-${DEFAULT_CODEX_CLI}}</string>
   </dict>

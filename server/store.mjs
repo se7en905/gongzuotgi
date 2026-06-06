@@ -689,6 +689,11 @@ export async function recordUsageCountersForOperationLog(log = {}) {
   if (targets.length) await updateUsageCounters(targets);
 }
 
+export async function recordUsageCountersForDirectSkillRun(run = {}) {
+  const targets = usageTargetsFromDirectSkillRun(run);
+  if (targets.length) await updateUsageCounters(targets);
+}
+
 export async function upsertCodexConfig(input = {}) {
   const existing = await getCodexConfig();
   const apiKeyInput = String(input.apiKey || '').trim();
@@ -761,6 +766,8 @@ export async function createRun(input) {
     figmaLinks: input.figmaLinks || '',
     showdocHints: input.showdocHints || '',
     selectedMaterialHints: normalizeLineList(input.selectedMaterialHints),
+    productName: input.productName || '',
+    sourceTitle: input.sourceTitle || '',
     primarySkillPath: input.primarySkillPath || input.skillPath || input.stage || '',
     primarySkillContent: input.primarySkillContent || input.skillContent || '',
     figmaWriteMode: input.figmaWriteMode || '',
@@ -963,6 +970,45 @@ export async function deleteRun(id) {
   await removeDirectoryIfSafe(getRunWorkspace(id), workspaceDir);
   if (run.artifactRoot) await removeDirectoryIfSafe(run.artifactRoot, paths.artifactDir);
   return run;
+}
+
+export async function deleteRunsByFilters(filters = {}) {
+  const runs = await readJson(paths.runs, []);
+  const from = filters.from ? Date.parse(filters.from) : 0;
+  const to = filters.to ? Date.parse(filters.to) : 0;
+  if (!from || !to || from > to) return { deleted: [], remaining: runs };
+  const sourceType = cleanString(filters.sourceType || filters.executionMode);
+  const keyword = cleanString(filters.keyword).toLowerCase();
+  const userId = cleanString(filters.userId);
+  const status = cleanString(filters.status).toLowerCase();
+  const deleted = [];
+  const remaining = [];
+  for (const run of runs) {
+    const time = Date.parse(run.createdAt || run.updatedAt || run.finishedAt || run.startedAt || '');
+    const inRange = Boolean(time && time >= from && time <= to);
+    const matchesSource = !sourceType || run.sourceType === sourceType || run.executionMode === sourceType;
+    const matchesUser = !userId || [run.createdBy, run.ownerUserId, run.assignedToUserId, run.startedBy].map(cleanString).includes(userId);
+    const matchesStatus = !status || cleanString(run.status).toLowerCase() === status;
+    const haystack = [
+      run.title,
+      run.primarySkillPath,
+      run.stage,
+      run.assignedToName,
+      run.developer,
+      run.figmaLinks,
+      run.requirement
+    ].map(value => cleanString(value).toLowerCase()).join(' ');
+    const matchesKeyword = !keyword || haystack.includes(keyword);
+    if (inRange && matchesSource && matchesUser && matchesStatus && matchesKeyword && !isRunningRunStatus(run.status)) deleted.push(run);
+    else remaining.push(run);
+  }
+  if (!deleted.length) return { deleted: [], remaining: runs };
+  await writeJson(paths.runs, remaining);
+  for (const run of deleted) {
+    await removeDirectoryIfSafe(getRunWorkspace(run.id), workspaceDir);
+    if (run.artifactRoot) await removeDirectoryIfSafe(run.artifactRoot, paths.artifactDir);
+  }
+  return { deleted, remaining };
 }
 
 export async function listUsersRaw() {
@@ -2161,6 +2207,24 @@ function usageTargetsFromOperationLog(log = {}) {
   });
 }
 
+function usageTargetsFromDirectSkillRun(run = {}) {
+  const values = [
+    run.primarySkillPath,
+    run.stage,
+    run.title,
+    run.sourceTitle,
+    run.productName,
+    ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : [])
+  ];
+  return buildUsageTargets(values, {
+    person: cleanString(run.assignedToName || run.developer || run.createdBy || run.ownerUserId),
+    at: cleanString(run.createdAt),
+    source: 'direct-skill-run',
+    kind: 'usage',
+    eventKey: usageEventKey('direct-skill-run', run.id || run.primarySkillPath || run.title, run.createdAt)
+  });
+}
+
 function isUsageLikeArtProgressEvent(event = {}) {
   const type = cleanString(event.eventType);
   if (['reporter_test', 'reporter_installed'].includes(type)) return false;
@@ -2338,6 +2402,10 @@ function isClaimableAgentRun(run = {}, userId = '', access = {}) {
   if (assignee && assignee !== userId) return false;
   if (access.canAccessAllProjects) return true;
   return normalizeLineList(access.allowedProjectIds).includes(String(run.projectId || '').trim());
+}
+
+function isRunningRunStatus(status = '') {
+  return /running|in_progress|claimed/i.test(String(status || ''));
 }
 
 function normalizeWorkerRunStatus(value = '') {

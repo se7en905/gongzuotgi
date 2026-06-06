@@ -21,6 +21,7 @@ const permissionCatalog = [
   { id: 'menu.codexConfig', name: 'Codex 配置', type: 'menu', group: '一级菜单', description: '访问 Codex 配置页。' },
   { id: 'menu.runs', name: '美术执行台', type: 'menu', group: '一级菜单', description: '访问美术执行台。' },
   { id: 'menu.agentWorkers', name: '本机执行状态', type: 'menu', group: '一级菜单', description: '查看组员 Worker 心跳、自检和执行明细。' },
+  { id: 'menu.aiArchive', name: 'AI档案', type: 'menu', group: '一级菜单', description: '查看完整 AI 执行明细档案。' },
   { id: 'menu.users', name: '账户管理', type: 'menu', group: '用户管理', description: '访问账户管理页。' },
   { id: 'menu.roles', name: '角色管理', type: 'menu', group: '用户管理', description: '访问角色管理页。' },
   { id: 'menu.operationLogs', name: '操作日志', type: 'menu', group: '用户管理', description: '访问平台操作审计日志。' },
@@ -64,6 +65,7 @@ const permissionCatalog = [
   { id: 'api.agentRuns.log', name: '直接执行日志 API', type: 'api', group: '后端接口', description: '允许组员本机 Worker 回传 Codex 执行日志。' },
   { id: 'api.agentRuns.status', name: '直接执行状态 API', type: 'api', group: '后端接口', description: '允许组员本机 Worker 回传执行状态、阻塞原因和结果。' },
   { id: 'api.runs.delete', name: '删除执行 API', type: 'api', group: '后端接口', description: '删除执行记录。' },
+  { id: 'api.aiArchive.delete', name: 'AI档案范围删除 API', type: 'api', group: '后端接口', description: '按时间范围删除 AI 执行明细和后端执行数据。' },
   { id: 'api.reviews.submit', name: '复核提交 API', type: 'api', group: '后端接口', description: '提交人工复核。' },
   { id: 'api.skillVersion.manage', name: '产物版本 API', type: 'api', group: '后端接口', description: '保存技能清单/产物版本号。' },
   { id: 'api.skillAlias.manage', name: '产物调用别名 API', type: 'api', group: '后端接口', description: '保存产物调用别名，不允许修改版本。' },
@@ -81,14 +83,14 @@ const allPermissionIds = permissionCatalog.map(item => item.id);
 const levelPermissions = {
   4: allPermissionIds,
   3: [
-    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers',
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive',
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy',
     'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'run.start', 'run.cancel', 'review.submit', 'review.image.submit',
     'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.asset.create', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
     'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.reviews.submit', 'api.codex.config.read', 'api.skillSources.manage', 'api.skillScan.run', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create'
   ],
   2: [
-    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.runs',
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.runs', 'menu.aiArchive',
     'task.codexPrompt.copy', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'api.reviews.submit', 'api.skillAlias.manage'
   ],
   1: ['menu.tasks', 'menu.skillList', 'menu.aiMembers', 'skill.usageLogs.view']
@@ -659,7 +661,8 @@ function expandLegacyPermission(permission = '') {
   const legacy = {
     'projects.manage': ['skill.source.connect', 'skill.source.edit', 'skill.source.delete', 'api.skillSources.manage', 'api.skillSources.delete'],
     'runs.execute': ['run.create', 'run.start', 'run.cancel', 'task.sync', 'api.runs.execute'],
-    'agentRuns.manage': ['menu.agentWorkers', 'run.directSkill.create', 'run.directSkill.workerCommand', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status'],
+    'agentRuns.manage': ['menu.agentWorkers', 'menu.aiArchive', 'run.directSkill.create', 'run.directSkill.workerCommand', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status'],
+    'aiArchive.manage': ['menu.aiArchive', 'api.aiArchive.delete'],
     'runs.delete': ['run.delete', 'api.runs.delete'],
     'reviews.submit': ['review.submit', 'api.reviews.submit'],
     'users.manage': ['menu.users', 'user.manage', 'api.users.manage'],

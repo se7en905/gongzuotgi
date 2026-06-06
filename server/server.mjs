@@ -44,6 +44,7 @@ import {
   cloneRunForRetry,
   deleteProject,
   deleteRun,
+  deleteRunsByFilters,
   deleteCustomWorkflow,
   ensurePlatformDirs,
   enforceRetentionNow,
@@ -75,6 +76,7 @@ import {
   recordUsageCountersForArtProgressEvent,
   recordUsageCountersForExpiredSkillValidations,
   recordUsageCountersForOperationLog,
+  recordUsageCountersForDirectSkillRun,
   recordUsageCountersForSkillValidation,
   reconcileZentaoTaskSnapshot,
   upsertBugs,
@@ -1920,6 +1922,9 @@ async function handleApi(req, res, url) {
     if (body.sourceType === 'direct-skill' || body.executionMode === 'direct-skill') {
       requireProjectAccess(currentUser, project.id, 'developer', 'api.agentRuns.create');
       const run = await createDirectSkillRunFromBody(req, project, body, currentUser);
+      await recordUsageCountersForDirectSkillRun(run).catch(error => {
+        console.warn('直接执行调用次数累计失败', error);
+      });
       sendJson(res, 201, run);
       return;
     }
@@ -1945,7 +1950,31 @@ async function handleApi(req, res, url) {
     const project = await requireProject(body.projectId);
     requireProjectAccess(currentUser, project.id, 'developer', 'api.agentRuns.create');
     const run = await createDirectSkillRunFromBody(req, project, body, currentUser);
+    await recordUsageCountersForDirectSkillRun(run).catch(error => {
+      console.warn('直接执行调用次数累计失败', error);
+    });
     sendJson(res, 201, run);
+    return;
+  }
+
+  if (req.method === 'DELETE' && url.pathname === '/api/runs') {
+    requirePermission(currentUser, 'api.aiArchive.delete');
+    const filters = Object.fromEntries(url.searchParams.entries());
+    if (!filters.from || !filters.to) throw new HttpError(400, '请选择要删除的开始时间和结束时间。');
+    const result = await deleteRunsByFilters(filters);
+    await writeOperationLog(req, {
+      user: currentUser,
+      module: 'run',
+      action: 'DELETE_RUN_RANGE',
+      actionName: '范围删除执行明细',
+      targetType: 'run',
+      targetId: 'range',
+      targetName: `${filters.from} - ${filters.to}`,
+      before: { filters, deletedCount: result.deleted.length },
+      description: `${currentUser.displayName || currentUser.username} 范围删除执行明细 ${result.deleted.length} 条`
+    });
+    broadcastPlatformEvent('runs.changed', { module: 'ai-archive', deletedCount: result.deleted.length });
+    sendJson(res, 200, { ok: true, deletedCount: result.deleted.length, deletedIds: result.deleted.map(run => run.id) });
     return;
   }
 

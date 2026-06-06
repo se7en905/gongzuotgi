@@ -105,8 +105,8 @@ bash "$HOME/ArtDirectWorker/scripts/install_art_direct_worker_launch_agent.sh"
 | `ART_PLATFORM_USERNAME` | 组员平台账号 |
 | `ART_PLATFORM_PASSWORD` | 组员平台密码 |
 | `ART_WORKER_DEVICE_ID` | 可选，本机设备标识 |
-| `ART_WORKER_POLL_INTERVAL_MS` | 可选，领取任务轮询间隔，默认 30000 |
-| `ART_WORKER_HEARTBEAT_INTERVAL_MS` | 可选，最近心跳刷新间隔，默认 120000 |
+| `ART_WORKER_POLL_INTERVAL_MS` | 可选，兜底任务轮询间隔，默认 300000 |
+| `ART_WORKER_HEARTBEAT_INTERVAL_MS` | 可选，最近心跳刷新间隔，默认 300000 |
 | `CODEX_CLI_PATH` | 可选，Codex CLI 路径 |
 | `ART_WORKER_PROJECT_ROOT` | 可选，Codex 执行根目录，默认当前目录 |
 
@@ -123,9 +123,10 @@ bash "$HOME/ArtDirectWorker/scripts/install_art_direct_worker_launch_agent.sh"
 ## 心跳与轮询频率
 
 - Worker 启动后先上报一次本机准备状态。
-- 默认每 30 秒检查一次是否有分配给自己的直接执行任务。
-- 默认每 2 分钟刷新一次最近心跳，避免频繁写入工作台数据文件。
-- 工作台前端按 3 分钟内有心跳判断为在线，避免低频心跳被误判离线。
+- Worker 会监听工作台实时事件；平台创建或更新直接执行时，优先通过事件唤醒 Worker 立即检查任务。
+- 默认每 5 分钟兜底检查一次是否有分配给自己的直接执行任务，用于实时事件断线或网络抖动后的补偿。
+- 默认每 5 分钟刷新一次最近心跳，避免频繁写入工作台数据文件。
+- 工作台前端按 10 分钟内有心跳判断为在线，避免低频心跳被误判离线。
 - 空轮询没有任务时不追加数据，也不反复刷新最近心跳；只有定时心跳或实际领取任务时才更新 Worker 状态。
 
 ## 常见阻塞
