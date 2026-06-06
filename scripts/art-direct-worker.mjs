@@ -10,7 +10,7 @@ const password = process.env.ART_PLATFORM_PASSWORD || process.env.AWP_PASSWORD |
 const deviceId = process.env.ART_WORKER_DEVICE_ID || `${os.hostname()}-${os.userInfo().username}`;
 const pollIntervalMs = Math.max(5000, Number(process.env.ART_WORKER_POLL_INTERVAL_MS || 10000));
 const codexPath = process.env.CODEX_CLI_PATH || 'codex';
-const defaultProjectRoot = process.env.ART_WORKER_PROJECT_ROOT || process.cwd();
+const defaultProjectRoot = process.env.ART_WORKER_PROJECT_ROOT || process.env.ART_WORKER_HOME || process.cwd();
 
 let cookie = '';
 let currentUser = null;
@@ -145,6 +145,10 @@ function buildPrompt(run = {}) {
     `- 资料路径: ${run.materialPath || ''}`,
     `- 平台产物目录记录: ${run.artifactRoot || ''}`,
     '',
+    '## Skill / md 内容快照',
+    '',
+    run.primarySkillContent || '平台未提供 Skill / md 内容快照。若本机无法读取任务中的路径线索，必须停止并回传阻塞原因。',
+    '',
     '## 执行要求',
     '',
     run.requirement || '',
@@ -155,6 +159,7 @@ function buildPrompt(run = {}) {
     '- 必须使用当前组员自己的 Figma 授权和 Figma 文件权限。',
     '- 不得依赖负责人电脑、本机 figma-write-local 插件或平台服务器 Figma token。',
     '- 如果当前 Codex 工具列表缺少 Figma 写入工具，或者 Figma OAuth 失效，必须停止并说明阻塞原因。',
+    '- 必须优先使用上方 Skill / md 内容快照执行，不要求组员电脑存在负责人本机项目目录。',
     '- 只有 Figma 写入工具成功返回 createdNodeIds 或 mutatedNodeIds，才算写入完成。',
     '',
     '## 交付',

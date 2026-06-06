@@ -31,54 +31,68 @@
 
 ### Windows 手动启动
 
-在执行人 Windows 电脑的 PowerShell 中进入平台项目目录后执行：
+在执行人 Windows 电脑的 PowerShell 中执行；命令会下载 Worker 到该电脑的用户目录，不需要本机有平台项目代码：
 
 ```powershell
+$root = "$env:USERPROFILE\ArtDirectWorker"
+New-Item -ItemType Directory -Force -Path "$root\scripts" | Out-Null
+Invoke-WebRequest -UseBasicParsing -Uri 'http://工作台服务器IP:4288/worker/art-direct-worker.mjs' -OutFile "$root\scripts\art-direct-worker.mjs"
 $env:ART_PLATFORM_API = 'http://工作台服务器IP:4288'
 $env:ART_PLATFORM_USERNAME = '组员账号'
 $env:ART_PLATFORM_PASSWORD = '组员密码'
-$env:ART_WORKER_PROJECT_ROOT = (Get-Location).Path
-node .\scripts\art-direct-worker.mjs
+$env:ART_WORKER_HOME = $root
+node "$root\scripts\art-direct-worker.mjs"
 ```
 
 手动启动适合临时实验或当天手动执行。PowerShell 窗口保持运行，关闭后 Worker 停止。
 
 ### macOS 手动启动
 
-在执行人 macOS 电脑、平台项目目录执行：
+在执行人 macOS 电脑执行：
 
 ```bash
+mkdir -p "$HOME/ArtDirectWorker/scripts"
+curl -fsSL 'http://工作台服务器IP:4288/worker/art-direct-worker.mjs' -o "$HOME/ArtDirectWorker/scripts/art-direct-worker.mjs"
 ART_PLATFORM_API=http://工作台服务器IP:4288 \
 ART_PLATFORM_USERNAME=组员账号 \
 ART_PLATFORM_PASSWORD=组员密码 \
-node scripts/art-direct-worker.mjs
+ART_WORKER_HOME="$HOME/ArtDirectWorker" \
+node "$HOME/ArtDirectWorker/scripts/art-direct-worker.mjs"
 ```
 
 ## 开机自启安装
 
 ### Windows 开机自启
 
-在执行人 Windows 电脑的 PowerShell 中进入平台项目目录后执行：
+在执行人 Windows 电脑的 PowerShell 中执行；命令会下载 Worker 和安装脚本到该电脑的用户目录：
 
 ```powershell
+$root = "$env:USERPROFILE\ArtDirectWorker"
+New-Item -ItemType Directory -Force -Path "$root\scripts" | Out-Null
+Invoke-WebRequest -UseBasicParsing -Uri 'http://工作台服务器IP:4288/worker/art-direct-worker.mjs' -OutFile "$root\scripts\art-direct-worker.mjs"
+Invoke-WebRequest -UseBasicParsing -Uri 'http://工作台服务器IP:4288/worker/install_art_direct_worker_windows.ps1' -OutFile "$root\scripts\install_art_direct_worker_windows.ps1"
 $env:ART_PLATFORM_API = 'http://工作台服务器IP:4288'
 $env:ART_PLATFORM_USERNAME = '组员账号'
 $env:ART_PLATFORM_PASSWORD = '组员密码'
-$env:ART_WORKER_PROJECT_ROOT = (Get-Location).Path
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_art_direct_worker_windows.ps1
+$env:ART_WORKER_HOME = $root
+powershell -NoProfile -ExecutionPolicy Bypass -File "$root\scripts\install_art_direct_worker_windows.ps1"
 ```
 
 安装后会注册 Windows 计划任务，组员登录 Windows 时自动启动本机 Worker。
 
 ### macOS 开机自启
 
-在执行人 macOS 电脑、平台项目目录执行：
+在执行人 macOS 电脑执行：
 
 ```bash
+mkdir -p "$HOME/ArtDirectWorker/scripts"
+curl -fsSL 'http://工作台服务器IP:4288/worker/art-direct-worker.mjs' -o "$HOME/ArtDirectWorker/scripts/art-direct-worker.mjs"
+curl -fsSL 'http://工作台服务器IP:4288/worker/install_art_direct_worker_launch_agent.sh' -o "$HOME/ArtDirectWorker/scripts/install_art_direct_worker_launch_agent.sh"
 ART_PLATFORM_API=http://工作台服务器IP:4288 \
 ART_PLATFORM_USERNAME=组员账号 \
 ART_PLATFORM_PASSWORD=组员密码 \
-bash scripts/install_art_direct_worker_launch_agent.sh
+ART_WORKER_HOME="$HOME/ArtDirectWorker" \
+bash "$HOME/ArtDirectWorker/scripts/install_art_direct_worker_launch_agent.sh"
 ```
 
 安装后，组员登录 macOS 时会自动启动本机 Worker。状态会显示在工作台的 `本机执行状态` 页面。

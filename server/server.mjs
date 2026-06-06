@@ -186,6 +186,10 @@ await ensureArtDepartmentSeed();
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
+    if (url.pathname.startsWith('/worker/')) {
+      await serveWorkerDownload(res, url.pathname);
+      return;
+    }
     if (url.pathname.startsWith('/api/')) {
       await handleApi(req, res, url);
       return;
@@ -2145,7 +2149,8 @@ function buildDirectSkillRequirement(body = {}) {
     `- Figma 写入方式：${writeMode === 'create-page' ? '新建页面或新建 Frame' : '写入指定节点'}`,
     '- 本次任务必须在执行人本机 Codex 环境中运行，使用执行人自己的 Figma MCP 和 Figma 授权。',
     '- 平台不提供 Figma token；如果本机 Figma MCP 未授权、缺少写入工具或没有 Figma 权限，必须停止并回传阻塞原因。',
-    '- 必须先读取指定 Skill / md，再按 Figma 链接解析 fileKey、node-id 和目标区域。',
+    '- 必须优先使用平台随任务下发的 Skill / md 内容快照，再按 Figma 链接解析 fileKey、node-id 和目标区域。',
+    '- 不要求组员电脑存在负责人本机项目目录；如果内容快照缺失且本机无法读取路径，必须回传阻塞原因。',
     '- 只处理本次指定 Skill / md 和 Figma 目标，不扩展为无关代码改造。',
     '- 只有 Figma 写入工具真实返回 createdNodeIds 或 mutatedNodeIds，才允许判定为已写入。',
     '- 执行报告必须记录使用的 Skill / md、Figma URL、写入节点、阻塞原因和人工复核建议。'
@@ -2155,6 +2160,7 @@ function buildDirectSkillRequirement(body = {}) {
 async function createDirectSkillRunFromBody(req, project, body = {}, currentUser = {}) {
   const figmaLinks = String(body.figmaLinks || body.figmaUrl || '').trim();
   const primarySkillPath = String(body.primarySkillPath || body.skillPath || body.stage || '').trim();
+  const primarySkillContent = String(body.primarySkillContent || body.skillContent || '').trim().slice(0, 60000);
   if (!figmaLinks) throw new HttpError(400, '请先填写 Figma 链接。');
   if (!primarySkillPath) throw new HttpError(400, '请先选择要执行的 Skill 或 md。');
   const assigneeUserId = String(body.assignedToUserId || body.assigneeUserId || currentUser.id || '').trim();
@@ -2169,6 +2175,7 @@ async function createDirectSkillRunFromBody(req, project, body = {}, currentUser
     sourceType: 'direct-skill',
     stage: primarySkillPath,
     primarySkillPath,
+    primarySkillContent,
     showdocHints: [primarySkillPath, ...(Array.isArray(body.selectedMaterialHints) ? body.selectedMaterialHints : [])].filter(Boolean).join('\n'),
     selectedMaterialHints: body.selectedMaterialHints || [primarySkillPath],
     figmaLinks,
@@ -7352,6 +7359,25 @@ async function serveStatic(res, pathname) {
     });
     res.end(index);
   }
+}
+
+async function serveWorkerDownload(res, pathname) {
+  const workerFiles = {
+    '/worker/art-direct-worker.mjs': path.resolve(__dirname, '..', 'scripts', 'art-direct-worker.mjs'),
+    '/worker/install_art_direct_worker_launch_agent.sh': path.resolve(__dirname, '..', 'scripts', 'install_art_direct_worker_launch_agent.sh'),
+    '/worker/install_art_direct_worker_windows.ps1': path.resolve(__dirname, '..', 'scripts', 'install_art_direct_worker_windows.ps1')
+  };
+  const file = workerFiles[pathname];
+  if (!file) {
+    sendJson(res, 404, { error: 'worker file not found' });
+    return;
+  }
+  const content = await fs.readFile(file);
+  res.writeHead(200, {
+    'Content-Type': mimeType(file),
+    'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
+  });
+  res.end(content);
 }
 
 async function requireProject(id) {

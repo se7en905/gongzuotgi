@@ -1018,18 +1018,6 @@ export default {
       });
     },
 
-    agentWorkerOnlineCount() {
-      return this.agentWorkerDisplayRows.filter(worker => this.directSkillWorkerOnline(worker)).length;
-    },
-
-    agentWorkerFigmaReadyCount() {
-      return this.agentWorkerDisplayRows.filter(worker => this.directSkillWorkerOnline(worker) && worker.figmaMcpReady).length;
-    },
-
-    agentWorkerExecutableCount() {
-      return this.agentWorkerHeartbeatRows.filter(row => row.ready).length;
-    },
-
     directSkillRunRows() {
       return (this.runs || [])
         .filter(run => this.isDirectSkillRun(run))
@@ -9761,6 +9749,7 @@ export default {
       }
       const assignee = this.directSkillAssigneeOptions.find(user => user.id === dialog.assignedToUserId) || this.currentUser || {};
       const productName = row.productDisplayName || row.productFileName || row.title || this.fileNameFromPath(skillPath) || 'AI 产物';
+      const primarySkillContent = this.skillContentCache[row.id] || row.preview || row.skill?.preview || this.skillPreviewText || '';
       dialog.submitting = true;
       try {
         const run = await this.api('/api/runs', {
@@ -9769,6 +9758,7 @@ export default {
             projectId,
             title: `直接执行 ${productName}`,
             primarySkillPath: skillPath,
+            primarySkillContent,
             stage: skillPath,
             selectedMaterialHints: [skillPath],
             figmaLinks,
@@ -14054,6 +14044,7 @@ export default {
       const password = String(user.passwordDisplay || '').trim();
       const apiBase = this.directSkillWorkerApiBase();
       const safePassword = password || '在这里填写该组员平台密码';
+      const windowsRoot = '$env:USERPROFILE\\ArtDirectWorker';
       if (os === 'dual') {
         return [
           '# Windows PowerShell（组员 Windows 电脑使用下面这段）',
@@ -14065,19 +14056,25 @@ export default {
       }
       if (os === 'windows') {
         return [
+          `$root = "${windowsRoot}"`,
+          'New-Item -ItemType Directory -Force -Path "$root\\scripts" | Out-Null',
+          `Invoke-WebRequest -UseBasicParsing -Uri ${this.powershellQuote(`${apiBase}/worker/art-direct-worker.mjs`)} -OutFile "$root\\scripts\\art-direct-worker.mjs"`,
           '$env:ART_PLATFORM_API = ' + this.powershellQuote(apiBase),
           '$env:ART_PLATFORM_USERNAME = ' + this.powershellQuote(username || '组员账号'),
           '$env:ART_PLATFORM_PASSWORD = ' + this.powershellQuote(safePassword),
-          '$env:ART_WORKER_PROJECT_ROOT = (Get-Location).Path',
-          'node .\\scripts\\art-direct-worker.mjs'
+          '$env:ART_WORKER_HOME = $root',
+          'node "$root\\scripts\\art-direct-worker.mjs"'
         ].join('\n');
       }
       return [
-        `cd ${this.shellQuote('/Users/se7en/ArtProject/platform')}`,
+        'WORKER_HOME="$HOME/ArtDirectWorker"',
+        'mkdir -p "$WORKER_HOME/scripts"',
+        `curl -fsSL ${this.shellQuote(`${apiBase}/worker/art-direct-worker.mjs`)} -o "$WORKER_HOME/scripts/art-direct-worker.mjs"`,
         `ART_PLATFORM_API=${this.shellQuote(apiBase)} \\`,
         `ART_PLATFORM_USERNAME=${this.shellQuote(username || '组员账号')} \\`,
         `ART_PLATFORM_PASSWORD=${this.shellQuote(safePassword)} \\`,
-        'node scripts/art-direct-worker.mjs'
+        'ART_WORKER_HOME="$WORKER_HOME" \\',
+        'node "$WORKER_HOME/scripts/art-direct-worker.mjs"'
       ].join('\n');
     },
 
@@ -14086,6 +14083,7 @@ export default {
       const password = String(user.passwordDisplay || '').trim();
       const apiBase = this.directSkillWorkerApiBase();
       const safePassword = password || '在这里填写该组员平台密码';
+      const windowsRoot = '$env:USERPROFILE\\ArtDirectWorker';
       if (os === 'dual') {
         return [
           '# Windows PowerShell（组员 Windows 电脑使用下面这段）',
@@ -14097,23 +14095,39 @@ export default {
       }
       if (os === 'windows') {
         return [
+          `$root = "${windowsRoot}"`,
+          'New-Item -ItemType Directory -Force -Path "$root\\scripts" | Out-Null',
+          `Invoke-WebRequest -UseBasicParsing -Uri ${this.powershellQuote(`${apiBase}/worker/art-direct-worker.mjs`)} -OutFile "$root\\scripts\\art-direct-worker.mjs"`,
+          `Invoke-WebRequest -UseBasicParsing -Uri ${this.powershellQuote(`${apiBase}/worker/install_art_direct_worker_windows.ps1`)} -OutFile "$root\\scripts\\install_art_direct_worker_windows.ps1"`,
           '$env:ART_PLATFORM_API = ' + this.powershellQuote(apiBase),
           '$env:ART_PLATFORM_USERNAME = ' + this.powershellQuote(username || '组员账号'),
           '$env:ART_PLATFORM_PASSWORD = ' + this.powershellQuote(safePassword),
-          '$env:ART_WORKER_PROJECT_ROOT = (Get-Location).Path',
-          'powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\install_art_direct_worker_windows.ps1'
+          '$env:ART_WORKER_HOME = $root',
+          'powershell -NoProfile -ExecutionPolicy Bypass -File "$root\\scripts\\install_art_direct_worker_windows.ps1"'
         ].join('\n');
       }
       return [
+        'WORKER_HOME="$HOME/ArtDirectWorker"',
+        'mkdir -p "$WORKER_HOME/scripts"',
+        `curl -fsSL ${this.shellQuote(`${apiBase}/worker/art-direct-worker.mjs`)} -o "$WORKER_HOME/scripts/art-direct-worker.mjs"`,
+        `curl -fsSL ${this.shellQuote(`${apiBase}/worker/install_art_direct_worker_launch_agent.sh`)} -o "$WORKER_HOME/scripts/install_art_direct_worker_launch_agent.sh"`,
         `ART_PLATFORM_API=${this.shellQuote(apiBase)} \\`,
         `ART_PLATFORM_USERNAME=${this.shellQuote(username || '组员账号')} \\`,
         `ART_PLATFORM_PASSWORD=${this.shellQuote(safePassword)} \\`,
-        'bash scripts/install_art_direct_worker_launch_agent.sh'
+        'ART_WORKER_HOME="$WORKER_HOME" \\',
+        'bash "$WORKER_HOME/scripts/install_art_direct_worker_launch_agent.sh"'
       ].join('\n');
     },
 
+    canCopyDirectSkillWorkerCommand(user = this.currentUser || {}) {
+      if (this.can('run.directSkill.workerCommand')) return true;
+      const targetId = String(user?.id || '').trim();
+      const currentId = String(this.currentUser?.id || '').trim();
+      return Boolean(targetId && currentId && targetId === currentId && this.can('api.agentWorkers.heartbeat'));
+    },
+
     copyDirectSkillWorkerCommand(user, install = false, os = 'dual') {
-      if (!this.can('run.directSkill.workerCommand')) {
+      if (!this.canCopyDirectSkillWorkerCommand(user)) {
         ElMessage.warning('当前账号没有复制 Worker 启动命令的权限');
         return Promise.resolve(false);
       }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="/Users/se7en/ArtProject/platform"
+ROOT="${ART_WORKER_HOME:-${HOME}/ArtDirectWorker}"
 LABEL="com.artproject.art-direct-worker.${ART_PLATFORM_USERNAME:-user}"
 PLIST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
 NODE_BIN="$(command -v node)"
@@ -23,7 +23,12 @@ if [[ -z "${ART_PLATFORM_PASSWORD:-}" ]]; then
   exit 1
 fi
 
-mkdir -p "${LOG_DIR}" "${HOME}/Library/LaunchAgents"
+mkdir -p "${ROOT}/scripts" "${LOG_DIR}" "${HOME}/Library/LaunchAgents"
+
+if [[ ! -f "${ROOT}/scripts/art-direct-worker.mjs" ]]; then
+  echo "缺少 ${ROOT}/scripts/art-direct-worker.mjs，请先通过工作台复制命令下载 Worker。" >&2
+  exit 1
+fi
 
 cat > "${PLIST}" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

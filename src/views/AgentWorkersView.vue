@@ -40,7 +40,7 @@
     </div>
   </ElCard>
 
-  <ElCard v-if="app.isWorkbenchAdmin" shadow="never" class="panel-card agent-worker-bind-card">
+  <ElCard shadow="never" class="panel-card agent-worker-bind-card">
     <template #header>
       <div class="panel-head">
         <div>
@@ -54,7 +54,7 @@
       <div class="agent-worker-bind-copy">
         <strong>{{ app.isWorkbenchAdmin ? '当前账号实验命令' : '我的启动命令' }}</strong>
         <p>如果你现在要在工作台里做一次实验：先用 Skill/md 创建直接执行并指派给自己，再复制“手动启动”。复制出的命令里同时包含 Windows PowerShell 和 macOS 终端两段，按自己电脑系统执行对应段落。Worker 在线且 Figma MCP 就绪后，会自动领取这个任务。</p>
-        <div v-if="app.can('run.directSkill.workerCommand')" class="agent-worker-bind-actions">
+        <div v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" class="agent-worker-bind-actions">
           <ElButton type="primary" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, false)">复制手动启动</ElButton>
           <ElButton plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, true)">复制开机自启</ElButton>
         </div>

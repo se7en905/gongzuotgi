@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-$Root = if ($env:ART_WORKER_PROJECT_ROOT) { $env:ART_WORKER_PROJECT_ROOT } else { (Resolve-Path (Join-Path $PSScriptRoot '..')).Path }
+$Root = if ($env:ART_WORKER_HOME) { $env:ART_WORKER_HOME } elseif ($env:ART_WORKER_PROJECT_ROOT) { $env:ART_WORKER_PROJECT_ROOT } else { Join-Path $env:USERPROFILE 'ArtDirectWorker' }
 $Username = $env:ART_PLATFORM_USERNAME
 $Password = $env:ART_PLATFORM_PASSWORD
 $Api = $env:ART_PLATFORM_API
@@ -18,6 +18,11 @@ $Worker = Join-Path $Root 'scripts\art-direct-worker.mjs'
 $Runner = Join-Path $Root 'scripts\run-art-direct-worker-windows.ps1'
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $Root 'scripts') | Out-Null
+
+if (-not (Test-Path $Worker)) {
+  throw "缺少 $Worker，请先通过工作台复制命令下载 Worker。"
+}
 
 @"
 `$ErrorActionPreference = 'Stop'

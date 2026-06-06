@@ -762,6 +762,7 @@ export async function createRun(input) {
     showdocHints: input.showdocHints || '',
     selectedMaterialHints: normalizeLineList(input.selectedMaterialHints),
     primarySkillPath: input.primarySkillPath || input.skillPath || input.stage || '',
+    primarySkillContent: input.primarySkillContent || input.skillContent || '',
     figmaWriteMode: input.figmaWriteMode || '',
     assignedToUserId: input.assignedToUserId || input.assigneeUserId || '',
     assignedToName: input.assignedToName || input.assigneeName || input.developer || task.developer || '',
