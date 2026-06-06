@@ -574,6 +574,7 @@ export default {
     return {
       appBridge: null,
       authChecked: false,
+      workbenchStateRestoring: false,
       currentUser: null,
       loginLoading: false,
       loginError: '',
@@ -674,6 +675,8 @@ export default {
       aiMembersViewMounted: false,
       aiMemberScoreReady: false,
       aiMemberScoreReadyTimer: 0,
+      aiMembersBoardFrameReady: false,
+      aiMembersBoardFrameReadyTimer: 0,
       users: [],
       roles: [],
       operationLogs: [],
@@ -3766,6 +3769,7 @@ export default {
     activeView(value) {
       document.title = `${this.pageMeta.title} · 美术部工作台`;
       if (value === 'ai-members') this.prepareAiMembersView();
+      else this.cancelAiMembersDeferredWork();
       this.ensureActiveViewData(value);
       if (value === 'tasks') {
         this.stopZentaoAutoSyncPolling();
@@ -3801,6 +3805,7 @@ export default {
   beforeUnmount() {
     if (this.zentaoSyncTimer) clearTimeout(this.zentaoSyncTimer);
     if (this.aiMemberScoreReadyTimer) clearTimeout(this.aiMemberScoreReadyTimer);
+    if (this.aiMembersBoardFrameReadyTimer) clearTimeout(this.aiMembersBoardFrameReadyTimer);
     this.stopZentaoAutoSyncPolling();
     this.stopTaskBriefRealtimeSync();
     this.stopPlatformEventSync();
@@ -4378,25 +4383,31 @@ export default {
 
     async restoreWorkbenchServerState() {
       if (!this.currentUser) return;
+      this.workbenchStateRestoring = true;
       const jobs = [];
-      if (this.can('menu.skillList')) {
-        jobs.push(['库存缓存', () => this.loadSkillInventorySavedSnapshot()]);
-        jobs.push(['人工研究清单', () => this.refreshAiAssetSheet()]);
-        jobs.push(['验证回填', () => this.refreshSkillValidations({ force: true, silent: true })]);
-        jobs.push(['调用次数', () => this.refreshUsageCounters()]);
-        jobs.push(['版本覆盖', () => this.refreshSkillVersionOverrides()]);
+      try {
+        if (this.can('menu.skillList')) {
+          jobs.push(['库存缓存', () => this.loadSkillInventorySavedSnapshot()]);
+          jobs.push(['人工研究清单', () => this.refreshAiAssetSheet()]);
+          jobs.push(['验证回填', () => this.refreshSkillValidations({ force: true, silent: true })]);
+          jobs.push(['调用次数', () => this.refreshUsageCounters()]);
+          jobs.push(['版本覆盖', () => this.refreshSkillVersionOverrides()]);
+        }
+        if (this.can('menu.skillList') || this.can('menu.aiMembers')) {
+          jobs.push(['AI 研究同步', () => this.refreshArtProgressEvents()]);
+        }
+        if (this.can('menu.aiMembers')) {
+          jobs.push(['成员快照', () => this.refreshAiMembers()]);
+        }
+        const results = await Promise.allSettled(jobs.map(([, run]) => run()));
+        results.forEach((result, index) => {
+          if (result.status === 'rejected') console.warn(`${jobs[index][0]}恢复失败，已保留当前页面状态`, result.reason);
+        });
+        if (!this.platformEventSource) this.startPlatformEventSync();
+      } finally {
+        this.workbenchStateRestoring = false;
+        if (this.activeView === 'ai-members') this.prepareAiMembersView();
       }
-      if (this.can('menu.skillList') || this.can('menu.aiMembers')) {
-        jobs.push(['AI 研究同步', () => this.refreshArtProgressEvents()]);
-      }
-      if (this.can('menu.aiMembers')) {
-        jobs.push(['成员快照', () => this.refreshAiMembers()]);
-      }
-      const results = await Promise.allSettled(jobs.map(([, run]) => run()));
-      results.forEach((result, index) => {
-        if (result.status === 'rejected') console.warn(`${jobs[index][0]}恢复失败，已保留当前页面状态`, result.reason);
-      });
-      if (!this.platformEventSource) this.startPlatformEventSync();
     },
 
     roleLabel(role = '', fallbackName = '') {
@@ -6422,11 +6433,30 @@ export default {
     prepareAiMembersView() {
       this.aiMembersViewMounted = true;
       this.aiMemberScoreReady = false;
-      if (this.aiMemberScoreReadyTimer) clearTimeout(this.aiMemberScoreReadyTimer);
+      this.aiMembersBoardFrameReady = false;
+      this.cancelAiMembersDeferredWork();
+      if (this.workbenchStateRestoring) return;
+      this.aiMembersBoardFrameReadyTimer = setTimeout(() => {
+        if (this.activeView !== 'ai-members') return;
+        this.aiMembersBoardFrameReady = true;
+        this.aiMembersBoardFrameReadyTimer = 0;
+      }, 80);
       this.aiMemberScoreReadyTimer = setTimeout(() => {
+        if (this.activeView !== 'ai-members') return;
         this.aiMemberScoreReady = true;
         this.aiMemberScoreReadyTimer = 0;
-      }, 0);
+      }, 140);
+    },
+
+    cancelAiMembersDeferredWork() {
+      if (this.aiMemberScoreReadyTimer) {
+        clearTimeout(this.aiMemberScoreReadyTimer);
+        this.aiMemberScoreReadyTimer = 0;
+      }
+      if (this.aiMembersBoardFrameReadyTimer) {
+        clearTimeout(this.aiMembersBoardFrameReadyTimer);
+        this.aiMembersBoardFrameReadyTimer = 0;
+      }
     },
 
     aiMemberScoreRowsCacheKey(sourceMembers = []) {
@@ -6436,14 +6466,21 @@ export default {
           return String(value || '').localeCompare(String(latest || '')) > 0 ? value : latest;
         }, '');
       const snapshot = this.aiMembersSnapshot || {};
+      const scanEntries = Object.entries(this.scans || {});
+      const scanSkillCount = scanEntries.reduce((total, [, scan]) => total + (Array.isArray(scan?.skills) ? scan.skills.length : 0), 0);
+      const scanLatest = scanEntries.reduce((latest, [, scan]) => {
+        const value = scan?.scannedAt || scan?.updatedAt || scan?.sourceUpdatedAt || '';
+        return String(value || '').localeCompare(String(latest || '')) > 0 ? value : latest;
+      }, '');
       return [
         this.aiScoreMonthLabel,
         sourceMembers.map(member => [member.name || member.realname || '', member.account || '', member.level || '', member.status || ''].join(':')).join('|'),
         snapshot.source?.boardUpdatedAt || '',
         snapshot.source?.fetchedAt || '',
         this.projects.length,
-        Object.keys(this.scans || {}).length,
-        this.skillInventoryRows.length,
+        scanEntries.length,
+        scanSkillCount,
+        scanLatest,
         this.artProgressEvents.length,
         latestOf(this.artProgressEvents, ['updatedAt', 'createdAt', 'reportedAt']),
         this.artProgressOperationLogRows.length,
