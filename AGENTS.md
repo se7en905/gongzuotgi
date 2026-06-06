@@ -213,6 +213,7 @@
   - 组员电脑默认没有负责人本机的项目代码，Worker 启动命令不得依赖负责人本机路径、相对 `scripts/` 路径或整套项目代码。
   - Worker 启动命令必须通过工作台服务 URL 下载 Worker 脚本到组员自己的用户目录；默认目录为 Windows `%USERPROFILE%\ArtDirectWorker`、macOS `$HOME/ArtDirectWorker`。
   - 直接执行 Worker 必须优先使用平台随任务下发的 Skill/md 内容快照，不得要求组员电脑能读取负责人本机 Skill/md 文件路径。
+  - 直接执行 Worker 默认运行在执行人自己的 `ArtDirectWorker` 目录，该目录不保证是 Git 仓库或 Codex 已信任目录；Worker 拉起 `codex exec` 时必须带 `--skip-git-repo-check`，避免还未真正执行 Figma 写入就因目录信任检查秒失败。
   - Figma 必须走原生授权和 Figma MCP；组员登录工作台后，也必须在自己的电脑使用自己的 Figma 账号和本机 Figma MCP。
   - 如果执行人本机 Codex 不可用、Figma MCP 未配置、Figma OAuth 失效、目标 Figma 文件无编辑权限或工具列表缺少写入工具，Worker 必须停止执行并回传阻塞原因。
   - 只有 Figma 写入工具真实返回 `createdNodeIds` 或 `mutatedNodeIds`，才允许判定写入完成。
@@ -316,6 +317,7 @@
   - 禁止把 Figma 写入依赖负责人电脑、本机插件或服务器 Figma 环境。
   - 禁止只生成本地脚本或提示词就声称 Figma 写入完成。
   - 禁止直接执行 Worker 领取或回传不属于当前执行人的任务。
+  - 禁止直接执行 Worker 在执行人本机下载目录里调用 `codex exec` 时漏掉 `--skip-git-repo-check`。
   - 禁止把本机执行状态页藏在深层入口。
   - 禁止新增界面、新按钮、新接口后不更新角色管理权限目录。
   - 禁止新增权限只写前端显隐，不写后端 API 校验。
