@@ -3,10 +3,15 @@
 ## 1.项目信息、技术栈版本
 
 - 项目路径：`/Users/se7en/ArtProject/platform`
-- 项目定位：美术部门生产工作台，用于禅道任务/BUG同步、任务中心、AI产物清单、成员产物、质量评分、资料库库存与负责人管理操作。
-- 默认用户身份：美术部门负责人。涉及任务、排期、周报、资源协调、风险识别、跨团队协作时，优先按负责人视角组织方案和回复。
+- 项目定位：美术部门生产工作台，用于禅道任务/BUG同步、任务中心、AI产物清单、成员产物、质量评分、资料库库存、美术执行台、本机直接执行状态和负责人管理操作。
 - 默认回复语言：中文。
-- 用户可见文案、说明文档、标记文档、看板文案统一使用中文。代码标识、命令、路径、文件名、字段名、接口参数、第三方专有名词可保留英文。
+- 默认用户身份：美术部门负责人。涉及任务、排期、周报、资源协调、风险识别、跨团队协作、权限配置和执行状态时，优先按美术部门负责人视角组织方案和回复。
+- 术语边界：
+  - `admin`、`美术负责人`、`负责人管理者`、`工作台管理者` 指工作台内具备管理权限的美术负责人账号。
+  - `执行人`、`组员`、`被指派人` 指实际领取并执行任务的人。
+  - `任务负责人` 或禅道原始负责人不得与工作台 `admin` 混用；涉及字段、权限、日志和界面文案时必须明确区分。
+- 用户可见文案、说明文档、标记文档、看板文案统一使用中文。
+- 代码里的必要英文标识、命令、路径、文件名、字段名、接口参数、第三方专有名词可以保留英文，避免影响程序运行。
 - 前端技术栈：
   - Vue 3
   - Vite 5
@@ -32,11 +37,20 @@
 - 保持现有目录和模块边界，不得为了局部修复顺手重构、改名、换布局或调整业务结构。
 - 关键文件职责：
   - `server/scanner.mjs`：Git、本地路径、共享盘扫描与产物内容解析。
-  - `server/server.mjs`：平台接口、缓存读取、禅道同步入口、权限判断。
-  - `src/App.vue`：库存缓存读取、刷新库存、贡献人覆盖、AI评分、产物使用统计等全局业务状态。
+  - `server/server.mjs`：平台接口、缓存读取、禅道同步入口、权限判断、本机 Worker 状态和直接执行任务接口。
+  - `server/auth.mjs`：账号、角色、权限目录、默认角色和历史权限兼容。
+  - `server/store.mjs`：本地 JSON 数据读写、执行记录、Worker 心跳、直接执行领取和状态回传。
+  - `src/App.vue`：全局业务状态、路由守卫、权限判断、库存缓存读取、刷新库存、贡献人覆盖、AI评分、产物使用统计、直接执行创建和 Worker 状态读取。
   - `src/views/SkillInventoryView.vue`：AI产物清单、贡献人调整、使用明细抽屉、成员产物整合入口。
+  - `src/components/dialogs/SkillPreviewDialog.vue`：Skill/md 内容预览、调用别名维护和直接执行到 Figma 的创建入口。
   - `src/components/dialogs/RunCreateDialog.vue`：新建美术执行弹窗。
+  - `src/views/RunsView.vue`：美术执行台、执行详情、直接执行的本机状态提示。
+  - `src/views/AgentWorkersView.vue`：本机执行状态页，展示 Worker 在线、自检、准备清单和直接执行队列。
+  - `src/views/RoleManagementView.vue`：角色管理和细粒度权限配置。
   - `src/styles.scss`：全局展示兜底样式、抽屉、评分面板、弹窗分段控件样式。
+  - `scripts/art-direct-worker.mjs`：组员本机直接执行 Worker。
+  - `scripts/install_art_direct_worker_launch_agent.sh`：安装组员本机 Worker 开机自启。
+  - `docs/本机直接执行Worker说明.md`：直接执行 Worker 使用说明。
   - `scripts/git-auto-backup.sh`：Git自动备份执行脚本。
   - `scripts/install_git_auto_backup_launch_agent.sh`：Git自动备份 LaunchAgent 安装脚本。
 - 工作台不是营销页或展示页。UI设计优先保证数据准确、信息完整、操作稳定、密度合理。
@@ -103,6 +117,32 @@
   - 同一轮多条待处理事项必须串行弹窗或写入待弹队列。
   - JXA/Cocoa 自定义窗口默认使用 `NSApplicationActivationPolicyAccessory`。
   - 弹窗必须固定尺寸和稳定布局，长内容使用滚动区域、列表或摘要窗口。
+- 直接执行到 Figma 界面规则：
+  - Skill/md 内容预览里可以展示 `直接执行到 Figma` 区块。
+  - 直接执行创建弹窗至少包含执行产物、Figma 链接、写入方式、执行人、补充要求。
+  - 创建直接执行后只进入队列，不显示平台侧“开始”按钮。
+  - 美术执行台的直接执行详情必须展示执行人、本机 Worker 状态、领取设备、最近心跳和阻塞提示。
+  - `/agent-workers` 页面必须直接作为一级页面展示给管理者，不得藏在深层弹窗或次级入口。
+  - `/agent-workers` 页面必须区分工作台管理者和组员美术执行者：
+    - 工作台管理者可见完整的直接执行流程说明、管理判断文案和给组员分发命令的说明。
+    - 组员美术执行者不需要看到管理流程说明，只需要看到自己的本机 Worker 绑定方式、启动命令、全员 Worker 状态、准备清单和直接执行队列。
+  - `/agent-workers` 页面必须展示：
+    - 直接执行启动方式。
+    - 组员本机 Worker 在线/离线。
+    - Codex 自检状态。
+    - Figma MCP 自检状态。
+    - 最近心跳。
+    - 组员准备清单。
+    - 每个可执行组员的待领取/执行中数量。
+    - 直接执行队列。
+    - 复制手动启动命令和复制开机自启命令。
+  - Worker 启动命令必须支持双平台：
+    - 页面只保留 `复制手动启动` 和 `复制开机自启` 两个按钮。
+    - 每次复制的命令内容必须同时包含 Windows PowerShell 段和 macOS 终端段，组员按自己电脑系统执行对应段落。
+    - `手动启动` 适合当前实验或临时执行；Windows 在 PowerShell 里运行，macOS 在终端里运行；窗口关闭后 Worker 停止。
+    - `开机自启` 适合长期接任务；Windows 注册计划任务，macOS 安装 LaunchAgent；后续登录系统自动启动 Worker。
+  - 如果负责人或组员要在工作台里做一次实验，必须先创建直接执行并指派给实际执行账号，再在该执行账号自己的电脑运行 `手动启动` 命令里对应系统的段落；Worker 在线且 Figma MCP 就绪后才会自动领取任务。
+  - Worker 心跳是负责人判断“谁做了、谁本机准备好了、任务卡在哪里”的核心状态，前端必须展示，不得只写在日志或后端数据里。
 
 ## 3.接口、数据结构、数据库约定
 
@@ -181,14 +221,53 @@
   - 隐藏产物必须从AI评分中排除。
   - 恢复后重新按正常规则计入。
   - 修复AI评分时，只改评分计算和展示相关逻辑，不得连带改动扫描缓存、贡献人覆盖、权限或刷新策略。
+- 直接执行到 Figma 数据和执行边界：
+  - 当前已定只实现第一场景：无需多轮对话，负责人或有权限账号选择一个 Skill/md，填写 Figma 链接，创建直接执行任务。
+  - 直接执行任务的 `sourceType` 或 `executionMode` 为 `direct-skill`。
+  - 直接执行任务必须记录 Skill/md 路径、Figma 链接、写入方式、执行人、补充要求、创建人、领取设备、Worker 状态和执行日志。
+  - 直接执行状态必须区分 `待领取`、`已领取`、`执行中`、`完成`、`失败`、`阻塞`。
+  - 平台服务器只负责任务创建、队列记录、Worker 心跳、日志回传、状态展示和权限审计。
+  - 平台服务器不得保存 Figma OAuth token，不得代替组员执行 Figma 写入，不得依赖工作台管理者 admin 的本机 Figma 环境。
+  - 直接执行没有平台侧“开始”按钮；启动动作只能来自被指派执行人电脑上的本机 Worker 自动领取。
+  - 组员本机 Worker 必须使用执行人自己的 Codex CLI、Figma MCP、Figma OAuth 和 Figma 文件权限。
+  - Figma 必须走原生授权和 Figma MCP；组员登录工作台后，也必须在自己的电脑使用自己的 Figma 账号和本机 Figma MCP。
+  - 如果执行人本机 Codex 不可用、Figma MCP 未配置、Figma OAuth 失效、目标 Figma 文件无编辑权限或工具列表缺少写入工具，Worker 必须停止执行并回传阻塞原因。
+  - 只有 Figma 写入工具真实返回 `createdNodeIds` 或 `mutatedNodeIds`，才允许判定写入完成。
+- Worker 数据与接口：
+  - Worker 心跳写入 `agent-workers` 数据，至少包含执行人、设备、最近心跳、Codex 是否就绪、Figma MCP 是否就绪、能力标记和检查消息。
+  - 直接执行领取必须校验执行人账号、项目权限、被分配关系、本机能力和 Worker 权限。
+  - Worker 只能领取并回传分配给自己的直接执行任务；除 admin 审计能力外，不得回传他人任务状态。
+  - Worker 日志回传要限制单次长度，避免日志过大拖慢平台。
+  - Worker 轮询间隔必须可配置，默认不低于 5 秒，避免高频打爆平台。
 - 权限：
-  - 负责人可刷新库存、作废/恢复产物、调整贡献人、调整展示管理、修改展示名称或别名。
+  - 负责人可刷新库存、作废/恢复产物、调整贡献人、调整展示管理、修改展示名称或别名、查看全员本机执行状态、复制 Worker 启动命令、创建直接执行、配置角色权限。
   - 组员可读取平台缓存。
   - 组员在AI产物清单只显示明细按钮。
   - 不得让组员端因为没有本机扫描能力而显示 `待接入`。
+  - 新界面、新按钮、新接口必须同步进入角色管理权限目录，不得只在前端写死。
+  - 与直接执行相关的权限必须拆分，不得全部复用 `api.runs.execute`：
+    - `menu.agentWorkers`：查看本机执行状态页。
+    - `run.directSkill.create`：创建直接执行。
+    - `run.directSkill.workerCommand`：复制 Worker 手动启动或开机自启命令。
+    - `api.agentRuns.create`：创建直接执行 API。
+    - `api.agentWorkers.read`：读取 Worker 状态 API。
+    - `api.agentWorkers.heartbeat`：Worker 心跳 API。
+    - `api.agentRuns.claim`：Worker 领取直接执行 API。
+    - `api.agentRuns.log`：Worker 回传日志 API。
+    - `api.agentRuns.status`：Worker 回传状态 API。
+  - `menu.runs` 只代表美术执行台页面；`menu.agentWorkers` 只代表本机执行状态页面，两者不得混用。
+  - `api.runs.execute` 保留给普通执行任务创建、启动、中断等旧执行能力；直接执行创建和 Worker 流程必须使用专门权限。
+  - 能复制 Worker 命令不等于能管理账号；全员账号、展示密码等敏感数据仍应受账号管理权限控制。
 - 已使用/需保持的接口：
   - `/api/project-scan-cache`：读取部门库存缓存。
   - `/api/projects/:id/scan?refresh=1`：负责人主动刷新库存时触发扫描。
+  - `/api/runs`：创建普通执行；当 `sourceType` 或 `executionMode` 为 `direct-skill` 时创建直接执行。
+  - `/api/runs/direct-skill`：创建直接执行。
+  - `/api/agent-workers`：读取 Worker 状态。
+  - `/api/agent-workers/heartbeat`：Worker 心跳。
+  - `/api/agent-runs/next`：Worker 自动领取直接执行。
+  - `/api/agent-runs/:id/log`：Worker 回传执行日志。
+  - `/api/agent-runs/:id/status`：Worker 回传执行状态。
 - Git自动备份数据约定：
   - 自动备份只提交 Git 工作区内未忽略的项目文件。
   - `.gitignore` 中的 `data/`、`logs/`、`dist/`、`node_modules/`、`.env*`、`outputs/`、`workspace/` 等不得被自动备份提交。
@@ -224,6 +303,30 @@
   - 禁止弹窗无限重弹、抢焦点、Dock闪烁。
   - 禁止自动Git备份使用 AI、Codex 或 OpenAI token。
   - 禁止自动Git备份强推或覆盖远端异常状态。
+  - 禁止直接执行任务在平台服务器启动。
+  - 禁止为直接执行任务添加平台侧“开始”按钮。
+  - 禁止平台保存、转发或复用任何人的 Figma OAuth token。
+  - 禁止让工作台管理者 admin 的本机 Figma 授权代替组员授权。
+  - 禁止把 Figma 写入依赖负责人电脑、本机插件或服务器 Figma 环境。
+  - 禁止只生成本地脚本或提示词就声称 Figma 写入完成。
+  - 禁止直接执行 Worker 领取或回传不属于当前执行人的任务。
+  - 禁止把本机执行状态页藏在深层入口。
+  - 禁止新增界面、新按钮、新接口后不更新角色管理权限目录。
+  - 禁止把 `menu.agentWorkers`、`api.agentWorkers.*`、`api.agentRuns.*` 全部混并到 `menu.runs` 或 `api.runs.execute`。
+- Figma 写入工具自检规则：
+  - 遇到“写入 Figma / use_figma / 新建或修改 Figma frame / 生成 Figma 页面”等任务时，必须先确认当前会话工具列表里是否真的存在可执行的 `use_figma` 写入工具；只看到 `figma-use` 技能卡不代表可写工具已注入。
+  - 当前机器需要同时保留三类 Figma 连接：`figma-local` 用于 Figma Desktop Dev Mode 读取、截图和变量检查；`figma` 远程 MCP 用于需要 OAuth `mcp:connect` 的 Figma 连接；`figma-write-local` 是本机 Figma 写入 MCP，工具名应包含 `use_figma`，用于真正执行 Figma Plugin API 写入。不要把三者混为同一个能力。
+  - 如果工具列表里只有 `mcp__figma_local__.*` 的 `get_metadata/get_screenshot/get_design_context/get_variable_defs/create_design_system_rules`，说明当前会话只有只读/设计上下文能力，不能声称已经能执行 Figma 写入。
+  - 如果缺少写入工具，先执行配置自检：`codex mcp list`、`codex mcp get figma-write-local`、`codex mcp get figma`。不要反复要求用户 OAuth 授权；若 `figma-write-local` 已注册但当前工具列表没有写入工具，通常需要开启新会话或重启 Codex，使工具列表重新注入。
+  - 使用 `figma-write-local` 写入时，Figma Desktop 里必须运行本地插件 `/Users/se7en/Downloads/figma-plugin`（插件名 `Claude Code in Figma`），并保持插件 UI 打开；本机桥接端口为 `9530`。
+  - 任何 Figma 写入脚本必须在真正调用 `use_figma` 成功返回 `createdNodeIds/mutatedNodeIds` 后，才算写入完成；仅生成本地 `figma_use_script.js` 不算完成。
+- 图片生成工具规则：
+  - 遇到“生成图片 / Image2 / GPT Image / image_gen / 宠物形象 / 概念图 / 参考图”等任务时，先确认当前会话工具列表里是否真的存在可执行的内置 `image_gen` 工具；只看到 `imagegen` 技能卡不代表内置工具已注入。
+  - 如果当前会话存在内置 `image_gen` 工具，优先使用内置工具生成或编辑图片，并把最终项目资产移动或保存到当前项目输出目录，不能只留在 `~/.codex/generated_images`。
+  - 如果当前会话没有内置 `image_gen` 工具，使用全局 `gpt-image` 技能的原生 GPT Image 2 CLI 作为标准兜底路径：`uv run /Users/se7en/.codex/skills/gpt-image/scripts/generate.py --model gpt-image-2 ...`
+  - 全局 `gpt-image` CLI 已改为自动按顺序读取 `OPENAI_API_KEY`：当前进程环境、当前项目 `.env`、用户 `~/.env`、Codex 认证文件 `~/.codex/auth.json`。后续不要因为 shell 中没有 `OPENAI_API_KEY` 就判定图片工具不可用。
+  - 如果 GPT Image 2 返回 `billing_hard_limit_reached`、额度不足、计费上限、rate limit 等 API 错误，要明确说明这是账号/API 额度问题，不是本机工具或项目配置坏了。
+  - 生成多张候选方案时，默认保存到当前项目的 `outputs/` 子目录；如果只是预览也要在回复里给出绝对路径，方便用户直接查看。
 - 固定执行命令：
   - 前端构建验证：
     ```bash
@@ -233,6 +336,13 @@
     ```bash
     node --check server/server.mjs
     node --check server/scanner.mjs
+    node --check server/auth.mjs
+    node --check server/store.mjs
+    ```
+  - 直接执行 Worker 脚本验证：
+    ```bash
+    node --check scripts/art-direct-worker.mjs
+    bash -n scripts/install_art_direct_worker_launch_agent.sh
     ```
   - 启动/重启工作台服务：
     ```bash
@@ -275,7 +385,9 @@
 - 验证规则：
   - 改后端JS时，至少对被改文件执行 `node --check`。
   - 改前端或样式时，至少执行 `npm run build`。
-  - 涉及工作台UI时，优先核对 `/skills/assets`、使用明细抽屉和“新建美术执行”弹窗。
+  - 涉及工作台UI时，优先核对 `/skills/assets`、使用明细抽屉、“新建美术执行”弹窗、美术执行台和 `/agent-workers` 本机执行状态页。
+  - 涉及直接执行时，必须核对创建入口、Figma 链接校验、执行人选择、无平台开始按钮、Worker 状态展示、权限控制和日志回传。
+  - 涉及权限时，必须核对 `server/auth.mjs`、`src/App.vue` 预设权限、角色管理页面展示和后端 API 校验。
   - 验证缓存逻辑时，不得通过手动刷新库存掩盖默认缓存读取问题。
   - 验证接入扫描逻辑时，必须分别覆盖 Git、本地路径、共享盘路径、路径断联、删除后刷新、重新新增、展示管理勾选和全选。
 - 规则维护：

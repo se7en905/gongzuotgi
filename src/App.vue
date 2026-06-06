@@ -1150,6 +1150,15 @@ export default {
       return this.roleLabel(this.currentUser?.role, this.currentUser?.roleName);
     },
 
+    isWorkbenchAdmin() {
+      return this.currentUser?.role === 'admin' || this.can('api.users.manage') || this.can('role.manage');
+    },
+
+    currentWorkerBindingUser() {
+      const currentId = String(this.currentUser?.id || '').trim();
+      return this.directSkillAssigneeOptions.find(user => String(user.id || '') === currentId) || this.currentUser || {};
+    },
+
     hasCriticalNotifications() {
       if (!this.currentUser || !this.can('menu.tasks')) return false;
       const today = localDateKey(new Date());
@@ -13953,11 +13962,36 @@ export default {
       return this.formatDateTime(worker.lastHeartbeatAt);
     },
 
-    directSkillWorkerStartCommand(user = this.currentUser || {}) {
+    directSkillWorkerApiBase() {
+      const origin = window.location.origin || '';
+      const hostname = window.location.hostname || '';
+      if (/^(localhost|127\.0\.0\.1|::1)$/i.test(hostname)) return 'http://工作台服务器IP:4288';
+      return origin || 'http://工作台服务器IP:4288';
+    },
+
+    directSkillWorkerStartCommand(user = this.currentUser || {}, os = 'dual') {
       const username = String(user.username || '').trim();
       const password = String(user.passwordDisplay || '').trim();
-      const apiBase = window.location.origin || 'http://127.0.0.1:4288';
+      const apiBase = this.directSkillWorkerApiBase();
       const safePassword = password || '在这里填写该组员平台密码';
+      if (os === 'dual') {
+        return [
+          '# Windows PowerShell（组员 Windows 电脑使用下面这段）',
+          this.directSkillWorkerStartCommand(user, 'windows'),
+          '',
+          '# macOS 终端（组员 macOS 电脑使用下面这段）',
+          this.directSkillWorkerStartCommand(user, 'mac')
+        ].join('\n');
+      }
+      if (os === 'windows') {
+        return [
+          '$env:ART_PLATFORM_API = ' + this.powershellQuote(apiBase),
+          '$env:ART_PLATFORM_USERNAME = ' + this.powershellQuote(username || '组员账号'),
+          '$env:ART_PLATFORM_PASSWORD = ' + this.powershellQuote(safePassword),
+          '$env:ART_WORKER_PROJECT_ROOT = (Get-Location).Path',
+          'node .\\scripts\\art-direct-worker.mjs'
+        ].join('\n');
+      }
       return [
         `cd ${this.shellQuote('/Users/se7en/ArtProject/platform')}`,
         `ART_PLATFORM_API=${this.shellQuote(apiBase)} \\`,
@@ -13967,11 +14001,29 @@ export default {
       ].join('\n');
     },
 
-    directSkillWorkerInstallCommand(user = this.currentUser || {}) {
+    directSkillWorkerInstallCommand(user = this.currentUser || {}, os = 'dual') {
       const username = String(user.username || '').trim();
       const password = String(user.passwordDisplay || '').trim();
-      const apiBase = window.location.origin || 'http://127.0.0.1:4288';
+      const apiBase = this.directSkillWorkerApiBase();
       const safePassword = password || '在这里填写该组员平台密码';
+      if (os === 'dual') {
+        return [
+          '# Windows PowerShell（组员 Windows 电脑使用下面这段）',
+          this.directSkillWorkerInstallCommand(user, 'windows'),
+          '',
+          '# macOS 终端（组员 macOS 电脑使用下面这段）',
+          this.directSkillWorkerInstallCommand(user, 'mac')
+        ].join('\n');
+      }
+      if (os === 'windows') {
+        return [
+          '$env:ART_PLATFORM_API = ' + this.powershellQuote(apiBase),
+          '$env:ART_PLATFORM_USERNAME = ' + this.powershellQuote(username || '组员账号'),
+          '$env:ART_PLATFORM_PASSWORD = ' + this.powershellQuote(safePassword),
+          '$env:ART_WORKER_PROJECT_ROOT = (Get-Location).Path',
+          'powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\install_art_direct_worker_windows.ps1'
+        ].join('\n');
+      }
       return [
         `ART_PLATFORM_API=${this.shellQuote(apiBase)} \\`,
         `ART_PLATFORM_USERNAME=${this.shellQuote(username || '组员账号')} \\`,
@@ -13980,17 +14032,22 @@ export default {
       ].join('\n');
     },
 
-    copyDirectSkillWorkerCommand(user, install = false) {
+    copyDirectSkillWorkerCommand(user, install = false, os = 'dual') {
       if (!this.can('run.directSkill.workerCommand')) {
         ElMessage.warning('当前账号没有复制 Worker 启动命令的权限');
         return Promise.resolve(false);
       }
-      const command = install ? this.directSkillWorkerInstallCommand(user) : this.directSkillWorkerStartCommand(user);
-      return this.copyText(command, install ? 'Worker 开机自启安装命令' : 'Worker 手动启动命令');
+      const platform = os === 'windows' ? 'Windows' : os === 'mac' ? 'macOS' : '双平台';
+      const command = install ? this.directSkillWorkerInstallCommand(user, os) : this.directSkillWorkerStartCommand(user, os);
+      return this.copyText(command, `${platform} Worker ${install ? '开机自启安装命令' : '手动启动命令'}`);
     },
 
     shellQuote(value = '') {
       return `'${String(value).replace(/'/g, `'\\''`)}'`;
+    },
+
+    powershellQuote(value = '') {
+      return `'${String(value).replace(/'/g, "''")}'`;
     },
 
     businessTasksForProject(projectId) {

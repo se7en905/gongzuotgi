@@ -6,7 +6,7 @@
     <small>直接执行不会在平台服务器写 Figma；必须由执行人本机 Worker 领取并使用本人 Figma 授权。</small>
   </div>
 
-  <ElCard shadow="never" class="panel-card agent-worker-guide-card">
+  <ElCard v-if="app.isWorkbenchAdmin" shadow="never" class="panel-card agent-worker-guide-card">
     <template #header>
       <div class="panel-head">
         <div>
@@ -19,7 +19,7 @@
     <div class="agent-worker-guide-grid">
       <div class="agent-worker-guide-step">
         <span>1</span>
-        <strong>负责人创建直接执行</strong>
+        <strong>工作台管理者创建直接执行</strong>
         <p>选择 Skill / md、填写 Figma 链接并指派执行人后，任务进入“待领取”。</p>
       </div>
       <div class="agent-worker-guide-step">
@@ -35,7 +35,44 @@
       <div class="agent-worker-guide-step">
         <span>4</span>
         <strong>平台展示日志和结果</strong>
-        <p>Worker 回传 Codex 输出、阻塞原因和最终执行状态，负责人在执行台查看。</p>
+        <p>Worker 回传 Codex 输出、阻塞原因和最终执行状态，工作台管理者在执行台查看。</p>
+      </div>
+    </div>
+  </ElCard>
+
+  <ElCard shadow="never" class="panel-card agent-worker-bind-card">
+    <template #header>
+      <div class="panel-head">
+        <div>
+          <h3>{{ app.isWorkbenchAdmin ? '本机 Worker 绑定与实验操作' : '我的本机 Worker 绑定' }}</h3>
+          <p>{{ app.isWorkbenchAdmin ? '需要实际跑一次直接执行实验时，在目标执行人的电脑启动 Worker；启动命令同时包含 Windows 和 macOS 两段。' : '在自己的电脑启动 Worker 后，平台才会显示你的 Codex / Figma MCP 状态，并自动领取分配给你的直接执行任务。' }}</p>
+        </div>
+        <ElTag type="info" effect="plain">命令必须在执行人自己的电脑运行</ElTag>
+      </div>
+    </template>
+    <div class="agent-worker-bind-grid">
+      <div class="agent-worker-bind-copy">
+        <strong>{{ app.isWorkbenchAdmin ? '当前账号实验命令' : '我的启动命令' }}</strong>
+        <p>如果你现在要在工作台里做一次实验：先用 Skill/md 创建直接执行并指派给自己，再复制“手动启动”。复制出的命令里同时包含 Windows PowerShell 和 macOS 终端两段，按自己电脑系统执行对应段落。Worker 在线且 Figma MCP 就绪后，会自动领取这个任务。</p>
+        <div v-if="app.can('run.directSkill.workerCommand')" class="agent-worker-bind-actions">
+          <ElButton type="primary" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, false)">复制手动启动</ElButton>
+          <ElButton plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, true)">复制开机自启</ElButton>
+        </div>
+        <span v-else class="muted-text">当前账号没有复制 Worker 启动命令的权限。</span>
+      </div>
+      <div class="agent-worker-command-explain">
+        <div>
+          <strong>手动启动</strong>
+          <p>适合临时实验或当天手动执行。复制内容同时支持 Windows 和 macOS；Windows 在 PowerShell 里运行，macOS 在终端里运行。窗口保持运行，关闭后 Worker 停止。</p>
+        </div>
+        <div>
+          <strong>开机自启</strong>
+          <p>适合组员长期接任务。复制内容同时支持 Windows 和 macOS；Windows 会注册计划任务，macOS 会安装 LaunchAgent。以后该电脑登录系统时自动启动 Worker。</p>
+        </div>
+        <div>
+          <strong>工作台地址</strong>
+          <p>组员电脑不能使用管理者电脑上的 localhost。如果复制出的地址是 127.0.0.1，请替换成组员能访问的工作台服务器 IP 或域名。</p>
+        </div>
       </div>
     </div>
   </ElCard>
@@ -93,7 +130,7 @@
       <div class="panel-head">
         <div>
           <h3>组员准备清单</h3>
-          <p>负责人用这里判断谁已经具备直接执行条件，并把 Worker 启动命令发给对应组员。</p>
+          <p>{{ app.isWorkbenchAdmin ? '工作台管理者用这里判断谁已经具备直接执行条件，并把 Worker 启动命令发给对应组员。' : '这里展示所有可执行组员的准备状态，用于确认自己的 Worker 是否已经被平台识别。' }}</p>
         </div>
         <ElButton plain :loading="app.loading.users || app.loading.agentWorkers" @click="app.refreshUsers(); app.refreshAgentWorkers(); app.refreshRuns()">刷新准备状态</ElButton>
       </div>
@@ -124,14 +161,14 @@
       <ElTableColumn label="最近心跳" width="170">
         <template #default="{ row }">{{ app.directSkillWorkerLastSeenText(row.worker) }}</template>
       </ElTableColumn>
-      <ElTableColumn label="启动命令" min-width="260" fixed="right">
+      <ElTableColumn label="启动命令" min-width="280" fixed="right">
         <template #default="{ row }">
           <div v-if="app.can('run.directSkill.workerCommand')" class="agent-command-cell">
             <span v-if="!row.user.passwordDisplay">未登记展示密码时，复制后让组员自行填写密码。</span>
             <span v-else>可复制给该组员在自己电脑执行。</span>
             <div>
-              <ElButton plain size="small" @click="app.copyDirectSkillWorkerCommand(row.user, false)">复制手动启动</ElButton>
-              <ElButton plain size="small" @click="app.copyDirectSkillWorkerCommand(row.user, true)">复制开机自启</ElButton>
+              <ElButton plain size="small" title="复制双平台手动启动命令；Windows 使用 PowerShell 段，macOS 使用终端段。" @click="app.copyDirectSkillWorkerCommand(row.user, false)">手动启动</ElButton>
+              <ElButton plain size="small" title="复制双平台开机自启命令；Windows 注册计划任务，macOS 安装 LaunchAgent。" @click="app.copyDirectSkillWorkerCommand(row.user, true)">开机自启</ElButton>
             </div>
           </div>
           <span v-else class="muted-text">无复制命令权限</span>
@@ -240,6 +277,47 @@ export default {
     font-size: 12px;
     line-height: 1.6;
   }
+}
+
+.agent-worker-bind-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  gap: 12px;
+  padding: 14px;
+}
+
+.agent-worker-bind-copy,
+.agent-worker-command-explain > div {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+
+  strong {
+    color: var(--heading);
+    font-size: 14px;
+  }
+
+  p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.7;
+  }
+}
+
+.agent-worker-bind-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agent-worker-command-explain {
+  display: grid;
+  gap: 12px;
 }
 
 .agent-worker-metrics {
@@ -391,8 +469,8 @@ export default {
   div {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
-    white-space: nowrap;
   }
 }
 
@@ -419,6 +497,10 @@ export default {
 @media (max-width: 1200px) {
   .agent-worker-guide-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agent-worker-bind-grid {
+    grid-template-columns: 1fr;
   }
 
   .agent-worker-list {

@@ -23,29 +23,65 @@
 
 直接执行任务不会出现平台服务器侧的“开始”按钮。负责人创建任务后，执行人本机 Worker 在线并通过 Codex / Figma MCP 自检，任务会自动从“待领取”变成“已领取 / 执行中”。
 
-在执行人自己的电脑、平台项目目录执行：
+组员当前以 Windows 电脑为主，后续如换成 macOS 使用 macOS 对应命令即可。所有命令都必须在执行人自己的电脑运行。
+
+如果平台地址显示为 `127.0.0.1`，组员 Windows 电脑不能直接使用；需要改成组员能访问的工作台服务器 IP 或域名，例如 `http://192.168.x.x:4288`。
+
+工作台页面上的 `复制手动启动` 和 `复制开机自启` 是双平台命令，复制后会同时包含 Windows PowerShell 段和 macOS 终端段。组员只执行自己电脑系统对应的那一段。
+
+### Windows 手动启动
+
+在执行人 Windows 电脑的 PowerShell 中进入平台项目目录后执行：
+
+```powershell
+$env:ART_PLATFORM_API = 'http://工作台服务器IP:4288'
+$env:ART_PLATFORM_USERNAME = '组员账号'
+$env:ART_PLATFORM_PASSWORD = '组员密码'
+$env:ART_WORKER_PROJECT_ROOT = (Get-Location).Path
+node .\scripts\art-direct-worker.mjs
+```
+
+手动启动适合临时实验或当天手动执行。PowerShell 窗口保持运行，关闭后 Worker 停止。
+
+### macOS 手动启动
+
+在执行人 macOS 电脑、平台项目目录执行：
 
 ```bash
-ART_PLATFORM_API=http://127.0.0.1:4288 \
+ART_PLATFORM_API=http://工作台服务器IP:4288 \
 ART_PLATFORM_USERNAME=组员账号 \
 ART_PLATFORM_PASSWORD=组员密码 \
 node scripts/art-direct-worker.mjs
 ```
 
-如果平台部署在局域网服务器，将 `ART_PLATFORM_API` 改成服务器地址。
-
 ## 开机自启安装
 
-在执行人自己的电脑、平台项目目录执行：
+### Windows 开机自启
+
+在执行人 Windows 电脑的 PowerShell 中进入平台项目目录后执行：
+
+```powershell
+$env:ART_PLATFORM_API = 'http://工作台服务器IP:4288'
+$env:ART_PLATFORM_USERNAME = '组员账号'
+$env:ART_PLATFORM_PASSWORD = '组员密码'
+$env:ART_WORKER_PROJECT_ROOT = (Get-Location).Path
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install_art_direct_worker_windows.ps1
+```
+
+安装后会注册 Windows 计划任务，组员登录 Windows 时自动启动本机 Worker。
+
+### macOS 开机自启
+
+在执行人 macOS 电脑、平台项目目录执行：
 
 ```bash
-ART_PLATFORM_API=http://127.0.0.1:4288 \
+ART_PLATFORM_API=http://工作台服务器IP:4288 \
 ART_PLATFORM_USERNAME=组员账号 \
 ART_PLATFORM_PASSWORD=组员密码 \
 bash scripts/install_art_direct_worker_launch_agent.sh
 ```
 
-安装后，组员电脑登录 macOS 时会自动启动本机 Worker。状态会显示在工作台的 `本机执行状态` 页面。
+安装后，组员登录 macOS 时会自动启动本机 Worker。状态会显示在工作台的 `本机执行状态` 页面。
 
 ## 环境变量
 
