@@ -5341,14 +5341,14 @@ async function syncZentaoTasks(project, options = {}) {
           executionScanLimit: options.executionScanLimit ?? (quickSync ? 24 : options.executionScanLimit),
           detailRefreshScope: options.detailRefreshScope || (quickSync ? 'current' : options.detailRefreshScope)
         };
-    const limit = Math.min(Math.max(Number(syncOptions.limit || 100), 1), 200);
-    const maxPages = Math.min(Math.max(Number(syncOptions.maxPages || 5), 1), 50);
-    const detailConcurrency = Math.min(Math.max(Number(syncOptions.detailConcurrency || (interactive ? 6 : 4)), 1), 10);
     if (quickSync) {
       syncOptions.executionScanLimit = Math.max(Number(syncOptions.executionScanLimit || 0), 80);
       syncOptions.executionMaxPages = Math.max(Number(syncOptions.executionMaxPages || 0), 5);
       syncOptions.maxPages = Math.max(Number(syncOptions.maxPages || 0), 3);
     }
+    const limit = Math.min(Math.max(Number(syncOptions.limit || 100), 1), 200);
+    const maxPages = Math.min(Math.max(Number(syncOptions.maxPages || 5), 1), 50);
+    const detailConcurrency = Math.min(Math.max(Number(syncOptions.detailConcurrency || (interactive ? 6 : 4)), 1), 10);
     const { artAccounts, userNames, artUserSource } = await getZentaoArtUsers();
     const artSnapshotTasks = await listArtSnapshotTasks(project.id).catch(() => []);
     const artSeenCandidateTaskNos = await listArtSeenCandidateTaskNos().catch(() => []);
