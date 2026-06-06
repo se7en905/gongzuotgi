@@ -1903,6 +1903,11 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const project = await requireProject(body.projectId);
     requireProjectAccess(currentUser, project.id, 'developer', 'api.runs.execute');
+    if (body.sourceType === 'direct-skill' || body.executionMode === 'direct-skill') {
+      const run = await createDirectSkillRunFromBody(req, project, body, currentUser);
+      sendJson(res, 201, run);
+      return;
+    }
     const run = await createRun({ ...body, createdBy: currentUser.id, ownerUserId: currentUser.id });
     await writeOperationLog(req, {
       user: currentUser,
@@ -1923,51 +1928,7 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const project = await requireProject(body.projectId);
     requireProjectAccess(currentUser, project.id, 'developer', 'api.runs.execute');
-    const figmaLinks = String(body.figmaLinks || body.figmaUrl || '').trim();
-    const primarySkillPath = String(body.primarySkillPath || body.skillPath || body.stage || '').trim();
-    if (!figmaLinks) throw new HttpError(400, '请先填写 Figma 链接。');
-    if (!primarySkillPath) throw new HttpError(400, '请先选择要执行的 Skill 或 md。');
-    const assigneeUserId = String(body.assignedToUserId || body.assigneeUserId || currentUser.id || '').trim();
-    const assigneeName = String(body.assignedToName || body.assigneeName || body.developer || currentUser.displayName || currentUser.username || '').trim();
-    const run = await createRun({
-      ...body,
-      projectId: project.id,
-      title: body.title || `直接执行：${path.basename(primarySkillPath)}`,
-      workflow: 'art-single-skill',
-      workflowLevel: body.workflowLevel || 'XS',
-      executionMode: 'direct-skill',
-      sourceType: 'direct-skill',
-      stage: primarySkillPath,
-      primarySkillPath,
-      showdocHints: [primarySkillPath, ...(Array.isArray(body.selectedMaterialHints) ? body.selectedMaterialHints : [])].filter(Boolean).join('\n'),
-      selectedMaterialHints: body.selectedMaterialHints || [primarySkillPath],
-      figmaLinks,
-      figmaWriteMode: body.figmaWriteMode || 'target-node',
-      developer: assigneeName,
-      assignedToUserId: assigneeUserId,
-      assignedToName: assigneeName,
-      requirement: buildDirectSkillRequirement(body),
-      createdBy: currentUser.id,
-      ownerUserId: assigneeUserId || currentUser.id
-    });
-    await writeOperationLog(req, {
-      user: currentUser,
-      module: 'run',
-      action: 'CREATE_DIRECT_SKILL_RUN',
-      actionName: '创建直接执行',
-      targetType: 'run',
-      targetId: run.id,
-      targetName: run.title,
-      after: run,
-      metadata: {
-        primarySkillPath,
-        figmaLinks,
-        assigneeUserId,
-        figmaWriteMode: run.figmaWriteMode || ''
-      },
-      description: `${currentUser.displayName || currentUser.username} 创建直接执行「${run.title}」，指派给 ${assigneeName || assigneeUserId || '未指定成员'}`
-    });
-    broadcastPlatformEvent('runs.changed', { projectId: project.id, runId: run.id, module: 'direct-skill-run' });
+    const run = await createDirectSkillRunFromBody(req, project, body, currentUser);
     sendJson(res, 201, run);
     return;
   }
@@ -2181,6 +2142,55 @@ function buildDirectSkillRequirement(body = {}) {
     '- 只有 Figma 写入工具真实返回 createdNodeIds 或 mutatedNodeIds，才允许判定为已写入。',
     '- 执行报告必须记录使用的 Skill / md、Figma URL、写入节点、阻塞原因和人工复核建议。'
   ].filter(Boolean).join('\n');
+}
+
+async function createDirectSkillRunFromBody(req, project, body = {}, currentUser = {}) {
+  const figmaLinks = String(body.figmaLinks || body.figmaUrl || '').trim();
+  const primarySkillPath = String(body.primarySkillPath || body.skillPath || body.stage || '').trim();
+  if (!figmaLinks) throw new HttpError(400, '请先填写 Figma 链接。');
+  if (!primarySkillPath) throw new HttpError(400, '请先选择要执行的 Skill 或 md。');
+  const assigneeUserId = String(body.assignedToUserId || body.assigneeUserId || currentUser.id || '').trim();
+  const assigneeName = String(body.assignedToName || body.assigneeName || body.developer || currentUser.displayName || currentUser.username || '').trim();
+  const run = await createRun({
+    ...body,
+    projectId: project.id,
+    title: body.title || `直接执行：${path.basename(primarySkillPath)}`,
+    workflow: 'art-single-skill',
+    workflowLevel: body.workflowLevel || 'XS',
+    executionMode: 'direct-skill',
+    sourceType: 'direct-skill',
+    stage: primarySkillPath,
+    primarySkillPath,
+    showdocHints: [primarySkillPath, ...(Array.isArray(body.selectedMaterialHints) ? body.selectedMaterialHints : [])].filter(Boolean).join('\n'),
+    selectedMaterialHints: body.selectedMaterialHints || [primarySkillPath],
+    figmaLinks,
+    figmaWriteMode: body.figmaWriteMode || 'target-node',
+    developer: assigneeName,
+    assignedToUserId: assigneeUserId,
+    assignedToName: assigneeName,
+    requirement: buildDirectSkillRequirement(body),
+    createdBy: currentUser.id,
+    ownerUserId: assigneeUserId || currentUser.id
+  });
+  await writeOperationLog(req, {
+    user: currentUser,
+    module: 'run',
+    action: 'CREATE_DIRECT_SKILL_RUN',
+    actionName: '创建直接执行',
+    targetType: 'run',
+    targetId: run.id,
+    targetName: run.title,
+    after: run,
+    metadata: {
+      primarySkillPath,
+      figmaLinks,
+      assigneeUserId,
+      figmaWriteMode: run.figmaWriteMode || ''
+    },
+    description: `${currentUser.displayName || currentUser.username} 创建直接执行「${run.title}」，指派给 ${assigneeName || assigneeUserId || '未指定成员'}`
+  });
+  broadcastPlatformEvent('runs.changed', { projectId: project.id, runId: run.id, module: 'direct-skill-run' });
+  return run;
 }
 
 function subscribePlatformEvents(req, res, user = {}) {

@@ -62,6 +62,12 @@
             </ElIcon>
           <span>美术执行台</span>
         </ElMenuItem>
+        <ElMenuItem v-if="can('menu.runs')" index="agent-workers">
+            <ElIcon>
+              <Monitor />
+            </ElIcon>
+          <span>本机执行状态</span>
+        </ElMenuItem>
         <ElMenuItem v-if="can('menu.users')" index="user-access">
             <ElIcon>
               <User />
@@ -189,6 +195,7 @@
           @update:task-page-size="taskPageSize = $event" />
 
         <RunsView v-if="activeView === 'runs'" :app="appBridge" />
+        <AgentWorkersView v-if="activeView === 'agent-workers'" :app="appBridge" />
 
         <TaskResultView v-if="activeView === 'task-result'" :app="appBridge" />
 
@@ -472,6 +479,7 @@ import SkillInventoryView from './views/SkillInventoryView.vue';
 import AiMembersView from './views/AiMembersView.vue';
 import ProjectDetailView from './views/ProjectDetailView.vue';
 import RunsView from './views/RunsView.vue';
+import AgentWorkersView from './views/AgentWorkersView.vue';
 import TaskResultView from './views/TaskResultView.vue';
 import ManualReviewView from './views/ManualReviewView.vue';
 import LoginView from './views/LoginView.vue';
@@ -535,6 +543,7 @@ export default {
     AiMembersView,
     ProjectDetailView,
     RunsView,
+    AgentWorkersView,
     TaskResultView,
     ManualReviewView,
     LoginView,
@@ -962,6 +971,7 @@ export default {
         'operation-logs': { eyebrow: '操作日志', title: '操作日志' },
         'project-detail': { eyebrow: '资料库详情', title: this.selectedProject?.name || '资料库详情' },
         runs: { eyebrow: '执行管理', title: '美术执行台' },
+        'agent-workers': { eyebrow: '执行管理', title: '本机执行状态' },
         'task-result': { eyebrow: '任务产物', title: this.selectedTask?.name || '任务产物' },
         'manual-review': { eyebrow: '人工复核', title: '人工复核' }
       }[this.activeView];
@@ -995,6 +1005,36 @@ export default {
           displayName: user.displayName || user.realname || user.name || user.username || user.id,
           role: user.role || ''
         }));
+    },
+
+    agentWorkerDisplayRows() {
+      return [...(this.agentWorkers || [])].sort((a, b) => {
+        const onlineDiff = Number(this.directSkillWorkerOnline(b)) - Number(this.directSkillWorkerOnline(a));
+        if (onlineDiff) return onlineDiff;
+        return String(b.lastHeartbeatAt || '').localeCompare(String(a.lastHeartbeatAt || ''));
+      });
+    },
+
+    agentWorkerOnlineCount() {
+      return this.agentWorkerDisplayRows.filter(worker => this.directSkillWorkerOnline(worker)).length;
+    },
+
+    agentWorkerFigmaReadyCount() {
+      return this.agentWorkerDisplayRows.filter(worker => this.directSkillWorkerOnline(worker) && worker.figmaMcpReady).length;
+    },
+
+    directSkillRunRows() {
+      return (this.runs || [])
+        .filter(run => this.isDirectSkillRun(run))
+        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    },
+
+    directSkillPendingRuns() {
+      return this.directSkillRunRows.filter(run => /pending|queued/i.test(String(run.status || '')));
+    },
+
+    directSkillActiveRuns() {
+      return this.directSkillRunRows.filter(run => /claimed|running|in_progress/i.test(String(run.status || '')));
     },
 
     permissionSet() {
@@ -3904,6 +3944,10 @@ export default {
         if (!this.runs.length && !this.loading.runs) this.refreshRuns().catch(() => {});
         if (!this.agentWorkers.length && !this.loading.agentWorkers) this.refreshAgentWorkers().catch(() => {});
       }
+      if (view === 'agent-workers') {
+        if (!this.runs.length && !this.loading.runs) this.refreshRuns().catch(() => {});
+        if (!this.agentWorkers.length && !this.loading.agentWorkers) this.refreshAgentWorkers().catch(() => {});
+      }
       if (view === 'operation-logs') {
         if (!this.operationLogs.length && !this.loading.operationLogs) this.refreshOperationLogs().catch(() => {});
       }
@@ -4367,6 +4411,15 @@ export default {
         }
         this.activeView = 'runs';
         this.ensureActiveViewData('runs');
+        return;
+      }
+      if (path === '/agent-workers') {
+        if (!this.can('menu.runs')) {
+          this.pushRoute(this.firstAllowedRoute());
+          return;
+        }
+        this.activeView = 'agent-workers';
+        this.ensureActiveViewData('agent-workers');
         return;
       }
       if (path === '/ai-archive' || path === '/workflow-designer') {
@@ -9606,7 +9659,7 @@ export default {
       const productName = row.productDisplayName || row.productFileName || row.title || this.fileNameFromPath(skillPath) || 'AI 产物';
       dialog.submitting = true;
       try {
-        const run = await this.api('/api/runs/direct-skill', {
+        const run = await this.api('/api/runs', {
           method: 'POST',
           body: JSON.stringify({
             projectId,
@@ -11456,6 +11509,7 @@ export default {
         'user-access': '/user-access',
         'role-management': '/role-management',
         'operation-logs': '/operation-logs',
+        'agent-workers': '/agent-workers',
         runs: '/runs'
       };
       this.pushRoute(routes[view] || '/tasks');
