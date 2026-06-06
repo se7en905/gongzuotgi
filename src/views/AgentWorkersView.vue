@@ -1,8 +1,8 @@
 <template>
 <section v-show="app.activeView === 'agent-workers'" class="content-grid agent-workers-view">
-  <div class="flow-helper">
+  <div v-if="app.isWorkbenchAdmin" class="flow-helper">
     <span>本机执行状态</span>
-    <strong>查看组员 Worker 在线、Figma MCP 自检和直接执行队列</strong>
+    <strong>查看组员 Worker 在线、Figma MCP 自检和执行明细</strong>
     <small>直接执行不会在平台服务器写 Figma；必须由执行人本机 Worker 领取并使用本人 Figma 授权。</small>
   </div>
 
@@ -40,7 +40,7 @@
     </div>
   </ElCard>
 
-  <ElCard shadow="never" class="panel-card agent-worker-bind-card">
+  <ElCard v-if="app.isWorkbenchAdmin" shadow="never" class="panel-card agent-worker-bind-card">
     <template #header>
       <div class="panel-head">
         <div>
@@ -81,114 +81,48 @@
     <template #header>
       <div class="panel-head">
         <div>
-          <h3>组员本机 Worker</h3>
-          <p>用于判断谁的本机可以接直接执行，以及 Codex / Figma MCP 是否可用。</p>
+          <h3>Worker 心跳</h3>
         </div>
-        <ElButton type="primary" plain :loading="app.loading.agentWorkers" @click="app.refreshAgentWorkers">刷新状态</ElButton>
+        <ElButton type="primary" plain :loading="app.loading.agentWorkers || app.loading.runs" @click="app.refreshAgentWorkers(); app.refreshRuns()">刷新状态</ElButton>
       </div>
     </template>
-    <div class="agent-worker-metrics">
-      <div>
-        <span>在线 Worker</span>
-        <strong>{{ app.agentWorkerOnlineCount }}</strong>
-      </div>
-      <div>
-        <span>Figma MCP 就绪</span>
-        <strong>{{ app.agentWorkerFigmaReadyCount }}</strong>
-      </div>
-      <div>
-        <span>待领取直接执行</span>
-        <strong>{{ app.directSkillPendingRuns.length }}</strong>
-      </div>
-      <div>
-        <span>本机执行中</span>
-        <strong>{{ app.directSkillActiveRuns.length }}</strong>
-      </div>
-    </div>
     <div class="agent-worker-list">
-      <article v-for="worker in app.agentWorkerDisplayRows" :key="worker.id" :class="['agent-worker-card', { online: app.directSkillWorkerOnline(worker), blocked: !worker.figmaMcpReady || !worker.codexReady }]">
+      <article v-for="row in app.agentWorkerHeartbeatRows" :key="row.user.id || row.worker?.id || row.worker?.deviceId" :class="['agent-worker-card', { online: row.online, ready: row.ready, blocked: !row.ready }]">
         <div class="agent-worker-card-head">
           <div>
-            <strong>{{ worker.userName || worker.userId || '未命名组员' }}</strong>
-            <span>{{ worker.deviceName || worker.deviceId || '-' }}</span>
+            <strong>{{ row.user.displayName || row.user.username || row.worker?.userName || '未命名组员' }}</strong>
+            <span>{{ row.worker?.deviceName || row.worker?.deviceId || '未启动 Worker' }}</span>
           </div>
-          <ElTag size="small" :type="app.directSkillWorkerOnline(worker) ? 'success' : 'info'">{{ app.directSkillWorkerOnline(worker) ? '在线' : '离线' }}</ElTag>
+          <ElTag size="small" :type="row.ready ? 'success' : row.online ? 'warning' : 'danger'">{{ row.ready ? '可直接执行' : row.online ? '不可执行' : '无心跳' }}</ElTag>
+        </div>
+        <div :class="['agent-heartbeat-line', { alive: row.ready }]">
+          <span></span>
         </div>
         <div class="agent-worker-state-grid">
-          <div><span>Codex</span><strong>{{ worker.codexReady ? '已就绪' : '未就绪' }}</strong></div>
-          <div><span>Figma MCP</span><strong>{{ worker.figmaMcpReady ? '已就绪' : '未就绪' }}</strong></div>
-          <div><span>最近心跳</span><strong>{{ app.directSkillWorkerLastSeenText(worker) }}</strong></div>
+          <div><span>Codex</span><strong>{{ row.codexReady ? '已就绪' : '未就绪' }}</strong></div>
+          <div><span>Figma MCP</span><strong>{{ row.figmaMcpReady ? '已就绪' : '未就绪' }}</strong></div>
+          <div><span>最近心跳</span><strong>{{ app.directSkillWorkerLastSeenText(row.worker) }}</strong></div>
+          <div><span>待领取</span><strong>{{ row.pendingRuns.length }}</strong></div>
+          <div><span>执行中</span><strong>{{ row.activeRuns.length }}</strong></div>
+          <div><span>已完成</span><strong>{{ row.completedRuns.length }}</strong></div>
         </div>
-        <p>{{ worker.checks?.figmaMessage || worker.checks?.codexMessage || '等待本机心跳回传。' }}</p>
       </article>
-      <div v-if="!app.agentWorkerDisplayRows.length" class="empty-block">暂无本机 Worker 心跳。组员启动本机 Worker 后会显示在这里。</div>
+      <div v-if="!app.agentWorkerHeartbeatRows.length" class="empty-block">暂无可查看的 Worker 信息。组员具备执行权限并启动本机 Worker 后会显示在这里。</div>
     </div>
-  </ElCard>
-
-  <ElCard shadow="never" class="panel-card agent-worker-member-card">
-    <template #header>
-      <div class="panel-head">
-        <div>
-          <h3>组员准备清单</h3>
-          <p>{{ app.isWorkbenchAdmin ? '工作台管理者用这里判断谁已经具备直接执行条件，并把 Worker 启动命令发给对应组员。' : '这里展示所有可执行组员的准备状态，用于确认自己的 Worker 是否已经被平台识别。' }}</p>
-        </div>
-        <ElButton plain :loading="app.loading.users || app.loading.agentWorkers" @click="app.refreshUsers(); app.refreshAgentWorkers(); app.refreshRuns()">刷新准备状态</ElButton>
-      </div>
-    </template>
-    <ElTable class="skill-clean-table" :data="app.directSkillMemberReadinessRows" table-layout="fixed" empty-text="暂无可执行账号">
-      <ElTableColumn label="组员" min-width="150">
-        <template #default="{ row }">
-          <div class="agent-member-cell">
-            <strong>{{ row.user.displayName || row.user.username }}</strong>
-            <span>{{ row.user.username }}</span>
-          </div>
-        </template>
-      </ElTableColumn>
-      <ElTableColumn label="准备状态" width="140">
-        <template #default="{ row }">
-          <ElTag size="small" :type="app.directSkillMemberReadyTagType(row)">{{ app.directSkillMemberReadyLabel(row) }}</ElTag>
-        </template>
-      </ElTableColumn>
-      <ElTableColumn label="Codex" width="110">
-        <template #default="{ row }">{{ row.codexReady ? '已就绪' : '未就绪' }}</template>
-      </ElTableColumn>
-      <ElTableColumn label="Figma MCP" width="120">
-        <template #default="{ row }">{{ row.figmaMcpReady ? '已就绪' : '未就绪' }}</template>
-      </ElTableColumn>
-      <ElTableColumn label="任务" width="150">
-        <template #default="{ row }">待领取 {{ row.pendingRuns.length }} · 执行中 {{ row.activeRuns.length }}</template>
-      </ElTableColumn>
-      <ElTableColumn label="最近心跳" width="170">
-        <template #default="{ row }">{{ app.directSkillWorkerLastSeenText(row.worker) }}</template>
-      </ElTableColumn>
-      <ElTableColumn label="启动命令" min-width="280" fixed="right">
-        <template #default="{ row }">
-          <div v-if="app.can('run.directSkill.workerCommand')" class="agent-command-cell">
-            <span v-if="!row.user.passwordDisplay">未登记展示密码时，复制后让组员自行填写密码。</span>
-            <span v-else>可复制给该组员在自己电脑执行。</span>
-            <div>
-              <ElButton plain size="small" title="复制双平台手动启动命令；Windows 使用 PowerShell 段，macOS 使用终端段。" @click="app.copyDirectSkillWorkerCommand(row.user, false)">手动启动</ElButton>
-              <ElButton plain size="small" title="复制双平台开机自启命令；Windows 注册计划任务，macOS 安装 LaunchAgent。" @click="app.copyDirectSkillWorkerCommand(row.user, true)">开机自启</ElButton>
-            </div>
-          </div>
-          <span v-else class="muted-text">无复制命令权限</span>
-        </template>
-      </ElTableColumn>
-    </ElTable>
   </ElCard>
 
   <ElCard shadow="never" class="panel-card agent-direct-runs-card">
     <template #header>
       <div class="panel-head">
         <div>
-          <h3>直接执行队列</h3>
-          <p>只展示从 Skill / md 发起、等待组员本机 Codex + Figma MCP 处理的任务。</p>
+          <h3>执行明细</h3>
+          <p>展示所有人从 Skill / md 发起的直接执行记录、执行人、本机 Worker 和处理状态。</p>
         </div>
-        <ElButton plain :loading="app.loading.runs" @click="app.refreshRuns">刷新队列</ElButton>
+        <ElButton plain :loading="app.loading.runs" @click="app.refreshRuns">刷新明细</ElButton>
       </div>
     </template>
-    <ElTable class="skill-clean-table" :data="app.directSkillRunRows" table-layout="fixed" empty-text="暂无直接执行任务">
-      <ElTableColumn label="任务" min-width="220">
+    <ElTable class="skill-clean-table" :data="app.directSkillRunRows" table-layout="fixed" empty-text="暂无执行明细">
+      <ElTableColumn label="执行内容" min-width="240">
         <template #default="{ row }">
           <button type="button" class="agent-run-title" @click="app.openRun(row)">
             <strong>{{ row.title }}</strong>
@@ -196,13 +130,19 @@
           </button>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="执行人" width="110">
+      <ElTableColumn label="操作人" width="120">
+        <template #default="{ row }">{{ app.directSkillRunOperatorName(row) }}</template>
+      </ElTableColumn>
+      <ElTableColumn label="执行人" width="120">
         <template #default="{ row }">{{ row.assignedToName || row.developer || '-' }}</template>
       </ElTableColumn>
       <ElTableColumn label="状态" width="110">
         <template #default="{ row }">
           <ElTag size="small" :type="app.runTagType(row.status)">{{ app.directSkillRunStatusLabel(row) }}</ElTag>
         </template>
+      </ElTableColumn>
+      <ElTableColumn label="领取设备" min-width="150">
+        <template #default="{ row }">{{ row.claimedByDeviceId || app.directSkillWorkerForRun(row)?.deviceName || '未领取' }}</template>
       </ElTableColumn>
       <ElTableColumn label="本机 Worker" min-width="240">
         <template #default="{ row }">{{ app.directSkillWorkerStatusText(row) }}</template>
@@ -215,6 +155,9 @@
       </ElTableColumn>
       <ElTableColumn label="创建时间" width="150">
         <template #default="{ row }">{{ app.formatDateTime(row.createdAt) || '-' }}</template>
+      </ElTableColumn>
+      <ElTableColumn label="更新时间" width="150">
+        <template #default="{ row }">{{ app.directSkillRunUpdatedText(row) }}</template>
       </ElTableColumn>
     </ElTable>
   </ElCard>
@@ -320,41 +263,11 @@ export default {
   gap: 12px;
 }
 
-.agent-worker-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  padding: 14px;
-
-  div {
-    padding: 14px;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    background: #ffffff;
-  }
-
-  span,
-  strong {
-    display: block;
-  }
-
-  span {
-    color: var(--muted);
-    font-size: 12px;
-  }
-
-  strong {
-    margin-top: 6px;
-    color: var(--heading);
-    font-size: 24px;
-  }
-}
-
 .agent-worker-list {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-  padding: 0 14px 14px;
+  padding: 14px;
 }
 
 .agent-worker-card {
@@ -373,12 +286,6 @@ export default {
     border-color: rgba(245, 158, 11, 0.38);
   }
 
-  p {
-    margin: 0;
-    color: #64748b;
-    font-size: 12px;
-    line-height: 1.6;
-  }
 }
 
 .agent-worker-card-head {
@@ -442,6 +349,63 @@ export default {
     font-size: 12px;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+}
+
+.agent-heartbeat-line {
+  position: relative;
+  height: 36px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #fff7f7;
+
+  &::before {
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    left: 10px;
+    height: 2px;
+    background: #ef4444;
+    content: "";
+    transform: translateY(-50%);
+  }
+
+  span {
+    display: none;
+  }
+
+  &.alive {
+    background: #f0fdf4;
+
+    &::before {
+      background: rgba(22, 163, 74, 0.18);
+    }
+
+    span {
+      position: absolute;
+      top: 50%;
+      left: 0;
+      display: block;
+      width: 200%;
+      height: 24px;
+      background:
+        linear-gradient(90deg, transparent 0 8px, #16a34a 8px 10px, transparent 10px 20px) 0 11px / 40px 2px repeat-x,
+        linear-gradient(135deg, transparent 0 42%, #16a34a 42% 47%, transparent 47% 100%) 18px 4px / 40px 18px repeat-x,
+        linear-gradient(45deg, transparent 0 42%, #16a34a 42% 47%, transparent 47% 100%) 30px 4px / 40px 18px repeat-x;
+      filter: drop-shadow(0 0 3px rgba(22, 163, 74, 0.35));
+      transform: translateY(-50%);
+      animation: agent-heartbeat-flow 1.35s linear infinite;
+    }
+  }
+}
+
+@keyframes agent-heartbeat-flow {
+  from {
+    transform: translate3d(0, -50%, 0);
+  }
+
+  to {
+    transform: translate3d(-40px, -50%, 0);
   }
 }
 
@@ -510,7 +474,6 @@ export default {
 
 @media (max-width: 760px) {
   .agent-worker-guide-grid,
-  .agent-worker-metrics,
   .agent-worker-list,
   .agent-worker-state-grid {
     grid-template-columns: 1fr;

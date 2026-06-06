@@ -20,7 +20,7 @@ const permissionCatalog = [
   { id: 'menu.aiMembers', name: 'AI 部门看板', type: 'menu', group: '一级菜单', description: '访问 AI 部门看板和当月 AI 评分。' },
   { id: 'menu.codexConfig', name: 'Codex 配置', type: 'menu', group: '一级菜单', description: '访问 Codex 配置页。' },
   { id: 'menu.runs', name: '美术执行台', type: 'menu', group: '一级菜单', description: '访问美术执行台。' },
-  { id: 'menu.agentWorkers', name: '本机执行状态', type: 'menu', group: '一级菜单', description: '查看组员本机 Worker 在线、自检和直接执行队列。' },
+  { id: 'menu.agentWorkers', name: '本机执行状态', type: 'menu', group: '一级菜单', description: '查看组员本机 Worker 在线、自检、准备就绪和执行明细。' },
   { id: 'menu.users', name: '账户管理', type: 'menu', group: '用户管理', description: '访问账户管理页。' },
   { id: 'menu.roles', name: '角色管理', type: 'menu', group: '用户管理', description: '访问角色管理页。' },
   { id: 'menu.operationLogs', name: '操作日志', type: 'menu', group: '用户管理', description: '访问平台操作审计日志。' },
@@ -261,6 +261,24 @@ export async function listPublicUsers() {
   const roles = await listRoles();
   const passwordRecords = await listPasswordRecords();
   return users.map(user => publicUser(user, roles, passwordRecords)).sort((a, b) => String(a.username).localeCompare(String(b.username)));
+}
+
+export async function listAgentWorkerUsers() {
+  const users = await listUsersRaw();
+  const roles = await listRoles();
+  return users
+    .map(user => publicUser(user, roles, {}))
+    .filter(user => user.disabled !== true)
+    .map(user => ({
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName || user.username,
+      role: user.role,
+      roleName: user.roleName || '',
+      permissions: user.permissions || [],
+      projectIds: user.projectIds || []
+    }))
+    .sort((a, b) => String(a.displayName || a.username || '').localeCompare(String(b.displayName || b.username || ''), 'zh-Hans-CN'));
 }
 
 export async function listRoles() {

@@ -1026,6 +1026,10 @@ export default {
       return this.agentWorkerDisplayRows.filter(worker => this.directSkillWorkerOnline(worker) && worker.figmaMcpReady).length;
     },
 
+    agentWorkerExecutableCount() {
+      return this.agentWorkerHeartbeatRows.filter(row => row.ready).length;
+    },
+
     directSkillRunRows() {
       return (this.runs || [])
         .filter(run => this.isDirectSkillRun(run))
@@ -1040,8 +1044,12 @@ export default {
       return this.directSkillRunRows.filter(run => /claimed|running|in_progress/i.test(String(run.status || '')));
     },
 
+    directSkillCompletedRuns() {
+      return this.directSkillRunRows.filter(run => /done|success|passed|completed|finished/i.test(String(run.status || '')));
+    },
+
     directSkillMemberReadinessRows() {
-      const rows = this.can('api.users.manage') && this.users.length
+      const rows = this.users.length
         ? this.users
         : [this.currentUser].filter(Boolean);
       return rows
@@ -1052,17 +1060,61 @@ export default {
           const online = this.directSkillWorkerOnline(worker);
           const pendingRuns = this.directSkillPendingRunsForUser(user);
           const activeRuns = this.directSkillActiveRunsForUser(user);
+          const completedRuns = this.directSkillCompletedRunsForUser(user);
           return {
             user,
             worker,
             online,
             pendingRuns,
             activeRuns,
+            completedRuns,
             codexReady: worker?.codexReady === true,
             figmaMcpReady: worker?.figmaMcpReady === true,
             ready: online && worker?.codexReady === true && worker?.figmaMcpReady === true
           };
         });
+    },
+
+    agentWorkerHeartbeatRows() {
+      const map = new Map();
+      for (const row of this.directSkillMemberReadinessRows) {
+        const key = String(row.user?.id || row.worker?.userId || '').trim();
+        if (key) map.set(key, row);
+      }
+      for (const worker of this.agentWorkerDisplayRows) {
+        const userId = String(worker.userId || '').trim();
+        const key = userId || `worker:${worker.id || worker.deviceId || worker.userName || map.size}`;
+        if (map.has(key)) continue;
+        const matchedUser = this.users.find(user => String(user.id || '') === userId)
+          || (String(this.currentUser?.id || '') === userId ? this.currentUser : null);
+        const user = {
+          id: matchedUser?.id || userId,
+          username: matchedUser?.username || worker.userName || userId || '未命名组员',
+          displayName: matchedUser?.displayName || matchedUser?.username || worker.userName || userId || '未命名组员',
+          role: matchedUser?.role || ''
+        };
+        const online = this.directSkillWorkerOnline(worker);
+        map.set(key, {
+          user,
+          worker,
+          online,
+          pendingRuns: userId ? this.directSkillPendingRunsForUser(user) : [],
+          activeRuns: userId ? this.directSkillActiveRunsForUser(user) : [],
+          completedRuns: userId ? this.directSkillCompletedRunsForUser(user) : [],
+          codexReady: worker?.codexReady === true,
+          figmaMcpReady: worker?.figmaMcpReady === true,
+          ready: online && worker?.codexReady === true && worker?.figmaMcpReady === true
+        });
+      }
+      return [...map.values()].sort((a, b) => {
+        const readyDiff = Number(b.ready) - Number(a.ready);
+        if (readyDiff) return readyDiff;
+        const onlineDiff = Number(b.online) - Number(a.online);
+        if (onlineDiff) return onlineDiff;
+        const timeDiff = String(b.worker?.lastHeartbeatAt || '').localeCompare(String(a.worker?.lastHeartbeatAt || ''));
+        if (timeDiff) return timeDiff;
+        return String(a.user?.displayName || a.user?.username || '').localeCompare(String(b.user?.displayName || b.user?.username || ''), 'zh-Hans-CN');
+      });
     },
 
     permissionSet() {
@@ -3980,12 +4032,12 @@ export default {
         this.restoreWorkbenchDisplayCacheKey('artProgressEvents');
         if (!this.runs.length && !this.loading.runs) this.refreshRuns().catch(() => {});
         if (!this.agentWorkers.length && !this.loading.agentWorkers) this.refreshAgentWorkers().catch(() => {});
-        if (this.can('api.users.manage') && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
+        if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
       }
       if (view === 'agent-workers') {
         if (!this.runs.length && !this.loading.runs) this.refreshRuns().catch(() => {});
         if (!this.agentWorkers.length && !this.loading.agentWorkers) this.refreshAgentWorkers().catch(() => {});
-        if (this.can('api.users.manage') && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
+        if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
       }
       if (view === 'operation-logs') {
         if (!this.operationLogs.length && !this.loading.operationLogs) this.refreshOperationLogs().catch(() => {});
@@ -6774,7 +6826,19 @@ export default {
 
     async refreshUsers() {
       if (!this.can('api.users.manage')) {
-        this.users = [];
+        if (!this.can('api.agentWorkers.read')) {
+          this.users = [];
+          return;
+        }
+        this.loading.users = true;
+        try {
+          this.users = await this.api('/api/agent-worker-users');
+        } catch (error) {
+          this.users = [];
+          console.warn('Worker 账号列表读取失败，已仅保留当前账号和心跳上报数据', error);
+        } finally {
+          this.loading.users = false;
+        }
         return;
       }
       this.loading.users = true;
@@ -13927,6 +13991,12 @@ export default {
       return this.directSkillActiveRuns.filter(run => String(run.assignedToUserId || run.ownerUserId || '') === userId);
     },
 
+    directSkillCompletedRunsForUser(user = null) {
+      const userId = String(user?.id || '').trim();
+      if (!userId) return [];
+      return this.directSkillCompletedRuns.filter(run => String(run.assignedToUserId || run.ownerUserId || '') === userId);
+    },
+
     directSkillMemberReadyLabel(row = {}) {
       if (row.ready) return '可自动领取';
       if (!row.worker) return '未启动 Worker';
@@ -13955,6 +14025,16 @@ export default {
       const figma = worker.figmaMcpReady ? 'Figma MCP 已就绪' : 'Figma MCP 未就绪';
       const codex = worker.codexReady ? 'Codex 已就绪' : 'Codex 未就绪';
       return `${online ? '在线' : '离线'} · ${codex} · ${figma}`;
+    },
+
+    directSkillRunOperatorName(run = null) {
+      const userId = String(run?.createdBy || '').trim();
+      const user = this.users.find(item => String(item.id || '') === userId);
+      return user?.displayName || user?.username || run?.createdByName || userId || '-';
+    },
+
+    directSkillRunUpdatedText(run = null) {
+      return this.formatDateTime(run?.updatedAt || run?.finishedAt || run?.startedAt || run?.claimedAt || run?.createdAt) || '-';
     },
 
     directSkillWorkerLastSeenText(worker = null) {

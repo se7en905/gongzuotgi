@@ -15,6 +15,7 @@ import {
   deleteUser,
   ensureDefaultAdmin,
   hasPermission,
+  listAgentWorkerUsers,
   listPermissionCatalog,
   listPublicUsers,
   listRoles,
@@ -1242,6 +1243,12 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/agent-worker-users') {
+    requirePermission(currentUser, 'api.agentWorkers.read');
+    sendJson(res, 200, await listAgentWorkerUsers());
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/agent-workers/heartbeat') {
     requirePermission(currentUser, 'api.agentWorkers.heartbeat');
     const body = await readBody(req);
@@ -2171,6 +2178,7 @@ async function createDirectSkillRunFromBody(req, project, body = {}, currentUser
     assignedToName: assigneeName,
     requirement: buildDirectSkillRequirement(body),
     createdBy: currentUser.id,
+    createdByName: currentUser.displayName || currentUser.username || currentUser.id,
     ownerUserId: assigneeUserId || currentUser.id
   });
   await writeOperationLog(req, {
