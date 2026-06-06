@@ -210,6 +210,7 @@ export default {
         'api.agentRuns.create': '直接执行创建 API',
         'api.agentWorkers.read': 'Worker 状态读取 API',
         'api.agentWorkers.heartbeat': 'Worker 心跳 API',
+        'api.agentWorkers.alias': 'Worker 设备花名 API',
         'api.agentRuns.claim': '直接执行领取 API',
         'api.agentRuns.log': '直接执行日志 API',
         'api.agentRuns.status': '直接执行状态 API',

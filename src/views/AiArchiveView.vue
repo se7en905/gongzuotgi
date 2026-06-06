@@ -7,14 +7,14 @@
           <h3>AI档案</h3>
           <p>完整保存美术执行台和直接执行的明细记录；删除明细只清理后端执行数据，不回退产物调用次数。</p>
         </div>
+        <label class="ai-archive-search-field">
+          <span>关键词</span>
+          <ElInput v-model="app.aiExecutionArchiveFilters.keyword" clearable placeholder="执行内容、Skill/md、Figma 链接、执行人" />
+        </label>
       </div>
     </template>
 
     <div class="ai-archive-filters">
-      <label class="ai-archive-filter-field ai-archive-filter-keyword">
-        <span>关键词</span>
-        <ElInput v-model="app.aiExecutionArchiveFilters.keyword" clearable placeholder="执行内容、Skill/md、Figma 链接、执行人" />
-      </label>
       <label class="ai-archive-filter-field">
         <span>执行人 / 操作人</span>
         <ElSelect v-model="app.aiExecutionArchiveFilters.userId" clearable filterable placeholder="全部人员">
@@ -65,7 +65,7 @@
         </template>
       </ElTableColumn>
       <ElTableColumn label="类型" width="100">
-        <template #default="{ row }">{{ app.workflowRunLabel(row) }}</template>
+        <template #default="{ row }">{{ app.directSkillRunContentKind(row) }}</template>
       </ElTableColumn>
       <ElTableColumn label="操作人" width="120">
         <template #default="{ row }">{{ app.directSkillRunOperatorName(row) }}</template>
@@ -114,10 +114,23 @@ export default {
 
 .ai-archive-filters {
   display: grid;
-  grid-template-columns: minmax(220px, 1.3fr) repeat(5, minmax(150px, 1fr)) auto;
+  grid-template-columns: repeat(5, minmax(150px, 1fr)) auto;
   gap: 12px;
   align-items: end;
   padding: 14px;
+}
+
+.ai-archive-search-field {
+  display: grid;
+  gap: 6px;
+  width: min(420px, 34vw);
+  min-width: 280px;
+
+  span {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+  }
 }
 
 .ai-archive-filter-field {
@@ -165,12 +178,22 @@ export default {
 }
 
 @media (max-width: 1200px) {
+  .ai-archive-search-field {
+    width: min(360px, 42vw);
+    min-width: 220px;
+  }
+
   .ai-archive-filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 760px) {
+  .ai-archive-search-field {
+    width: 100%;
+    min-width: 0;
+  }
+
   .ai-archive-filters {
     grid-template-columns: 1fr;
   }

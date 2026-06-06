@@ -91,7 +91,10 @@
         <div class="agent-worker-card-head">
           <div>
             <strong>{{ row.user.displayName || row.user.username || row.worker?.userName || '未命名组员' }}</strong>
-            <span>{{ row.worker?.deviceName || row.worker?.deviceId || '未启动 Worker' }}</span>
+            <span>
+              {{ app.directSkillWorkerDisplayName(row.worker) }}
+              <button v-if="app.canEditDirectSkillWorkerAlias(row.worker)" type="button" class="agent-worker-rename-button" @click="app.renameDirectSkillWorker(row.worker)">改名</button>
+            </span>
           </div>
           <div :class="['agent-heartbeat-badge', { alive: row.ready, warning: row.online && !row.ready }]">
             <svg v-if="row.ready" viewBox="0 0 112 34" aria-hidden="true">
@@ -145,7 +148,7 @@
         </template>
       </ElTableColumn>
       <ElTableColumn label="领取设备" min-width="150">
-        <template #default="{ row }">{{ row.claimedByDeviceId || app.directSkillWorkerForRun(row)?.deviceName || '未领取' }}</template>
+        <template #default="{ row }">{{ app.directSkillRunDeviceDisplayName(row) }}</template>
       </ElTableColumn>
       <ElTableColumn label="本机 Worker" min-width="240">
         <template #default="{ row }">{{ app.directSkillWorkerStatusText(row) }}</template>
@@ -317,8 +320,7 @@ export default {
     min-width: 0;
   }
 
-  strong,
-  span {
+  strong {
     display: block;
   }
 
@@ -330,6 +332,9 @@ export default {
   }
 
   span {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     margin-top: 4px;
     overflow: hidden;
     color: var(--muted);
@@ -501,6 +506,16 @@ export default {
     color: var(--muted);
     font-size: 12px;
   }
+}
+
+.agent-worker-rename-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 @media (max-width: 1200px) {

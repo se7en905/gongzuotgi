@@ -91,7 +91,7 @@
         </div>
         <div>
           <span>领取设备</span>
-          <strong>{{ app.selectedRun.claimedByDeviceId || app.directSkillWorkerForRun(app.selectedRun)?.deviceName || '未领取' }}</strong>
+          <strong>{{ app.directSkillRunDeviceDisplayName(app.selectedRun) }}</strong>
         </div>
         <div>
           <span>本机状态</span>

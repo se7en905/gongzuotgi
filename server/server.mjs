@@ -78,6 +78,7 @@ import {
   recordUsageCountersForOperationLog,
   recordUsageCountersForDirectSkillRun,
   recordUsageCountersForSkillValidation,
+  recordUsageCountersForSkillAliases,
   reconcileZentaoTaskSnapshot,
   upsertBugs,
   redactCodexConfig,
@@ -89,6 +90,7 @@ import {
   upsertTaskProcessingNote,
   updateArtProgressEvent,
   updateAgentRunFromWorker,
+  updateAgentWorkerAlias,
   upsertAgentWorker,
   upsertTasks,
   upsertAiFlowRecord,
@@ -699,7 +701,14 @@ async function handleApi(req, res, url) {
   if (req.method === 'PATCH' && url.pathname === '/api/skill-alias') {
     requirePermission(currentUser, 'api.skillAlias.manage');
     const body = await readBody(req);
-    const result = await saveSkillVersionOverride({ ...body, version: '', owner: '', allowVersion: false, allowAliases: true });
+    const result = await saveSkillVersionOverride({ ...body, version: '', allowVersion: false, allowAliases: true });
+    const usagePatch = await recordUsageCountersForSkillAliases(result.aliases || body.aliases || [], {
+      target: result.title || body.title || result.relativePath || body.relativePath || body.id || result.key,
+      kind: 'usage'
+    }).catch(error => {
+      console.warn('调用别名历史计数补录失败', error);
+      return { matched: 0 };
+    });
     await writeOperationLog(req, {
       user: currentUser,
       module: 'skill-inventory',
@@ -711,6 +720,19 @@ async function handleApi(req, res, url) {
       after: result,
       description: `${currentUser.displayName || currentUser.username} 修改产物调用别名`
     });
+    broadcastPlatformEvent('skill-version-overrides.changed', {
+      module: 'skill-inventory',
+      overrideKey: result.key,
+      projectId: result.projectId || '',
+      relativePath: result.relativePath || ''
+    });
+    if (usagePatch.matched) {
+      broadcastPlatformEvent('usage-counters.changed', {
+        module: 'skill-inventory',
+        target: result.title || result.relativePath || '',
+        matched: usagePatch.matched
+      });
+    }
     sendJson(res, 200, result);
     return;
   }
@@ -1263,6 +1285,29 @@ async function handleApi(req, res, url) {
       userId: currentUser.id,
       userName: currentUser.displayName || currentUser.username,
       lastHeartbeatAt: new Date().toISOString()
+    });
+    broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, module: 'agent-worker' });
+    sendJson(res, 200, worker);
+    return;
+  }
+
+  const agentWorkerAlias = url.pathname.match(/^\/api\/agent-workers\/([^/]+)\/alias$/);
+  if (req.method === 'PATCH' && agentWorkerAlias) {
+    requirePermission(currentUser, 'api.agentWorkers.alias');
+    const body = await readBody(req).catch(() => ({}));
+    const workerId = decodeURIComponent(agentWorkerAlias[1]);
+    const worker = await updateAgentWorkerAlias(workerId, currentUser.id, body.alias || body.deviceAlias || '');
+    if (!worker) throw new HttpError(404, '只能修改本人已绑定设备的花名。');
+    await writeOperationLog(req, {
+      user: currentUser,
+      module: 'agent-worker',
+      action: 'UPDATE_AGENT_WORKER_ALIAS',
+      actionName: '修改 Worker 设备花名',
+      targetType: 'agent-worker',
+      targetId: worker.id,
+      targetName: worker.deviceAlias || worker.deviceName || worker.deviceId,
+      after: { id: worker.id, deviceAlias: worker.deviceAlias, deviceName: worker.deviceName, deviceId: worker.deviceId },
+      description: `${currentUser.displayName || currentUser.username} 修改本机 Worker 设备花名为「${worker.deviceAlias || worker.deviceName || worker.deviceId}」`
     });
     broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, module: 'agent-worker' });
     sendJson(res, 200, worker);
@@ -3096,15 +3141,44 @@ async function loadSkillVersionOverrides() {
   try {
     const raw = await fs.readFile(skillVersionOverridesPath, 'utf8');
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : {};
+    const overrides = parsed && typeof parsed === 'object' ? parsed : {};
+    return normalizeSkillVersionAliasOverrides(overrides);
   } catch {
     return {};
   }
 }
 
+function normalizeSkillVersionAliasOverrides(overrides = {}) {
+  if (!overrides || typeof overrides !== 'object') return {};
+  const normalized = { ...overrides };
+  for (const [key, record] of Object.entries(overrides)) {
+    if (!record || typeof record !== 'object' || !Array.isArray(record.aliases)) continue;
+    const aliasKey = skillAliasOverrideKey({
+      projectId: record.projectId || '',
+      relativePath: record.relativePath || record.path || '',
+      path: record.relativePath || record.path || '',
+      id: record.id || ''
+    });
+    if (!aliasKey || aliasKey === key) continue;
+    const existingAlias = normalized[aliasKey] || {};
+    normalized[aliasKey] = {
+      ...existingAlias,
+      key: aliasKey,
+      id: existingAlias.id || record.id || '',
+      projectId: existingAlias.projectId || record.projectId || '',
+      title: existingAlias.title || record.title || '',
+      relativePath: existingAlias.relativePath || record.relativePath || record.path || '',
+      aliases: Array.isArray(existingAlias.aliases) ? existingAlias.aliases : record.aliases,
+      aliasHistory: mergeSkillAliasHistory(existingAlias.aliasHistory, existingAlias.aliases, record.aliasHistory, record.aliases),
+      updatedAt: existingAlias.updatedAt || record.updatedAt || ''
+    };
+  }
+  return normalized;
+}
+
 async function writeSkillVersionOverrides(overrides = {}) {
   await fs.mkdir(path.dirname(skillVersionOverridesPath), { recursive: true });
-  await fs.writeFile(skillVersionOverridesPath, `${JSON.stringify(overrides, null, 2)}\n`);
+  await fs.writeFile(skillVersionOverridesPath, `${JSON.stringify(normalizeSkillVersionAliasOverrides(overrides), null, 2)}\n`);
 }
 
 async function loadProjectScanCache() {
@@ -3589,6 +3663,21 @@ async function saveSkillVersionOverride(input = {}) {
     record.inventoryKind = inventoryKindChange ? inventoryKind : (previous.inventoryKind || '');
   }
   overrides[key] = record;
+  const aliasMirrorKey = aliases !== null ? skillAliasOverrideKey(input) : '';
+  if (aliasMirrorKey && aliasMirrorKey !== key) {
+    const previousAlias = overrides[aliasMirrorKey] || {};
+    overrides[aliasMirrorKey] = {
+      ...previousAlias,
+      key: aliasMirrorKey,
+      id: record.id || previousAlias.id || '',
+      projectId: record.projectId || previousAlias.projectId || '',
+      title: record.title || previousAlias.title || '',
+      relativePath: record.relativePath || previousAlias.relativePath || '',
+      aliases,
+      aliasHistory: mergeSkillAliasHistory(previousAlias.aliasHistory, previousAlias.aliases, aliasHistory, aliases),
+      updatedAt: record.updatedAt
+    };
+  }
   await writeSkillVersionOverrides(overrides);
   return record;
 }

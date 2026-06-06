@@ -61,6 +61,7 @@ const permissionCatalog = [
   { id: 'api.agentRuns.create', name: '直接执行创建 API', type: 'api', group: '后端接口', description: '创建由组员本机 Worker 领取的直接执行任务。' },
   { id: 'api.agentWorkers.read', name: 'Worker 状态读取 API', type: 'api', group: '后端接口', description: '读取本机 Worker 心跳、自检和在线状态。' },
   { id: 'api.agentWorkers.heartbeat', name: 'Worker 心跳 API', type: 'api', group: '后端接口', description: '允许组员本机 Worker 回传在线和自检状态。' },
+  { id: 'api.agentWorkers.alias', name: 'Worker 设备花名 API', type: 'api', group: '后端接口', description: '允许本人修改自己绑定设备在工作台里的展示花名。' },
   { id: 'api.agentRuns.claim', name: '直接执行领取 API', type: 'api', group: '后端接口', description: '允许组员本机 Worker 领取分配给自己的直接执行任务。' },
   { id: 'api.agentRuns.log', name: '直接执行日志 API', type: 'api', group: '后端接口', description: '允许组员本机 Worker 回传 Codex 执行日志。' },
   { id: 'api.agentRuns.status', name: '直接执行状态 API', type: 'api', group: '后端接口', description: '允许组员本机 Worker 回传执行状态、阻塞原因和结果。' },
@@ -87,7 +88,7 @@ const levelPermissions = {
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy',
     'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'run.start', 'run.cancel', 'review.submit', 'review.image.submit',
     'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.asset.create', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
-    'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.reviews.submit', 'api.codex.config.read', 'api.skillSources.manage', 'api.skillScan.run', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create'
+    'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.reviews.submit', 'api.codex.config.read', 'api.skillSources.manage', 'api.skillScan.run', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create'
   ],
   2: [
     'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.runs', 'menu.aiArchive',
@@ -194,7 +195,7 @@ function legacyRolePermissionAdditions(roleId = '') {
     'run.directSkill.create', 'run.directSkill.workerCommand',
     'skill.alias.manage', 'skill.usageLogs.view',
     'api.skillAlias.manage', 'api.agentRuns.create', 'api.agentWorkers.read',
-    'api.agentWorkers.heartbeat', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status'
+    'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status'
   ];
   if (roleId === 'reviewer') return ['menu.skillList', 'menu.aiMembers', 'skill.alias.manage', 'skill.usageLogs.view', 'api.skillAlias.manage'];
   if (roleId === 'viewer') return ['menu.skillList', 'menu.aiMembers', 'skill.usageLogs.view'];
@@ -661,7 +662,7 @@ function expandLegacyPermission(permission = '') {
   const legacy = {
     'projects.manage': ['skill.source.connect', 'skill.source.edit', 'skill.source.delete', 'api.skillSources.manage', 'api.skillSources.delete'],
     'runs.execute': ['run.create', 'run.start', 'run.cancel', 'task.sync', 'api.runs.execute'],
-    'agentRuns.manage': ['menu.agentWorkers', 'menu.aiArchive', 'run.directSkill.create', 'run.directSkill.workerCommand', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status'],
+    'agentRuns.manage': ['menu.agentWorkers', 'menu.aiArchive', 'run.directSkill.create', 'run.directSkill.workerCommand', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status'],
     'aiArchive.manage': ['menu.aiArchive', 'api.aiArchive.delete'],
     'runs.delete': ['run.delete', 'api.runs.delete'],
     'reviews.submit': ['review.submit', 'api.reviews.submit'],

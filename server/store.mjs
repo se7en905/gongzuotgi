@@ -694,6 +694,54 @@ export async function recordUsageCountersForDirectSkillRun(run = {}) {
   if (targets.length) await updateUsageCounters(targets);
 }
 
+export async function recordUsageCountersForSkillAliases(aliases = [], options = {}) {
+  const normalizedAliases = normalizeLineList(aliases)
+    .map(cleanString)
+    .filter(Boolean);
+  if (!normalizedAliases.length) return { matched: 0 };
+  const aliasKeys = normalizedAliases
+    .map(usageCounterKey)
+    .filter(Boolean)
+    .filter((value, index, array) => array.indexOf(value) === index);
+  if (!aliasKeys.length) return { matched: 0 };
+  const usageTarget = cleanString(options.target || options.targetName || normalizedAliases[0]);
+  const countKind = cleanString(options.kind || 'usage');
+  const afterTime = options.after ? Date.parse(options.after) : 0;
+  const targets = [];
+  const shouldUseRecord = record => {
+    const createdAt = Date.parse(record?.createdAt || record?.updatedAt || '');
+    if (afterTime && (!createdAt || createdAt < afterTime)) return false;
+    return true;
+  };
+  const addAliasHit = (record, source = 'art-progress') => {
+    if (!shouldUseRecord(record)) return;
+    const haystack = usageSearchTextFromRecord(record, source);
+    if (!haystack) return;
+    if (!aliasKeys.some(key => haystack.includes(key))) return;
+    const person = source === 'operation-log'
+      ? cleanString(record.displayName || record.username)
+      : cleanString(record.memberName || record.memberAccount);
+    targets.push({
+      key: usageTarget,
+      target: usageTarget,
+      person,
+      at: cleanString(record.createdAt || record.updatedAt),
+      source: `alias-${source}`,
+      kind: countKind,
+      eventKey: usageEventKey(`alias-${source}`, [record.id, usageTarget].filter(Boolean).join(':'), record.createdAt || record.updatedAt)
+    });
+  };
+  const events = await readJson(paths.artProgressEvents, []);
+  for (const event of Array.isArray(events) ? events : []) addAliasHit(event, 'art-progress');
+  const logs = await readJson(paths.operationLogs, []);
+  for (const log of Array.isArray(logs) ? logs : []) {
+    if (!isUsageLikeOperationLog(log)) continue;
+    addAliasHit(log, 'operation-log');
+  }
+  if (targets.length) await updateUsageCounters(targets);
+  return { matched: targets.length };
+}
+
 export async function upsertCodexConfig(input = {}) {
   const existing = await getCodexConfig();
   const apiKeyInput = String(input.apiKey || '').trim();
@@ -817,10 +865,31 @@ export async function upsertAgentWorker(input = {}) {
   const workers = await readJson(paths.agentWorkers, []);
   const worker = normalizeAgentWorker(input);
   const index = workers.findIndex(item => item.id === worker.id);
-  if (index >= 0) workers[index] = { ...workers[index], ...worker, createdAt: workers[index].createdAt || worker.createdAt };
+  if (index >= 0) workers[index] = {
+    ...workers[index],
+    ...worker,
+    deviceAlias: worker.deviceAlias || workers[index].deviceAlias || '',
+    createdAt: workers[index].createdAt || worker.createdAt
+  };
   else workers.push(worker);
   await writeJson(paths.agentWorkers, workers);
   return index >= 0 ? normalizeAgentWorker(workers[index]) : worker;
+}
+
+export async function updateAgentWorkerAlias(id, userId, alias = '') {
+  const workers = await readJson(paths.agentWorkers, []);
+  const workerId = cleanString(decodeURIComponent(String(id || '')));
+  const ownerId = cleanString(userId);
+  const index = workers.findIndex(item => cleanString(item.id) === workerId && cleanString(item.userId) === ownerId);
+  if (index === -1) return null;
+  const nextAlias = cleanString(alias).slice(0, 24);
+  workers[index] = {
+    ...workers[index],
+    deviceAlias: nextAlias,
+    updatedAt: new Date().toISOString()
+  };
+  await writeJson(paths.agentWorkers, workers);
+  return normalizeAgentWorker(workers[index]);
 }
 
 export async function claimNextAgentRun(input = {}) {
@@ -2068,7 +2137,11 @@ function normalizeUsageCounterBucket(input = {}, fallbackKey = '') {
     researchSyncCount,
     validationCount,
     eventKeys: Array.isArray(input.eventKeys) ? input.eventKeys.map(cleanString).filter(Boolean) : [],
-    aliases: normalizeLineList(input.aliases || input.aliasHistory || input.historicalAliases || []),
+    aliases: normalizeLineList([
+      ...(Array.isArray(input.aliases) ? input.aliases : normalizeLineList(input.aliases || [])),
+      ...(Array.isArray(input.aliasHistory) ? input.aliasHistory : normalizeLineList(input.aliasHistory || [])),
+      ...(Array.isArray(input.historicalAliases) ? input.historicalAliases : normalizeLineList(input.historicalAliases || []))
+    ]),
     people: normalizedPeople,
     peopleCount: Number(input.peopleCount || Object.keys(normalizedPeople).length),
     firstAt: cleanString(input.firstAt),
@@ -2235,6 +2308,52 @@ function usageTargetsFromDirectSkillRun(run = {}) {
   });
 }
 
+function usageSearchTextFromRecord(record = {}, source = 'art-progress') {
+  const metadata = record.metadata && typeof record.metadata === 'object' ? record.metadata : {};
+  const values = source === 'operation-log'
+    ? [
+        record.action,
+        record.actionName,
+        record.targetName,
+        record.description,
+        metadata.productName,
+        metadata.artifactName,
+        metadata.skillName,
+        metadata.operationName,
+        metadata.alias,
+        metadata.path,
+        metadata.filePath,
+        metadata.skillPath,
+        metadata.artifactPath,
+        ...(Array.isArray(metadata.aliases) ? metadata.aliases : []),
+        ...(Array.isArray(metadata.artifactNames) ? metadata.artifactNames : []),
+        ...(Array.isArray(metadata.artifactPaths) ? metadata.artifactPaths : [])
+      ]
+    : [
+        record.eventType,
+        record.skillId,
+        record.skillName,
+        record.repoPath,
+        record.title,
+        record.stage,
+        record.summary,
+        metadata.path,
+        metadata.filePath,
+        metadata.finalPath,
+        metadata.skillPath,
+        metadata.artifactPath,
+        metadata.artifactLocation,
+        ...(Array.isArray(metadata.artifactPaths) ? metadata.artifactPaths : []),
+        ...(Array.isArray(metadata.artifactNames) ? metadata.artifactNames : []),
+        ...(Array.isArray(metadata.calledArtifacts) ? metadata.calledArtifacts.flatMap(item => [item?.id, item?.name, item?.path]) : []),
+        ...(Array.isArray(metadata.matchedArtifacts) ? metadata.matchedArtifacts.flatMap(item => [item?.id, item?.name, item?.path]) : [])
+      ];
+  return values
+    .map(value => usageCounterKey(value))
+    .filter(Boolean)
+    .join('\n');
+}
+
 function isUsageLikeArtProgressEvent(event = {}) {
   const type = cleanString(event.eventType);
   if (['reporter_test', 'reporter_installed'].includes(type)) return false;
@@ -2382,6 +2501,7 @@ function normalizeAgentWorker(input = {}) {
     userId,
     userName: cleanString(input.userName || input.displayName),
     deviceId,
+    deviceAlias: cleanString(input.deviceAlias),
     deviceName: cleanString(input.deviceName || input.hostname || os.hostname()),
     hostname: cleanString(input.hostname || os.hostname()),
     platform: cleanString(input.platform || os.platform()),

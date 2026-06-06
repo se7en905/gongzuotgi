@@ -528,14 +528,14 @@ const roleLevelPermissionPresets = {
     'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'run.start', 'run.cancel', 'run.delete', 'review.submit', 'review.image.submit',
     'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.source.delete', 'skill.asset.create', 'skill.asset.void', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
     'codex.config.manage', 'user.manage', 'role.manage',
-    'api.skillSources.manage', 'api.skillSources.delete', 'api.skillScan.run', 'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.runs.delete', 'api.aiArchive.delete', 'api.reviews.submit', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.skillAsset.void', 'api.codex.config.read', 'api.codex.config.manage', 'api.users.manage', 'api.roles.manage', 'api.taskCenter.config.manage', 'api.operationLogs.read', 'api.operationLogs.delete'
+    'api.skillSources.manage', 'api.skillSources.delete', 'api.skillScan.run', 'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.runs.delete', 'api.aiArchive.delete', 'api.reviews.submit', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.skillAsset.void', 'api.codex.config.read', 'api.codex.config.manage', 'api.users.manage', 'api.roles.manage', 'api.taskCenter.config.manage', 'api.operationLogs.read', 'api.operationLogs.delete'
   ],
   3: [
     'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive',
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy',
     'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'run.start', 'run.cancel', 'review.submit', 'review.image.submit',
     'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.asset.create', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
-    'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.reviews.submit', 'api.codex.config.read', 'api.skillSources.manage', 'api.skillScan.run', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create'
+    'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.reviews.submit', 'api.codex.config.read', 'api.skillSources.manage', 'api.skillScan.run', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create'
   ],
   2: [
     'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.runs', 'menu.aiArchive',
@@ -4397,6 +4397,10 @@ export default {
         results.forEach((result, index) => {
           if (result.status === 'rejected') console.warn(`${jobs[index][0]}恢复失败，已保留当前页面状态`, result.reason);
         });
+        if (this.can('menu.skillList')) {
+          this.applySkillAliasOverridesToScans();
+          this.saveWorkbenchDisplayCache('scans', this.scans);
+        }
         if (!this.platformEventSource) this.startPlatformEventSync();
       } finally {
         this.workbenchStateRestoring = false;
@@ -4891,8 +4895,14 @@ export default {
       if (type === 'skill-version-overrides.changed' && this.can('menu.skillList')) {
         this.schedulePlatformRefresh('skill-version-overrides', async () => {
           await this.refreshSkillVersionOverrides();
+          this.applySkillAliasOverridesToScans();
           this.saveWorkbenchDisplayCache('scans', this.scans);
         });
+      }
+      if (type === 'usage-counters.changed' && this.can('menu.skillList')) {
+        this.schedulePlatformRefresh('usage-counters', async () => {
+          await this.refreshUsageCounters();
+        }, 300);
       }
       if (type === 'project-scan-cache.changed' && this.can('menu.skillList')) {
         this.schedulePlatformRefresh('project-scan-cache', async () => {
@@ -5232,12 +5242,14 @@ export default {
         this.skillAliasOverrides = aliasOverrides;
         this.skillAliasHistoryOverrides = aliasHistoryOverrides;
         this.skillInventoryKindOverrides = inventoryKindOverrides;
+        return true;
       } catch {
         this.skillOwnerOverrides = this.skillOwnerOverrides || {};
         this.skillDisplayNameOverrides = this.skillDisplayNameOverrides || {};
         this.skillAliasOverrides = this.skillAliasOverrides || {};
         this.skillAliasHistoryOverrides = this.skillAliasHistoryOverrides || {};
         this.skillInventoryKindOverrides = this.skillInventoryKindOverrides || {};
+        return false;
       }
     },
 
@@ -7460,6 +7472,66 @@ export default {
         if (Array.isArray(overrides[key])) values.push(...overrides[key]);
       }
       return this.normalizeSkillAliasList(values);
+    },
+
+    applySkillAliasOverridesToScans() {
+      const scans = {};
+      let changed = false;
+      for (const [projectId, scan] of Object.entries(this.scans || {})) {
+        const skills = Array.isArray(scan?.skills)
+          ? scan.skills.map(skill => {
+            const aliases = this.skillAliasOverrideFor({ ...skill, projectId });
+            const aliasHistory = this.skillAliasHistoryOverrideFor({ ...skill, projectId });
+            if (!Array.isArray(aliases) && !aliasHistory.length) return skill;
+            const nextAliases = this.normalizeSkillAliasList(Array.isArray(aliases) ? aliases : skill.aliases || []);
+            const nextAliasHistory = this.normalizeSkillAliasHistoryList([
+              ...(Array.isArray(skill.aliasHistory) ? skill.aliasHistory : []),
+              ...aliasHistory,
+              ...nextAliases
+            ]);
+            const sameAliases = nextAliases.join('｜') === this.normalizeSkillAliasList(skill.aliases || []).join('｜');
+            const sameHistory = nextAliasHistory.join('｜') === this.normalizeSkillAliasHistoryList(skill.aliasHistory || []).join('｜');
+            if (sameAliases && sameHistory && skill.hasAliasOverride === nextAliases.length > 0) return skill;
+            changed = true;
+            return {
+              ...skill,
+              aliases: nextAliases,
+              manualAliases: nextAliases,
+              aliasHistory: nextAliasHistory,
+              hasAliasOverride: nextAliases.length > 0
+            };
+          })
+          : scan?.skills;
+        scans[projectId] = { ...scan, skills };
+      }
+      if (!changed) return false;
+      this.scans = scans;
+      this.clearSkillUsageLogCache();
+      this.syncOpenSkillPreviewAliasesFromOverrides();
+      return true;
+    },
+
+    syncOpenSkillPreviewAliasesFromOverrides() {
+      const skill = this.skillPreview?.skill;
+      if (!this.skillPreview?.visible || !skill) return;
+      const aliases = this.skillAliasOverrideFor(skill);
+      const aliasHistory = this.skillAliasHistoryOverrideFor(skill);
+      if (!Array.isArray(aliases)) return;
+      const normalizedAliases = this.normalizeSkillAliasList(aliases);
+      const normalizedAliasHistory = this.normalizeSkillAliasHistoryList([
+        ...(Array.isArray(skill.aliasHistory) ? skill.aliasHistory : []),
+        ...aliasHistory,
+        ...normalizedAliases
+      ]);
+      const nextSkill = {
+        ...skill,
+        aliases: normalizedAliases,
+        manualAliases: normalizedAliases,
+        aliasHistory: normalizedAliasHistory,
+        hasAliasOverride: normalizedAliases.length > 0
+      };
+      this.skillPreview = { ...this.skillPreview, skill: nextSkill };
+      this.skillPreviewAliasesDraft = normalizedAliases.join('、');
     },
 
     gitHistoryOwnerNames(skill = {}) {
@@ -10194,6 +10266,12 @@ export default {
       return String(value || '').replace(/\\/g, '/').toLowerCase();
     },
 
+    usageCompactMatchText(value = '') {
+      return this.normalizeUsageMatchText(value)
+        .replace(/\.(md|markdown)/g, '')
+        .replace(/[\\/_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '');
+    },
+
     isGenericUsageNeedle(value = '') {
       const text = String(value || '')
         .trim()
@@ -10347,6 +10425,17 @@ export default {
       if (!targets.length) return true;
       const rowKeys = this.usageRowExplicitTargetKeys(row);
       if (!rowKeys.length) return true;
+      const aliasKeys = [
+        ...(Array.isArray(row.aliases) ? row.aliases : []),
+        ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : []),
+        ...(Array.isArray(row.aliasHistory) ? row.aliasHistory : []),
+        ...(Array.isArray(row.skill?.aliasHistory) ? row.skill.aliasHistory : [])
+      ]
+        .map(value => this.usageCounterKeyForProduct(value))
+        .filter(value => value && value.length >= 4 && !this.isGenericUsageNeedle(value));
+      const context = source === 'validation' ? this.usageContextTextFromValidation(item) : this.usageContextTextFromArtProgress(item);
+      const compactContext = this.usageCompactMatchText(context);
+      if (aliasKeys.some(alias => compactContext.includes(alias))) return true;
       return targets.some(target => rowKeys.some(rowKey => target === rowKey));
     },
 
@@ -10623,7 +10712,13 @@ export default {
       const path = needles.paths.find(needle => needle.length >= 8 && !this.isGenericUsageNeedle(needle) && matchText.includes(needle));
       const file = needles.files.find(needle => needle.length >= 4 && !this.isGenericUsageNeedle(needle) && matchText.includes(needle));
       const name = needles.names.find(needle => needle.length >= 6 && !this.isGenericUsageNeedle(needle) && matchText.includes(needle));
-      const alias = needles.aliases.find(needle => needle.length >= 4 && !this.isGenericUsageNeedle(needle) && matchText.includes(needle));
+      const compactContext = this.usageCompactMatchText(context);
+      const alias = needles.aliases.find(needle => {
+        const compactNeedle = this.usageCounterKeyForProduct(needle);
+        return needle.length >= 4
+          && !this.isGenericUsageNeedle(needle)
+          && (matchText.includes(needle) || context.includes(needle) || (compactNeedle && compactContext.includes(compactNeedle)));
+      });
       const match = { path, file, name, alias };
       if (!path && !file && !name && !alias) return { matched: false };
       if (source !== 'validation' && !this.isExplicitBackfillAssetUse(item, matchText, match)) return { matched: false };
@@ -11643,7 +11738,12 @@ export default {
           })
         });
         const savedAliases = Array.isArray(result.aliases) ? result.aliases : aliasDraft;
-        const nextSkill = { ...skill, version: result.version, aliases: savedAliases, manualAliases: savedAliases, hasAliasOverride: savedAliases.length > 0 };
+        const savedAliasHistory = this.normalizeSkillAliasHistoryList([
+          ...(Array.isArray(result.aliasHistory) ? result.aliasHistory : []),
+          ...(Array.isArray(skill.aliasHistory) ? skill.aliasHistory : []),
+          ...savedAliases
+        ]);
+        const nextSkill = { ...skill, version: result.version, aliases: savedAliases, manualAliases: savedAliases, aliasHistory: savedAliasHistory, hasAliasOverride: savedAliases.length > 0 };
         this.skillPreview = { ...this.skillPreview, skill: nextSkill };
         this.skillPreviewAliasesDraft = this.normalizeSkillAliasList(savedAliases).join('、');
         this.patchSkillVersionInScans(nextSkill, result.version, savedAliases);
@@ -11679,7 +11779,12 @@ export default {
           })
         });
         const savedAliases = Array.isArray(result.aliases) ? result.aliases : aliasDraft;
-        const nextSkill = { ...skill, aliases: savedAliases, manualAliases: savedAliases, hasAliasOverride: savedAliases.length > 0 };
+        const savedAliasHistory = this.normalizeSkillAliasHistoryList([
+          ...(Array.isArray(result.aliasHistory) ? result.aliasHistory : []),
+          ...(Array.isArray(skill.aliasHistory) ? skill.aliasHistory : []),
+          ...savedAliases
+        ]);
+        const nextSkill = { ...skill, aliases: savedAliases, manualAliases: savedAliases, aliasHistory: savedAliasHistory, hasAliasOverride: savedAliases.length > 0 };
         this.skillPreview = { ...this.skillPreview, skill: nextSkill };
         this.skillPreviewAliasesDraft = this.normalizeSkillAliasList(savedAliases).join('、');
         this.patchSkillVersionInScans(nextSkill, nextSkill.version || skill.version || '', savedAliases);
@@ -14376,6 +14481,53 @@ export default {
       return this.agentWorkerDisplayRows.find(worker => worker.userId === userId) || null;
     },
 
+    directSkillWorkerDisplayName(worker = null) {
+      if (!worker) return '未启动 Worker';
+      return worker.deviceAlias || worker.deviceName || worker.deviceId || '未命名设备';
+    },
+
+    directSkillRunDeviceDisplayName(run = null) {
+      const worker = this.directSkillWorkerForRun(run);
+      if (worker) return this.directSkillWorkerDisplayName(worker);
+      return run?.claimedByDeviceId || '未领取';
+    },
+
+    canEditDirectSkillWorkerAlias(worker = null) {
+      const workerUserId = String(worker?.userId || '').trim();
+      const currentUserId = String(this.currentUser?.id || '').trim();
+      return Boolean(worker?.id && workerUserId && currentUserId && workerUserId === currentUserId && this.can('api.agentWorkers.alias'));
+    },
+
+    async renameDirectSkillWorker(worker = null) {
+      if (!this.canEditDirectSkillWorkerAlias(worker)) {
+        ElMessage.warning('只能修改自己已绑定设备的花名');
+        return;
+      }
+      const { value } = await ElMessageBox.prompt('请输入这台设备在工作台里展示的花名。留空会恢复为真实设备名。', '修改设备花名', {
+        confirmButtonText: '保存',
+        cancelButtonText: '取消',
+        inputValue: worker.deviceAlias || '',
+        inputPlaceholder: worker.deviceName || worker.deviceId || '设备花名',
+        inputPattern: /^.{0,24}$/,
+        inputErrorMessage: '花名最多 24 个字符'
+      }).catch(() => ({ value: null }));
+      if (value === null) return;
+      const alias = String(value || '').trim();
+      this.loading.agentWorkers = true;
+      try {
+        this.agentWorkers = this.agentWorkers.map(item => item.id === worker.id ? { ...item, deviceAlias: alias } : item);
+        const updated = await this.api(`/api/agent-workers/${encodeURIComponent(worker.id)}/alias`, {
+          method: 'PATCH',
+          body: JSON.stringify({ alias })
+        });
+        this.agentWorkers = this.agentWorkers.map(item => item.id === updated.id ? updated : item);
+        await this.refreshAgentWorkers();
+        ElMessage.success('设备花名已保存');
+      } finally {
+        this.loading.agentWorkers = false;
+      }
+    },
+
     directSkillUserCanExecute(user = null) {
       if (!user || user.disabled === true) return false;
       if (user.role === 'admin') return true;
@@ -14433,7 +14585,7 @@ export default {
       const online = this.directSkillWorkerOnline(worker);
       const figma = worker.figmaMcpReady ? 'Figma MCP 已就绪' : 'Figma MCP 未就绪';
       const codex = worker.codexReady ? 'Codex 已就绪' : 'Codex 未就绪';
-      return `${online ? '在线' : '离线'} · ${codex} · ${figma}`;
+      return `${this.directSkillWorkerDisplayName(worker)} · ${online ? '在线' : '离线'} · ${codex} · ${figma}`;
     },
 
     directSkillRunOperatorName(run = null) {
