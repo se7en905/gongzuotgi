@@ -728,6 +728,7 @@ export default {
       skillOwnerOverrides: {},
       skillDisplayNameOverrides: {},
       skillAliasOverrides: {},
+      skillAliasHistoryOverrides: {},
       skillInventoryKindOverrides: {},
       skillSourceDisplayDrafts: {},
       skillPreview: {
@@ -5172,6 +5173,7 @@ export default {
         const ownerOverrides = {};
         const displayNameOverrides = {};
         const aliasOverrides = {};
+        const aliasHistoryOverrides = {};
         const inventoryKindOverrides = {};
         for (const [key, record] of Object.entries(overrides)) {
           const owner = this.displayPersonList(record?.owner || record?.uploader || '');
@@ -5204,6 +5206,18 @@ export default {
               aliasOverrides[itemKey] = record.aliases;
             });
           }
+          if (Array.isArray(record?.aliasHistory) || Array.isArray(record?.aliases)) {
+            const history = this.normalizeSkillAliasHistoryList([
+              ...(Array.isArray(record?.aliasHistory) ? record.aliasHistory : []),
+              ...(Array.isArray(record?.aliases) ? record.aliases : [])
+            ]);
+            const aliasKeys = String(key || '').startsWith('alias:') || String(record?.key || '').startsWith('alias:')
+              ? [key, record?.key].map(value => String(value || '').trim()).filter(Boolean)
+              : overrideKeys;
+            aliasKeys.forEach(itemKey => {
+              aliasHistoryOverrides[itemKey] = history;
+            });
+          }
           if (Object.prototype.hasOwnProperty.call(record || {}, 'inventoryKind')) {
             const kindKeys = String(key || '').startsWith('kind:') || String(record?.key || '').startsWith('kind:')
               ? [key, record?.key].map(value => String(value || '').trim()).filter(Boolean)
@@ -5216,11 +5230,13 @@ export default {
         this.skillOwnerOverrides = ownerOverrides;
         this.skillDisplayNameOverrides = displayNameOverrides;
         this.skillAliasOverrides = aliasOverrides;
+        this.skillAliasHistoryOverrides = aliasHistoryOverrides;
         this.skillInventoryKindOverrides = inventoryKindOverrides;
       } catch {
         this.skillOwnerOverrides = this.skillOwnerOverrides || {};
         this.skillDisplayNameOverrides = this.skillDisplayNameOverrides || {};
         this.skillAliasOverrides = this.skillAliasOverrides || {};
+        this.skillAliasHistoryOverrides = this.skillAliasHistoryOverrides || {};
         this.skillInventoryKindOverrides = this.skillInventoryKindOverrides || {};
       }
     },
@@ -7437,6 +7453,15 @@ export default {
       return null;
     },
 
+    skillAliasHistoryOverrideFor(input = {}) {
+      const overrides = this.skillAliasHistoryOverrides || {};
+      const values = [];
+      for (const key of this.skillAliasOverrideKeys(input)) {
+        if (Array.isArray(overrides[key])) values.push(...overrides[key]);
+      }
+      return this.normalizeSkillAliasList(values);
+    },
+
     gitHistoryOwnerNames(skill = {}) {
       const history = Array.isArray(skill.git?.history) ? skill.git.history : [];
       const orderedHistory = [...history]
@@ -7497,6 +7522,11 @@ export default {
       const manualAliases = this.normalizeSkillAliasList(
         Array.isArray(aliasOverride) ? aliasOverride : (Array.isArray(skill.aliases) ? skill.aliases : [])
       );
+      const aliasHistory = this.normalizeSkillAliasHistoryList([
+        ...(Array.isArray(skill.aliasHistory) ? skill.aliasHistory : []),
+        ...this.skillAliasHistoryOverrideFor({ ...skill, projectId: projectRow.id }),
+        ...manualAliases
+      ]);
       const aliases = this.normalizeSkillAliasList([
         ...manualAliases,
         ...this.generateSkillAliases({ ...skill, relativePath })
@@ -7526,6 +7556,7 @@ export default {
         relativePath,
         originalProductDisplayName: skill.originalProductDisplayName || directoryFileName || skill.productFileName || skill.productDisplayName || '',
         aliases,
+        aliasHistory,
         hidden: skill.hidden === true,
         hiddenAt: skill.hiddenAt || '',
         hiddenBy: skill.hiddenBy || '',
@@ -7541,6 +7572,7 @@ export default {
           projectId: projectRow.id,
           aliases,
           manualAliases,
+          aliasHistory,
           hasAliasOverride: manualAliases.length > 0,
           inventoryKind
         }
@@ -7576,6 +7608,8 @@ export default {
         row.productDisplayName || '',
         (Array.isArray(row.aliases) ? row.aliases : []).join('|'),
         (Array.isArray(row.skill?.aliases) ? row.skill.aliases : []).join('|'),
+        (Array.isArray(row.aliasHistory) ? row.aliasHistory : []).join('|'),
+        (Array.isArray(row.skill?.aliasHistory) ? row.skill.aliasHistory : []).join('|'),
         row.version || row.skill?.version || '',
         row.hidden === true ? 'hidden' : 'visible',
         this.usageCounters?.updatedAt || '',
@@ -7599,6 +7633,11 @@ export default {
         ...(Array.isArray(skill.aliases) ? skill.aliases : []),
         ...this.generateSkillAliases({ ...skill, relativePath })
       ]);
+      const aliasHistory = this.normalizeSkillAliasHistoryList([
+        ...(Array.isArray(skill.aliasHistory) ? skill.aliasHistory : []),
+        ...this.skillAliasHistoryOverrideFor({ ...skill, projectId: projectRow.id }),
+        ...(Array.isArray(skill.aliases) ? skill.aliases : [])
+      ]);
       return {
         uid: `${projectRow.id}:${skill.id}:${skill.path || ''}`,
         id: skill.id,
@@ -7613,10 +7652,11 @@ export default {
         path: skill.path || '',
         relativePath,
         aliases,
+        aliasHistory,
         hidden: skill.hidden === true,
         skillInventoryKind: this.skillInventoryKind(skill),
         scenes: this.skillScenes(skill),
-        skill: { ...skill, projectId: projectRow.id, aliases, manualAliases: this.normalizeSkillAliasList(skill.aliases || []), hasAliasOverride: Array.isArray(skill.aliases) && skill.aliases.length > 0 }
+        skill: { ...skill, projectId: projectRow.id, aliases, aliasHistory, manualAliases: this.normalizeSkillAliasList(skill.aliases || []), hasAliasOverride: Array.isArray(skill.aliases) && skill.aliases.length > 0 }
       };
     },
 
@@ -7766,6 +7806,7 @@ export default {
       const keys = this.usageRowExplicitTargetKeys(row);
       if (this.isTaskArtBriefAssetRow(row)) keys.push('zentaoartbriefproduct');
       const seen = new Set();
+      const seenEventKeys = new Set();
       const people = {};
       let count = 0;
       let usageCount = 0;
@@ -7776,13 +7817,19 @@ export default {
         const bucket = buckets[normalizedKey];
         if (!bucket || seen.has(normalizedKey)) return;
         seen.add(normalizedKey);
-        count += Number(bucket.count || bucket.usageCount || 0);
-        usageCount += Number(bucket.usageCount || 0);
-        validationCount += Number(bucket.validationCount || 0);
-        researchSyncCount += Number(bucket.researchSyncCount || 0);
+        const eventKeys = Array.isArray(bucket.eventKeys) ? bucket.eventKeys.filter(Boolean) : [];
+        const newEventKeys = eventKeys.filter(eventKey => !seenEventKeys.has(eventKey));
+        const eventRatio = eventKeys.length ? newEventKeys.length / eventKeys.length : 1;
+        if (!eventRatio) return;
+        eventKeys.forEach(eventKey => seenEventKeys.add(eventKey));
+        const applyCount = value => Math.round(Number(value || 0) * eventRatio);
+        count += applyCount(bucket.count || bucket.usageCount || 0);
+        usageCount += applyCount(bucket.usageCount || 0);
+        validationCount += applyCount(bucket.validationCount || 0);
+        researchSyncCount += applyCount(bucket.researchSyncCount || 0);
         Object.entries(bucket.people || {}).forEach(([person, personCount]) => {
           if (!person) return;
-          people[person] = Number(people[person] || 0) + Number(personCount || 0);
+          people[person] = Number(people[person] || 0) + applyCount(personCount || 0);
         });
       });
       return { count, people, usageCount, validationCount, researchSyncCount, bucketCount: seen.size };
@@ -7813,7 +7860,9 @@ export default {
       const rowKeys = this.usageRowExplicitTargetKeys(row);
       const missingAliasKeys = [
         ...(Array.isArray(row.aliases) ? row.aliases : []),
-        ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : [])
+        ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : []),
+        ...(Array.isArray(row.aliasHistory) ? row.aliasHistory : []),
+        ...(Array.isArray(row.skill?.aliasHistory) ? row.skill.aliasHistory : [])
       ]
         .map(value => this.usageCounterKeyForProduct(value))
         .filter(value => value && value.length >= 4 && !this.isGenericUsageNeedle(value) && !buckets[value]);
@@ -8075,6 +8124,24 @@ export default {
         output.push(text);
       }
       return output.slice(0, 12);
+    },
+
+    normalizeSkillAliasHistoryList(value = []) {
+      const raw = Array.isArray(value)
+        ? value
+        : String(value || '').split(/[,，、\n\r]+/);
+      const blocked = /^(skill|skills|md|markdown|codex|mcp|figma|git|ai|工具|技能|文档|流程|规范|验证|平台|资源|图片)$/i;
+      const seen = new Set();
+      const output = [];
+      for (const item of raw) {
+        const text = String(item || '').trim();
+        if (!text || text.length < 2 || text.length > 80 || blocked.test(text)) continue;
+        const key = this.usageCounterKeyForProduct(text) || text.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        output.push(text);
+      }
+      return output.slice(-80);
     },
 
     extractSkillAliasesFromContent(content = '') {
@@ -8960,7 +9027,9 @@ export default {
           this.fileNameFromPath(row.relativePath || row.path || row.skill?.git?.relativePath),
           ...this.validationConcreteNamesFromPath(row.relativePath || row.path || row.skill?.git?.relativePath),
           ...(Array.isArray(row.aliases) ? row.aliases : []),
-          ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : [])
+          ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : []),
+          ...(Array.isArray(row.aliasHistory) ? row.aliasHistory : []),
+          ...(Array.isArray(row.skill?.aliasHistory) ? row.skill.aliasHistory : [])
         ]);
     },
 
@@ -8986,7 +9055,9 @@ export default {
         row.relativePath,
         row.path,
         ...(Array.isArray(row.aliases) ? row.aliases : []),
-        ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : [])
+        ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : []),
+        ...(Array.isArray(row.aliasHistory) ? row.aliasHistory : []),
+        ...(Array.isArray(row.skill?.aliasHistory) ? row.skill.aliasHistory : [])
       ])
         .map(value => this.normalizeValidationMatchText(value))
         .filter(value => value && value.length >= 4 && !this.isGenericValidationMatchName(value))
@@ -9201,6 +9272,8 @@ export default {
         row.productDisplayName,
         ...(Array.isArray(row.aliases) ? row.aliases : []),
         ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : []),
+        ...(Array.isArray(row.aliasHistory) ? row.aliasHistory : []),
+        ...(Array.isArray(row.skill?.aliasHistory) ? row.skill.aliasHistory : []),
         this.fileNameFromPath(row.relativePath),
         this.fileNameFromPath(row.path),
         this.fileNameFromPath(row.skill?.git?.relativePath),
@@ -10236,6 +10309,8 @@ export default {
         row.title,
         ...(Array.isArray(row.aliases) ? row.aliases : []),
         ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : []),
+        ...(Array.isArray(row.aliasHistory) ? row.aliasHistory : []),
+        ...(Array.isArray(row.skill?.aliasHistory) ? row.skill.aliasHistory : []),
         row.skill?.productDisplayName,
         row.skill?.displayName,
         row.skill?.commonName,
@@ -10364,7 +10439,9 @@ export default {
         .filter(value => value && value.length >= 6 && !this.isGenericUsageNeedle(value));
       const aliasValues = [
         ...(Array.isArray(row.aliases) ? row.aliases : []),
-        ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : [])
+        ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : []),
+        ...(Array.isArray(row.aliasHistory) ? row.aliasHistory : []),
+        ...(Array.isArray(row.skill?.aliasHistory) ? row.skill.aliasHistory : [])
       ]
         .map(value => String(value || '').trim())
         .filter(value => value && value.length >= 4 && !this.isGenericUsageNeedle(value));
@@ -10647,7 +10724,9 @@ export default {
         row.skill?.path,
         row.skill?.git?.relativePath,
         ...(Array.isArray(row.aliases) ? row.aliases : []),
-        ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : [])
+        ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : []),
+        ...(Array.isArray(row.aliasHistory) ? row.aliasHistory : []),
+        ...(Array.isArray(row.skill?.aliasHistory) ? row.skill.aliasHistory : [])
       ].map(value => String(value || '')).join('\n'));
       return this.isTaskArtBriefProductName(text);
     },
@@ -10804,6 +10883,10 @@ export default {
       return [
         row.uid || row.id || row.productDisplayName || row.title,
         row.relativePath || row.path || '',
+        (Array.isArray(row.aliases) ? row.aliases : []).join('|'),
+        (Array.isArray(row.skill?.aliases) ? row.skill.aliases : []).join('|'),
+        (Array.isArray(row.aliasHistory) ? row.aliasHistory : []).join('|'),
+        (Array.isArray(row.skill?.aliasHistory) ? row.skill.aliasHistory : []).join('|'),
         this.artProgressEvents.length,
         this.artProgressOperationLogRows.length,
         this.taskArtBriefUsageLogs.length
@@ -11615,11 +11698,21 @@ export default {
       const targetPath = String(skill.git?.relativePath || skill.relativePath || skill.path || '');
       const targetId = String(skill.id || '');
       const normalizedAliases = this.normalizeSkillAliasList(aliases);
+      const normalizedAliasHistory = this.normalizeSkillAliasHistoryList([
+        ...(Array.isArray(skill.aliasHistory) ? skill.aliasHistory : []),
+        ...(Array.isArray(skill.skill?.aliasHistory) ? skill.skill.aliasHistory : []),
+        ...(Array.isArray(skill.aliases) ? skill.aliases : []),
+        ...(Array.isArray(skill.skill?.aliases) ? skill.skill.aliases : []),
+        ...normalizedAliases
+      ]);
       const aliasOverrideKeys = this.skillAliasOverrideKeys(skill);
       if (normalizedAliases.length || aliasOverrideKeys.length) {
         const nextAliasOverrides = { ...(this.skillAliasOverrides || {}) };
+        const nextAliasHistoryOverrides = { ...(this.skillAliasHistoryOverrides || {}) };
         for (const key of aliasOverrideKeys) nextAliasOverrides[key] = normalizedAliases;
+        for (const key of aliasOverrideKeys) nextAliasHistoryOverrides[key] = normalizedAliasHistory;
         this.skillAliasOverrides = nextAliasOverrides;
+        this.skillAliasHistoryOverrides = nextAliasHistoryOverrides;
       }
       const scans = {};
       for (const [projectId, scan] of Object.entries(this.scans || {})) {
@@ -11635,6 +11728,7 @@ export default {
                   version,
                   aliases: normalizedAliases,
                   manualAliases: normalizedAliases,
+                  aliasHistory: normalizedAliasHistory,
                   hasAliasOverride: normalizedAliases.length > 0
                 };
               }

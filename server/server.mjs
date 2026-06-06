@@ -3458,6 +3458,7 @@ function skillUsageCandidateKeys(skill = {}) {
     skill.displayName,
     skill.title,
     ...(Array.isArray(skill.aliases) ? skill.aliases : []),
+    ...(Array.isArray(skill.aliasHistory) ? skill.aliasHistory : []),
     path.basename(String(skill.relativePath || '').replace(/\\/g, '/')),
     path.basename(String(skill.path || '').replace(/\\/g, '/')),
     path.basename(String(skill.git?.relativePath || '').replace(/\\/g, '/'))
@@ -3564,6 +3565,9 @@ async function saveSkillVersionOverride(input = {}) {
   if (!allowVersion && aliases === null) throw statusError(400, '请填写调用别名。');
   const overrides = await loadSkillVersionOverrides();
   const previous = overrides[key] || {};
+  const aliasHistory = aliases === null
+    ? mergeSkillAliasHistory(previous.aliasHistory, previous.aliases)
+    : mergeSkillAliasHistory(previous.aliasHistory, previous.aliases, aliases);
   const record = {
     ...previous,
     key,
@@ -3573,6 +3577,7 @@ async function saveSkillVersionOverride(input = {}) {
     relativePath: String(input.relativePath || input.path || '').trim(),
     version: allowVersion ? (version || previous.version || '') : (previous.version || ''),
     aliases: aliases === null ? (previous.aliases || []) : aliases,
+    aliasHistory,
     owner: allowVersion ? (owner || previous.owner || '') : (previous.owner || ''),
     updatedAt: new Date().toISOString()
   };
@@ -3675,6 +3680,34 @@ function normalizeSkillAliases(value = []) {
   return output.slice(0, 12);
 }
 
+function normalizeSkillAliasHistory(value = []) {
+  const raw = Array.isArray(value)
+    ? value
+    : String(value || '').split(/[,，、\n\r]+/);
+  const blocked = /^(skill|skills|md|markdown|codex|mcp|figma|git|ai|工具|技能|文档|流程|规范|验证|平台|资源|图片)$/i;
+  const seen = new Set();
+  const output = [];
+  for (const item of raw) {
+    const text = String(item || '').trim();
+    if (!text || text.length < 2 || text.length > 80 || blocked.test(text)) continue;
+    const key = usageCounterKeyForScanProduct(text) || text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(text);
+  }
+  return output.slice(-80);
+}
+
+function mergeSkillAliasHistory(...values) {
+  const merged = [];
+  for (const value of values) {
+    merged.push(...normalizeSkillAliasHistory(value));
+  }
+  return merged
+    .filter((item, index, array) => array.findIndex(other => usageCounterKeyForScanProduct(other) === usageCounterKeyForScanProduct(item)) === index)
+    .slice(-80);
+}
+
 async function applySkillVersionOverridesToScan(scan = {}) {
   const overrides = await loadSkillVersionOverrides();
   if (!Array.isArray(scan.skills) || !Object.keys(overrides).length) return scan;
@@ -3737,7 +3770,10 @@ async function applySkillVersionOverridesToScan(scan = {}) {
         || Object.prototype.hasOwnProperty.call(displayNameSource, 'commonName');
       const hasInventoryKindOverride = Object.prototype.hasOwnProperty.call(inventoryKindOverride || {}, 'inventoryKind')
         || Object.prototype.hasOwnProperty.call(baseOverride || {}, 'inventoryKind');
-      if (!baseOverride?.version && !Array.isArray(legacyAliasOverride?.aliases) && !Array.isArray(aliasOverride?.aliases) && !baseOverride?.owner && !ownerOverride?.owner && !hasVisibilityOverride && !hasDisplayVisibilityOverride && !hasDisplayNameOverride && !hasInventoryKindOverride) return skill;
+      const hasAliasHistoryOverride = Array.isArray(aliasOverride?.aliasHistory)
+        || Array.isArray(legacyAliasOverride?.aliasHistory)
+        || Array.isArray(baseOverride?.aliasHistory);
+      if (!baseOverride?.version && !Array.isArray(legacyAliasOverride?.aliases) && !Array.isArray(aliasOverride?.aliases) && !hasAliasHistoryOverride && !baseOverride?.owner && !ownerOverride?.owner && !hasVisibilityOverride && !hasDisplayVisibilityOverride && !hasDisplayNameOverride && !hasInventoryKindOverride) return skill;
       const hidden = hasVisibilityOverride ? baseOverride.hidden === true : skill.hidden === true;
       const displaySource = displayOverride || baseOverride || {};
       const displayHidden = hasDisplayVisibilityOverride ? displaySource.displayHidden === true : skill.displayHidden === true;
@@ -3748,12 +3784,22 @@ async function applySkillVersionOverridesToScan(scan = {}) {
       const manualAliases = Array.isArray(aliasOverride?.aliases)
         ? aliasOverride.aliases
         : (Array.isArray(legacyAliasOverride?.aliases) ? legacyAliasOverride.aliases : []);
+      const aliasHistory = mergeSkillAliasHistory(
+        skill.aliasHistory,
+        skill.aliases,
+        baseOverride.aliasHistory,
+        legacyAliasOverride?.aliasHistory,
+        legacyAliasOverride?.aliases,
+        aliasOverride?.aliasHistory,
+        aliasOverride?.aliases
+      );
       return {
         ...skill,
         version: baseOverride.version || skill.version,
         inventoryKind: hasInventoryKindOverride ? (inventoryKindOverride?.inventoryKind || baseOverride.inventoryKind || skill.inventoryKind) : skill.inventoryKind,
         aliases,
         manualAliases,
+        aliasHistory,
         hasAliasOverride: manualAliases.length > 0,
         ownerOverride: ownerOverride?.owner || baseOverride.owner || '',
         productDisplayName: hasDisplayNameOverride ? (displayName || skill.productFileName || skill.productDisplayName) : skill.productDisplayName,

@@ -2068,6 +2068,7 @@ function normalizeUsageCounterBucket(input = {}, fallbackKey = '') {
     researchSyncCount,
     validationCount,
     eventKeys: Array.isArray(input.eventKeys) ? input.eventKeys.map(cleanString).filter(Boolean) : [],
+    aliases: normalizeLineList(input.aliases || input.aliasHistory || input.historicalAliases || []),
     people: normalizedPeople,
     peopleCount: Number(input.peopleCount || Object.keys(normalizedPeople).length),
     firstAt: cleanString(input.firstAt),
@@ -2094,6 +2095,15 @@ async function updateUsageCounters(targets = []) {
     const eventKey = cleanString(target.eventKey);
     if (eventKey && bucket.eventKeys.includes(eventKey)) continue;
     bucket.target = bucket.target || target.target || key;
+    bucket.aliases = [
+      ...(Array.isArray(bucket.aliases) ? bucket.aliases : []),
+      target.target,
+      target.key
+    ]
+      .map(cleanString)
+      .filter(Boolean)
+      .filter((value, index, array) => array.findIndex(item => usageCounterKey(item) === usageCounterKey(value)) === index)
+      .slice(-50);
     bucket.count = Number(bucket.count || 0) + Number(target.count || 1);
     const kind = cleanString(target.kind || target.source);
     if (kind === 'validation' || kind === 'skill-validation') {
