@@ -128,8 +128,8 @@
       <ElTableColumn label="执行内容" min-width="240">
         <template #default="{ row }">
           <button type="button" class="agent-run-title" @click="app.openRun(row)">
-            <strong>{{ row.title }}</strong>
-            <span>{{ row.primarySkillPath || row.stage || '-' }}</span>
+            <strong>{{ app.directSkillRunContentName(row) }}</strong>
+            <span>{{ app.directSkillRunContentKind(row) }}</span>
           </button>
         </template>
       </ElTableColumn>
@@ -481,7 +481,13 @@ export default {
   display: grid;
   gap: 4px;
   width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
   color: inherit;
+  cursor: pointer;
+  appearance: none;
   text-align: left;
 
   strong,

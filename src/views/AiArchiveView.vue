@@ -13,7 +13,7 @@
     <div class="ai-archive-filters">
       <label class="ai-archive-filter-field ai-archive-filter-keyword">
         <span>关键词</span>
-        <ElInput v-model="app.aiExecutionArchiveFilters.keyword" clearable placeholder="执行内容、Skill/md、Figma 链接、执行人" @keyup.enter="app.refreshRuns" />
+        <ElInput v-model="app.aiExecutionArchiveFilters.keyword" clearable placeholder="执行内容、Skill/md、Figma 链接、执行人" />
       </label>
       <label class="ai-archive-filter-field">
         <span>执行人 / 操作人</span>
@@ -50,7 +50,6 @@
         <ElDatePicker v-model="app.aiExecutionArchiveFilters.to" type="datetime" value-format="YYYY-MM-DD HH:mm:ss" placeholder="不限" />
       </label>
       <div class="ai-archive-filter-actions">
-        <ElButton type="primary" :loading="app.loading.runs" @click="app.refreshRuns">查询</ElButton>
         <ElButton plain @click="app.resetAiExecutionArchiveFilters">重置</ElButton>
         <ElButton v-if="app.can('api.aiArchive.delete')" type="danger" plain :loading="app.loading.runs" @click="app.deleteAiExecutionArchiveRunsByCurrentFilters">删除当前范围</ElButton>
       </div>
@@ -60,8 +59,8 @@
       <ElTableColumn label="执行内容" min-width="260">
         <template #default="{ row }">
           <button type="button" class="ai-archive-run-title" @click="app.openRun(row)">
-            <strong>{{ row.title }}</strong>
-            <span>{{ row.primarySkillPath || row.stage || '-' }}</span>
+            <strong>{{ app.directSkillRunContentName(row) }}</strong>
+            <span>{{ app.directSkillRunContentKind(row) }}</span>
           </button>
         </template>
       </ElTableColumn>
@@ -143,7 +142,13 @@ export default {
   display: grid;
   gap: 4px;
   width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
   color: inherit;
+  cursor: pointer;
+  appearance: none;
   text-align: left;
 
   strong,

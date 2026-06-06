@@ -10,7 +10,8 @@
         <p>{{ app.aiScoreMonthDisplay }} · {{ app.aiMemberScoreRuleText }}</p>
       </div>
     </div>
-    <div class="ai-score-grid">
+    <div v-if="!app.aiMemberScoreReady" class="ai-score-loading">正在整理当月 AI 评分...</div>
+    <div v-else class="ai-score-grid">
       <article
         v-for="member in app.aiMemberScoreRows"
         :key="member.account || member.name"
@@ -38,7 +39,7 @@
   <iframe
     ref="boardFrame"
     class="ai-board-embed-frame"
-    :srcdoc="activeBoardHtml"
+    :srcdoc="frameHtml"
     title="AI部门看板"
     @load="syncThemeToFrame"
   />
@@ -75,13 +76,34 @@ export default {
         : (this.snapshot.ownerHtml || this.boardHtml);
     }
   },
+  data() {
+    return {
+      frameHtml: '',
+      frameHtmlUpdateTimer: 0
+    };
+  },
   watch: {
     'app.theme'() {
       this.syncThemeToFrame();
     },
-    activeBoardHtml() {
-      this.$nextTick(() => this.syncThemeToFrame());
+    activeBoardHtml: {
+      immediate: true,
+      handler(value) {
+        if (value === this.frameHtml) {
+          this.$nextTick(() => this.syncThemeToFrame());
+          return;
+        }
+        if (this.frameHtmlUpdateTimer) window.clearTimeout(this.frameHtmlUpdateTimer);
+        this.frameHtmlUpdateTimer = window.setTimeout(() => {
+          this.frameHtml = value;
+          this.frameHtmlUpdateTimer = 0;
+          this.$nextTick(() => this.syncThemeToFrame());
+        }, 0);
+      }
     }
+  },
+  beforeUnmount() {
+    if (this.frameHtmlUpdateTimer) window.clearTimeout(this.frameHtmlUpdateTimer);
   },
   methods: {
     syncThemeToFrame() {
@@ -170,6 +192,16 @@ export default {
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.ai-score-loading {
+  background: var(--soft-card);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 12px;
 }
 
 .ai-score-card {

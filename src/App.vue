@@ -141,7 +141,7 @@
 
         <TaskCenterView v-if="activeView === 'tasks'" :app="appBridge" :revision="taskCenterRevision" />
 
-        <AiMembersView v-if="activeView === 'ai-members'" :app="appBridge" />
+        <AiMembersView v-if="aiMembersViewMounted" v-show="activeView === 'ai-members'" :app="appBridge" />
 
         <section v-show="activeView === 'codex-config'" class="view-grid codex-config-view">
           <ElCard shadow="never" class="panel-card page-card codex-config-card">
@@ -671,6 +671,9 @@ export default {
       aiFlowRecords: [],
       taskReviews: [],
       aiMembersSnapshot: null,
+      aiMembersViewMounted: false,
+      aiMemberScoreReady: false,
+      aiMemberScoreReadyTimer: 0,
       users: [],
       roles: [],
       operationLogs: [],
@@ -989,6 +992,7 @@ export default {
         'project-detail': { eyebrow: '资料库详情', title: this.selectedProject?.name || '资料库详情' },
         runs: { eyebrow: '执行管理', title: '美术执行台' },
         'agent-workers': { eyebrow: '执行管理', title: '本机执行状态' },
+        'ai-archive': { eyebrow: '执行管理', title: 'AI档案' },
         'task-result': { eyebrow: '任务产物', title: this.selectedTask?.name || '任务产物' },
         'manual-review': { eyebrow: '人工复核', title: '人工复核' }
       }[this.activeView];
@@ -1070,6 +1074,8 @@ export default {
           if (!keyword) return true;
           return [
             run.title,
+            this.directSkillRunContentName(run),
+            this.directSkillRunContentKind(run),
             run.primarySkillPath,
             run.stage,
             run.assignedToName,
@@ -2541,11 +2547,15 @@ export default {
         status: ''
       }));
       const sourceMembers = this.dedupeAiScoreMembers([...snapshotMembers, ...fallbackMembers]);
+      const cacheKey = this.aiMemberScoreRowsCacheKey(sourceMembers);
+      if (this._aiMemberScoreRowsCache?.key === cacheKey) return this._aiMemberScoreRowsCache.rows;
       const summaryMap = new Map(this.skillInventoryMemberSummaries.map(summary => [this.normalizeAiScorePersonKey(summary.name || summary.account), summary]));
-      return sourceMembers
+      const rows = sourceMembers
         .filter(member => !this.isAiScoreOwnerMember(member))
         .map(member => this.aiMemberScoreRow(member, summaryMap.get(this.normalizeAiScorePersonKey(member.name || member.realname || member.account)) || null))
         .sort((a, b) => b.score - a.score || b.monthUsageCount - a.monthUsageCount || a.name.localeCompare(b.name));
+      this._aiMemberScoreRowsCache = { key: cacheKey, rows };
+      return rows;
     },
 
     aiMemberScoreOverview() {
@@ -3755,6 +3765,7 @@ export default {
 
     activeView(value) {
       document.title = `${this.pageMeta.title} · 美术部工作台`;
+      if (value === 'ai-members') this.prepareAiMembersView();
       this.ensureActiveViewData(value);
       if (value === 'tasks') {
         this.stopZentaoAutoSyncPolling();
@@ -3789,6 +3800,7 @@ export default {
 
   beforeUnmount() {
     if (this.zentaoSyncTimer) clearTimeout(this.zentaoSyncTimer);
+    if (this.aiMemberScoreReadyTimer) clearTimeout(this.aiMemberScoreReadyTimer);
     this.stopZentaoAutoSyncPolling();
     this.stopTaskBriefRealtimeSync();
     this.stopPlatformEventSync();
@@ -4525,6 +4537,7 @@ export default {
           this.pushRoute(this.firstAllowedRoute());
           return;
         }
+        this.prepareAiMembersView();
         this.activeView = 'ai-members';
         this.ensureActiveViewData('ai-members');
         return;
@@ -4743,6 +4756,15 @@ export default {
       } catch {
       }
       return false;
+    },
+
+    restoreWorkbenchDisplayCacheKeyIfEmpty(key = '') {
+      if (!key) return false;
+      const current = this[key];
+      if (Array.isArray(current) && current.length) return false;
+      if (current && typeof current === 'object' && !Array.isArray(current) && Object.keys(current).length) return false;
+      if (current !== null && current !== undefined && !Array.isArray(current) && typeof current !== 'object') return false;
+      return this.restoreWorkbenchDisplayCacheKey(key);
     },
 
     restoreWorkbenchDisplayCache() {
@@ -6329,13 +6351,13 @@ export default {
     },
 
     ensureAiMemberScoreData() {
-      this.restoreWorkbenchDisplayCacheKey('projects');
-      this.restoreWorkbenchDisplayCacheKey('scans');
-      this.restoreWorkbenchDisplayCacheKey('artProgressEvents');
-      this.restoreWorkbenchDisplayCacheKey('skillValidationRows');
-      this.restoreWorkbenchDisplayCacheKey('runs');
-      this.restoreWorkbenchDisplayCacheKey('aiAssetSheetRows');
-      this.restoreWorkbenchDisplayCacheKey('usageCounters');
+      this.restoreWorkbenchDisplayCacheKeyIfEmpty('projects');
+      this.restoreWorkbenchDisplayCacheKeyIfEmpty('scans');
+      this.restoreWorkbenchDisplayCacheKeyIfEmpty('artProgressEvents');
+      this.restoreWorkbenchDisplayCacheKeyIfEmpty('skillValidationRows');
+      this.restoreWorkbenchDisplayCacheKeyIfEmpty('runs');
+      this.restoreWorkbenchDisplayCacheKeyIfEmpty('aiAssetSheetRows');
+      this.restoreWorkbenchDisplayCacheKeyIfEmpty('usageCounters');
     },
 
     aiScoreMonthKey(value = new Date()) {
@@ -6395,6 +6417,56 @@ export default {
 
     isIndependentAiScoreMember(memberName = '', account = '') {
       return [memberName, account].some(value => samePerson(value, '余盛威') || samePerson(value, 'yushengwei') || samePerson(value, 'ysw'));
+    },
+
+    prepareAiMembersView() {
+      this.aiMembersViewMounted = true;
+      this.aiMemberScoreReady = false;
+      if (this.aiMemberScoreReadyTimer) clearTimeout(this.aiMemberScoreReadyTimer);
+      this.aiMemberScoreReadyTimer = setTimeout(() => {
+        this.aiMemberScoreReady = true;
+        this.aiMemberScoreReadyTimer = 0;
+      }, 0);
+    },
+
+    aiMemberScoreRowsCacheKey(sourceMembers = []) {
+      const latestOf = (rows = [], fields = ['updatedAt', 'createdAt']) => (Array.isArray(rows) ? rows : [])
+        .reduce((latest, row) => {
+          const value = fields.map(field => row?.[field]).find(Boolean) || '';
+          return String(value || '').localeCompare(String(latest || '')) > 0 ? value : latest;
+        }, '');
+      const snapshot = this.aiMembersSnapshot || {};
+      return [
+        this.aiScoreMonthLabel,
+        sourceMembers.map(member => [member.name || member.realname || '', member.account || '', member.level || '', member.status || ''].join(':')).join('|'),
+        snapshot.source?.boardUpdatedAt || '',
+        snapshot.source?.fetchedAt || '',
+        this.projects.length,
+        Object.keys(this.scans || {}).length,
+        this.skillInventoryRows.length,
+        this.artProgressEvents.length,
+        latestOf(this.artProgressEvents, ['updatedAt', 'createdAt', 'reportedAt']),
+        this.artProgressOperationLogRows.length,
+        latestOf(this.artProgressOperationLogRows, ['updatedAt', 'createdAt']),
+        this.taskArtBriefUsageLogs.length,
+        latestOf(this.taskArtBriefUsageLogs, ['updatedAt', 'createdAt']),
+        this.skillValidationRows.length,
+        latestOf(this.skillValidationRows, ['updatedAt', 'submittedAt', 'createdAt', 'importedAt']),
+        this.runs.length,
+        latestOf(this.runs, ['updatedAt', 'finishedAt', 'startedAt', 'createdAt']),
+        this.aiAssetSheetRows.length,
+        latestOf(this.aiAssetSheetRows, ['updatedAt', 'submittedAt', 'createdAt']),
+        this.usageCounters?.updatedAt || '',
+        Object.keys(this.usageCounters?.buckets || {}).length,
+        Object.keys(this.skillOwnerOverrides || {}).length,
+        Object.keys(this.skillDisplayNameOverrides || {}).length,
+        Object.keys(this.skillAliasOverrides || {}).length,
+        Object.keys(this.skillInventoryKindOverrides || {}).length
+      ].join('::');
+    },
+
+    clearAiMemberScoreCache() {
+      this._aiMemberScoreRowsCache = null;
     },
 
     aiMemberScoreRow(member = {}, summary = null) {
@@ -10634,6 +10706,7 @@ export default {
     clearSkillUsageLogCache() {
       if (this._skillUsageLogCache) this._skillUsageLogCache.clear();
       this.skillInventoryMetricsCache = {};
+      this.clearAiMemberScoreCache();
     },
 
     artProgressRecordDisplayTime(record = {}) {
@@ -11732,8 +11805,10 @@ export default {
         'role-management': '/role-management',
         'operation-logs': '/operation-logs',
         'agent-workers': '/agent-workers',
+        'ai-archive': '/ai-archive',
         runs: '/runs'
       };
+      if (view === 'ai-members') this.prepareAiMembersView();
       this.pushRoute(routes[view] || '/tasks');
       this.recordWorkbenchViewLog(view, routes[view] || '/tasks');
     },
@@ -11753,6 +11828,8 @@ export default {
         'ai-members': 'AI部门看板',
         'codex-config': 'Codex 配置',
         runs: '美术执行台',
+        'agent-workers': '本机执行状态',
+        'ai-archive': 'AI档案',
         'user-access': '用户管理',
         'role-management': '角色管理'
       }[view] || view;
@@ -11776,7 +11853,7 @@ export default {
     },
 
     goAiArchive() {
-      this.switchView('runs');
+      this.switchView('ai-archive');
     },
 
     goTaskResult() {
@@ -14149,6 +14226,83 @@ export default {
       const userId = String(run?.createdBy || '').trim();
       const user = this.users.find(item => String(item.id || '') === userId);
       return user?.displayName || user?.username || run?.createdByName || userId || '-';
+    },
+
+    directSkillRunContentName(run = null) {
+      const explicitCandidates = [
+        run?.productName,
+        run?.productDisplayName,
+        run?.sourceTitle,
+        this.cleanDirectSkillRunTitle(run?.title)
+      ];
+      const explicit = explicitCandidates
+        .map(value => this.cleanDirectSkillDisplayText(value))
+        .find(value => value && !this.looksLikeFilePath(value));
+      if (explicit) return explicit;
+      const pathName = [
+        run?.primarySkillPath,
+        run?.stage,
+        run?.targetPage,
+        run?.selectedMaterialHints?.[0]
+      ]
+        .map(value => this.meaningfulNameFromPath(value))
+        .find(Boolean);
+      return pathName || this.cleanDirectSkillDisplayText(run?.title) || 'AI 产物';
+    },
+
+    directSkillRunContentKind(run = null) {
+      const text = [
+        run?.productName,
+        run?.sourceTitle,
+        run?.primarySkillPath,
+        run?.stage,
+        run?.targetPage,
+        run?.title
+      ].join('\n');
+      if (/SKILL\.md$/i.test(text) || /(^|\/)skills?\//i.test(text)) return 'Skill';
+      if (/\.md$/i.test(text)) return 'md';
+      if (this.isDirectSkillRun(run)) return '直接执行';
+      if (run?.sourceType === 'bug') return 'Bug 执行';
+      if (run?.sourceType === 'task') return '任务执行';
+      return this.workflowRunLabel(run) || '执行';
+    },
+
+    cleanDirectSkillRunTitle(title = '') {
+      return String(title || '')
+        .trim()
+        .replace(/^(直接执行|执行|单技能执行|单技能)\s*[:：·-]?\s*/i, '')
+        .trim();
+    },
+
+    cleanDirectSkillDisplayText(value = '') {
+      return String(value || '')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .replace(/^(直接执行|执行|单技能执行|单技能)\s*[:：·-]?\s*/i, '')
+        .trim();
+    },
+
+    looksLikeFilePath(value = '') {
+      return /(^\/|^[A-Za-z]:\\|\\|\/Users\/|\/Volumes\/|\.md$|\.txt$|\.json$)/i.test(String(value || '').trim());
+    },
+
+    meaningfulNameFromPath(pathValue = '') {
+      const raw = String(pathValue || '').trim();
+      if (!raw) return '';
+      const withoutQuery = raw.split(/[?#]/)[0];
+      let decoded = withoutQuery;
+      try {
+        decoded = decodeURIComponent(withoutQuery);
+      } catch {
+        decoded = withoutQuery;
+      }
+      const parts = decoded.replace(/\\/g, '/').split('/').filter(Boolean);
+      if (!parts.length) return '';
+      const fileName = parts[parts.length - 1] || '';
+      if (/^(SKILL|README|index)\.md$/i.test(fileName) && parts.length > 1) {
+        return parts[parts.length - 2] || '';
+      }
+      return fileName.replace(/\.(md|txt|json)$/i, '') || fileName;
     },
 
     directSkillRunUpdatedText(run = null) {
