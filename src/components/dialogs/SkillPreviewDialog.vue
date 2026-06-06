@@ -15,7 +15,7 @@
             <strong>直接执行到 Figma</strong>
             <span>创建后由执行人本机 Worker 领取，使用执行人自己的 Figma MCP 和 Figma 授权写入。</span>
           </div>
-          <ElButton v-if="app.can('api.runs.execute')" type="primary" size="small" @click="app.openDirectSkillRunDialog(app.skillPreview.skill)">直接执行</ElButton>
+          <ElButton v-if="app.can('run.directSkill.create')" type="primary" size="small" @click="app.openDirectSkillRunDialog(app.skillPreview.skill)">直接执行</ElButton>
         </div>
         <div class="skill-preview-version-row skill-preview-alias-row">
           <span>调用别名</span>

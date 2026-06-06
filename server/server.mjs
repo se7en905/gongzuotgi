@@ -1236,14 +1236,14 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/agent-workers') {
-    requirePermission(currentUser, 'api.runs.execute');
+    requirePermission(currentUser, 'api.agentWorkers.read');
     const workers = await listAgentWorkers(url.searchParams.get('mine') === '1' ? { userId: currentUser.id } : {});
     sendJson(res, 200, workers);
     return;
   }
 
   if (req.method === 'POST' && url.pathname === '/api/agent-workers/heartbeat') {
-    requirePermission(currentUser, 'api.runs.execute');
+    requirePermission(currentUser, 'api.agentWorkers.heartbeat');
     const body = await readBody(req);
     const worker = await upsertAgentWorker({
       ...body,
@@ -1257,7 +1257,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/agent-runs/next') {
-    requirePermission(currentUser, 'api.runs.execute');
+    requirePermission(currentUser, 'api.agentRuns.claim');
     const body = await readBody(req).catch(() => ({}));
     const worker = await upsertAgentWorker({
       ...body,
@@ -1298,7 +1298,7 @@ async function handleApi(req, res, url) {
   const agentRunLog = url.pathname.match(/^\/api\/agent-runs\/([^/]+)\/log$/);
   if (req.method === 'POST' && agentRunLog) {
     const run = await requireRun(agentRunLog[1]);
-    requireProjectAccess(currentUser, run.projectId, 'developer', 'api.runs.execute');
+    requireProjectAccess(currentUser, run.projectId, 'developer', 'api.agentRuns.log');
     ensureWorkerCanUpdateRun(currentUser, run);
     const body = await readBody(req).catch(() => ({}));
     const chunk = String(body.chunk || body.text || '').slice(0, 20000);
@@ -1311,7 +1311,7 @@ async function handleApi(req, res, url) {
   const agentRunStatus = url.pathname.match(/^\/api\/agent-runs\/([^/]+)\/status$/);
   if (req.method === 'POST' && agentRunStatus) {
     const run = await requireRun(agentRunStatus[1]);
-    requireProjectAccess(currentUser, run.projectId, 'developer', 'api.runs.execute');
+    requireProjectAccess(currentUser, run.projectId, 'developer', 'api.agentRuns.status');
     ensureWorkerCanUpdateRun(currentUser, run);
     const body = await readBody(req).catch(() => ({}));
     const updated = await updateAgentRunFromWorker(run.id, body);
@@ -1902,12 +1902,13 @@ async function handleApi(req, res, url) {
   if (req.method === 'POST' && url.pathname === '/api/runs') {
     const body = await readBody(req);
     const project = await requireProject(body.projectId);
-    requireProjectAccess(currentUser, project.id, 'developer', 'api.runs.execute');
     if (body.sourceType === 'direct-skill' || body.executionMode === 'direct-skill') {
+      requireProjectAccess(currentUser, project.id, 'developer', 'api.agentRuns.create');
       const run = await createDirectSkillRunFromBody(req, project, body, currentUser);
       sendJson(res, 201, run);
       return;
     }
+    requireProjectAccess(currentUser, project.id, 'developer', 'api.runs.execute');
     const run = await createRun({ ...body, createdBy: currentUser.id, ownerUserId: currentUser.id });
     await writeOperationLog(req, {
       user: currentUser,
@@ -1927,7 +1928,7 @@ async function handleApi(req, res, url) {
   if (req.method === 'POST' && url.pathname === '/api/runs/direct-skill') {
     const body = await readBody(req);
     const project = await requireProject(body.projectId);
-    requireProjectAccess(currentUser, project.id, 'developer', 'api.runs.execute');
+    requireProjectAccess(currentUser, project.id, 'developer', 'api.agentRuns.create');
     const run = await createDirectSkillRunFromBody(req, project, body, currentUser);
     sendJson(res, 201, run);
     return;

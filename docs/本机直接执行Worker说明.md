@@ -21,7 +21,9 @@
 
 ## 启动方式
 
-在平台项目目录执行：
+直接执行任务不会出现平台服务器侧的“开始”按钮。负责人创建任务后，执行人本机 Worker 在线并通过 Codex / Figma MCP 自检，任务会自动从“待领取”变成“已领取 / 执行中”。
+
+在执行人自己的电脑、平台项目目录执行：
 
 ```bash
 ART_PLATFORM_API=http://127.0.0.1:4288 \
@@ -31,6 +33,19 @@ node scripts/art-direct-worker.mjs
 ```
 
 如果平台部署在局域网服务器，将 `ART_PLATFORM_API` 改成服务器地址。
+
+## 开机自启安装
+
+在执行人自己的电脑、平台项目目录执行：
+
+```bash
+ART_PLATFORM_API=http://127.0.0.1:4288 \
+ART_PLATFORM_USERNAME=组员账号 \
+ART_PLATFORM_PASSWORD=组员密码 \
+bash scripts/install_art_direct_worker_launch_agent.sh
+```
+
+安装后，组员电脑登录 macOS 时会自动启动本机 Worker。状态会显示在工作台的 `本机执行状态` 页面。
 
 ## 环境变量
 
@@ -61,4 +76,3 @@ node scripts/art-direct-worker.mjs
 - Figma OAuth 失效：在组员本机重新授权。
 - Figma 链接无 `node-id`：第一版建议提供明确 Frame 或节点链接。
 - Figma 文件无编辑权限：让文件所有者给组员开通编辑权限。
-

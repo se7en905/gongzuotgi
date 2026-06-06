@@ -107,6 +107,16 @@
         <span v-else-if="!app.directSkillWorkerForRun(app.selectedRun)?.figmaMcpReady">该设备未通过 Figma MCP 自检，请执行人在本机完成 Figma MCP 授权。</span>
         <span v-else>本机 Worker 会把 Codex 日志和执行结果回传到当前执行记录。</span>
       </div>
+      <div v-if="app.selectedRun.status === 'pending'" class="run-worker-command-box">
+        <div>
+          <strong>当前不显示平台“开始”按钮</strong>
+          <span>直接执行必须由 {{ app.selectedRun.assignedToName || app.selectedRun.developer || '执行人' }} 的电脑启动 Worker 后自动领取，确保使用本人 Figma 账号和本机 Figma MCP。</span>
+        </div>
+        <div class="run-worker-command-actions">
+          <ElButton v-if="app.can('run.directSkill.workerCommand')" size="small" plain @click="app.copyDirectSkillWorkerCommand(app.directSkillAssigneeOptions.find(user => user.id === app.selectedRun.assignedToUserId) || app.currentUser, false)">复制 Worker 启动命令</ElButton>
+          <ElButton v-if="app.can('menu.agentWorkers')" size="small" @click="app.switchView('agent-workers')">查看本机执行状态</ElButton>
+        </div>
+      </div>
     </section>
     <div class="stage-steps-wrap">
       <ElSteps :active="app.activeRunStage" finish-status="success" direction="horizontal" class="stage-steps">
@@ -897,9 +907,55 @@ export default {
     line-height: 1.6;
   }
 
+  .run-worker-command-box {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+    border: 1px dashed rgba(14, 165, 233, 0.34);
+    border-radius: 8px;
+    background: #ffffff;
+
+    > div:first-child {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    strong,
+    span {
+      display: block;
+    }
+
+    strong {
+      color: var(--heading);
+      font-size: 13px;
+    }
+
+    span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+  }
+
+  .run-worker-command-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+  }
+
   @media (max-width: 1100px) {
     .run-worker-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .run-worker-command-box {
+      align-items: flex-start;
+      flex-direction: column;
     }
   }
 

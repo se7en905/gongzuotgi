@@ -62,7 +62,7 @@
             </ElIcon>
           <span>美术执行台</span>
         </ElMenuItem>
-        <ElMenuItem v-if="can('menu.runs')" index="agent-workers">
+        <ElMenuItem v-if="can('menu.agentWorkers')" index="agent-workers">
             <ElIcon>
               <Monitor />
             </ElIcon>
@@ -515,19 +515,19 @@ const CODEX_MODEL_OPTIONS = ['gpt-5.5', 'gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2'];
 
 const roleLevelPermissionPresets = {
   4: [
-    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.users', 'menu.roles', 'menu.operationLogs',
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.users', 'menu.roles', 'menu.operationLogs',
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy', 'task.personPressure.view',
-    'run.create', 'run.codex.execute', 'run.start', 'run.cancel', 'run.delete', 'review.submit', 'review.image.submit',
+    'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'run.start', 'run.cancel', 'run.delete', 'review.submit', 'review.image.submit',
     'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.source.delete', 'skill.asset.create', 'skill.asset.void', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
     'codex.config.manage', 'user.manage', 'role.manage',
-    'api.skillSources.manage', 'api.skillSources.delete', 'api.skillScan.run', 'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.runs.delete', 'api.reviews.submit', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.skillAsset.void', 'api.codex.config.read', 'api.codex.config.manage', 'api.users.manage', 'api.roles.manage', 'api.taskCenter.config.manage', 'api.operationLogs.read', 'api.operationLogs.delete'
+    'api.skillSources.manage', 'api.skillSources.delete', 'api.skillScan.run', 'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.runs.delete', 'api.reviews.submit', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.skillAsset.void', 'api.codex.config.read', 'api.codex.config.manage', 'api.users.manage', 'api.roles.manage', 'api.taskCenter.config.manage', 'api.operationLogs.read', 'api.operationLogs.delete'
   ],
   3: [
-    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs',
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers',
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy',
-    'run.create', 'run.codex.execute', 'run.start', 'run.cancel', 'review.submit', 'review.image.submit',
+    'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'run.start', 'run.cancel', 'review.submit', 'review.image.submit',
     'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.asset.create', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
-    'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.reviews.submit', 'api.codex.config.read', 'api.skillSources.manage', 'api.skillScan.run', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create'
+    'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.reviews.submit', 'api.codex.config.read', 'api.skillSources.manage', 'api.skillScan.run', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create'
   ],
   2: [
     'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.runs',
@@ -999,11 +999,14 @@ export default {
         : [this.currentUser].filter(Boolean);
       return rows
         .filter(user => user && user.disabled !== true)
+        .filter(user => this.directSkillUserCanExecute(user))
         .map(user => ({
           id: user.id,
           username: user.username || '',
           displayName: user.displayName || user.realname || user.name || user.username || user.id,
-          role: user.role || ''
+          role: user.role || '',
+          permissions: user.permissions || [],
+          passwordDisplay: user.passwordDisplay || ''
         }));
     },
 
@@ -1035,6 +1038,31 @@ export default {
 
     directSkillActiveRuns() {
       return this.directSkillRunRows.filter(run => /claimed|running|in_progress/i.test(String(run.status || '')));
+    },
+
+    directSkillMemberReadinessRows() {
+      const rows = this.can('api.users.manage') && this.users.length
+        ? this.users
+        : [this.currentUser].filter(Boolean);
+      return rows
+        .filter(user => user && user.disabled !== true)
+        .filter(user => this.directSkillUserCanExecute(user))
+        .map(user => {
+          const worker = this.directSkillWorkerForUser(user);
+          const online = this.directSkillWorkerOnline(worker);
+          const pendingRuns = this.directSkillPendingRunsForUser(user);
+          const activeRuns = this.directSkillActiveRunsForUser(user);
+          return {
+            user,
+            worker,
+            online,
+            pendingRuns,
+            activeRuns,
+            codexReady: worker?.codexReady === true,
+            figmaMcpReady: worker?.figmaMcpReady === true,
+            ready: online && worker?.codexReady === true && worker?.figmaMcpReady === true
+          };
+        });
     },
 
     permissionSet() {
@@ -1174,7 +1202,7 @@ export default {
     },
 
     selectedRunActionLabel() {
-      if (this.isDirectSkillRun(this.selectedRun)) return this.selectedRun?.status === 'pending' ? '等待本机' : '本机执行';
+      if (this.isDirectSkillRun(this.selectedRun)) return this.selectedRun?.status === 'pending' ? '等待 Worker 自动领取' : '本机执行';
       if (this.isRunInProgress(this.selectedRun)) return '执行中';
       return this.hasRunExecuted(this.selectedRun) ? '再次执行' : '发起执行';
     },
@@ -3943,10 +3971,12 @@ export default {
         this.restoreWorkbenchDisplayCacheKey('artProgressEvents');
         if (!this.runs.length && !this.loading.runs) this.refreshRuns().catch(() => {});
         if (!this.agentWorkers.length && !this.loading.agentWorkers) this.refreshAgentWorkers().catch(() => {});
+        if (this.can('api.users.manage') && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
       }
       if (view === 'agent-workers') {
         if (!this.runs.length && !this.loading.runs) this.refreshRuns().catch(() => {});
         if (!this.agentWorkers.length && !this.loading.agentWorkers) this.refreshAgentWorkers().catch(() => {});
+        if (this.can('api.users.manage') && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
       }
       if (view === 'operation-logs') {
         if (!this.operationLogs.length && !this.loading.operationLogs) this.refreshOperationLogs().catch(() => {});
@@ -4277,6 +4307,7 @@ export default {
         ['menu.skillList', '/skills/list'],
         ['menu.aiMembers', '/ai-members'],
         ['menu.runs', '/runs'],
+        ['menu.agentWorkers', '/agent-workers'],
         ['menu.codexConfig', '/codex-config'],
         ['menu.users', '/user-access'],
         ['menu.roles', '/role-management'],
@@ -4414,7 +4445,7 @@ export default {
         return;
       }
       if (path === '/agent-workers') {
-        if (!this.can('menu.runs')) {
+        if (!this.can('menu.agentWorkers')) {
           this.pushRoute(this.firstAllowedRoute());
           return;
         }
@@ -4688,7 +4719,7 @@ export default {
           await this.refreshRuns();
         }, 300);
       }
-      if (type === 'agent-workers.changed' && this.can('menu.runs')) {
+      if (type === 'agent-workers.changed' && this.can('menu.agentWorkers')) {
         this.schedulePlatformRefresh('agent-workers', async () => {
           await this.refreshAgentWorkers();
         }, 500);
@@ -6603,7 +6634,7 @@ export default {
     },
 
     async refreshAgentWorkers() {
-      if (!this.can('menu.runs')) return;
+      if (!this.can('api.agentWorkers.read')) return;
       this.loading.agentWorkers = true;
       try {
         this.agentWorkers = await this.api('/api/agent-workers');
@@ -9618,7 +9649,7 @@ export default {
     },
 
     openDirectSkillRunDialog(row = this.skillPreview.skill || {}) {
-      if (!this.can('api.runs.execute')) {
+      if (!this.can('run.directSkill.create')) {
         ElMessage.warning('当前账号没有创建直接执行的权限');
         return;
       }
@@ -13857,6 +13888,51 @@ export default {
         || null;
     },
 
+    directSkillWorkerForUser(user = null) {
+      const userId = String(user?.id || '').trim();
+      if (!userId) return null;
+      return this.agentWorkerDisplayRows.find(worker => worker.userId === userId) || null;
+    },
+
+    directSkillUserCanExecute(user = null) {
+      if (!user || user.disabled === true) return false;
+      if (user.role === 'admin') return true;
+      const permissions = new Set(user.permissions || []);
+      return [
+        'api.agentWorkers.heartbeat',
+        'api.agentRuns.claim',
+        'api.agentRuns.log',
+        'api.agentRuns.status'
+      ].every(permission => permissions.has(permission));
+    },
+
+    directSkillPendingRunsForUser(user = null) {
+      const userId = String(user?.id || '').trim();
+      if (!userId) return [];
+      return this.directSkillPendingRuns.filter(run => String(run.assignedToUserId || run.ownerUserId || '') === userId);
+    },
+
+    directSkillActiveRunsForUser(user = null) {
+      const userId = String(user?.id || '').trim();
+      if (!userId) return [];
+      return this.directSkillActiveRuns.filter(run => String(run.assignedToUserId || run.ownerUserId || '') === userId);
+    },
+
+    directSkillMemberReadyLabel(row = {}) {
+      if (row.ready) return '可自动领取';
+      if (!row.worker) return '未启动 Worker';
+      if (!row.online) return 'Worker 离线';
+      if (!row.codexReady) return 'Codex 未就绪';
+      if (!row.figmaMcpReady) return 'Figma MCP 未就绪';
+      return '待检查';
+    },
+
+    directSkillMemberReadyTagType(row = {}) {
+      if (row.ready) return 'success';
+      if (!row.worker || !row.online) return 'info';
+      return 'warning';
+    },
+
     directSkillWorkerOnline(worker = null) {
       if (!worker?.lastHeartbeatAt) return false;
       const last = Date.parse(worker.lastHeartbeatAt);
@@ -13875,6 +13951,46 @@ export default {
     directSkillWorkerLastSeenText(worker = null) {
       if (!worker?.lastHeartbeatAt) return '暂无心跳';
       return this.formatDateTime(worker.lastHeartbeatAt);
+    },
+
+    directSkillWorkerStartCommand(user = this.currentUser || {}) {
+      const username = String(user.username || '').trim();
+      const password = String(user.passwordDisplay || '').trim();
+      const apiBase = window.location.origin || 'http://127.0.0.1:4288';
+      const safePassword = password || '在这里填写该组员平台密码';
+      return [
+        `cd ${this.shellQuote('/Users/se7en/ArtProject/platform')}`,
+        `ART_PLATFORM_API=${this.shellQuote(apiBase)} \\`,
+        `ART_PLATFORM_USERNAME=${this.shellQuote(username || '组员账号')} \\`,
+        `ART_PLATFORM_PASSWORD=${this.shellQuote(safePassword)} \\`,
+        'node scripts/art-direct-worker.mjs'
+      ].join('\n');
+    },
+
+    directSkillWorkerInstallCommand(user = this.currentUser || {}) {
+      const username = String(user.username || '').trim();
+      const password = String(user.passwordDisplay || '').trim();
+      const apiBase = window.location.origin || 'http://127.0.0.1:4288';
+      const safePassword = password || '在这里填写该组员平台密码';
+      return [
+        `ART_PLATFORM_API=${this.shellQuote(apiBase)} \\`,
+        `ART_PLATFORM_USERNAME=${this.shellQuote(username || '组员账号')} \\`,
+        `ART_PLATFORM_PASSWORD=${this.shellQuote(safePassword)} \\`,
+        'bash scripts/install_art_direct_worker_launch_agent.sh'
+      ].join('\n');
+    },
+
+    copyDirectSkillWorkerCommand(user, install = false) {
+      if (!this.can('run.directSkill.workerCommand')) {
+        ElMessage.warning('当前账号没有复制 Worker 启动命令的权限');
+        return Promise.resolve(false);
+      }
+      const command = install ? this.directSkillWorkerInstallCommand(user) : this.directSkillWorkerStartCommand(user);
+      return this.copyText(command, install ? 'Worker 开机自启安装命令' : 'Worker 手动启动命令');
+    },
+
+    shellQuote(value = '') {
+      return `'${String(value).replace(/'/g, `'\\''`)}'`;
     },
 
     businessTasksForProject(projectId) {
@@ -14229,6 +14345,13 @@ export default {
       if (/blocked/.test(value)) return '已阻塞';
       if (/cancelled|canceled/.test(value)) return '已取消';
       return status || '待判定';
+    },
+
+    directSkillRunStatusLabel(run = null) {
+      if (!run) return '待判定';
+      const value = String(run.status || '').toLowerCase();
+      if (/pending|created|queued/.test(value)) return '待领取';
+      return this.runStatusLabel(run.status);
     },
 
     gitStatusLabel(status = '') {

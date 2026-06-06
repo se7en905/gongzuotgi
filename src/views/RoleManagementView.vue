@@ -198,11 +198,20 @@ export default {
         'projects.manage': '项目管理',
         'runs.execute': '执行任务',
         'run.codex.execute': '启动 Codex 执行',
+        'run.directSkill.create': '创建直接执行',
+        'run.directSkill.workerCommand': '复制 Worker 命令',
         'runs.delete': '删除执行记录',
         'reviews.submit': '人工复核',
         'users.manage': '账号管理',
         'roles.manage': '角色管理',
-        'workflow.manage': '工作流模板'
+        'workflow.manage': '工作流模板',
+        'menu.agentWorkers': '本机执行状态',
+        'api.agentRuns.create': '直接执行创建 API',
+        'api.agentWorkers.read': 'Worker 状态读取 API',
+        'api.agentWorkers.heartbeat': 'Worker 心跳 API',
+        'api.agentRuns.claim': '直接执行领取 API',
+        'api.agentRuns.log': '直接执行日志 API',
+        'api.agentRuns.status': '直接执行状态 API'
       };
       return this.app.permissionCatalog.find(item => item.id === id)?.name || fallbackNames[id] || '未知权限';
     },

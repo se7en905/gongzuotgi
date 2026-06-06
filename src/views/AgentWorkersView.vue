@@ -6,6 +6,40 @@
     <small>直接执行不会在平台服务器写 Figma；必须由执行人本机 Worker 领取并使用本人 Figma 授权。</small>
   </div>
 
+  <ElCard shadow="never" class="panel-card agent-worker-guide-card">
+    <template #header>
+      <div class="panel-head">
+        <div>
+          <h3>直接执行启动方式</h3>
+          <p>直接执行没有平台侧“开始”按钮；任务创建后由执行人本机 Worker 自动领取。</p>
+        </div>
+        <ElTag type="warning" effect="plain">必须使用执行人本机 Figma 授权</ElTag>
+      </div>
+    </template>
+    <div class="agent-worker-guide-grid">
+      <div class="agent-worker-guide-step">
+        <span>1</span>
+        <strong>负责人创建直接执行</strong>
+        <p>选择 Skill / md、填写 Figma 链接并指派执行人后，任务进入“待领取”。</p>
+      </div>
+      <div class="agent-worker-guide-step">
+        <span>2</span>
+        <strong>执行人启动本机 Worker</strong>
+        <p>Worker 在组员电脑上登录工作台，检查 Codex 和 Figma MCP。</p>
+      </div>
+      <div class="agent-worker-guide-step">
+        <span>3</span>
+        <strong>Worker 自动领取并执行</strong>
+        <p>自检通过后自动领取自己的任务，状态会变为“已领取 / 执行中”。</p>
+      </div>
+      <div class="agent-worker-guide-step">
+        <span>4</span>
+        <strong>平台展示日志和结果</strong>
+        <p>Worker 回传 Codex 输出、阻塞原因和最终执行状态，负责人在执行台查看。</p>
+      </div>
+    </div>
+  </ElCard>
+
   <ElCard shadow="never" class="panel-card agent-worker-summary-card">
     <template #header>
       <div class="panel-head">
@@ -54,6 +88,58 @@
     </div>
   </ElCard>
 
+  <ElCard shadow="never" class="panel-card agent-worker-member-card">
+    <template #header>
+      <div class="panel-head">
+        <div>
+          <h3>组员准备清单</h3>
+          <p>负责人用这里判断谁已经具备直接执行条件，并把 Worker 启动命令发给对应组员。</p>
+        </div>
+        <ElButton plain :loading="app.loading.users || app.loading.agentWorkers" @click="app.refreshUsers(); app.refreshAgentWorkers(); app.refreshRuns()">刷新准备状态</ElButton>
+      </div>
+    </template>
+    <ElTable class="skill-clean-table" :data="app.directSkillMemberReadinessRows" table-layout="fixed" empty-text="暂无可执行账号">
+      <ElTableColumn label="组员" min-width="150">
+        <template #default="{ row }">
+          <div class="agent-member-cell">
+            <strong>{{ row.user.displayName || row.user.username }}</strong>
+            <span>{{ row.user.username }}</span>
+          </div>
+        </template>
+      </ElTableColumn>
+      <ElTableColumn label="准备状态" width="140">
+        <template #default="{ row }">
+          <ElTag size="small" :type="app.directSkillMemberReadyTagType(row)">{{ app.directSkillMemberReadyLabel(row) }}</ElTag>
+        </template>
+      </ElTableColumn>
+      <ElTableColumn label="Codex" width="110">
+        <template #default="{ row }">{{ row.codexReady ? '已就绪' : '未就绪' }}</template>
+      </ElTableColumn>
+      <ElTableColumn label="Figma MCP" width="120">
+        <template #default="{ row }">{{ row.figmaMcpReady ? '已就绪' : '未就绪' }}</template>
+      </ElTableColumn>
+      <ElTableColumn label="任务" width="150">
+        <template #default="{ row }">待领取 {{ row.pendingRuns.length }} · 执行中 {{ row.activeRuns.length }}</template>
+      </ElTableColumn>
+      <ElTableColumn label="最近心跳" width="170">
+        <template #default="{ row }">{{ app.directSkillWorkerLastSeenText(row.worker) }}</template>
+      </ElTableColumn>
+      <ElTableColumn label="启动命令" min-width="260" fixed="right">
+        <template #default="{ row }">
+          <div v-if="app.can('run.directSkill.workerCommand')" class="agent-command-cell">
+            <span v-if="!row.user.passwordDisplay">未登记展示密码时，复制后让组员自行填写密码。</span>
+            <span v-else>可复制给该组员在自己电脑执行。</span>
+            <div>
+              <ElButton plain size="small" @click="app.copyDirectSkillWorkerCommand(row.user, false)">复制手动启动</ElButton>
+              <ElButton plain size="small" @click="app.copyDirectSkillWorkerCommand(row.user, true)">复制开机自启</ElButton>
+            </div>
+          </div>
+          <span v-else class="muted-text">无复制命令权限</span>
+        </template>
+      </ElTableColumn>
+    </ElTable>
+  </ElCard>
+
   <ElCard shadow="never" class="panel-card agent-direct-runs-card">
     <template #header>
       <div class="panel-head">
@@ -78,7 +164,7 @@
       </ElTableColumn>
       <ElTableColumn label="状态" width="110">
         <template #default="{ row }">
-          <ElTag size="small" :type="app.runTagType(row.status)">{{ app.runStatusLabel(row.status) }}</ElTag>
+          <ElTag size="small" :type="app.runTagType(row.status)">{{ app.directSkillRunStatusLabel(row) }}</ElTag>
         </template>
       </ElTableColumn>
       <ElTableColumn label="本机 Worker" min-width="240">
@@ -113,6 +199,47 @@ export default {
 <style scoped lang="scss">
 .agent-workers-view {
   grid-template-columns: minmax(0, 1fr);
+}
+
+.agent-worker-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.agent-worker-guide-step {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+
+  > span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: #0f172a;
+    color: #ffffff;
+    font-size: 12px;
+    font-weight: 800;
+  }
+
+  strong {
+    color: var(--heading);
+    font-size: 14px;
+  }
+
+  p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.6;
+  }
 }
 
 .agent-worker-metrics {
@@ -240,6 +367,35 @@ export default {
   }
 }
 
+.agent-member-cell,
+.agent-command-cell {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+
+  strong,
+  span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  span {
+    color: var(--muted);
+    font-size: 12px;
+  }
+}
+
+.agent-command-cell {
+  div {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+  }
+}
+
 .agent-run-title {
   display: grid;
   gap: 4px;
@@ -261,12 +417,17 @@ export default {
 }
 
 @media (max-width: 1200px) {
+  .agent-worker-guide-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .agent-worker-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 760px) {
+  .agent-worker-guide-grid,
   .agent-worker-metrics,
   .agent-worker-list,
   .agent-worker-state-grid {
