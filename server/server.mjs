@@ -1270,25 +1270,29 @@ async function handleApi(req, res, url) {
   if (req.method === 'POST' && url.pathname === '/api/agent-runs/next') {
     requirePermission(currentUser, 'api.agentRuns.claim');
     const body = await readBody(req).catch(() => ({}));
-    const worker = await upsertAgentWorker({
+    const workerInput = {
       ...body,
       userId: currentUser.id,
       userName: currentUser.displayName || currentUser.username,
       status: 'online',
       lastHeartbeatAt: new Date().toISOString()
-    });
-    broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, module: 'agent-worker' });
+    };
+    const capabilities = Array.isArray(workerInput.capabilities)
+      ? workerInput.capabilities
+      : String(workerInput.capabilities || '').split(/\n|,|，/).map(item => item.trim()).filter(Boolean);
     const run = await claimNextAgentRun({
       userId: currentUser.id,
-      deviceId: worker.deviceId,
-      capabilities: worker.capabilities,
+      deviceId: workerInput.deviceId,
+      capabilities,
       allowedProjectIds: currentUser.projectIds || [],
       canAccessAllProjects: currentUser.role === 'admin'
     });
     if (!run) {
-      sendJson(res, 200, { run: null, worker });
+      sendJson(res, 200, { run: null });
       return;
     }
+    const worker = await upsertAgentWorker(workerInput);
+    broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, module: 'agent-worker' });
     await writeOperationLog(req, {
       user: currentUser,
       module: 'run',

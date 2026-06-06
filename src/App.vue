@@ -14005,7 +14005,7 @@ export default {
     directSkillWorkerOnline(worker = null) {
       if (!worker?.lastHeartbeatAt) return false;
       const last = Date.parse(worker.lastHeartbeatAt);
-      return Boolean(last && Date.now() - last < 45000);
+      return Boolean(last && Date.now() - last < 180000);
     },
 
     directSkillWorkerStatusText(run = null) {
@@ -14063,6 +14063,8 @@ export default {
           '$env:ART_PLATFORM_USERNAME = ' + this.powershellQuote(username || '组员账号'),
           '$env:ART_PLATFORM_PASSWORD = ' + this.powershellQuote(safePassword),
           '$env:ART_WORKER_HOME = $root',
+          '$env:ART_WORKER_POLL_INTERVAL_MS = ' + this.powershellQuote('30000'),
+          '$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = ' + this.powershellQuote('120000'),
           'node "$root\\scripts\\art-direct-worker.mjs"'
         ].join('\n');
       }
@@ -14074,6 +14076,8 @@ export default {
         `ART_PLATFORM_USERNAME=${this.shellQuote(username || '组员账号')} \\`,
         `ART_PLATFORM_PASSWORD=${this.shellQuote(safePassword)} \\`,
         'ART_WORKER_HOME="$WORKER_HOME" \\',
+        'ART_WORKER_POLL_INTERVAL_MS=30000 \\',
+        'ART_WORKER_HEARTBEAT_INTERVAL_MS=120000 \\',
         'node "$WORKER_HOME/scripts/art-direct-worker.mjs"'
       ].join('\n');
     },
@@ -14103,6 +14107,8 @@ export default {
           '$env:ART_PLATFORM_USERNAME = ' + this.powershellQuote(username || '组员账号'),
           '$env:ART_PLATFORM_PASSWORD = ' + this.powershellQuote(safePassword),
           '$env:ART_WORKER_HOME = $root',
+          '$env:ART_WORKER_POLL_INTERVAL_MS = ' + this.powershellQuote('30000'),
+          '$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = ' + this.powershellQuote('120000'),
           'powershell -NoProfile -ExecutionPolicy Bypass -File "$root\\scripts\\install_art_direct_worker_windows.ps1"'
         ].join('\n');
       }
@@ -14115,6 +14121,8 @@ export default {
         `ART_PLATFORM_USERNAME=${this.shellQuote(username || '组员账号')} \\`,
         `ART_PLATFORM_PASSWORD=${this.shellQuote(safePassword)} \\`,
         'ART_WORKER_HOME="$WORKER_HOME" \\',
+        'ART_WORKER_POLL_INTERVAL_MS=30000 \\',
+        'ART_WORKER_HEARTBEAT_INTERVAL_MS=120000 \\',
         'bash "$WORKER_HOME/scripts/install_art_direct_worker_launch_agent.sh"'
       ].join('\n');
     },

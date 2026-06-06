@@ -4,7 +4,8 @@ $Root = if ($env:ART_WORKER_HOME) { $env:ART_WORKER_HOME } elseif ($env:ART_WORK
 $Username = $env:ART_PLATFORM_USERNAME
 $Password = $env:ART_PLATFORM_PASSWORD
 $Api = $env:ART_PLATFORM_API
-$PollInterval = if ($env:ART_WORKER_POLL_INTERVAL_MS) { $env:ART_WORKER_POLL_INTERVAL_MS } else { '10000' }
+$PollInterval = if ($env:ART_WORKER_POLL_INTERVAL_MS) { $env:ART_WORKER_POLL_INTERVAL_MS } else { '30000' }
+$HeartbeatInterval = if ($env:ART_WORKER_HEARTBEAT_INTERVAL_MS) { $env:ART_WORKER_HEARTBEAT_INTERVAL_MS } else { '120000' }
 $CodexPath = if ($env:CODEX_CLI_PATH) { $env:CODEX_CLI_PATH } else { 'codex' }
 
 if (-not $Api) { throw '缺少 ART_PLATFORM_API，例如：http://工作台服务器IP:4288' }
@@ -32,6 +33,7 @@ Set-Location '$Root'
 `$env:ART_PLATFORM_PASSWORD = '$Password'
 `$env:ART_WORKER_PROJECT_ROOT = '$Root'
 `$env:ART_WORKER_POLL_INTERVAL_MS = '$PollInterval'
+`$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = '$HeartbeatInterval'
 `$env:CODEX_CLI_PATH = '$CodexPath'
 & '$Node' '$Worker' *>> '$LogDir\art-direct-worker.$Username.log'
 "@ | Set-Content -Path $Runner -Encoding UTF8

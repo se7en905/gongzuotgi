@@ -40,25 +40,19 @@
     </div>
   </ElCard>
 
-  <ElCard shadow="never" class="panel-card agent-worker-bind-card">
+  <ElCard v-if="app.isWorkbenchAdmin" shadow="never" class="panel-card agent-worker-bind-card">
     <template #header>
       <div class="panel-head">
         <div>
           <h3>{{ app.isWorkbenchAdmin ? '本机 Worker 绑定与实验操作' : '我的本机 Worker 绑定' }}</h3>
           <p>{{ app.isWorkbenchAdmin ? '需要实际跑一次直接执行实验时，在目标执行人的电脑启动 Worker；启动命令同时包含 Windows 和 macOS 两段。' : '在自己的电脑启动 Worker 后，平台才会显示你的 Codex / Figma MCP 状态，并自动领取分配给你的直接执行任务。' }}</p>
         </div>
-        <ElTag type="info" effect="plain">命令必须在执行人自己的电脑运行</ElTag>
       </div>
     </template>
     <div class="agent-worker-bind-grid">
       <div class="agent-worker-bind-copy">
         <strong>{{ app.isWorkbenchAdmin ? '当前账号实验命令' : '我的启动命令' }}</strong>
         <p>如果你现在要在工作台里做一次实验：先用 Skill/md 创建直接执行并指派给自己，再复制“手动启动”。复制出的命令里同时包含 Windows PowerShell 和 macOS 终端两段，按自己电脑系统执行对应段落。Worker 在线且 Figma MCP 就绪后，会自动领取这个任务。</p>
-        <div v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" class="agent-worker-bind-actions">
-          <ElButton type="primary" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, false)">复制手动启动</ElButton>
-          <ElButton plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, true)">复制开机自启</ElButton>
-        </div>
-        <span v-else class="muted-text">当前账号没有复制 Worker 启动命令的权限。</span>
       </div>
       <div class="agent-worker-command-explain">
         <div>
@@ -79,11 +73,17 @@
 
   <ElCard shadow="never" class="panel-card agent-worker-summary-card">
     <template #header>
-      <div class="panel-head">
+      <div class="panel-head agent-worker-summary-head">
         <div>
           <h3>Worker 心跳</h3>
+          <p>命令必须在执行人自己的电脑运行。</p>
+          <span v-if="!app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" class="muted-text">当前账号没有复制 Worker 启动命令的权限。</span>
         </div>
-        <ElButton type="primary" plain :loading="app.loading.agentWorkers || app.loading.runs" @click="app.refreshAgentWorkers(); app.refreshRuns()">刷新状态</ElButton>
+        <div class="agent-worker-toolbar">
+          <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" type="primary" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, false)">复制手动启动</ElButton>
+          <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, true)">复制开机自启</ElButton>
+          <ElButton plain :loading="app.loading.agentWorkers || app.loading.runs" @click="app.refreshAgentWorkers(); app.refreshRuns()">刷新状态</ElButton>
+        </div>
       </div>
     </template>
     <div class="agent-worker-list">
@@ -93,10 +93,13 @@
             <strong>{{ row.user.displayName || row.user.username || row.worker?.userName || '未命名组员' }}</strong>
             <span>{{ row.worker?.deviceName || row.worker?.deviceId || '未启动 Worker' }}</span>
           </div>
-          <ElTag size="small" :type="row.ready ? 'success' : row.online ? 'warning' : 'danger'">{{ row.ready ? '可直接执行' : row.online ? '不可执行' : '无心跳' }}</ElTag>
-        </div>
-        <div :class="['agent-heartbeat-line', { alive: row.ready }]">
-          <span></span>
+          <div :class="['agent-heartbeat-badge', { alive: row.ready, warning: row.online && !row.ready }]">
+            <svg v-if="row.ready" viewBox="0 0 112 34" aria-hidden="true">
+              <path class="agent-heartbeat-trail" d="M2 22 C14 22, 18 14, 29 15 C39 16, 43 22, 52 22 C61 22, 63 7, 71 7 C80 7, 82 22, 91 22 C101 22, 104 17, 110 17" />
+              <path class="agent-heartbeat-draw" d="M2 22 C14 22, 18 14, 29 15 C39 16, 43 22, 52 22 C61 22, 63 7, 71 7 C80 7, 82 22, 91 22 C101 22, 104 17, 110 17" />
+            </svg>
+            <span v-else>{{ row.online ? '不可执行' : '无心跳' }}</span>
+          </div>
         </div>
         <div class="agent-worker-state-grid">
           <div><span>Codex</span><strong>{{ row.codexReady ? '已就绪' : '未就绪' }}</strong></div>
@@ -263,6 +266,22 @@ export default {
   gap: 12px;
 }
 
+.agent-worker-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agent-worker-summary-head {
+  align-items: center;
+
+  > div:first-child {
+    min-width: 0;
+  }
+}
+
 .agent-worker-list {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -352,60 +371,80 @@ export default {
   }
 }
 
-.agent-heartbeat-line {
-  position: relative;
-  height: 36px;
-  overflow: hidden;
-  border-radius: 6px;
+.agent-heartbeat-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 70px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 999px;
   background: #fff7f7;
+  color: #dc2626;
+  font-size: 12px;
+  font-weight: 800;
 
-  &::before {
-    position: absolute;
-    top: 50%;
-    right: 10px;
-    left: 10px;
-    height: 2px;
-    background: #ef4444;
-    content: "";
-    transform: translateY(-50%);
-  }
-
-  span {
-    display: none;
+  &.warning {
+    border-color: rgba(245, 158, 11, 0.28);
+    background: #fffbeb;
+    color: #b45309;
   }
 
   &.alive {
-    background: #f0fdf4;
+    width: 94px;
+    min-width: 94px;
+    padding: 0 8px;
+    border-color: rgba(20, 184, 166, 0.28);
+    background: rgba(236, 253, 245, 0.9);
+    box-shadow: inset 0 0 14px rgba(20, 184, 166, 0.12);
+  }
 
-    &::before {
-      background: rgba(22, 163, 74, 0.18);
-    }
+  svg {
+    width: 76px;
+    height: 24px;
+    overflow: visible;
+  }
 
-    span {
-      position: absolute;
-      top: 50%;
-      left: 0;
-      display: block;
-      width: 200%;
-      height: 24px;
-      background:
-        linear-gradient(90deg, transparent 0 8px, #16a34a 8px 10px, transparent 10px 20px) 0 11px / 40px 2px repeat-x,
-        linear-gradient(135deg, transparent 0 42%, #16a34a 42% 47%, transparent 47% 100%) 18px 4px / 40px 18px repeat-x,
-        linear-gradient(45deg, transparent 0 42%, #16a34a 42% 47%, transparent 47% 100%) 30px 4px / 40px 18px repeat-x;
-      filter: drop-shadow(0 0 3px rgba(22, 163, 74, 0.35));
-      transform: translateY(-50%);
-      animation: agent-heartbeat-flow 1.35s linear infinite;
-    }
+  path {
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 }
 
-@keyframes agent-heartbeat-flow {
-  from {
-    transform: translate3d(0, -50%, 0);
+.agent-heartbeat-trail {
+  stroke: rgba(20, 184, 166, 0.2);
+  stroke-width: 4;
+}
+
+.agent-heartbeat-draw {
+  stroke: #10f5d4;
+  stroke-width: 4;
+  stroke-dasharray: 150;
+  stroke-dashoffset: 150;
+  filter:
+    drop-shadow(0 0 2px rgba(45, 212, 191, 0.9))
+    drop-shadow(0 0 6px rgba(20, 184, 166, 0.5));
+  animation: agent-heartbeat-trace 1.45s ease-in-out infinite;
+}
+
+@keyframes agent-heartbeat-trace {
+  0% {
+    stroke-dashoffset: 150;
+    opacity: 0.35;
   }
 
-  to {
-    transform: translate3d(-40px, -50%, 0);
+  45%,
+  72% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+
+  100% {
+    stroke-dashoffset: -150;
+    opacity: 0.35;
   }
 }
 
@@ -465,6 +504,15 @@ export default {
 
   .agent-worker-bind-grid {
     grid-template-columns: 1fr;
+  }
+
+  .agent-worker-toolbar {
+    justify-content: flex-start;
+  }
+
+  .agent-worker-summary-head {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .agent-worker-list {

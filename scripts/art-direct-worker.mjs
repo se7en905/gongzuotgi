@@ -8,12 +8,14 @@ const apiBase = normalizeBaseUrl(process.env.ART_PLATFORM_API || process.env.API
 const username = process.env.ART_PLATFORM_USERNAME || process.env.AWP_USERNAME || '';
 const password = process.env.ART_PLATFORM_PASSWORD || process.env.AWP_PASSWORD || '';
 const deviceId = process.env.ART_WORKER_DEVICE_ID || `${os.hostname()}-${os.userInfo().username}`;
-const pollIntervalMs = Math.max(5000, Number(process.env.ART_WORKER_POLL_INTERVAL_MS || 10000));
+const pollIntervalMs = Math.max(10000, Number(process.env.ART_WORKER_POLL_INTERVAL_MS || 30000));
+const heartbeatIntervalMs = Math.max(pollIntervalMs, Number(process.env.ART_WORKER_HEARTBEAT_INTERVAL_MS || 120000));
 const codexPath = process.env.CODEX_CLI_PATH || 'codex';
 const defaultProjectRoot = process.env.ART_WORKER_PROJECT_ROOT || process.env.ART_WORKER_HOME || process.cwd();
 
 let cookie = '';
 let currentUser = null;
+let lastHeartbeatAt = 0;
 let localChecks = {
   codexReady: false,
   figmaMcpReady: false,
@@ -32,11 +34,15 @@ async function main() {
   console.log(`[worker] 已连接 ${apiBase}，当前账号：${currentUser?.displayName || currentUser?.username || username}`);
   console.log(`[worker] Codex: ${localChecks.codexMessage}`);
   console.log(`[worker] Figma MCP: ${localChecks.figmaMessage}`);
+  await heartbeat(true);
   while (true) {
     try {
       await heartbeat();
       const run = await claimNextRun();
-      if (run) await executeRun(run);
+      if (run) {
+        await executeRun(run);
+        await heartbeat(true);
+      }
     } catch (error) {
       console.error(`[worker] ${error.message}`);
       if (/401|登录态|认证/.test(error.message)) await login();
@@ -57,11 +63,14 @@ async function login() {
   if (!cookie || !currentUser) throw new Error('平台登录失败，未获得有效登录态。');
 }
 
-async function heartbeat() {
+async function heartbeat(force = false) {
+  const now = Date.now();
+  if (!force && now - lastHeartbeatAt < heartbeatIntervalMs) return;
   await fetchJson('/api/agent-workers/heartbeat', {
     method: 'POST',
     body: workerPayload()
   });
+  lastHeartbeatAt = now;
 }
 
 async function claimNextRun() {

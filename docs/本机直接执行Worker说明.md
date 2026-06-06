@@ -105,7 +105,8 @@ bash "$HOME/ArtDirectWorker/scripts/install_art_direct_worker_launch_agent.sh"
 | `ART_PLATFORM_USERNAME` | 组员平台账号 |
 | `ART_PLATFORM_PASSWORD` | 组员平台密码 |
 | `ART_WORKER_DEVICE_ID` | 可选，本机设备标识 |
-| `ART_WORKER_POLL_INTERVAL_MS` | 可选，领取任务轮询间隔，默认 10000 |
+| `ART_WORKER_POLL_INTERVAL_MS` | 可选，领取任务轮询间隔，默认 30000 |
+| `ART_WORKER_HEARTBEAT_INTERVAL_MS` | 可选，最近心跳刷新间隔，默认 120000 |
 | `CODEX_CLI_PATH` | 可选，Codex CLI 路径 |
 | `ART_WORKER_PROJECT_ROOT` | 可选，Codex 执行根目录，默认当前目录 |
 
@@ -118,6 +119,14 @@ bash "$HOME/ArtDirectWorker/scripts/install_art_direct_worker_launch_agent.sh"
 5. Codex 使用组员本机 Figma MCP 写入 Figma。
 6. Worker 回传执行日志和最终状态。
 7. 平台执行台展示结果、阻塞原因和报告入口。
+
+## 心跳与轮询频率
+
+- Worker 启动后先上报一次本机准备状态。
+- 默认每 30 秒检查一次是否有分配给自己的直接执行任务。
+- 默认每 2 分钟刷新一次最近心跳，避免频繁写入工作台数据文件。
+- 工作台前端按 3 分钟内有心跳判断为在线，避免低频心跳被误判离线。
+- 空轮询没有任务时不追加数据，也不反复刷新最近心跳；只有定时心跳或实际领取任务时才更新 Worker 状态。
 
 ## 常见阻塞
 
