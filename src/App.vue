@@ -520,7 +520,7 @@ const AI_FLOW_STAGE_FIELDS = [
   { key: 'autoFix', label: '自动修复' }
 ];
 const CODEX_MODEL_OPTIONS = ['gpt-5.5', 'gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2'];
-const RUN_LOG_FETCH_TAIL_BYTES = 128 * 1024;
+const RUN_LOG_FETCH_TAIL_BYTES = 48 * 1024;
 const RUN_LOG_BUFFER_MAX_CHARS = 160 * 1024;
 const RUN_LOG_RENDER_MAX_CHARS = 80 * 1024;
 const RUN_LOG_RENDER_MAX_LINES = 400;
@@ -755,6 +755,7 @@ export default {
         userId: '',
         status: '',
         sourceType: '',
+        runId: '',
         from: '',
         to: ''
       },
@@ -1069,9 +1070,11 @@ export default {
       const userId = String(filters.userId || '').trim();
       const status = String(filters.status || '').trim();
       const sourceType = String(filters.sourceType || '').trim();
+      const runId = String(filters.runId || '').trim();
       const from = filters.from ? Date.parse(filters.from) : 0;
       const to = filters.to ? Date.parse(filters.to) : 0;
       return (this.runs || [])
+        .filter(run => !runId || String(run.id || '') === runId)
         .filter(run => !sourceType || run.sourceType === sourceType || run.executionMode === sourceType)
         .filter(run => !status || String(run.status || '') === status)
         .filter(run => {
@@ -1301,6 +1304,7 @@ export default {
     },
 
     selectedRunChangeItems() {
+      if (this.activeView !== 'runs' && !this.runDiffPreview.visible) return [];
       const summary = this.selectedRun?.changeSummary || {};
       const groups = [
         ['added', 'added'],
@@ -3369,12 +3373,72 @@ export default {
     },
 
     activeRunStage() {
-      const stages = this.displayRunStages(this.selectedRun);
-      const running = stages.findIndex(stage => /running/.test(stage.status || ''));
+      if (this.activeView !== 'runs') return 0;
+      const stages = this.selectedRunDisplayStages;
+      const running = stages.findIndex(stage => /running/.test(stage.displayStatus || stage.status || ''));
       if (running >= 0) return running + 1;
       const current = this.currentRunStageIndex(this.selectedRun);
       if (current >= 0) return current + 1;
-      return stages.filter(stage => /done|success|passed|conditional|skipped|通过|有条件|跳过|✅|⏭️/.test(stage.status || '')).length;
+      return stages.filter(stage => /done|success|passed|conditional|skipped|通过|有条件|跳过|✅|⏭️/.test(stage.displayStatus || stage.status || '')).length;
+    },
+
+    selectedRunDisplayStages() {
+      if (this.activeView !== 'runs') return [];
+      const run = this.selectedRun;
+      const stages = this.displayRunStages(run);
+      return stages.map((stage, index) => {
+        const displayStatus = this.displayStageStatusFromDisplayStages(stages, stage, index, run);
+        return {
+          ...stage,
+          displayStatus,
+          stepStatus: this.stepStatus(displayStatus),
+          stepLabel: this.stageStepLabel(displayStatus),
+          stepClass: this.stageStepClass(displayStatus),
+          isCurrent: this.isCurrentRunStageFromDisplayStages(stages, index, run),
+          durationText: this.stageDurationText(stage, run, index)
+        };
+      });
+    },
+
+    selectedRunSkillActionRows() {
+      if (this.activeView !== 'runs') return [];
+      return this.runChainSkillActions(this.selectedRun);
+    },
+
+    selectedRunHighlightedSkillActions() {
+      const byKey = new Map(this.selectedRunSkillActionRows.map(item => [item.key, item]));
+      return ['sameipimage', 'uifinalize'].map(key => byKey.get(key) || {
+        key,
+        name: this.displayRunActionSkillName(key),
+        type: this.runActionTypeLabel(key),
+        count: 0,
+        status: 'pending',
+        people: [],
+        lastAt: '',
+        summary: this.defaultRunActionSummary(key),
+        records: []
+      });
+    },
+
+    selectedRunSkillActionTotal() {
+      return this.selectedRunSkillActionRows.reduce((sum, item) => sum + item.count, 0);
+    },
+
+    selectedRunOtherSkillActionSummary() {
+      const rows = this.selectedRunSkillActionRows.filter(item => !['sameipimage', 'uifinalize'].includes(item.key)).slice(0, 8);
+      return {
+        rows,
+        count: rows.length,
+        total: rows.reduce((sum, item) => sum + item.count, 0)
+      };
+    },
+
+    selectedRunReferenceItems() {
+      return this.runChainReferenceItems(this.selectedRun);
+    },
+
+    selectedRunReferenceCount() {
+      return this.selectedRunReferenceItems.length;
     },
 
     audit() {
@@ -3610,8 +3674,9 @@ export default {
 
     selectedRunId(value) {
       if (value) {
-        this.loadSelectedRunLog();
         this.runLogCollapse = this.isRunInProgress(this.selectedRun) ? ['raw-log'] : [];
+        if (this.isRunInProgress(this.selectedRun)) this.loadSelectedRunLog();
+        else this.logText = '原始执行日志默认收起，展开后读取尾部摘要。';
       } else {
         this.runLogCollapse = [];
         this.logText = '选择一个任务后查看执行日志。';
@@ -3658,6 +3723,14 @@ export default {
 
     selectedBusinessTaskId() {
       this.seedTaskReviewForm();
+    },
+
+    runLogCollapse(value) {
+      if (Array.isArray(value) && value.includes('raw-log') && this.selectedRun?.id) {
+        if (!this.logText || /默认收起|选择一个任务后查看执行日志/.test(this.logText)) {
+          this.loadSelectedRunLog().catch(() => {});
+        }
+      }
     },
 
     artProjectSheetKeyword() {
@@ -4092,17 +4165,17 @@ export default {
       }
       if (view === 'runs') {
         this.restoreWorkbenchDisplayCacheKey('artProgressEvents');
-        if (!this.runs.length && !this.loading.runs) this.refreshRuns().catch(() => {});
+        if (!this.loading.runs) this.refreshRuns().catch(() => {});
         if (!this.agentWorkers.length && !this.loading.agentWorkers) this.refreshAgentWorkers().catch(() => {});
         if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
       }
       if (view === 'agent-workers') {
-        if (!this.runs.length && !this.loading.runs) this.refreshRuns().catch(() => {});
+        if (!this.loading.runs) this.refreshRuns().catch(() => {});
         if (!this.agentWorkers.length && !this.loading.agentWorkers) this.refreshAgentWorkers().catch(() => {});
         if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
       }
       if (view === 'ai-archive') {
-        if (!this.runs.length && !this.loading.runs) this.refreshRuns().catch(() => {});
+        if (!this.loading.runs) this.refreshRuns().catch(() => {});
         if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
       }
       if (view === 'operation-logs') {
@@ -6974,8 +7047,15 @@ export default {
       try {
         this.runs = await this.api('/api/runs');
         this.saveWorkbenchDisplayCache('runs', this.runs);
+        if (this.selectedRunId && !this.runs.some(run => run.id === this.selectedRunId)) {
+          this.selectedRunId = this.runs[0]?.id || '';
+        }
         if (!this.selectedRunId && this.runs[0]) this.selectedRunId = this.runs[0].id;
-        if (this.selectedRunId) await this.loadSelectedRunLog();
+        if (this.selectedRunId && this.isRunInProgress(this.selectedRun)) {
+          window.setTimeout(() => {
+            if (this.selectedRunId) this.loadSelectedRunLog().catch(() => {});
+          }, 0);
+        }
       } finally {
         this.loading.runs = false;
       }
@@ -6999,6 +7079,7 @@ export default {
         userId: '',
         status: '',
         sourceType: '',
+        runId: '',
         from: '',
         to: ''
       };
@@ -15146,6 +15227,25 @@ export default {
     },
 
     openRunArchive(run = this.selectedRun) {
+      if (!run) return;
+      if (this.isDirectSkillRun(run)) {
+        this.aiExecutionArchiveFilters = {
+          ...this.aiExecutionArchiveFilters,
+          keyword: '',
+          userId: '',
+          status: '',
+          sourceType: '',
+          runId: run.id || '',
+          from: '',
+          to: ''
+        };
+        this.activeView = 'ai-archive';
+        this.pushRoute('/ai-archive');
+        this.$nextTick(() => {
+          document.querySelector('.ai-archive-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+        return;
+      }
       const task = this.businessTaskForRun(run);
       if (task) {
         this.selectedBusinessTaskId = task.id;
@@ -15310,7 +15410,9 @@ export default {
     displayRunStages(run = null) {
       const stages = (run?.stages || []).map(stage => ({ ...stage }));
       if (!stages.length) return [];
-      const events = this.stageEventsFromLog(this.logText);
+      const events = this.isRunInProgress(run) && run?.id === this.selectedRunId
+        ? this.stageEventsFromLog(this.logText)
+        : [];
       for (const event of events) {
         const index = this.findStageIndexByName(stages, event.name);
         if (index < 0) continue;
@@ -15427,6 +15529,23 @@ export default {
       return this.runChainSkillActions(run).filter(item => !['sameipimage', 'uifinalize'].includes(item.key)).slice(0, 8);
     },
 
+    runSkillActionTotal(run = this.selectedRun) {
+      return this.runChainSkillActions(run).reduce((sum, item) => sum + item.count, 0);
+    },
+
+    runOtherSkillActionSummary(run = this.selectedRun) {
+      const rows = this.otherRunSkillActions(run);
+      return {
+        rows,
+        count: rows.length,
+        total: rows.reduce((sum, item) => sum + item.count, 0)
+      };
+    },
+
+    runReferenceCount(run = this.selectedRun) {
+      return this.runChainReferenceItems(run, { includeSelectedLog: false }).length;
+    },
+
     normalizeRunActionSkillKey(value = '') {
       const normalized = this.normalizeUsageMatchText(value).replace(/\.(md|markdown)$/i, '');
       if (!normalized) return '';
@@ -15505,7 +15624,6 @@ export default {
         run?.figmaLinks,
         run?.showdocHints,
         run?.materialPath,
-        this.logText,
         ...(this.runChainEvents(run).flatMap(event => [event.repoPath, event.summary, event.metadata?.path, event.metadata?.filePath, event.metadata?.skillPath, event.metadata?.artifactPath]) || [])
       ].forEach(value => push(value, '执行链路'));
       return items.slice(0, 10);
@@ -15586,9 +15704,22 @@ export default {
       return currentIndex >= 0 ? index === currentIndex : index === Math.max(this.activeRunStage - 1, 0);
     },
 
+    isCurrentRunStageFromDisplayStages(stages = [], index = -1, run = null) {
+      if (!run || !/running|in_progress/i.test(run.status || '')) return false;
+      const currentIndex = this.currentRunStageIndex(run);
+      if (currentIndex >= 0) return index === currentIndex;
+      const active = stages.findIndex(stage => /running|in_progress/i.test(stage.status || ''));
+      return active >= 0 ? index === active : false;
+    },
+
     displayStageStatus(stage, index) {
       const displayStage = this.displayRunStages(this.selectedRun)[index] || stage;
       return this.isCurrentRunStage(stage, index) ? 'running' : displayStage?.status || '';
+    },
+
+    displayStageStatusFromDisplayStages(stages = [], stage = {}, index = -1, run = null) {
+      const displayStage = stages[index] || stage;
+      return this.isCurrentRunStageFromDisplayStages(stages, index, run) ? 'running' : displayStage?.status || '';
     },
 
     currentRunStageIndex(run = null) {

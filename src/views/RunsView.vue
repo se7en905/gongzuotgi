@@ -35,8 +35,8 @@
           >
             {{ action.type }} {{ action.count }}
           </span>
-          <span v-if="app.runChainReferenceItems(run).length" class="run-action-chip reference">
-            md 引用 {{ app.runChainReferenceItems(run).length }}
+          <span v-if="app.runReferenceCount(run)" class="run-action-chip reference">
+            md 引用 {{ app.runReferenceCount(run) }}
           </span>
         </div>
       </button>
@@ -127,16 +127,16 @@
     <div class="stage-steps-wrap">
       <ElSteps :active="app.activeRunStage" finish-status="success" direction="horizontal" class="stage-steps">
         <ElStep
-          v-for="(stage, index) in app.displayRunStages(app.selectedRun)"
+          v-for="stage in app.selectedRunDisplayStages"
           :key="stage.no"
-          :class="[app.stageStepClass(app.displayStageStatus(stage, index)), { 'is-current-running-stage': app.isCurrentRunStage(stage, index) }]"
+          :class="[stage.stepClass, { 'is-current-running-stage': stage.isCurrent }]"
           :title="stage.name"
-          :status="app.stepStatus(app.displayStageStatus(stage, index))"
+          :status="stage.stepStatus"
         >
           <template #description>
             <span class="stage-step-detail">
-              <span>{{ app.stageStepLabel(app.displayStageStatus(stage, index)) }}</span>
-              <small>{{ app.stageDurationText(stage, app.selectedRun, index) }}</small>
+              <span>{{ stage.stepLabel }}</span>
+              <small>{{ stage.durationText }}</small>
             </span>
           </template>
         </ElStep>
@@ -153,11 +153,11 @@
           <h4>关键动作概览</h4>
           <p>这里只判断本次任务是否发生过关键动作；调用明细在产物列表里查看。</p>
         </div>
-        <span>{{ app.runChainSkillActions(app.selectedRun).reduce((sum, item) => sum + item.count, 0) }} 次动作</span>
+        <span>{{ app.selectedRunSkillActionTotal }} 次动作</span>
       </div>
       <div class="run-skill-action-grid">
         <div
-          v-for="action in app.highlightedRunSkillActions(app.selectedRun)"
+          v-for="action in app.selectedRunHighlightedSkillActions"
           :key="action.key"
           :class="['run-skill-action-card', action.status]"
         >
@@ -175,9 +175,9 @@
           </div>
         </div>
       </div>
-      <div v-if="app.otherRunSkillActions(app.selectedRun).length" class="run-other-action-row">
+      <div v-if="app.selectedRunOtherSkillActionSummary.count" class="run-other-action-row">
         <span>其它 skill / 工具动作</span>
-        <strong>{{ app.otherRunSkillActions(app.selectedRun).length }} 类，合计 {{ app.otherRunSkillActions(app.selectedRun).reduce((sum, item) => sum + item.count, 0) }} 次</strong>
+        <strong>{{ app.selectedRunOtherSkillActionSummary.count }} 类，合计 {{ app.selectedRunOtherSkillActionSummary.total }} 次</strong>
       </div>
     </section>
     <section v-if="app.selectedRun" class="run-chain-panel">
@@ -207,9 +207,9 @@
           </div>
         </div>
       </div>
-      <div v-if="app.runChainReferenceItems(app.selectedRun).length" class="run-reference-list">
+      <div v-if="app.selectedRunReferenceCount" class="run-reference-list">
         <span>md / SKILL.md 引用</span>
-        <strong>{{ app.runChainReferenceItems(app.selectedRun).length }} 个引用，明细在产物列表查看</strong>
+        <strong>{{ app.selectedRunReferenceCount }} 个引用，明细在产物列表查看</strong>
       </div>
     </section>
     <section v-if="app.selectedRun" class="run-codex-chat-panel">
