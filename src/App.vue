@@ -675,6 +675,11 @@ export default {
       aiMembersViewMounted: false,
       aiMemberScoreReady: false,
       aiMemberScoreReadyTimer: 0,
+      aiMemberScoreRowsSnapshot: [],
+      aiMemberScoreRowsSnapshotKey: '',
+      aiMemberScoreRowsSnapshotAt: '',
+      aiMemberScoreRefreshTimer: 0,
+      aiMemberScoreRefreshing: false,
       aiMembersBoardFrameReady: false,
       aiMembersBoardFrameReadyTimer: 0,
       users: [],
@@ -2542,23 +2547,10 @@ export default {
     },
 
     aiMemberScoreRows() {
-      const snapshotMembers = Array.isArray(this.aiMembersSnapshot?.members) ? this.aiMembersSnapshot.members : [];
-      const fallbackMembers = DEFAULT_ART_DEPT_PEOPLE.map(person => ({
-        name: person.realname,
-        account: person.account,
-        level: '',
-        status: ''
-      }));
-      const sourceMembers = this.dedupeAiScoreMembers([...snapshotMembers, ...fallbackMembers]);
-      const cacheKey = this.aiMemberScoreRowsCacheKey(sourceMembers);
-      if (this._aiMemberScoreRowsCache?.key === cacheKey) return this._aiMemberScoreRowsCache.rows;
-      const summaryMap = new Map(this.skillInventoryMemberSummaries.map(summary => [this.normalizeAiScorePersonKey(summary.name || summary.account), summary]));
-      const rows = sourceMembers
-        .filter(member => !this.isAiScoreOwnerMember(member))
-        .map(member => this.aiMemberScoreRow(member, summaryMap.get(this.normalizeAiScorePersonKey(member.name || member.realname || member.account)) || null))
-        .sort((a, b) => b.score - a.score || b.monthUsageCount - a.monthUsageCount || a.name.localeCompare(b.name));
-      this._aiMemberScoreRowsCache = { key: cacheKey, rows };
-      return rows;
+      if (Array.isArray(this.aiMemberScoreRowsSnapshot) && this.aiMemberScoreRowsSnapshot.length) {
+        return this.aiMemberScoreRowsSnapshot;
+      }
+      return this.computeAiMemberScoreRows();
     },
 
     aiMemberScoreOverview() {
@@ -3805,6 +3797,7 @@ export default {
   beforeUnmount() {
     if (this.zentaoSyncTimer) clearTimeout(this.zentaoSyncTimer);
     if (this.aiMemberScoreReadyTimer) clearTimeout(this.aiMemberScoreReadyTimer);
+    if (this.aiMemberScoreRefreshTimer) clearTimeout(this.aiMemberScoreRefreshTimer);
     if (this.aiMembersBoardFrameReadyTimer) clearTimeout(this.aiMembersBoardFrameReadyTimer);
     this.stopZentaoAutoSyncPolling();
     this.stopTaskBriefRealtimeSync();
@@ -4406,7 +4399,10 @@ export default {
         if (!this.platformEventSource) this.startPlatformEventSync();
       } finally {
         this.workbenchStateRestoring = false;
-        if (this.activeView === 'ai-members') this.prepareAiMembersView();
+        if (this.activeView === 'ai-members') {
+          this.aiMembersBoardFrameReady = true;
+          this.scheduleAiMemberScoreRefresh(120);
+        }
       }
     },
 
@@ -4769,6 +4765,39 @@ export default {
       return false;
     },
 
+    restoreAiMemberScoreSnapshot() {
+      try {
+        const raw = localStorage.getItem(this.workbenchDisplayCacheKey('aiMemberScoreRowsSnapshot'));
+        if (!raw) return false;
+        const parsed = JSON.parse(raw);
+        const rows = Array.isArray(parsed?.rows) ? parsed.rows : Array.isArray(parsed?.value?.rows) ? parsed.value.rows : [];
+        if (!rows.length) return false;
+        this.aiMemberScoreRowsSnapshot = rows;
+        this.aiMemberScoreRowsSnapshotKey = parsed.key || parsed.value?.key || '';
+        this.aiMemberScoreRowsSnapshotAt = parsed.savedAt || parsed.value?.savedAt || '';
+        this.aiMemberScoreReady = true;
+        return true;
+      } catch {
+        return false;
+      }
+    },
+
+    saveAiMemberScoreSnapshot(rows = [], key = '') {
+      if (!Array.isArray(rows) || !rows.length) return;
+      const payload = {
+        rows,
+        key,
+        savedAt: new Date().toISOString()
+      };
+      this.aiMemberScoreRowsSnapshot = rows;
+      this.aiMemberScoreRowsSnapshotKey = key;
+      this.aiMemberScoreRowsSnapshotAt = payload.savedAt;
+      try {
+        localStorage.setItem(this.workbenchDisplayCacheKey('aiMemberScoreRowsSnapshot'), JSON.stringify(payload));
+      } catch {
+      }
+    },
+
     restoreWorkbenchDisplayCacheKeyIfEmpty(key = '') {
       if (!key) return false;
       const current = this[key];
@@ -4795,6 +4824,7 @@ export default {
         'artProgressSummary',
         'usageCounters'
       ].forEach(key => this.restoreWorkbenchDisplayCacheKey(key));
+      this.restoreAiMemberScoreSnapshot();
     },
 
     async refreshAll() {
@@ -6432,20 +6462,21 @@ export default {
 
     prepareAiMembersView() {
       this.aiMembersViewMounted = true;
-      this.aiMemberScoreReady = false;
       this.aiMembersBoardFrameReady = false;
       this.cancelAiMembersDeferredWork();
+      if (Array.isArray(this.aiMemberScoreRowsSnapshot) && this.aiMemberScoreRowsSnapshot.length) {
+        this.aiMemberScoreReady = true;
+      } else {
+        this.restoreAiMemberScoreSnapshot();
+        this.aiMemberScoreReady = Array.isArray(this.aiMemberScoreRowsSnapshot) && this.aiMemberScoreRowsSnapshot.length;
+      }
       if (this.workbenchStateRestoring) return;
       this.aiMembersBoardFrameReadyTimer = setTimeout(() => {
         if (this.activeView !== 'ai-members') return;
         this.aiMembersBoardFrameReady = true;
         this.aiMembersBoardFrameReadyTimer = 0;
       }, 80);
-      this.aiMemberScoreReadyTimer = setTimeout(() => {
-        if (this.activeView !== 'ai-members') return;
-        this.aiMemberScoreReady = true;
-        this.aiMemberScoreReadyTimer = 0;
-      }, 140);
+      this.scheduleAiMemberScoreRefresh();
     },
 
     cancelAiMembersDeferredWork() {
@@ -6457,6 +6488,58 @@ export default {
         clearTimeout(this.aiMembersBoardFrameReadyTimer);
         this.aiMembersBoardFrameReadyTimer = 0;
       }
+    },
+
+    currentAiMemberScoreSourceMembers() {
+      const snapshotMembers = Array.isArray(this.aiMembersSnapshot?.members) ? this.aiMembersSnapshot.members : [];
+      const fallbackMembers = DEFAULT_ART_DEPT_PEOPLE.map(person => ({
+        name: person.realname,
+        account: person.account,
+        level: '',
+        status: ''
+      }));
+      return this.dedupeAiScoreMembers([...snapshotMembers, ...fallbackMembers]);
+    },
+
+    computeAiMemberScoreRows() {
+      const sourceMembers = this.currentAiMemberScoreSourceMembers();
+      const cacheKey = this.aiMemberScoreRowsCacheKey(sourceMembers);
+      if (this._aiMemberScoreRowsCache?.key === cacheKey) return this._aiMemberScoreRowsCache.rows;
+      const summaryMap = new Map(this.skillInventoryMemberSummaries.map(summary => [this.normalizeAiScorePersonKey(summary.name || summary.account), summary]));
+      const rows = sourceMembers
+        .filter(member => !this.isAiScoreOwnerMember(member))
+        .map(member => this.aiMemberScoreRow(member, summaryMap.get(this.normalizeAiScorePersonKey(member.name || member.realname || member.account)) || null))
+        .sort((a, b) => b.score - a.score || b.monthUsageCount - a.monthUsageCount || a.name.localeCompare(b.name));
+      this._aiMemberScoreRowsCache = { key: cacheKey, rows };
+      return rows;
+    },
+
+    scheduleAiMemberScoreRefresh(delay = 180) {
+      if (this.aiMemberScoreRefreshTimer) clearTimeout(this.aiMemberScoreRefreshTimer);
+      this.aiMemberScoreRefreshTimer = setTimeout(() => {
+        this.aiMemberScoreRefreshTimer = 0;
+        this.refreshAiMemberScoreSnapshotQuietly();
+      }, delay);
+    },
+
+    refreshAiMemberScoreSnapshotQuietly() {
+      if (this.aiMemberScoreRefreshing || this.workbenchStateRestoring) return;
+      const sourceMembers = this.currentAiMemberScoreSourceMembers();
+      const cacheKey = this.aiMemberScoreRowsCacheKey(sourceMembers);
+      if (cacheKey && cacheKey === this.aiMemberScoreRowsSnapshotKey && this.aiMemberScoreRowsSnapshot.length) {
+        this.aiMemberScoreReady = true;
+        return;
+      }
+      this.aiMemberScoreRefreshing = true;
+      setTimeout(() => {
+        try {
+          const rows = this.computeAiMemberScoreRows();
+          this.saveAiMemberScoreSnapshot(rows, cacheKey);
+          this.aiMemberScoreReady = true;
+        } finally {
+          this.aiMemberScoreRefreshing = false;
+        }
+      }, 0);
     },
 
     aiMemberScoreRowsCacheKey(sourceMembers = []) {

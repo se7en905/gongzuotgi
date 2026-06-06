@@ -10,9 +10,7 @@
         <p>{{ app.aiScoreMonthDisplay }} · {{ app.aiMemberScoreRuleText }}</p>
       </div>
     </div>
-    <div v-if="!app.aiMemberScoreReady" class="ai-score-loading">
-      {{ app.workbenchStateRestoring ? '正在同步最终评分数据...' : '正在整理当月 AI 评分...' }}
-    </div>
+    <div v-if="!app.aiMemberScoreReady" class="ai-score-loading">正在整理当月 AI 评分...</div>
     <div v-else class="ai-score-grid">
       <article
         v-for="member in app.aiMemberScoreRows"
