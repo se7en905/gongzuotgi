@@ -14588,6 +14588,14 @@ export default {
       return `${this.directSkillWorkerDisplayName(worker)} · ${online ? '在线' : '离线'} · ${codex} · ${figma}`;
     },
 
+    isDirectSkillClaimedRun(run = null) {
+      return Boolean(this.isDirectSkillRun(run) && (run?.claimedAt || run?.startedAt || run?.claimedByDeviceId));
+    },
+
+    isDirectSkillFailedRun(run = null) {
+      return Boolean(this.isDirectSkillRun(run) && /failed|error/i.test(String(run?.status || run?.workerStatus || '')));
+    },
+
     directSkillRunOperatorName(run = null) {
       const userId = String(run?.createdBy || '').trim();
       const user = this.users.find(item => String(item.id || '') === userId);
@@ -14945,6 +14953,9 @@ export default {
     },
 
     workflowRunLabel(run) {
+      if (this.isDirectSkillRun(run)) {
+        return `${this.directSkillRunContentKind(run)} · ${this.directSkillRunContentName(run)}`;
+      }
       const workflow = normalizeWorkflowId(run.workflow);
       if (workflow === 'bug-fix') return 'Bug 修复';
       if (workflow === 'art-single-skill') return `单技能 · ${run.stage || '指定阶段'}`;
@@ -15008,6 +15019,8 @@ export default {
     },
 
     resultSummaryText(summary = {}, run = {}) {
+      const logReason = this.directSkillRunLogFailureReason(run);
+      if (logReason) return this.humanizeRunResultText(logReason);
       const text = String(summary.summary || '').trim();
       if (text && !this.isPlaceholderResultText(text)) return this.humanizeRunResultText(text);
       const reason = String(summary.blockerReason || '').trim();
@@ -15086,6 +15099,8 @@ export default {
       const status = this.effectiveResultStatus(run);
       const nextStep = String(summary.nextStep || '').trim();
       if (nextStep && !this.isPlaceholderResultText(nextStep)) return this.humanizeRunResultText(nextStep);
+      const logReason = this.directSkillRunLogFailureReason(run);
+      if (logReason) return `下一步：${this.humanizeRunResultText(logReason)}`;
       const blockerReason = String(summary.blockerReason || '').trim();
       if (['blocked', 'failed'].includes(status) && blockerReason && !this.isPlaceholderResultText(blockerReason)) {
         return this.humanizeRunResultText(blockerReason);
@@ -15106,6 +15121,18 @@ export default {
         .replace(/当前兼容列表/g, '已配置的兼容字段列表')
         .replace(/界面无法优先使用该字段/g, '页面会继续使用旧字段，新的自定义路径不会生效')
         .replace(/CUSTOM_PATH_KEYS/g, '自定义路径字段列表（CUSTOM_PATH_KEYS）');
+    },
+
+    directSkillRunLogFailureReason(run = null) {
+      if (!this.isDirectSkillFailedRun(run) || run?.id !== this.selectedRunId) return '';
+      const lines = String(this.logText || '')
+        .replace(/\u001b\[[0-9;]*m/g, '')
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean);
+      const matched = lines.find(line => /not inside a trusted directory|skip-git-repo-check|figma|mcp|oauth|permission|denied|error|failed|失败|阻塞|不可用/i.test(line));
+      if (!matched || /日志读取失败|暂无日志/.test(matched)) return '';
+      return matched.slice(0, 300);
     },
 
     businessTaskForRun(run) {
@@ -15158,6 +15185,11 @@ export default {
       if (!run) return '待判定';
       const value = String(run.status || '').toLowerCase();
       if (/pending|created|queued/.test(value)) return '待领取';
+      if (/claimed/.test(value)) return '已领取';
+      if (/running|in_progress/.test(value)) return '本机执行中';
+      if (/failed|error/.test(value)) return '本机执行失败';
+      if (/blocked/.test(value)) return '本机阻塞';
+      if (/completed|done|success|passed/.test(value)) return '本机已完成';
       return this.runStatusLabel(run.status);
     },
 
@@ -15602,6 +15634,7 @@ export default {
       if (!run) return '等待启动';
       if (this.isDirectSkillRun(run) && String(run.status || '').toLowerCase() === 'pending') return '等待执行人本机 Worker 领取';
       if (this.isDirectSkillRun(run) && String(run.status || '').toLowerCase() === 'claimed') return '执行人本机已领取';
+      if (this.isDirectSkillFailedRun(run)) return '本机 Worker 已自动领取后执行失败';
       if (!this.isRunInProgress(run)) {
         if (this.hasRunExecuted(run)) return '执行完成';
         return '等待启动';
@@ -16114,12 +16147,13 @@ export default {
 
     async loadSelectedRunLog() {
       const run = this.selectedRun;
-      if (!run?.logPath) {
-        this.logText = run?.status === 'running' ? '执行已启动，等待日志输出...' : '选择一个任务后查看执行日志。';
+      if (!run?.id) {
+        this.logText = '选择一个任务后查看执行日志。';
         return;
       }
       try {
-        const response = await fetch(this.artifactUrl(run.logPath));
+        const response = await fetch(`/api/runs/${encodeURIComponent(run.id)}/log`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         this.logText = await response.text() || (run.status === 'running' ? '执行中，暂无日志输出。' : '暂无日志。');
       } catch {
         this.logText = run.status === 'running' ? '执行中，日志暂未可读。' : '日志读取失败。';

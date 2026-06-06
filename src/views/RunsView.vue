@@ -20,7 +20,7 @@
         <div class="run-item-head">
           <a v-if="app.runTaskUrl(run)" :href="app.runTaskUrl(run)" target="_blank" rel="noopener noreferrer" class="task-title-link" @click.stop>{{ app.runGroupTitle(run) }}</a>
           <strong v-else>{{ app.runGroupTitle(run) }}</strong>
-          <span class="run-status-tag">{{ app.runStatusLabel(run.status) }}</span>
+          <span class="run-status-tag">{{ app.isDirectSkillRun(run) ? app.directSkillRunStatusLabel(run) : app.runStatusLabel(run.status) }}</span>
         </div>
         <div class="run-item-meta">
           <span>第 {{ app.runAttemptNumber(run) }} 次执行</span>
@@ -61,7 +61,7 @@
     <section v-if="app.selectedRun" :class="['run-live-status', app.runStatusClass(app.selectedRun.status)]">
       <div>
         <span>当前状态</span>
-        <strong>{{ app.runStatusLabel(app.selectedRun.status) }}</strong>
+        <strong>{{ app.isDirectSkillRun(app.selectedRun) ? app.directSkillRunStatusLabel(app.selectedRun) : app.runStatusLabel(app.selectedRun.status) }}</strong>
       </div>
       <div>
         <span>当前阶段</span>
@@ -103,9 +103,15 @@
         </div>
       </div>
       <div class="run-worker-note">
-        <span v-if="!app.directSkillWorkerForRun(app.selectedRun)">执行人需要启动本机 Worker 后，任务才会从“待启动”变为“已领取 / 执行中”。</span>
+        <span v-if="app.isDirectSkillFailedRun(app.selectedRun)">该任务已由执行人本机 Worker 自动领取后执行失败；请查看下方原始执行日志里的具体原因。</span>
+        <span v-else-if="!app.directSkillWorkerForRun(app.selectedRun)">执行人需要启动本机 Worker 后，任务才会从“待领取”变为“已领取 / 执行中”。</span>
         <span v-else-if="!app.directSkillWorkerForRun(app.selectedRun)?.figmaMcpReady">该设备未通过 Figma MCP 自检，请执行人在本机完成 Figma MCP 授权。</span>
         <span v-else>本机 Worker 会把 Codex 日志和执行结果回传到当前执行记录。</span>
+      </div>
+      <div v-if="app.isDirectSkillClaimedRun(app.selectedRun)" class="run-worker-claim-evidence">
+        <span>自动领取：{{ app.formatDateTime(app.selectedRun.claimedAt) || '-' }}</span>
+        <span>开始执行：{{ app.formatDateTime(app.selectedRun.startedAt) || '-' }}</span>
+        <span v-if="app.selectedRun.exitCode !== null && app.selectedRun.exitCode !== undefined">Codex 退出码：{{ app.selectedRun.exitCode }}</span>
       </div>
       <div v-if="app.selectedRun.status === 'pending'" class="run-worker-command-box">
         <div>
@@ -905,6 +911,25 @@ export default {
     color: #475569;
     font-size: 12px;
     line-height: 1.6;
+  }
+
+  .run-worker-claim-evidence {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+
+    span {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 3px 8px;
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.78);
+      color: #475569;
+      font-size: 12px;
+      line-height: 1.3;
+    }
   }
 
   .run-worker-command-box {

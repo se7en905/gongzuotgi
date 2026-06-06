@@ -59,6 +59,7 @@ import {
   getTaskCenterConfig,
   getUsageCounters,
   appendRunLog,
+  ensureRunLogPath,
   claimNextAgentRun,
   listCustomWorkflows,
   listAgentWorkers,
@@ -1364,7 +1365,10 @@ async function handleApi(req, res, url) {
     ensureWorkerCanUpdateRun(currentUser, run);
     const body = await readBody(req).catch(() => ({}));
     const chunk = String(body.chunk || body.text || '').slice(0, 20000);
-    if (chunk) await appendRunLog(run.id, chunk);
+    if (chunk) {
+      await appendRunLog(run.id, chunk);
+      await ensureRunLogPath(run.id);
+    }
     broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, module: 'agent-run-log' });
     sendJson(res, 200, { ok: true });
     return;
@@ -2138,6 +2142,15 @@ async function handleApi(req, res, url) {
     });
     res.write(`data: ${JSON.stringify({ type: 'connected', runId: runEvents[1] })}\n\n`);
     subscribe(runEvents[1], res);
+    return;
+  }
+
+  const runLog = url.pathname.match(/^\/api\/runs\/([^/]+)\/log$/);
+  if (req.method === 'GET' && runLog) {
+    const run = await requireRun(runLog[1]);
+    requireProjectAccess(currentUser, run.projectId, 'viewer');
+    const fallbackLogPath = path.join(paths.workspaceDir, run.id, 'run.log');
+    await serveArtifact(res, run.logPath || fallbackLogPath, currentUser);
     return;
   }
 

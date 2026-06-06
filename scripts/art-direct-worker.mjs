@@ -161,6 +161,7 @@ async function executeRun(run) {
     '--json',
     '--cd',
     run.projectRoot || defaultProjectRoot,
+    '--skip-git-repo-check',
     '--sandbox',
     'workspace-write',
     '-'
@@ -171,6 +172,7 @@ async function executeRun(run) {
   });
 
   let finalText = '';
+  let stderrText = '';
   child.stdout.on('data', chunk => {
     const text = chunk.toString();
     finalText += collectReadableJsonl(text);
@@ -179,6 +181,7 @@ async function executeRun(run) {
   });
   child.stderr.on('data', chunk => {
     const text = chunk.toString();
+    stderrText += text;
     void appendRunLog(run.id, text);
     process.stderr.write(text);
   });
@@ -191,12 +194,13 @@ async function executeRun(run) {
     workerStatus: status,
     exitCode,
     finishedAt: new Date().toISOString(),
-    resultSummary: buildResultSummary(status, exitCode, finalText),
+    resultSummary: buildResultSummary(status, exitCode, [finalText, stderrText].filter(Boolean).join('\n')),
     workerResult: {
       deviceId,
       hostname: os.hostname(),
       exitCode,
-      finalText: finalText.slice(-8000)
+      finalText: finalText.slice(-8000),
+      stderrText: stderrText.slice(-8000)
     }
   });
   console.log(`[worker] 执行结束：${run.title} (${status})`);
@@ -299,17 +303,27 @@ async function updateRunStatus(runId, body) {
 }
 
 function buildResultSummary(status, exitCode, finalText) {
+  const failureReason = status === 'completed' ? '' : extractFailureReason(finalText) || `Codex 退出码：${exitCode}`;
   return {
     status,
     statusText: status,
     summary: status === 'completed' ? '本机直接执行已完成，具体 Figma 写入结果请查看执行日志和报告。' : '本机直接执行失败，请查看阻塞原因和原始日志。',
-    blockerReason: status === 'completed' ? '' : `Codex 退出码：${exitCode}`,
+    blockerReason: failureReason,
     needsHumanReview: true,
     validationCommands: ['codex exec --json'],
     artifacts: [],
     finalText: String(finalText || '').slice(-4000),
     parsedAt: new Date().toISOString()
   };
+}
+
+function extractFailureReason(text = '') {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  const preferred = lines.find(line => /not inside a trusted directory|skip-git-repo-check|figma|mcp|oauth|permission|denied|error|failed|失败|阻塞|不可用/i.test(line));
+  return (preferred || lines[0] || '').slice(0, 300);
 }
 
 function collectReadableJsonl(text = '') {

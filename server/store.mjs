@@ -1122,6 +1122,21 @@ export async function appendRunLog(runId, chunk) {
   return file;
 }
 
+export async function ensureRunLogPath(runId) {
+  const runs = await readJson(paths.runs, []);
+  const index = runs.findIndex(item => item.id === runId);
+  if (index === -1) return '';
+  const file = path.join(getRunWorkspace(runId), 'run.log');
+  if (runs[index].logPath === file) return file;
+  runs[index] = {
+    ...runs[index],
+    logPath: file,
+    updatedAt: new Date().toISOString()
+  };
+  await writeJson(paths.runs, runs);
+  return file;
+}
+
 export function buildStages(workflow, requestedStage = '', workflowLevel = '') {
   return stagesForWorkflow(workflow, requestedStage, workflowLevel);
 }
@@ -1351,7 +1366,7 @@ async function hydrateRunStages(run) {
         output: stage.output || matched.output || ''
       };
     }
-    return { ...stage, status: fallbackFinishedStageStatus(run.status) };
+    return { ...stage, status: fallbackFinishedStageStatus(run.status, run) };
   });
   return {
     ...run,
@@ -1429,7 +1444,8 @@ function normalizeStageStatus(status = '') {
   return status || 'pending';
 }
 
-function fallbackFinishedStageStatus(runStatus = '') {
+function fallbackFinishedStageStatus(runStatus = '', run = {}) {
+  if ((run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill') && /failed|error/i.test(String(runStatus || ''))) return 'failed';
   if (/failed|blocked|cancelled|canceled/i.test(String(runStatus || ''))) return 'skipped';
   if (/conditional/i.test(String(runStatus || ''))) return 'conditional_pass';
   return 'passed';
