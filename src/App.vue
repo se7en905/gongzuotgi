@@ -4457,25 +4457,34 @@ export default {
       if (!this.currentUser) return;
       this.workbenchStateRestoring = true;
       const jobs = [];
+      const lightRunViews = ['runs', 'agent-workers', 'ai-archive'];
       try {
-        if (this.can('menu.skillList')) {
+        if (lightRunViews.includes(this.activeView)) {
+          jobs.push(['执行记录', () => this.refreshRuns()]);
+          if (['runs', 'agent-workers'].includes(this.activeView) && this.can('api.agentWorkers.read')) {
+            jobs.push(['Worker 状态', () => this.refreshAgentWorkers()]);
+          }
+          if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length) {
+            jobs.push(['账号列表', () => this.refreshUsers()]);
+          }
+        } else if (this.can('menu.skillList')) {
           jobs.push(['库存缓存', () => this.loadSkillInventorySavedSnapshot()]);
           jobs.push(['人工研究清单', () => this.refreshAiAssetSheet()]);
           jobs.push(['验证回填', () => this.refreshSkillValidations({ force: true, silent: true })]);
           jobs.push(['调用次数', () => this.refreshUsageCounters()]);
           jobs.push(['版本覆盖', () => this.refreshSkillVersionOverrides()]);
         }
-        if (this.can('menu.skillList') || this.can('menu.aiMembers')) {
+        if (!lightRunViews.includes(this.activeView) && (this.can('menu.skillList') || this.can('menu.aiMembers'))) {
           jobs.push(['AI 研究同步', () => this.refreshArtProgressEvents()]);
         }
-        if (this.can('menu.aiMembers')) {
+        if (!lightRunViews.includes(this.activeView) && this.can('menu.aiMembers')) {
           jobs.push(['成员快照', () => this.refreshAiMembers()]);
         }
         const results = await Promise.allSettled(jobs.map(([, run]) => run()));
         results.forEach((result, index) => {
           if (result.status === 'rejected') console.warn(`${jobs[index][0]}恢复失败，已保留当前页面状态`, result.reason);
         });
-        if (this.can('menu.skillList')) {
+        if (!lightRunViews.includes(this.activeView) && this.can('menu.skillList')) {
           this.applySkillAliasOverridesToScans();
           this.saveWorkbenchDisplayCache('scans', this.scans);
         }
@@ -4891,6 +4900,11 @@ export default {
     },
 
     restoreWorkbenchDisplayCache() {
+      const path = typeof window !== 'undefined' ? window.location.pathname : '';
+      if (['/runs', '/agent-workers', '/ai-archive'].includes(path)) {
+        ['runs', 'projects', 'agentWorkers'].forEach(key => this.restoreWorkbenchDisplayCacheKey(key));
+        return;
+      }
       [
         'businessTasks',
         'projects',
@@ -15223,37 +15237,27 @@ export default {
 
     businessTaskForRun(run) {
       if (!run) return null;
-      return this.businessTaskRows.find(task => task.id === run.taskId || (task.taskNo && task.taskNo === run.zentaoId)) || null;
+      return (this.businessTasks || []).find(task => task.id === run.taskId || (task.taskNo && task.taskNo === run.zentaoId)) || null;
     },
 
     openRunArchive(run = this.selectedRun) {
       if (!run) return;
-      if (this.isDirectSkillRun(run)) {
-        this.aiExecutionArchiveFilters = {
-          ...this.aiExecutionArchiveFilters,
-          keyword: '',
-          userId: '',
-          status: '',
-          sourceType: '',
-          runId: run.id || '',
-          from: '',
-          to: ''
-        };
-        this.activeView = 'ai-archive';
-        this.pushRoute('/ai-archive');
-        this.$nextTick(() => {
-          document.querySelector('.ai-archive-table')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
-        return;
-      }
-      const task = this.businessTaskForRun(run);
-      if (task) {
-        this.selectedBusinessTaskId = task.id;
-        this.selectedAiArchiveTaskId = task.id;
-        this.seedTaskReviewForm(task);
-      }
-      this.activeView = task ? 'tasks' : 'runs';
-      this.pushRoute(task ? '/tasks' : '/runs');
+      this.aiExecutionArchiveFilters = {
+        ...this.aiExecutionArchiveFilters,
+        keyword: '',
+        userId: '',
+        status: '',
+        sourceType: '',
+        runId: run.id || '',
+        from: '',
+        to: ''
+      };
+      this.runLogCollapse = [];
+      this.logText = '原始执行日志默认收起，展开后读取尾部摘要。';
+      this.pushRoute('/ai-archive');
+      this.$nextTick(() => {
+        document.querySelector('.ai-archive-table')?.scrollIntoView({ behavior: 'auto', block: 'start' });
+      });
     },
 
     openRunBusinessTaskReview(run = this.selectedRun) {
@@ -15445,6 +15449,7 @@ export default {
 
     runChainEvents(run = this.selectedRun) {
       if (!run) return [];
+      if (this.activeView !== 'runs') return [];
       const taskNo = this.runChainTaskNo(run);
       const task = this.runChainTask(run);
       return (this.artProgressEvents || [])
