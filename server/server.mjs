@@ -5521,7 +5521,9 @@ async function syncZentaoTasks(project, options = {}) {
     const interactive = options.interactive === true || options.mode === 'interactive';
     const syncProfile = String(options.syncProfile || options.profile || '').trim().toLowerCase();
     const fullScan = options.fullScan === true || ['full', 'full-scan', 'deep'].includes(syncProfile) || options.mode === 'full';
+    const discoveryScan = fullScan || options.discovery === true || options.discover === true || ['discovery', 'discover', 'find-new'].includes(syncProfile);
     const quickSync = !fullScan && (options.quick === true || ['quick', 'fast', 'manual-quick'].includes(syncProfile));
+    const currentOnlySync = !discoveryScan && (quickSync || options.detailRefreshScope === 'current' || options.currentOnly === true);
     const widenInteractiveScan = interactive && !quickSync;
     const syncOptions = widenInteractiveScan
       ? {
@@ -5541,7 +5543,7 @@ async function syncZentaoTasks(project, options = {}) {
           executionScanLimit: options.executionScanLimit ?? (quickSync ? 24 : options.executionScanLimit),
           detailRefreshScope: options.detailRefreshScope || (quickSync ? 'current' : options.detailRefreshScope)
         };
-    if (quickSync) {
+    if (quickSync && !currentOnlySync) {
       syncOptions.executionScanLimit = Math.max(Number(syncOptions.executionScanLimit || 0), 80);
       syncOptions.executionMaxPages = Math.max(Number(syncOptions.executionMaxPages || 0), 5);
       syncOptions.maxPages = Math.max(Number(syncOptions.maxPages || 0), 3);
@@ -5567,14 +5569,6 @@ async function syncZentaoTasks(project, options = {}) {
       ...artSnapshotTasks.filter(task => task.taskNo).map(task => [String(task.taskNo), task]),
       ...existingZentaoTasks.map(task => [String(task.taskNo), task])
     ]);
-    const executions = await resolveZentaoExecutionIds(syncOptions).catch(error => {
-      if (interactive) {
-        console.warn(`ZenTao execution list fallback: ${error.message || error}`);
-        return [];
-      }
-      throw error;
-    });
-    const executionScanLimit = Math.min(Math.max(Number(syncOptions.executionScanLimit || (interactive ? 24 : executions.length || 1)), 1), 200);
     const detailRefreshScope = String(syncOptions.detailRefreshScope || 'tracked').trim().toLowerCase();
     const detailRefreshTaskNos = detailRefreshScope === 'current'
       ? zentaoCurrentDetailRefreshTaskNos(existingZentaoTasks, artSnapshotTasks, artSeenCandidateTaskNos, aiFlowTaskNos)
@@ -5582,11 +5576,23 @@ async function syncZentaoTasks(project, options = {}) {
     const allTasks = [];
     const executionSummaries = [];
     const detailRefresh = await refreshTrackedZentaoTasks(project, detailRefreshTaskNos, existingZentaoTaskByNo, artAccounts, userNames, detailConcurrency);
+    const executions = currentOnlySync
+      ? []
+      : await resolveZentaoExecutionIds(syncOptions).catch(error => {
+        if (interactive) {
+          console.warn(`ZenTao execution list fallback: ${error.message || error}`);
+          return [];
+        }
+        throw error;
+      });
+    const executionScanLimit = Math.min(Math.max(Number(syncOptions.executionScanLimit || (interactive ? 24 : executions.length || 1)), 1), 200);
     const refreshedCurrentExecutionIds = new Set(detailRefresh.tasks
       .filter(task => task.isCurrent !== false)
       .map(task => String(task.zentao?.execution || '').trim())
       .filter(Boolean));
-    const scanExecutions = interactive
+    const scanExecutions = currentOnlySync
+      ? []
+      : interactive
       ? [...new Set([...refreshedCurrentExecutionIds, ...executions.map(execution => String(execution)).slice(0, executionScanLimit)])]
       : executions;
 
@@ -5689,6 +5695,7 @@ async function syncZentaoTasks(project, options = {}) {
       syncProfile: quickSync ? 'quick' : fullScan ? 'full' : interactive ? 'interactive' : 'standard',
       detailRefreshScope,
       detailRefreshCandidates: detailRefreshTaskNos.size,
+      currentOnlySync,
       scannedExecutions: scanExecutions.length,
       preservedExistingCurrentTasks: preserveExistingCurrentTasks,
       syncedAt
@@ -6501,7 +6508,6 @@ async function refreshTrackedZentaoTasks(project, taskNos = new Set(), existingT
           const existingTask = existingTaskByNo.get(detailTaskNo);
           const executionId = detailTask.execution || existingTask?.zentao?.execution || '';
           const isCurrent = isCurrentArtZentaoTask(detailTask, artAccounts);
-          if (!isCurrent) continue;
           const normalized = normalizeZentaoTask(
             project,
             {
@@ -6620,42 +6626,17 @@ async function resolveZentaoExecutionIds(options = {}) {
 }
 
 async function getZentaoArtUsers() {
-  const users = [];
-  const limit = 1000;
-  let page = 1;
-  let total = 0;
-  while (page <= 20) {
-    const { api: zentaoApi, modules: zentao } = await zentaoContext();
-    const payload = await zentao.listUsers(zentaoApi, { page, limit });
-    const result = payload.result || payload.data || payload;
-    const pageUsers = Array.isArray(result.users) ? result.users : Array.isArray(result) ? result : [];
-    total = Number(result.total || pageUsers.length || total);
-    users.push(...pageUsers);
-    if (!pageUsers.length || users.length >= total) break;
-    page += 1;
-  }
-  const artUsers = users.filter(user => zentaoArtDeptIds.has(zentaoUserDeptId(user)));
+  const artUsers = await artDepartmentUsers({ fast: true });
   const artAccounts = new Set(artUsers.map(user => zentaoUserAccount(user)).filter(Boolean));
-  let source = 'zentao-users';
-  if (!artAccounts.size) {
-    const fallbackUsers = await fallbackArtDepartmentUsers();
-    for (const user of fallbackUsers) {
-      const account = zentaoUserAccount(user);
-      if (account) artAccounts.add(account);
-    }
-    source = 'platform-fallback';
-  }
   if (!artAccounts.size) {
     throw new HttpError(502, `ZenTao 同步失败：未获取到部门 ID=${zentaoArtDeptId} 的美术人员，已保留现有任务列表。`);
   }
-  const fallbackNames = source === 'platform-fallback' ? await fallbackArtDepartmentUsers() : [];
   return {
     artAccounts,
-    artUserSource: source,
-    userNames: new Map([
-      ...fallbackNames.map(user => [zentaoUserAccount(user), user.realname || user.name || zentaoUserAccount(user)]),
-      ...users.map(user => [zentaoUserAccount(user), user.realname || user.name || zentaoUserAccount(user)])
-    ].filter(([account]) => account))
+    artUserSource: artDepartmentUsersCache?.length ? 'zentao-users-cache' : 'platform-fallback',
+    userNames: new Map(artUsers
+      .map(user => [zentaoUserAccount(user), user.realname || user.name || zentaoUserAccount(user)])
+      .filter(([account]) => account))
   };
 }
 
@@ -7021,16 +7002,13 @@ async function listArtSeenCandidateTaskNos() {
   return [...taskNos];
 }
 
-function zentaoCurrentDetailRefreshTaskNos(existingZentaoTasks = [], artSnapshotTasks = [], _artSeenCandidateTaskNos = [], aiFlowTaskNos = []) {
+function zentaoCurrentDetailRefreshTaskNos(existingZentaoTasks = [], artSnapshotTasks = [], _artSeenCandidateTaskNos = [], _aiFlowTaskNos = []) {
   const taskNos = new Set();
   for (const task of existingZentaoTasks) {
     if (task?.taskNo && task.isCurrent !== false) taskNos.add(String(task.taskNo));
   }
   for (const task of artSnapshotTasks) {
     if (task?.taskNo && task.isCurrent !== false) taskNos.add(String(task.taskNo));
-  }
-  for (const taskNo of aiFlowTaskNos) {
-    if (taskNo) taskNos.add(String(taskNo));
   }
   return taskNos;
 }

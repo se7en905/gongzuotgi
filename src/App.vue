@@ -12776,6 +12776,7 @@ export default {
       };
       this.loading.syncTasks = true;
       this.manualZentaoSyncPending = true;
+      ElMessage.info(`已提交同步${syncKind === 'bug' ? ' Bug' : '任务'}，后台正在刷新`);
       try {
         const result = await this.api('/api/tasks/sync-zentao', {
           method: 'POST',
@@ -12805,10 +12806,14 @@ export default {
         }
         this.startZentaoAutoSyncPolling();
         this.pollZentaoSync(syncKind);
-        ElMessage.info(result.message || `已开始同步${syncKind === 'bug' ? ' Bug' : '任务'}，完成后会自动刷新列表`);
+        if (result.message && !/已开始|同步.*开始|后台正在刷新/.test(result.message)) {
+          ElMessage.info(result.message);
+        }
       } catch (error) {
         this.manualZentaoSyncPending = false;
         ElMessage.error(this.readApiError(error) || '禅道同步失败');
+      } finally {
+        if (!this.manualZentaoSyncPending) this.loading.syncTasks = false;
       }
     },
 
