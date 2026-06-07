@@ -759,6 +759,12 @@ export default {
         from: '',
         to: ''
       },
+      aiExecutionArchivePage: 1,
+      aiExecutionArchivePageSize: 20,
+      aiExecutionArchiveDetail: {
+        visible: false,
+        run: null
+      },
       skillUsageDialog: { visible: false, row: null, metrics: [], logs: [], start: '', end: '', page: 1, pageSize: 10 },
       skillHistoryDialog: { visible: false, row: null, entries: [] },
       skillOwnerDialog: { visible: false, row: null, owner: [] },
@@ -1103,6 +1109,38 @@ export default {
           ].map(value => String(value || '').toLowerCase()).join(' ').includes(keyword);
         })
         .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    },
+
+    aiExecutionArchiveSummaryMetrics() {
+      const rows = this.aiExecutionArchiveRunRows || [];
+      const closed = rows.filter(run => this.isAiExecutionArchiveClosedRun(run)).length;
+      const rework = rows.filter(run => this.isAiExecutionArchiveReworkRun(run)).length;
+      const review = rows.filter(run => this.isAiExecutionArchiveReviewRun(run)).length;
+      return [
+        { label: '归档任务', value: rows.length, hint: '当前筛选范围' },
+        { label: '已闭环', value: closed, hint: '完成且无需返工' },
+        { label: '待返工', value: rework, hint: '失败 / 阻塞 / 返工' },
+        { label: '待验收', value: review, hint: '完成后需人工确认' }
+      ];
+    },
+
+    aiExecutionArchivePagedRunRows() {
+      const rows = this.aiExecutionArchiveRunRows || [];
+      const pageSize = Math.max(Number(this.aiExecutionArchivePageSize) || 20, 1);
+      const maxPage = Math.max(Math.ceil(rows.length / pageSize), 1);
+      const page = Math.min(Math.max(Number(this.aiExecutionArchivePage) || 1, 1), maxPage);
+      const start = (page - 1) * pageSize;
+      return rows.slice(start, start + pageSize);
+    },
+
+    aiExecutionArchiveDetailRun() {
+      const id = String(this.aiExecutionArchiveDetail?.run?.id || '').trim();
+      if (!id) return null;
+      return (this.runs || []).find(run => String(run.id || '') === id) || this.aiExecutionArchiveDetail.run;
+    },
+
+    aiExecutionArchiveDetailStats() {
+      return this.aiExecutionArchiveDetailMetrics(this.aiExecutionArchiveDetailRun);
     },
 
     directSkillPendingRuns() {
@@ -3719,6 +3757,13 @@ export default {
     'archiveFilters.keyword'() {
       this.aiArchivePage = 1;
       this.aiArtifactPage = 1;
+    },
+
+    aiExecutionArchiveFilters: {
+      deep: true,
+      handler() {
+        this.aiExecutionArchivePage = 1;
+      }
     },
 
     selectedBusinessTaskId() {
@@ -15076,6 +15121,9 @@ export default {
     resultStatusLabel(status) {
       return {
         passed: '通过',
+        completed: '已完成',
+        success: '成功',
+        done: '已完成',
         conditional_pass: '有条件通过',
         failed: '失败',
         blocked: '阻塞',
@@ -15086,9 +15134,14 @@ export default {
 
     effectiveResultStatus(run = {}) {
       const summaryStatus = run.resultSummary?.status;
+      const normalizedSummaryStatus = String(summaryStatus || '').toLowerCase();
       if (summaryStatus === 'blocked' && /conditional/i.test(run.status || '') && /无硬阻塞|无阻塞|无$/.test(run.resultSummary?.blockerReason || '')) {
         return 'conditional_pass';
       }
+      if (/completed|done|success|passed/.test(normalizedSummaryStatus)) return 'passed';
+      if (/failed|error/.test(normalizedSummaryStatus)) return 'failed';
+      if (/blocked/.test(normalizedSummaryStatus)) return 'blocked';
+      if (/conditional/.test(normalizedSummaryStatus)) return 'conditional_pass';
       if (summaryStatus && !/unknown/.test(summaryStatus)) return summaryStatus;
       if (/conditional/i.test(run.status || '')) return 'conditional_pass';
       if (/done|success|passed|completed/i.test(run.status || '')) return 'passed';
@@ -15116,6 +15169,173 @@ export default {
       if (status === 'failed') return '执行过程中出现失败，需要查看日志或变更内容定位原因。';
       if (status === 'skipped') return '部分阶段未执行，建议确认是否符合本次任务范围。';
       return '平台暂未解析出明确结论，请结合日志和文件变更判断。';
+    },
+
+    aiExecutionArchiveStatusBucket(run = {}) {
+      const status = this.effectiveResultStatus(run);
+      const raw = `${run.status || ''} ${run.workerStatus || ''} ${run.resultSummary?.status || ''}`.toLowerCase();
+      if (/rework|返工/.test(raw)) return 'rework';
+      if (['failed', 'blocked'].includes(status) || /failed|error|blocked|失败|阻塞/.test(raw)) return 'rework';
+      if (['conditional_pass', 'skipped'].includes(status) || run.resultSummary?.needsHumanReview === true) return 'review';
+      if (['passed', 'completed', 'success'].includes(status) || /done|success|passed|completed|finished/.test(raw)) return 'closed';
+      if (/claimed|running|in_progress|pending|queued/.test(raw)) return 'open';
+      return 'open';
+    },
+
+    isAiExecutionArchiveClosedRun(run = {}) {
+      return this.aiExecutionArchiveStatusBucket(run) === 'closed';
+    },
+
+    isAiExecutionArchiveReworkRun(run = {}) {
+      return this.aiExecutionArchiveStatusBucket(run) === 'rework';
+    },
+
+    isAiExecutionArchiveReviewRun(run = {}) {
+      return this.aiExecutionArchiveStatusBucket(run) === 'review';
+    },
+
+    aiExecutionArchiveDetailMetrics(run = null) {
+      if (!run) return {
+        summaryCards: [],
+        dataRows: [],
+        stageRows: [],
+        validationRows: [],
+        changeRows: [],
+        artifactRows: [],
+        metaRows: []
+      };
+      const summary = run.resultSummary || {};
+      const stages = this.displayRunStages(run);
+      const stageRows = stages.map((stage, index) => ({
+        key: `${index}-${stage.name || 'stage'}`,
+        name: this.meaningfulNameFromPath(stage.name) || stage.name || `阶段 ${index + 1}`,
+        status: this.aiExecutionArchiveStageStatus(stage.status || '', run),
+        label: this.stageStepLabel(this.aiExecutionArchiveStageStatus(stage.status || '', run)),
+        type: this.stageStatusTagType(this.aiExecutionArchiveStageStatus(stage.status || '', run))
+      }));
+      const stageCounts = stageRows.reduce((acc, stage) => {
+        const value = `${stage.status || ''} ${stage.label || ''}`.toLowerCase();
+        if (/failed|error|blocked|失败|阻塞/.test(value)) acc.failed += 1;
+        else if (/skipped|skip|跳过/.test(value)) acc.skipped += 1;
+        else if (/conditional|有条件/.test(value)) acc.review += 1;
+        else if (/done|success|passed|completed|通过|完成/.test(value)) acc.success += 1;
+        else acc.pending += 1;
+        return acc;
+      }, { success: 0, failed: 0, review: 0, skipped: 0, pending: 0 });
+      const validationRows = (Array.isArray(summary.validationCommands) ? summary.validationCommands : [])
+        .map(value => String(value || '').trim())
+        .filter(value => value && !this.isPlaceholderResultText(value))
+        .map((value, index) => ({ key: `validation-${index}`, value }));
+      const artifactRows = (Array.isArray(summary.artifacts) ? summary.artifacts : [])
+        .map(value => String(value || '').trim())
+        .filter(value => value && !this.isPlaceholderResultText(value))
+        .map((value, index) => ({ key: `artifact-${index}`, value: this.readableArchiveValue(value) }));
+      const changeRows = this.aiExecutionArchiveChangeRows(run);
+      const dataRows = this.aiExecutionArchiveDataRows(run, { stageRows, validationRows, artifactRows, changeRows });
+      const resultStatus = this.effectiveResultStatus(run);
+      const hasRunSuccess = this.isAiExecutionArchiveClosedRun(run) || this.isAiExecutionArchiveReviewRun(run);
+      const hasRunFailure = this.isAiExecutionArchiveReworkRun(run);
+      const successCount = Math.max(stageCounts.success + stageCounts.review + stageCounts.skipped, hasRunSuccess ? 1 : 0);
+      const failedCount = Math.max(stageCounts.failed, hasRunFailure ? 1 : 0);
+      const scanPointCount = stageRows.length
+        + validationRows.length
+        + artifactRows.length
+        + changeRows.length
+        + (run.primarySkillPath || run.stage || run.selectedMaterialHints?.length ? 1 : 0)
+        + (run.figmaLinks ? 1 : 0)
+        + (summary.blockerReason && !this.isPlaceholderResultText(summary.blockerReason) ? 1 : 0)
+        + (summary.finalText && !this.isPlaceholderResultText(summary.finalText) ? 1 : 0);
+      const summaryCards = [
+        { label: '成功数量', value: successCount, hint: resultStatus === 'unknown' ? '按阶段和状态推导' : this.resultStatusLabel(resultStatus), tone: failedCount ? 'warning' : 'success' },
+        { label: '失败数量', value: failedCount, hint: failedCount ? '含失败或阻塞阶段' : '未记录失败', tone: failedCount ? 'danger' : 'success' },
+        { label: '扫描点', value: scanPointCount, hint: '阶段 / 验证 / 变更 / 证据', tone: scanPointCount ? 'primary' : 'muted' },
+        { label: '数据类', value: dataRows.length, hint: dataRows.map(item => item.label).slice(0, 3).join(' / ') || '暂无结构化数据', tone: dataRows.length ? 'primary' : 'muted' }
+      ];
+      const metaRows = [
+        { label: '执行内容', value: this.directSkillRunContentName(run) },
+        { label: '类型', value: this.directSkillRunContentKind(run) },
+        { label: '操作人', value: this.directSkillRunOperatorName(run) },
+        { label: '执行人', value: run.assignedToName || run.developer || '-' },
+        { label: '领取设备', value: this.directSkillRunDeviceDisplayName(run) },
+        { label: '状态', value: this.directSkillRunStatusLabel(run) || this.runStatusLabel(run.status) },
+        { label: '创建时间', value: this.formatDateTime(run.createdAt) || '-' },
+        { label: '更新时间', value: this.directSkillRunUpdatedText(run) },
+        { label: 'Figma 链接', value: run.figmaLinks || '-' }
+      ];
+      return {
+        summaryCards,
+        dataRows,
+        stageRows,
+        validationRows,
+        changeRows,
+        artifactRows,
+        metaRows,
+        resultTitle: this.resultStatusTitle(summary, run),
+        resultText: this.resultSummaryText(summary, run),
+        nextAction: this.resultNextActionText(run)
+      };
+    },
+
+    aiExecutionArchiveChangeRows(run = {}) {
+      const summary = run.resultSummary || {};
+      const rows = [];
+      const push = (value, status = '') => {
+        const text = String(value?.path || value || '').trim();
+        if (!text || this.isPlaceholderResultText(text)) return;
+        rows.push({
+          key: `${status || 'change'}-${rows.length}-${text}`,
+          path: this.readableArchiveValue(text),
+          status: status || value?.status || value?.changeType || '',
+          label: this.gitChangeStatusLabel(status || value?.status || value?.changeType || '')
+        });
+      };
+      (run.changeSummary?.after || []).forEach(item => push(item, item?.status || item?.changeType || ''));
+      (summary.changedFiles || []).forEach(item => push(item, item?.status || item?.changeType || ''));
+      return rows.slice(0, 80);
+    },
+
+    aiExecutionArchiveStageStatus(status = '', run = {}) {
+      const value = String(status || '').toLowerCase();
+      if (value && !/pending|created|queued|wait/.test(value)) return status;
+      if (!this.hasRunExecuted(run) || this.isRunInProgress(run)) return status || 'pending';
+      const resultStatus = this.effectiveResultStatus(run);
+      if (resultStatus === 'passed') return 'completed';
+      if (resultStatus === 'conditional_pass') return 'conditional';
+      if (resultStatus === 'failed') return 'failed';
+      if (resultStatus === 'blocked') return 'blocked';
+      if (resultStatus === 'skipped') return 'skipped';
+      return status || 'pending';
+    },
+
+    aiExecutionArchiveDataRows(run = {}, groups = {}) {
+      const summary = run.resultSummary || {};
+      const rows = [];
+      if (groups.stageRows?.length) rows.push({ label: '阶段数据', value: `${groups.stageRows.length} 个阶段` });
+      if (groups.validationRows?.length) rows.push({ label: '验证数据', value: `${groups.validationRows.length} 条命令` });
+      if (groups.changeRows?.length) rows.push({ label: '变更数据', value: `${groups.changeRows.length} 个点` });
+      if (groups.artifactRows?.length) rows.push({ label: '产物证据', value: `${groups.artifactRows.length} 个` });
+      if (run.primarySkillPath || run.stage || run.selectedMaterialHints?.length) {
+        rows.push({ label: 'Skill/md 数据', value: this.directSkillRunContentName(run) });
+      }
+      if (run.figmaLinks) rows.push({ label: 'Figma 数据', value: '已记录目标链接' });
+      if (summary.blockerReason && !this.isPlaceholderResultText(summary.blockerReason)) {
+        rows.push({ label: '阻塞数据', value: this.humanizeRunResultText(summary.blockerReason) });
+      }
+      if (summary.finalText && !this.isPlaceholderResultText(summary.finalText)) {
+        rows.push({ label: '模型回传', value: this.compactArchiveText(summary.finalText) });
+      }
+      return rows.filter(row => String(row.value || '').trim());
+    },
+
+    compactArchiveText(value = '') {
+      const text = String(value || '').replace(/\s+/g, ' ').trim();
+      return text.length > 160 ? `${text.slice(0, 160)}...` : text;
+    },
+
+    readableArchiveValue(value = '') {
+      const text = String(value || '').trim();
+      if (!text) return '-';
+      return this.meaningfulNameFromPath(text) || text;
     },
 
     resultSummaryText(summary = {}, run = {}) {
@@ -15258,6 +15478,21 @@ export default {
       this.$nextTick(() => {
         document.querySelector('.ai-archive-table')?.scrollIntoView({ behavior: 'auto', block: 'start' });
       });
+    },
+
+    openAiExecutionArchiveDetail(run = null) {
+      if (!run) return;
+      this.aiExecutionArchiveDetail = {
+        visible: true,
+        run: { ...run }
+      };
+    },
+
+    closeAiExecutionArchiveDetail() {
+      this.aiExecutionArchiveDetail = {
+        visible: false,
+        run: null
+      };
     },
 
     openRunBusinessTaskReview(run = this.selectedRun) {
