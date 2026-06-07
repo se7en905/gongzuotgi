@@ -15411,6 +15411,51 @@ export default {
       };
     },
 
+    directSkillRunOverviewMetrics(run = null) {
+      const detail = this.aiExecutionArchiveDetailMetrics(run);
+      if (!run) return detail;
+      const summary = run.resultSummary || {};
+      const actualStages = (Array.isArray(run.stages) ? run.stages : []).filter(stage => stage?.name);
+      const actualStageCounts = actualStages.reduce((acc, stage) => {
+        const value = String(stage.status || '').toLowerCase();
+        if (/failed|error|blocked|失败|阻塞/.test(value)) acc.failed += 1;
+        else if (/conditional|有条件/.test(value)) acc.review += 1;
+        else if (/done|success|passed|completed|通过|完成/.test(value)) acc.success += 1;
+        return acc;
+      }, { success: 0, failed: 0, review: 0 });
+      const resultStatus = this.effectiveResultStatus(run);
+      const rawStatus = String(run.status || '').toLowerCase();
+      const isFinished = /done|success|passed|completed|finished|failed|error|blocked/.test(rawStatus);
+      const finalSuccess = isFinished && ['passed', 'conditional_pass', 'completed', 'success'].includes(resultStatus) ? 1 : 0;
+      const finalFailure = isFinished && ['failed', 'blocked'].includes(resultStatus) ? 1 : 0;
+      const successCount = Math.max(actualStageCounts.success + actualStageCounts.review, finalSuccess);
+      const failedCount = Math.max(actualStageCounts.failed, finalFailure);
+      const scanPointCount = actualStages.length
+        + detail.validationRows.length
+        + detail.artifactRows.length
+        + detail.changeRows.length
+        + (run.primarySkillPath || run.stage || run.selectedMaterialHints?.length ? 1 : 0)
+        + (run.figmaLinks ? 1 : 0)
+        + (summary.blockerReason && !this.isPlaceholderResultText(summary.blockerReason) ? 1 : 0)
+        + (summary.finalText && !this.isPlaceholderResultText(summary.finalText) ? 1 : 0);
+      let issueRows = detail.issueRows;
+      if (/pending|queued|created/i.test(rawStatus)) {
+        issueRows = [{ label: '当前等待', value: '等待执行人本机 Worker 自动领取。', tone: 'muted' }];
+      } else if (/claimed|running|in_progress/i.test(rawStatus)) {
+        issueRows = [{ label: '当前处理', value: '执行人本机 Worker 正在处理，等待结果回传。', tone: 'muted' }];
+      }
+      return {
+        ...detail,
+        summaryCards: [
+          { label: '成功数量', value: successCount, hint: successCount ? this.resultStatusLabel(resultStatus) : '尚未记录成功', tone: failedCount ? 'warning' : successCount ? 'success' : 'muted' },
+          { label: '失败数量', value: failedCount, hint: failedCount ? '含失败或阻塞' : '未记录失败', tone: failedCount ? 'danger' : 'success' },
+          { label: '扫描点', value: scanPointCount, hint: '对象 / Figma / 阶段 / 证据', tone: scanPointCount ? 'primary' : 'muted' },
+          { label: '数据类', value: detail.dataRows.length, hint: detail.dataRows.map(item => item.label).slice(0, 3).join(' / ') || '暂无结构化数据', tone: detail.dataRows.length ? 'primary' : 'muted' }
+        ],
+        issueRows
+      };
+    },
+
     directSkillWriteModeLabel(mode = '') {
       return {
         'target-node': '写入指定节点',

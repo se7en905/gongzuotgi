@@ -392,7 +392,7 @@ export default {
           nextAction: ''
         };
       }
-      return this.app.aiExecutionArchiveDetailMetrics(this.app.selectedRun);
+      return this.app.directSkillRunOverviewMetrics(this.app.selectedRun);
     }
   },
   watch: {
