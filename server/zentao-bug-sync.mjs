@@ -1,26 +1,64 @@
 import { listBugs, replaceBugsForProducts, upsertBugs } from './store.mjs';
 import { getZentaoApi, getZentaoModules } from './zentao-adapter.mjs';
 
+const zentaoArtUsersCacheTtlMs = Number(process.env.ZENTAO_ART_USERS_CACHE_TTL_MS || 10 * 60 * 1000);
+let zentaoArtUsersCache = {
+  key: '',
+  expiresAt: 0,
+  value: null
+};
+
 export async function syncZentaoBugsForProject(project, options = {}) {
   const configuredProducts = options.products || options.product || options.productIds || process.env.ZENTAO_BUG_PRODUCT_IDS || 'all';
   const limit = Math.min(Math.max(Number(options.limit || 100), 1), 200);
   const maxPages = Math.min(Math.max(Number(options.maxPages || 10), 1), 50);
   const refreshTracked = options.refreshTracked !== false;
   const trackedConcurrency = Math.min(Math.max(Number(options.trackedConcurrency || 4), 1), 8);
+  const syncProfile = String(options.syncProfile || options.profile || '').trim().toLowerCase();
+  const fullScan = options.fullScan === true || options.discovery === true || options.discover === true || ['full', 'full-scan', 'deep', 'discovery', 'discover', 'find-new'].includes(syncProfile);
+  const currentOnlySync = !fullScan && (options.currentOnly !== false);
   const artDeptId = Number(options.artDeptId || process.env.ZENTAO_ART_DEPT_ID || 27);
   const { artAccounts, userNames } = await getZentaoArtUsers(artDeptId);
   const api = await getZentaoApi();
   const zentao = await getZentaoModules();
-  const products = await resolveBugProductIds(zentao, api, configuredProducts);
-  if (!products.length) throw new Error('请填写要同步的 ZenTao product ID');
-  const allBugs = [];
-  const productSummaries = [];
   const trackedBugNos = refreshTracked
     ? new Set((await listBugs({ projectId: project.id }))
       .filter(bug => bug.bugNo || bug.zentao?.id)
       .map(bug => String(bug.bugNo || bug.zentao?.id).trim())
       .filter(Boolean))
     : new Set();
+
+  if (currentOnlySync) {
+    const detailRefresh = refreshTracked && typeof zentao.getBug === 'function'
+      ? await refreshTrackedZentaoBugs(project, trackedBugNos, artAccounts, userNames, trackedConcurrency)
+      : { bugs: [], refreshed: 0, failed: [] };
+    const saved = detailRefresh.refreshed ? await upsertBugs(detailRefresh.bugs) : { created: 0, updated: 0, total: 0, bugs: [] };
+    const existing = await listBugs({ projectId: project.id });
+    return {
+      created: saved.created || 0,
+      updated: saved.updated || 0,
+      removed: 0,
+      total: existing.length,
+      bugs: saved.bugs?.length ? saved.bugs : existing,
+      currentOnlySync: true,
+      skippedProductScan: true,
+      artDeptId,
+      artUserCount: artAccounts.size,
+      trackedCandidates: trackedBugNos.size,
+      detailRefresh: {
+        refreshed: detailRefresh.refreshed,
+        failed: detailRefresh.failed.length,
+        failures: detailRefresh.failed
+      },
+      products: [],
+      syncedAt: new Date().toISOString()
+    };
+  }
+
+  const products = await resolveBugProductIds(zentao, api, configuredProducts);
+  if (!products.length) throw new Error('请填写要同步的 ZenTao product ID');
+  const allBugs = [];
+  const productSummaries = [];
 
   for (const product of products) {
     let page = 1;
@@ -219,6 +257,11 @@ function isPendingCloseBug(bug = {}) {
 }
 
 async function getZentaoArtUsers(artDeptId) {
+  const cacheKey = String(artDeptId || '');
+  const now = Date.now();
+  if (zentaoArtUsersCache.key === cacheKey && zentaoArtUsersCache.value && zentaoArtUsersCache.expiresAt > now) {
+    return zentaoArtUsersCache.value;
+  }
   const api = await getZentaoApi();
   const zentao = await getZentaoModules();
   const users = [];
@@ -235,10 +278,18 @@ async function getZentaoArtUsers(artDeptId) {
     page += 1;
   }
   const artUsers = users.filter(user => Number(user.dept) === artDeptId);
-  return {
+  const value = {
     artAccounts: new Set(artUsers.map(user => user.account).filter(Boolean)),
     userNames: new Map(users.map(user => [user.account, user.realname || user.account]))
   };
+  if (value.artAccounts.size) {
+    zentaoArtUsersCache = {
+      key: cacheKey,
+      expiresAt: Date.now() + zentaoArtUsersCacheTtlMs,
+      value
+    };
+  }
+  return value;
 }
 
 function normalizeIds(value) {

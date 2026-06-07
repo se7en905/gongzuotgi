@@ -1886,7 +1886,7 @@ async function handleApi(req, res, url) {
     const project = await requireProject(body.projectId);
     requireProjectAccess(currentUser, project.id, 'developer', 'api.runs.execute');
     if (body.wait === false || body.async === true) {
-      const result = triggerZentaoBugSync(project, body, 'manual');
+      const result = triggerZentaoBugSync(project, { ...body, currentOnly: body.currentOnly !== false }, 'manual');
       await writeOperationLog(req, {
         user: currentUser,
         module: 'task',
@@ -1901,7 +1901,7 @@ async function handleApi(req, res, url) {
       sendJson(res, 202, result);
       return;
     }
-    const result = await syncZentaoBugs(project, { ...body, trigger: 'manual' });
+    const result = await syncZentaoBugs(project, { ...body, currentOnly: body.currentOnly !== false, trigger: 'manual' });
     await writeOperationLog(req, {
       user: currentUser,
       module: 'task',
@@ -5767,14 +5767,18 @@ function triggerZentaoTaskSync(project, options = {}, reason = 'manual') {
     });
   }
   const includeBugs = options.includeBugs !== false;
-  const bugTrigger = includeBugs
-    ? triggerZentaoBugSync(project, {
-      products: options.products || options.product || options.productIds || zentaoBugProductIds,
-      limit: options.bugLimit || 100,
-      maxPages: options.bugMaxPages || 10,
-      refreshTracked: options.bugRefreshTracked !== false,
-      trackedConcurrency: options.bugTrackedConcurrency || 4
-    }, reason)
+	  const bugTrigger = includeBugs
+	    ? triggerZentaoBugSync(project, {
+	      products: options.products || options.product || options.productIds || zentaoBugProductIds,
+	      limit: options.bugLimit || 100,
+	      maxPages: options.bugMaxPages || 10,
+	      refreshTracked: options.bugRefreshTracked !== false,
+	      trackedConcurrency: options.bugTrackedConcurrency || 4,
+	      currentOnly: options.bugCurrentOnly !== false,
+	      fullScan: options.bugFullScan === true || options.fullScan === true || options.discovery === true || options.discover === true,
+	      discovery: options.bugDiscovery === true || options.discovery === true || options.discover === true,
+	      syncProfile: options.bugSyncProfile || options.syncProfile || options.profile || ''
+	    }, reason)
     : { accepted: false, running: false, message: '本次只同步任务' };
   return {
     accepted: true,
@@ -5795,15 +5799,19 @@ async function syncZentaoTasksWithStats(project, options = {}) {
   if (syncKind !== 'bug') {
     jobs.push(['tasks', syncZentaoTasks(project, { ...options, trigger: options.trigger || 'manual' })]);
   }
-  if (syncKind !== 'task') {
-    jobs.push(['bugs', syncZentaoBugs(project, {
-      products: options.products || options.product || options.productIds || zentaoBugProductIds,
-      limit: options.bugLimit || 100,
-      maxPages: options.bugMaxPages || 10,
-      refreshTracked: options.bugRefreshTracked !== false,
-      trackedConcurrency: options.bugTrackedConcurrency || 4,
-      trigger: options.trigger || 'manual'
-    })]);
+	  if (syncKind !== 'task') {
+	    jobs.push(['bugs', syncZentaoBugs(project, {
+	      products: options.products || options.product || options.productIds || zentaoBugProductIds,
+	      limit: options.bugLimit || 100,
+	      maxPages: options.bugMaxPages || 10,
+	      refreshTracked: options.bugRefreshTracked !== false,
+	      trackedConcurrency: options.bugTrackedConcurrency || 4,
+	      currentOnly: options.bugCurrentOnly !== false,
+	      fullScan: options.bugFullScan === true || options.fullScan === true || options.discovery === true || options.discover === true,
+	      discovery: options.bugDiscovery === true || options.discovery === true || options.discover === true,
+	      syncProfile: options.bugSyncProfile || options.syncProfile || options.profile || '',
+	      trigger: options.trigger || 'manual'
+	    })]);
   }
   const settled = await Promise.allSettled(jobs.map(([, promise]) => promise));
   const byType = Object.fromEntries(jobs.map(([type], index) => [type, settled[index]]));
@@ -5839,10 +5847,14 @@ function triggerZentaoBugSyncOnly(project, options = {}, reason = 'manual') {
   const bugTrigger = triggerZentaoBugSync(project, {
     products: options.products || options.product || options.productIds || zentaoBugProductIds,
     limit: options.bugLimit || options.limit || 100,
-    maxPages: options.bugMaxPages || options.maxPages || 10,
-    refreshTracked: options.bugRefreshTracked !== false && options.refreshTracked !== false,
-    trackedConcurrency: options.bugTrackedConcurrency || options.trackedConcurrency || 4
-  }, reason);
+	    maxPages: options.bugMaxPages || options.maxPages || 10,
+	    refreshTracked: options.bugRefreshTracked !== false && options.refreshTracked !== false,
+	    trackedConcurrency: options.bugTrackedConcurrency || options.trackedConcurrency || 4,
+	    currentOnly: options.bugCurrentOnly !== false && options.currentOnly !== false,
+	    fullScan: options.bugFullScan === true || options.fullScan === true || options.discovery === true || options.discover === true,
+	    discovery: options.bugDiscovery === true || options.discovery === true || options.discover === true,
+	    syncProfile: options.bugSyncProfile || options.syncProfile || options.profile || ''
+	  }, reason);
   return {
     accepted: true,
     running: hasRunningZentaoQueue(),

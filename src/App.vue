@@ -12797,6 +12797,7 @@ export default {
             bugLimit: 100,
             bugMaxPages: 10,
             bugRefreshTracked: true,
+            bugCurrentOnly: true,
             bugTrackedConcurrency: 4
           })
         });
