@@ -2,8 +2,8 @@
 <section v-show="app.activeView === 'runs'" class="content-grid runs-view">
   <div class="flow-helper">
     <span>执行顺序</span>
-    <strong>选择执行记录 → 启动 / 查看进度 → 看任务链路 → 到产物列表看明细</strong>
-    <small>执行台只看任务推进和关键动作是否发生；具体调用明细、截图、文件和验证内容放在产物列表对应明细里。</small>
+    <strong>{{ app.runFlowHelperTitle(app.selectedRun) }}</strong>
+    <small>{{ app.runFlowHelperDescription(app.selectedRun) }}</small>
   </div>
   <ElCard shadow="never" class="panel-card">
     <template #header>
@@ -48,11 +48,11 @@
     <template #header>
       <div class="panel-head">
         <div>
-          <h3>AI 执行过程</h3>
-          <p>{{ app.selectedRun ? '查看阶段进度、关键动作概览和任务链路。产物明细请到产物列表查看。' : '请先从左侧选择一条执行记录。' }}</p>
+          <h3>{{ app.runDetailTitle(app.selectedRun) }}</h3>
+          <p>{{ app.runDetailDescription(app.selectedRun) }}</p>
         </div>
         <div class="run-actions">
-          <ElButton v-if="app.can('run.codex.execute')" type="primary" @click="app.startSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun) || app.isDirectSkillRun(app.selectedRun)" :loading="app.isRunInProgress(app.selectedRun)">{{ app.selectedRunActionLabel }}</ElButton>
+          <ElButton v-if="app.can('run.codex.execute') && !app.isDirectSkillRun(app.selectedRun)" type="primary" @click="app.startSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun)" :loading="app.isRunInProgress(app.selectedRun)">{{ app.selectedRunActionLabel }}</ElButton>
           <ElButton v-if="app.can('run.codex.execute')" @click="app.cancelSelectedRun" :disabled="!app.selectedRun || !app.isRunInProgress(app.selectedRun)">中断</ElButton>
           <ElButton v-if="app.can('run.delete')" type="danger" plain @click="app.deleteSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun)">删除</ElButton>
         </div>
@@ -124,7 +124,61 @@
         </div>
       </div>
     </section>
-    <div class="stage-steps-wrap">
+    <section v-if="app.selectedRun && app.isDirectSkillRun(app.selectedRun)" class="direct-run-overview-panel">
+      <div class="run-section-head">
+        <div>
+          <h4>直接执行结果</h4>
+          <p>这条记录来自 Skill/md 引用，只看执行对象、Worker 回传和当前结论。</p>
+        </div>
+        <ElTag size="large" effect="dark" class="run-result-status-tag" :type="app.runTagType(app.effectiveResultStatus(app.selectedRun))">{{ app.resultStatusLabel(app.effectiveResultStatus(app.selectedRun)) }}</ElTag>
+      </div>
+      <div class="direct-run-summary-grid">
+        <div
+          v-for="card in directRunDetail.summaryCards"
+          :key="card.label"
+          :class="['direct-run-summary-card', card.tone]"
+        >
+          <span>{{ card.label }}</span>
+          <strong>{{ card.value }}</strong>
+          <small>{{ card.hint }}</small>
+        </div>
+      </div>
+      <div class="direct-run-info-grid">
+        <div class="direct-run-info-group">
+          <span class="direct-run-group-title">执行对象</span>
+          <div v-for="row in directRunDetail.targetRows" :key="row.label" class="direct-run-info-row">
+            <span>{{ row.label }}</span>
+            <a v-if="row.href" :href="row.href" target="_blank" rel="noopener noreferrer">{{ row.value }}</a>
+            <strong v-else>{{ row.value }}</strong>
+          </div>
+        </div>
+        <div class="direct-run-info-group">
+          <span class="direct-run-group-title">执行环境</span>
+          <div v-for="row in directRunDetail.environmentRows" :key="row.label" class="direct-run-info-row">
+            <span>{{ row.label }}</span>
+            <strong>{{ row.value }}</strong>
+          </div>
+        </div>
+      </div>
+      <div v-if="directRunDetail.issueRows.length" class="direct-run-issue-list">
+        <div
+          v-for="row in directRunDetail.issueRows"
+          :key="row.label"
+          :class="['direct-run-issue-row', row.tone]"
+        >
+          <span>{{ row.label }}</span>
+          <strong>{{ row.value }}</strong>
+        </div>
+      </div>
+      <div class="direct-run-actions">
+        <span>{{ directRunDetail.nextAction }}</span>
+        <div>
+          <ElButton type="primary" @click="app.openRunArchive(app.selectedRun)">进入 AI档案</ElButton>
+          <ElButton v-if="app.can('menu.agentWorkers')" @click="app.switchView('agent-workers')">Worker 心跳</ElButton>
+        </div>
+      </div>
+    </section>
+    <div v-if="app.selectedRun && app.selectedRunDisplayStages.length" class="stage-steps-wrap">
       <ElSteps :active="app.activeRunStage" finish-status="success" direction="horizontal" class="stage-steps">
         <ElStep
           v-for="stage in app.selectedRunDisplayStages"
@@ -142,12 +196,12 @@
         </ElStep>
       </ElSteps>
     </div>
-    <section v-if="app.isRunInProgress(app.selectedRun)" class="run-progress-panel">
+    <section v-if="app.selectedRun && !app.isDirectSkillRun(app.selectedRun) && app.isRunInProgress(app.selectedRun)" class="run-progress-panel">
       <strong>正在执行中</strong>
       <span>当前美术执行还没有最终结论。执行完成后，这里会显示 Figma / 规范 / Skill 处理结果、风险和下一步操作。</span>
       <small>可以先展开下方原始执行日志查看实时输出。</small>
     </section>
-    <section v-if="app.selectedRun" class="run-skill-actions-panel">
+    <section v-if="app.shouldShowRunWorkflowPanels(app.selectedRun)" class="run-skill-actions-panel">
       <div class="run-section-head">
         <div>
           <h4>关键动作概览</h4>
@@ -180,7 +234,7 @@
         <strong>{{ app.selectedRunOtherSkillActionSummary.count }} 类，合计 {{ app.selectedRunOtherSkillActionSummary.total }} 次</strong>
       </div>
     </section>
-    <section v-if="app.selectedRun" class="run-chain-panel">
+    <section v-if="app.shouldShowRunWorkflowPanels(app.selectedRun)" class="run-chain-panel">
       <div class="run-section-head">
         <div>
           <h4>任务链路</h4>
@@ -212,7 +266,7 @@
         <strong>{{ app.selectedRunReferenceCount }} 个引用，明细在产物列表查看</strong>
       </div>
     </section>
-    <section v-if="app.selectedRun" class="run-codex-chat-panel">
+    <section v-if="app.shouldShowRunWorkflowPanels(app.selectedRun)" class="run-codex-chat-panel">
       <div class="run-section-head">
         <div>
           <h4>继续和 Codex 沟通</h4>
@@ -239,7 +293,7 @@
         </ElButton>
       </div>
     </section>
-    <section v-if="!app.isRunInProgress(app.selectedRun) && app.selectedRun?.resultSummary" :class="['run-result-summary', app.resultSummaryClass(app.effectiveResultStatus(app.selectedRun))]">
+    <section v-if="app.selectedRun && !app.isDirectSkillRun(app.selectedRun) && !app.isRunInProgress(app.selectedRun) && app.selectedRun?.resultSummary" :class="['run-result-summary', app.resultSummaryClass(app.effectiveResultStatus(app.selectedRun))]">
       <div class="run-result-head">
         <div>
           <span>交付判定</span>
@@ -327,6 +381,18 @@ export default {
         this.app.logText?.length || 0,
         Array.isArray(this.app.runLogCollapse) ? this.app.runLogCollapse.join(',') : ''
       ].join('|');
+    },
+    directRunDetail() {
+      if (!this.app.selectedRun || !this.app.isDirectSkillRun(this.app.selectedRun)) {
+        return {
+          summaryCards: [],
+          targetRows: [],
+          environmentRows: [],
+          issueRows: [],
+          nextAction: ''
+        };
+      }
+      return this.app.aiExecutionArchiveDetailMetrics(this.app.selectedRun);
     }
   },
   watch: {
@@ -1183,6 +1249,235 @@ export default {
       background: rgba(34, 197, 94, 0.06);
       border-color: rgba(34, 197, 94, 0.2);
       border-left-color: var(--primary);
+    }
+  }
+
+  .direct-run-overview-panel {
+    display: grid;
+    gap: 14px;
+    margin: 14px 18px 18px;
+    padding: 14px;
+    border: 1px solid rgba(34, 197, 94, 0.22);
+    border-left: 4px solid var(--primary);
+    border-radius: 8px;
+    background: rgba(34, 197, 94, 0.05);
+  }
+
+  .direct-run-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    overflow: hidden;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  .direct-run-summary-card {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+    padding: 11px 12px;
+    border-right: 1px solid rgba(148, 163, 184, 0.18);
+
+    &:last-child {
+      border-right: 0;
+    }
+
+    span,
+    strong,
+    small {
+      display: block;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    strong {
+      color: var(--heading);
+      font-size: 18px;
+      font-weight: 900;
+      line-height: 1.1;
+    }
+
+    small {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.2;
+    }
+
+    &.success strong {
+      color: #047857;
+    }
+
+    &.warning strong {
+      color: #b45309;
+    }
+
+    &.danger strong {
+      color: #b91c1c;
+    }
+
+    &.primary strong {
+      color: #0369a1;
+    }
+
+    &.muted strong {
+      color: var(--muted);
+    }
+  }
+
+  .direct-run-info-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .direct-run-info-group {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  .direct-run-group-title {
+    color: var(--heading);
+    font-size: 13px;
+    font-weight: 900;
+  }
+
+  .direct-run-info-row {
+    display: grid;
+    grid-template-columns: 82px minmax(0, 1fr);
+    gap: 10px;
+    align-items: baseline;
+    min-width: 0;
+
+    span {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    strong,
+    a {
+      min-width: 0;
+      overflow: hidden;
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 820;
+      line-height: 1.35;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    a {
+      color: var(--primary-ink);
+      text-decoration: none;
+
+      &:hover {
+        text-decoration: underline;
+      }
+    }
+  }
+
+  .direct-run-issue-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .direct-run-issue-row {
+    display: grid;
+    grid-template-columns: 92px minmax(0, 1fr);
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 8px;
+    background: #ffffff;
+
+    span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+    }
+
+    strong {
+      color: var(--heading);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    &.danger {
+      border-color: rgba(220, 38, 38, 0.24);
+      background: rgba(220, 38, 38, 0.06);
+
+      strong {
+        color: #b91c1c;
+      }
+    }
+
+    &.warning {
+      border-color: rgba(245, 158, 11, 0.28);
+      background: rgba(245, 158, 11, 0.08);
+
+      strong {
+        color: #b45309;
+      }
+    }
+
+    &.muted strong {
+      color: var(--muted);
+    }
+  }
+
+  .direct-run-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid rgba(14, 165, 233, 0.18);
+    border-radius: 8px;
+    background: rgba(14, 165, 233, 0.06);
+
+    > span {
+      min-width: 0;
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 760;
+      line-height: 1.5;
+    }
+
+    > div {
+      display: flex;
+      flex: 0 0 auto;
+      gap: 8px;
+    }
+  }
+
+  @media (max-width: 1200px) {
+    .direct-run-summary-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .direct-run-summary-card:nth-child(2n) {
+      border-right: 0;
+    }
+
+    .direct-run-summary-card:nth-child(-n + 2) {
+      border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+    }
+
+    .direct-run-info-grid {
+      grid-template-columns: 1fr;
     }
   }
 

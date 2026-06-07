@@ -14584,6 +14584,37 @@ export default {
       return run?.sourceType === 'direct-skill' || run?.executionMode === 'direct-skill';
     },
 
+    shouldShowRunWorkflowPanels(run = null) {
+      return Boolean(run && !this.isDirectSkillRun(run));
+    },
+
+    runFlowHelperTitle(run = null) {
+      if (!run) return '选择执行记录 → 查看右侧进度和结果';
+      if (this.isDirectSkillRun(run)) return '选择直接执行记录 → 看 Worker 状态 → 看执行结果 → 进入 AI档案';
+      return '选择执行记录 → 启动 / 查看进度 → 看任务链路 → 到产物列表看明细';
+    },
+
+    runFlowHelperDescription(run = null) {
+      if (!run) return '左侧选择一条执行记录后，右侧会按执行类型展示对应内容。';
+      if (this.isDirectSkillRun(run)) {
+        return '引用 Skill/md 的直接执行只展示执行对象、执行人本机状态、阶段进度和档案入口，不展示普通任务的关键动作、任务链路和继续对话。';
+      }
+      return '执行台只看任务推进和关键动作是否发生；具体调用明细、截图、文件和验证内容放在产物列表对应明细里。';
+    },
+
+    runDetailTitle(run = null) {
+      if (!run) return 'AI 执行过程';
+      return this.isDirectSkillRun(run) ? '直接执行结果' : 'AI 执行过程';
+    },
+
+    runDetailDescription(run = null) {
+      if (!run) return '请先从左侧选择一条执行记录。';
+      if (this.isDirectSkillRun(run)) {
+        return '这是引用 Skill/md 的本机直接执行，只展示 Worker 状态、执行进度、结果和 AI档案入口。';
+      }
+      return '查看阶段进度、关键动作概览和任务链路。产物明细请到产物列表查看。';
+    },
+
     directSkillWorkerForRun(run = null) {
       if (!run) return null;
       const claimedDevice = String(run.claimedByDeviceId || '').trim();
@@ -15759,8 +15790,53 @@ export default {
       return 0;
     },
 
+    directSkillRunDisplayStages(run = null) {
+      if (!run) return [];
+      const status = String(run.status || '').toLowerCase();
+      const isPending = /pending|created|queued/.test(status) || !status;
+      const isClaimed = Boolean(run.claimedAt || run.claimedByDeviceId || /claimed|running|in_progress|done|success|passed|completed|failed|error|blocked/.test(status));
+      const isRunning = /claimed|running|in_progress/.test(status);
+      const isFailed = /failed|error/.test(status);
+      const isBlocked = /blocked/.test(status);
+      const isDone = /done|success|passed|completed|finished/.test(status);
+      const finalStatus = isFailed ? 'failed' : isBlocked ? 'blocked' : isDone ? 'completed' : 'pending';
+      const claimStatus = isPending ? 'pending' : isClaimed ? 'completed' : 'pending';
+      const executeStatus = isFailed ? 'failed' : isBlocked ? 'blocked' : isDone ? 'completed' : isRunning ? 'running' : 'pending';
+      return [
+        {
+          no: 1,
+          name: '已创建',
+          status: run.createdAt ? 'completed' : 'pending',
+          startedAt: run.createdAt || '',
+          finishedAt: run.createdAt || ''
+        },
+        {
+          no: 2,
+          name: 'Worker 领取',
+          status: claimStatus,
+          startedAt: run.claimedAt || '',
+          finishedAt: run.claimedAt || run.startedAt || ''
+        },
+        {
+          no: 3,
+          name: '本机执行',
+          status: executeStatus,
+          startedAt: run.startedAt || run.claimedAt || '',
+          finishedAt: isDone || isFailed || isBlocked ? run.finishedAt || run.updatedAt || '' : ''
+        },
+        {
+          no: 4,
+          name: '结果回传',
+          status: finalStatus,
+          startedAt: run.finishedAt || run.updatedAt || '',
+          finishedAt: run.finishedAt || run.updatedAt || ''
+        }
+      ];
+    },
+
     displayRunStages(run = null) {
       const stages = (run?.stages || []).map(stage => ({ ...stage }));
+      if (!stages.length && this.isDirectSkillRun(run)) return this.directSkillRunDisplayStages(run);
       if (!stages.length) return [];
       const events = this.isRunInProgress(run) && run?.id === this.selectedRunId
         ? this.stageEventsFromLog(this.logText)
@@ -17535,7 +17611,7 @@ export default {
     },
 
     stepStatus(status = '') {
-      if (/failed|阻塞|❌/.test(status)) return 'error';
+      if (/failed|error|blocked|阻塞|❌/.test(status)) return 'error';
       if (/running/.test(status)) return 'process';
       if (/done|success|passed|通过|✅/.test(status)) return 'success';
       return 'wait';
