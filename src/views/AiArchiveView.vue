@@ -14,13 +14,20 @@
       </div>
     </template>
 
-    <div class="ai-archive-summary-strip">
-      <div v-for="metric in app.aiExecutionArchiveSummaryMetrics" :key="metric.label" class="ai-archive-summary-item">
+    <div class="ai-archive-summary-strip" aria-label="AI档案汇总筛选">
+      <button
+        v-for="metric in app.aiExecutionArchiveSummaryMetrics"
+        :key="metric.label"
+        type="button"
+        :class="['ai-archive-summary-item', metric.tone, { active: app.isAiExecutionArchiveMetricActive(metric) }]"
+        @click="app.applyAiExecutionArchiveBucket(metric)"
+      >
         <span>{{ metric.label }}</span>
         <strong>{{ metric.value }}</strong>
         <small>{{ metric.hint }}</small>
-      </div>
+      </button>
     </div>
+    <p class="ai-archive-summary-hint">点击上方任一归档区域，下面列表会只显示对应记录；再次点击“归档任务”可回到当前筛选范围全部记录。</p>
 
     <div class="ai-archive-filters">
       <label class="ai-archive-filter-field">
@@ -151,20 +158,20 @@
       </section>
 
       <section class="ai-archive-detail-section">
-        <h4>基础信息</h4>
+        <h4>执行对象</h4>
         <div class="ai-archive-detail-grid">
-          <div v-for="item in app.aiExecutionArchiveDetailStats.metaRows" :key="item.label">
+          <div v-for="item in app.aiExecutionArchiveDetailStats.targetRows" :key="item.label">
             <span>{{ item.label }}</span>
-            <a v-if="item.label === 'Figma 链接' && item.value !== '-'" :href="item.value" target="_blank" rel="noopener noreferrer">打开 Figma</a>
+            <a v-if="item.href" :href="item.href" target="_blank" rel="noopener noreferrer">{{ item.value }}</a>
             <strong v-else>{{ item.value }}</strong>
           </div>
         </div>
       </section>
 
       <section class="ai-archive-detail-section">
-        <h4>具体数据类</h4>
-        <div class="ai-archive-data-list">
-          <div v-for="item in app.aiExecutionArchiveDetailStats.dataRows" :key="item.label">
+        <h4>执行环境</h4>
+        <div class="ai-archive-detail-grid">
+          <div v-for="item in app.aiExecutionArchiveDetailStats.environmentRows" :key="item.label">
             <span>{{ item.label }}</span>
             <strong>{{ item.value }}</strong>
           </div>
@@ -172,24 +179,43 @@
       </section>
 
       <section class="ai-archive-detail-section">
-        <h4>阶段扫描点</h4>
-        <div v-if="app.aiExecutionArchiveDetailStats.stageRows.length" class="ai-archive-stage-list">
-          <div v-for="stage in app.aiExecutionArchiveDetailStats.stageRows" :key="stage.key">
-            <span>{{ stage.name }}</span>
-            <ElTag size="small" :type="stage.type">{{ stage.label }}</ElTag>
+        <h4>问题与待处理</h4>
+        <div class="ai-archive-issue-list">
+          <div v-for="item in app.aiExecutionArchiveDetailStats.issueRows" :key="item.label" :class="item.tone">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
           </div>
         </div>
-        <p v-else class="ai-archive-empty">暂无阶段记录。</p>
       </section>
 
       <section class="ai-archive-detail-section">
-        <h4>验证与变更</h4>
+        <h4>本次检查了什么</h4>
         <div class="ai-archive-evidence-grid">
+          <div>
+            <span>具体数据类</span>
+            <strong v-for="item in app.aiExecutionArchiveDetailStats.dataRows" :key="item.label">{{ item.label }}：{{ item.value }}</strong>
+          </div>
+          <div>
+            <span>阶段扫描点</span>
+            <div v-if="app.aiExecutionArchiveDetailStats.stageRows.length" class="ai-archive-stage-list">
+              <div v-for="stage in app.aiExecutionArchiveDetailStats.stageRows" :key="stage.key">
+                <strong>{{ stage.name }}</strong>
+                <ElTag size="small" :type="stage.type">{{ stage.label }}</ElTag>
+              </div>
+            </div>
+            <small v-else>暂无阶段记录。</small>
+          </div>
           <div>
             <span>验证命令</span>
             <code v-for="item in app.aiExecutionArchiveDetailStats.validationRows" :key="item.key">{{ item.value }}</code>
             <small v-if="!app.aiExecutionArchiveDetailStats.validationRows.length">暂无验证命令。</small>
           </div>
+        </div>
+      </section>
+
+      <section class="ai-archive-detail-section">
+        <h4>产物与证据</h4>
+        <div class="ai-archive-evidence-grid two-columns">
           <div>
             <span>文件变更</span>
             <strong v-for="item in app.aiExecutionArchiveDetailStats.changeRows.slice(0, 12)" :key="item.key">{{ item.path }}</strong>
@@ -237,14 +263,55 @@ export default {
 .ai-archive-summary-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
-  padding: 14px 14px 6px;
+  gap: 12px;
+  padding: 14px 14px 12px;
 }
 
 .ai-archive-summary-item {
+  position: relative;
   display: grid;
   gap: 4px;
   min-width: 0;
+  min-height: 92px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  box-shadow: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  appearance: none;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 4px;
+    border-radius: 8px 0 0 8px;
+    background: var(--accent);
+    opacity: 0.55;
+  }
+
+  &:hover,
+  &.active {
+    border-color: var(--accent);
+    background: var(--panel);
+    transform: translateY(-1px);
+  }
+
+  &.closed::before {
+    background: var(--primary);
+  }
+
+  &.rework::before {
+    background: var(--danger);
+  }
+
+  &.review::before {
+    background: var(--warn);
+  }
 
   span,
   small {
@@ -258,6 +325,18 @@ export default {
     font-size: 28px;
     line-height: 1.1;
   }
+
+  &.active strong {
+    color: var(--accent);
+  }
+}
+
+.ai-archive-summary-hint {
+  margin: 0;
+  padding: 0 14px 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .ai-archive-search-field {
@@ -405,8 +484,8 @@ export default {
   }
 
   h4 {
-    color: var(--muted);
-    font-size: 13px;
+    color: var(--text);
+    font-size: 14px;
   }
 
   > strong {
@@ -426,7 +505,8 @@ export default {
 
 .ai-archive-detail-grid,
 .ai-archive-data-list,
-.ai-archive-stage-list {
+.ai-archive-stage-list,
+.ai-archive-issue-list {
   display: grid;
   gap: 10px;
 }
@@ -437,7 +517,8 @@ export default {
 
 .ai-archive-detail-grid > div,
 .ai-archive-data-list > div,
-.ai-archive-stage-list > div {
+.ai-archive-stage-list > div,
+.ai-archive-issue-list > div {
   display: grid;
   gap: 4px;
   min-width: 0;
@@ -451,6 +532,7 @@ export default {
 .ai-archive-detail-grid span,
 .ai-archive-data-list span,
 .ai-archive-stage-list span,
+.ai-archive-issue-list span,
 .ai-archive-evidence-grid span {
   color: var(--muted);
   font-size: 12px;
@@ -460,6 +542,7 @@ export default {
 .ai-archive-detail-grid strong,
 .ai-archive-data-list strong,
 .ai-archive-stage-list strong,
+.ai-archive-issue-list strong,
 .ai-archive-evidence-grid strong,
 .ai-archive-detail-grid a {
   min-width: 0;
@@ -467,6 +550,19 @@ export default {
   color: var(--text);
   font-size: 14px;
   line-height: 1.5;
+}
+
+.ai-archive-issue-list > div {
+  padding-left: 10px;
+  border-left: 3px solid var(--line);
+
+  &.danger {
+    border-left-color: var(--danger);
+  }
+
+  &.warning {
+    border-left-color: var(--warn);
+  }
 }
 
 .ai-archive-evidence-grid {
@@ -489,6 +585,10 @@ export default {
   small {
     color: var(--muted);
     font-size: 12px;
+  }
+
+  &.two-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

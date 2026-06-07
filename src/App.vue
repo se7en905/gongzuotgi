@@ -754,6 +754,7 @@ export default {
         keyword: '',
         userId: '',
         status: '',
+        archiveBucket: '',
         sourceType: '',
         runId: '',
         from: '',
@@ -1071,56 +1072,19 @@ export default {
     },
 
     aiExecutionArchiveRunRows() {
-      const filters = this.aiExecutionArchiveFilters || {};
-      const keyword = String(filters.keyword || '').trim().toLowerCase();
-      const userId = String(filters.userId || '').trim();
-      const status = String(filters.status || '').trim();
-      const sourceType = String(filters.sourceType || '').trim();
-      const runId = String(filters.runId || '').trim();
-      const from = filters.from ? Date.parse(filters.from) : 0;
-      const to = filters.to ? Date.parse(filters.to) : 0;
-      return (this.runs || [])
-        .filter(run => !runId || String(run.id || '') === runId)
-        .filter(run => !sourceType || run.sourceType === sourceType || run.executionMode === sourceType)
-        .filter(run => !status || String(run.status || '') === status)
-        .filter(run => {
-          if (!userId) return true;
-          return [run.createdBy, run.ownerUserId, run.assignedToUserId, run.startedBy].map(value => String(value || '')).includes(userId);
-        })
-        .filter(run => {
-          const time = Date.parse(run.createdAt || run.updatedAt || run.finishedAt || run.startedAt || '');
-          if (from && (!time || time < from)) return false;
-          if (to && (!time || time > to)) return false;
-          return true;
-        })
-        .filter(run => {
-          if (!keyword) return true;
-          return [
-            run.title,
-            this.directSkillRunContentName(run),
-            this.directSkillRunContentKind(run),
-            run.primarySkillPath,
-            run.stage,
-            run.assignedToName,
-            run.developer,
-            run.figmaLinks,
-            run.requirement,
-            run.status
-          ].map(value => String(value || '').toLowerCase()).join(' ').includes(keyword);
-        })
-        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      return this.filteredAiExecutionArchiveRuns();
     },
 
     aiExecutionArchiveSummaryMetrics() {
-      const rows = this.aiExecutionArchiveRunRows || [];
+      const rows = this.filteredAiExecutionArchiveRuns({ ignoreBucket: true });
       const closed = rows.filter(run => this.isAiExecutionArchiveClosedRun(run)).length;
       const rework = rows.filter(run => this.isAiExecutionArchiveReworkRun(run)).length;
       const review = rows.filter(run => this.isAiExecutionArchiveReviewRun(run)).length;
       return [
-        { label: '归档任务', value: rows.length, hint: '当前筛选范围' },
-        { label: '已闭环', value: closed, hint: '完成且无需返工' },
-        { label: '待返工', value: rework, hint: '失败 / 阻塞 / 返工' },
-        { label: '待验收', value: review, hint: '完成后需人工确认' }
+        { label: '归档任务', value: rows.length, hint: '当前筛选范围', bucket: '', tone: 'all' },
+        { label: '已闭环', value: closed, hint: '完成且无需返工', bucket: 'closed', tone: 'closed' },
+        { label: '待返工', value: rework, hint: '失败 / 阻塞 / 返工', bucket: 'rework', tone: 'rework' },
+        { label: '待验收', value: review, hint: '完成后需人工确认', bucket: 'review', tone: 'review' }
       ];
     },
 
@@ -7137,6 +7101,7 @@ export default {
         keyword: '',
         userId: '',
         status: '',
+        archiveBucket: '',
         sourceType: '',
         runId: '',
         from: '',
@@ -7170,7 +7135,9 @@ export default {
         }
       );
       const query = new URLSearchParams();
+      const allowedFilterKeys = new Set(['keyword', 'userId', 'status', 'sourceType', 'runId', 'from', 'to']);
       for (const [key, value] of Object.entries(filters)) {
+        if (!allowedFilterKeys.has(key)) continue;
         if (String(value || '').trim()) query.set(key, String(value).trim());
       }
       this.loading.runs = true;
@@ -15182,6 +15149,73 @@ export default {
       return 'open';
     },
 
+    aiExecutionArchiveRunMatchesBucket(run = {}, bucket = '') {
+      const value = String(bucket || '').trim();
+      if (!value) return true;
+      return this.aiExecutionArchiveStatusBucket(run) === value;
+    },
+
+    filteredAiExecutionArchiveRuns(options = {}) {
+      const filters = this.aiExecutionArchiveFilters || {};
+      const keyword = String(filters.keyword || '').trim().toLowerCase();
+      const userId = String(filters.userId || '').trim();
+      const status = String(filters.status || '').trim();
+      const archiveBucket = options.ignoreBucket ? '' : String(filters.archiveBucket || '').trim();
+      const sourceType = String(filters.sourceType || '').trim();
+      const runId = String(filters.runId || '').trim();
+      const from = filters.from ? Date.parse(filters.from) : 0;
+      const to = filters.to ? Date.parse(filters.to) : 0;
+      return (this.runs || [])
+        .filter(run => !runId || String(run.id || '') === runId)
+        .filter(run => !sourceType || run.sourceType === sourceType || run.executionMode === sourceType)
+        .filter(run => !status || String(run.status || '') === status)
+        .filter(run => this.aiExecutionArchiveRunMatchesBucket(run, archiveBucket))
+        .filter(run => {
+          if (!userId) return true;
+          return [run.createdBy, run.ownerUserId, run.assignedToUserId, run.assignedToUserId, run.startedBy]
+            .map(value => String(value || ''))
+            .includes(userId);
+        })
+        .filter(run => {
+          const time = Date.parse(run.createdAt || run.updatedAt || run.finishedAt || run.startedAt || '');
+          if (from && (!time || time < from)) return false;
+          if (to && (!time || time > to)) return false;
+          return true;
+        })
+        .filter(run => {
+          if (!keyword) return true;
+          return [
+            run.title,
+            this.directSkillRunContentName(run),
+            this.directSkillRunContentKind(run),
+            run.primarySkillPath,
+            run.stage,
+            run.assignedToName,
+            run.developer,
+            run.figmaLinks,
+            run.requirement,
+            run.status
+          ].map(value => String(value || '').toLowerCase()).join(' ').includes(keyword);
+        })
+        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    },
+
+    isAiExecutionArchiveMetricActive(metric = {}) {
+      const bucket = String(metric.bucket || '').trim();
+      return String(this.aiExecutionArchiveFilters?.archiveBucket || '').trim() === bucket;
+    },
+
+    applyAiExecutionArchiveBucket(metric = {}) {
+      const bucket = String(metric.bucket || '').trim();
+      this.aiExecutionArchiveFilters = {
+        ...this.aiExecutionArchiveFilters,
+        archiveBucket: bucket,
+        runId: '',
+        status: ''
+      };
+      this.aiExecutionArchivePage = 1;
+    },
+
     isAiExecutionArchiveClosedRun(run = {}) {
       return this.aiExecutionArchiveStatusBucket(run) === 'closed';
     },
@@ -15202,7 +15236,9 @@ export default {
         validationRows: [],
         changeRows: [],
         artifactRows: [],
-        metaRows: []
+        targetRows: [],
+        environmentRows: [],
+        issueRows: []
       };
       const summary = run.resultSummary || {};
       const stages = this.displayRunStages(run);
@@ -15251,29 +15287,99 @@ export default {
         { label: '扫描点', value: scanPointCount, hint: '阶段 / 验证 / 变更 / 证据', tone: scanPointCount ? 'primary' : 'muted' },
         { label: '数据类', value: dataRows.length, hint: dataRows.map(item => item.label).slice(0, 3).join(' / ') || '暂无结构化数据', tone: dataRows.length ? 'primary' : 'muted' }
       ];
-      const metaRows = [
-        { label: '执行内容', value: this.directSkillRunContentName(run) },
-        { label: '类型', value: this.directSkillRunContentKind(run) },
+      const targetRows = [
+        { label: '使用内容', value: this.directSkillRunContentName(run) },
+        { label: '内容类型', value: this.directSkillRunContentKind(run) },
+        { label: 'Figma 目标', value: run.figmaLinks ? '已记录目标链接' : '未记录链接', href: run.figmaLinks || '' },
+        { label: '写入方式', value: this.directSkillWriteModeLabel(run.figmaWriteMode) }
+      ];
+      const environmentRows = [
         { label: '操作人', value: this.directSkillRunOperatorName(run) },
         { label: '执行人', value: run.assignedToName || run.developer || '-' },
-        { label: '领取设备', value: this.directSkillRunDeviceDisplayName(run) },
-        { label: '状态', value: this.directSkillRunStatusLabel(run) || this.runStatusLabel(run.status) },
+        { label: '执行设备', value: this.directSkillRunDeviceDisplayName(run) },
+        { label: '当前状态', value: this.directSkillRunStatusLabel(run) || this.runStatusLabel(run.status) },
         { label: '创建时间', value: this.formatDateTime(run.createdAt) || '-' },
-        { label: '更新时间', value: this.directSkillRunUpdatedText(run) },
-        { label: 'Figma 链接', value: run.figmaLinks || '-' }
+        { label: '更新时间', value: this.directSkillRunUpdatedText(run) }
       ];
+      const issueRows = [
+        this.aiExecutionArchiveIssueRow('阻塞原因', summary.blockerReason),
+        this.aiExecutionArchiveIssueRow('退出码', run.exitCode === null || run.exitCode === undefined ? '' : `Codex 退出码 ${run.exitCode}`),
+        this.aiExecutionArchiveIssueRow('人工确认', summary.needsHumanReview ? '需要人工确认' : '')
+      ].filter(Boolean);
+      if (!issueRows.length) {
+        issueRows.push({ label: '当前问题', value: '未记录阻塞或失败原因。', tone: 'muted' });
+      }
+      const readableDataRows = dataRows.filter(item => item.readable !== false);
+      if (!readableDataRows.length && !stageRows.length && !validationRows.length && !changeRows.length && !artifactRows.length) {
+        readableDataRows.push({ label: '记录状态', value: '这条执行目前只有基础状态，没有更细的结构化结果。' });
+      }
       return {
         summaryCards,
-        dataRows,
+        dataRows: readableDataRows,
         stageRows,
         validationRows,
         changeRows,
         artifactRows,
-        metaRows,
-        resultTitle: this.resultStatusTitle(summary, run),
-        resultText: this.resultSummaryText(summary, run),
-        nextAction: this.resultNextActionText(run)
+        targetRows,
+        environmentRows,
+        issueRows,
+        resultTitle: this.aiExecutionArchiveResultTitle(run),
+        resultText: this.aiExecutionArchiveResultText(run),
+        nextAction: this.aiExecutionArchiveNextActionText(run)
       };
+    },
+
+    aiExecutionArchiveResultTitle(run = {}) {
+      const status = this.effectiveResultStatus(run);
+      if (this.isAiExecutionArchiveReworkRun(run)) return '需要返工或重新处理';
+      if (status === 'passed') return '已完成，等待验收确认';
+      if (status === 'conditional_pass') return '已产出结果，需要人工确认';
+      if (/pending|queued/i.test(String(run.status || ''))) return '等待执行人本机 Worker 领取';
+      if (/claimed|running|in_progress/i.test(String(run.status || ''))) return '执行人本机正在处理';
+      return this.resultStatusTitle(run.resultSummary || {}, run);
+    },
+
+    aiExecutionArchiveResultText(run = {}) {
+      const summary = run.resultSummary || {};
+      if (this.isAiExecutionArchiveReworkRun(run)) {
+        const reason = String(summary.blockerReason || '').trim();
+        return reason && !this.isPlaceholderResultText(reason)
+          ? this.humanizeRunResultText(reason)
+          : '本次执行失败或阻塞，需要查看问题信息后重新执行。';
+      }
+      if (summary.summary && !this.isPlaceholderResultText(summary.summary)) {
+        return this.humanizeRunResultText(summary.summary);
+      }
+      if (this.isAiExecutionArchiveReviewRun(run)) return '本次执行已有结果，但仍需要负责人或验收人做人工确认。';
+      if (this.isAiExecutionArchiveClosedRun(run)) return '本次执行已完成，未记录阻塞原因。';
+      return this.resultStatusDescription(summary, run);
+    },
+
+    aiExecutionArchiveNextActionText(run = {}) {
+      if (this.isAiExecutionArchiveReworkRun(run)) return '建议：先处理阻塞原因，再重新发起直接执行。';
+      if (this.isAiExecutionArchiveReviewRun(run)) return '建议：打开 Figma 和执行结果，完成人工验收确认。';
+      if (this.isAiExecutionArchiveClosedRun(run)) return '建议：进入业务任务验收，确认是否闭环。';
+      if (/pending|queued/i.test(String(run.status || ''))) return '建议：确认执行人电脑 Worker、Codex 和 Figma MCP 是否就绪。';
+      if (/claimed|running|in_progress/i.test(String(run.status || ''))) return '建议：等待本机 Worker 回传结果。';
+      return this.resultNextActionText(run);
+    },
+
+    aiExecutionArchiveIssueRow(label = '', value = '') {
+      const text = String(value || '').trim();
+      if (!text || this.isPlaceholderResultText(text)) return null;
+      return {
+        label,
+        value: this.humanizeRunResultText(text),
+        tone: /失败|阻塞|exit|退出码|error|failed|blocked/i.test(text) ? 'danger' : 'warning'
+      };
+    },
+
+    directSkillWriteModeLabel(mode = '') {
+      return {
+        'target-node': '写入指定节点',
+        append: '追加到目标区域',
+        replace: '替换目标内容'
+      }[mode] || mode || '写入指定节点';
     },
 
     aiExecutionArchiveChangeRows(run = {}) {
@@ -15467,6 +15573,7 @@ export default {
         keyword: '',
         userId: '',
         status: '',
+        archiveBucket: '',
         sourceType: '',
         runId: run.id || '',
         from: '',
