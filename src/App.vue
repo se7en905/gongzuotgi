@@ -17044,6 +17044,10 @@ export default {
       if (this.isDirectSkillRun(run) && String(run.status || '').toLowerCase() === 'claimed') return '执行人本机已领取';
       if (this.isDirectSkillFailedRun(run)) return '本机 Worker 已自动领取后执行失败';
       if (!this.isRunInProgress(run)) {
+        const statusText = String(run.status || '').toLowerCase();
+        if (/cancelled|canceled/.test(statusText)) return '已中断，可继续执行';
+        if (/blocked/.test(statusText)) return '已阻塞，可继续执行';
+        if (/failed|error/.test(statusText)) return '执行失败，可继续执行';
         if (this.hasRunExecuted(run)) return '执行完成';
         return '等待启动';
       }
@@ -17454,7 +17458,7 @@ export default {
           blocker: null,
           cancelledBy: ''
         });
-        this.logText = '执行已启动，等待日志输出...';
+        this.logText = mode === 'resume' ? '继续执行已启动，保留旧产物并等待新日志输出...' : '执行已启动，等待日志输出...';
         this.runLogCollapse = [];
         this.runLogDrawerVisible = false;
         await this.api(`/api/runs/${encodeURIComponent(runId)}/start`, {

@@ -95,8 +95,8 @@ export async function startRun(project, run) {
     artifactRoot,
     materialPath,
     blocker: null,
-    resultSummary: isResume ? run.resultSummary || null : null,
-    strictCheck: isResume ? run.strictCheck || null : null,
+    resultSummary: null,
+    strictCheck: null,
     exitCode: null,
     pid: null,
     changeSummary: {
@@ -175,13 +175,23 @@ function codexEnvironment(config = {}) {
   return env;
 }
 
+async function readTextTail(file, maxChars = 12000) {
+  try {
+    const text = await fs.readFile(file, 'utf8');
+    return text.slice(-maxChars);
+  } catch {
+    return '';
+  }
+}
+
 function tomlString(value = '') {
   return JSON.stringify(String(value || ''));
 }
 
-function markInitialRunningStage(stages = []) {
+function markInitialRunningStage(stages = [], startMode = 'start') {
+  if (startMode === 'resume') return markInitialRunningStageForResume(stages);
   const now = new Date().toISOString();
-  const startIndex = firstRunnableStageIndex(stages);
+  const startIndex = firstRunnableStageIndex(stages, startMode);
   return stages.map((stage, index) => ({
     ...stage,
     status: index === startIndex ? 'running' : 'pending',
@@ -263,6 +273,7 @@ export async function cancelRun(runId, cancelledBy = '') {
 async function buildPrompt(project, run) {
   const workflowText = workflowInstruction(run);
   const artifactRoot = run.artifactRoot || buildRunArtifactRoot(project, run);
+  const resumeText = run.startMode === 'resume' ? buildResumePromptSection(run, artifactRoot) : '';
 
   const forbidden = [
     ...(project.forbiddenCommands || []),
@@ -304,6 +315,8 @@ async function buildPrompt(project, run) {
 - agentModel: ${run.agentModel || '无'}
 - figmaLinks: ${run.figmaLinks || '无'}
 - specOrSkillHints: ${run.showdocHints || '无'}
+
+${resumeText}
 
 ## Requirement
 
@@ -400,6 +413,37 @@ function safeTaskFolderName(run) {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 120) || run.id;
+}
+
+function buildResumePromptSection(run = {}, artifactRoot = '') {
+  const stages = Array.isArray(run.stages) ? run.stages : [];
+  const completed = stages
+    .filter(stage => isCompletedStageStatus(stage.status))
+    .map(stage => `${stage.name || '未命名阶段'}（${stage.status || '已完成'}）`);
+  const pending = stages
+    .filter(stage => !isCompletedStageStatus(stage.status))
+    .map(stage => `${stage.name || '未命名阶段'}（${stage.status || '待继续'}）`);
+  const logTail = String(run.previousLogTail || '').trim().slice(-8000);
+  return [
+    '## Resume Mode',
+    '',
+    '本次是中断后的继续执行，不是从头重做。',
+    `- 继续使用当前 runId：${run.id}`,
+    `- 继续使用当前 artifactRoot：${artifactRoot}`,
+    '- 启动前必须先读取 artifactRoot/资料.md、artifactRoot/需求清单.md、artifactRoot/阶段执行报告.md，以及已经生成的阶段产物。',
+    '- 已完成的阶段不要重复执行；只从未完成、失败、阻塞或中断附近的步骤继续处理。',
+    '- 如果需要操作 Figma，必须先检查目标 Figma 当前状态，避免重复创建已经完成的节点、页面、Frame 或图层。',
+    '- 如果旧日志和当前文件状态冲突，以当前文件和 Figma 实际状态为准，并在阶段报告里说明续跑判断。',
+    '',
+    '### 已完成阶段',
+    completed.length ? completed.map(item => `- ${item}`).join('\n') : '- 暂无明确已完成阶段。',
+    '',
+    '### 待继续阶段',
+    pending.length ? pending.map(item => `- ${item}`).join('\n') : '- 没有明确待继续阶段，请从交付检查和归档验收继续确认。',
+    '',
+    logTail ? `### 上次执行日志尾部\n\n\`\`\`text\n${logTail}\n\`\`\`` : '### 上次执行日志尾部\n\n暂无可用日志尾部。',
+    ''
+  ].join('\n');
 }
 
 function buildRunArtifactRoot(project, run) {
