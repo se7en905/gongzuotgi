@@ -2128,7 +2128,7 @@ export default {
         map.set(name, { name, taskCount: 0, todayDueCount: 0, riskCount: 0, bugCount: 0, tasks: [] });
       });
       this.taskCenterCurrentArtMemberTaskRows.forEach(task => {
-        const name = this.canonicalArtDeptPerson(task.developer || '');
+        const name = this.taskAssigneeDisplayName(task);
         if (!this.isArtDeptPerson(name)) return;
         const row = map.get(name) || { name, taskCount: 0, todayDueCount: 0, riskCount: 0, bugCount: 0, tasks: [] };
         row.taskCount += 1;
@@ -4185,6 +4185,10 @@ export default {
     },
 
     ensureActiveViewData(view = this.activeView) {
+      if (view === 'tasks') {
+        if (!this.loading.tasks) this.refreshTasks().catch(() => {});
+        if (!this.loading.config) this.refreshConfig().catch(() => {});
+      }
       if (['skill-inventory', 'skill-assets'].includes(view)) {
         if (view === 'skill-assets' || view === 'skill-inventory') this.skillInventoryTab = 'assets';
         this.ensureSkillInventoryTabData(this.skillInventoryTab || 'assets');
@@ -4370,6 +4374,24 @@ export default {
         task.zentao?.openedBy
       ];
       return fields.some(field => aliases.some(alias => samePerson(field, alias)));
+    },
+
+    taskAssigneeDisplayName(task = {}) {
+      const fields = [
+        task.developer,
+        task.assignedToName,
+        task.assignedTo,
+        task.zentao?.assignedToName,
+        task.zentao?.assignedToRealName,
+        task.zentao?.assignedTo,
+        task.owner,
+        task.creator
+      ];
+      for (const field of fields) {
+        const name = this.canonicalArtDeptPerson(field);
+        if (name && this.isArtDeptPerson(name)) return name;
+      }
+      return this.canonicalArtDeptPerson(task.developer || task.assignedTo || task.zentao?.assignedTo || '') || '';
     },
 
     isArtDepartmentTask(task = {}) {
@@ -5046,6 +5068,7 @@ export default {
         }, 300);
       }
       if (type === 'tasks.changed' && this.can('menu.tasks')) {
+        if (event.payload?.deleted) this.removeDeletedTaskFromLocalState(event.payload);
         this.schedulePlatformRefresh('tasks', async () => {
           await Promise.all([
             this.refreshTasks(),
@@ -13360,6 +13383,71 @@ export default {
       this.bumpTaskCenterRevision();
     },
 
+    removeDeletedTaskFromLocalState(task = {}) {
+      const deletedId = String(task.id || task.taskId || '').trim();
+      const deletedTaskNo = String(task.taskNo || task.zentaoId || task.zentao?.id || '').trim();
+      const beforeCount = this.businessTasks.length;
+      this.businessTasks = this.businessTasks.filter(item => {
+        if (deletedId && item.id === deletedId) return false;
+        const itemTaskNo = String(item.taskNo || item.zentaoId || item.zentao?.id || '').trim();
+        return !(deletedTaskNo && itemTaskNo === deletedTaskNo && (!task.projectId || item.projectId === task.projectId));
+      });
+      this.taskReviews = this.taskReviews.filter(review => {
+        if (deletedId && review.taskId === deletedId) return false;
+        return !(deletedTaskNo && review.taskNo === deletedTaskNo && (!task.projectId || review.projectId === task.projectId));
+      });
+      if (deletedId) {
+        const nextNotes = { ...this.taskProcessingNotes };
+        const nextBriefs = { ...this.taskArtBriefs };
+        delete nextNotes[deletedId];
+        delete nextBriefs[deletedId];
+        this.taskProcessingNotes = nextNotes;
+        this.taskArtBriefs = nextBriefs;
+        localStorage.setItem('art-task-processing-notes', JSON.stringify(this.taskProcessingNotes));
+        localStorage.setItem('art-task-briefs', JSON.stringify(this.taskArtBriefs));
+        if (this.selectedBusinessTaskId === deletedId) {
+          this.selectedBusinessTaskId = '';
+          this.taskProcessingSheetOpen = false;
+        }
+      }
+      if (beforeCount !== this.businessTasks.length) {
+        this.saveWorkbenchDisplayCache('businessTasks', this.businessTasks);
+        this.bumpTaskCenterRevision();
+      }
+    },
+
+    canDeletePlatformTask(task = {}) {
+      return this.can('task.platform.delete')
+        && task?.source === 'platform'
+        && !isBugLikeTask(task);
+    },
+
+    async deletePlatformTask(task = {}) {
+      if (!this.canDeletePlatformTask(task)) return;
+      const title = this.taskDisplayTitle(task) || task.title || task.id || '平台创建任务';
+      try {
+        await ElMessageBox.confirm(
+          `确认删除「${title}」？删除后会从平台任务中心数据中销毁，并清理该单的备注、验收和美术摘要；不会删除禅道任务，也不会删除已产生的执行档案。`,
+          '删除平台创建任务',
+          {
+            type: 'warning',
+            confirmButtonText: '确认删除',
+            cancelButtonText: '取消'
+          }
+        );
+      } catch {
+        return;
+      }
+      try {
+        const result = await this.api(`/api/tasks/${encodeURIComponent(task.id)}`, { method: 'DELETE' });
+        this.removeDeletedTaskFromLocalState(result?.task || task);
+        ElMessage.success('平台创建任务已删除');
+        this.refreshTasks().catch(() => {});
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || '平台创建任务删除失败');
+      }
+    },
+
     shouldShowTaskSplitButton(task = {}) {
       if (!this.isPlatformAdmin || !this.can('task.sync')) return false;
       if (this.isSgProjectTask(task)) return false;
@@ -14684,16 +14772,43 @@ export default {
       return workflow === 'art-single-skill';
     },
 
+    hasRunSelectedSkillOrMdMaterial(run = null) {
+      if (!run) return false;
+      if (this.isDirectSkillRun(run) || this.isSingleSkillWorkflowRun(run)) return true;
+      if (String(run.executionMode || '').trim() === 'single-skill') return true;
+      const selectedMaterials = Array.isArray(run.selectedMaterialHints)
+        ? run.selectedMaterialHints.filter(value => String(value || '').trim())
+        : [];
+      if (selectedMaterials.length) return true;
+      return [
+        run.primarySkillPath,
+        run.skillPath,
+        run.showdocHints,
+        run.stage
+      ].some(value => this.looksLikeRunSkillOrMdMaterial(value));
+    },
+
+    looksLikeRunSkillOrMdMaterial(value = '') {
+      const text = String(value || '').trim();
+      if (!text) return false;
+      if (/(^|[\\/])SKILL\.md(?:$|[?#])/i.test(text)) return true;
+      if (/\.(md|markdown)(?:$|[?#])/i.test(text)) return true;
+      if (/[\\/](skills?|\.codex|\.claude|规范|资料库|references)[\\/]/i.test(text)) return true;
+      if (this.isGenericUsageFileTarget(text)) return false;
+      if (/(same-ip-image|ui-finalize|gpt-image|imagegen|figma-use|界面收尾|同\s*IP|固定人设|规范|Skill)/i.test(text)) return true;
+      return false;
+    },
+
     isSkillOrMdFocusedRun(run = null) {
       return Boolean(this.isDirectSkillRun(run) || this.isSingleSkillWorkflowRun(run));
     },
 
     shouldShowRunWorkflowPanels(run = null) {
-      return Boolean(run && !this.isSkillOrMdFocusedRun(run));
+      return Boolean(run && !this.hasRunSelectedSkillOrMdMaterial(run));
     },
 
     shouldShowRunSkillActionsPanel(run = null) {
-      return Boolean(run && !this.isSkillOrMdFocusedRun(run));
+      return Boolean(run && !this.hasRunSelectedSkillOrMdMaterial(run));
     },
 
     shouldShowRunTopChainPanel(run = null) {
@@ -14701,7 +14816,7 @@ export default {
     },
 
     shouldShowRunChainPanel(run = null) {
-      return Boolean(run && !this.isSkillOrMdFocusedRun(run));
+      return Boolean(run && !this.hasRunSelectedSkillOrMdMaterial(run));
     },
 
     shouldShowRunCodexChatPanel(run = null) {

@@ -42,6 +42,7 @@ import {
   createRun,
   createArtProgressEvent,
   cloneRunForRetry,
+  deletePlatformTask,
   deleteProject,
   deleteRun,
   deleteRunsByFilters,
@@ -1568,6 +1569,49 @@ async function handleApi(req, res, url) {
       description: `${currentUser.displayName || currentUser.username} 新增任务「${task.title}」`
     });
     sendJson(res, 201, task);
+    return;
+  }
+
+  const taskDelete = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
+  if (req.method === 'DELETE' && taskDelete) {
+    const task = await requireTaskLike(taskDelete[1]);
+    requireProjectAccess(currentUser, task.projectId, 'admin', 'api.tasks.deletePlatform');
+    if (task.source !== 'platform') {
+      throw new HttpError(403, '只允许删除平台创建任务，禅道同步任务不能删除。');
+    }
+    let result;
+    try {
+      result = await deletePlatformTask(task.id || taskDelete[1]);
+    } catch (error) {
+      if (error.code === 'TASK_DELETE_FORBIDDEN') {
+        throw new HttpError(403, error.message);
+      }
+      throw error;
+    }
+    if (!result) {
+      sendJson(res, 404, { error: 'task not found' });
+      return;
+    }
+    await writeOperationLog(req, {
+      user: currentUser,
+      module: 'task',
+      action: 'DELETE_PLATFORM_TASK',
+      actionName: '删除平台创建任务',
+      targetType: 'task',
+      targetId: result.task.id,
+      targetName: result.task.title,
+      before: result.task,
+      metadata: result.removed,
+      description: `${currentUser.displayName || currentUser.username} 删除平台创建任务「${result.task.title}」`
+    });
+    broadcastPlatformEvent('tasks.changed', {
+      projectId: result.task.projectId || artProjectId,
+      taskId: result.task.id,
+      taskNo: result.task.taskNo || '',
+      module: 'platform-task-delete',
+      deleted: true
+    });
+    sendJson(res, 200, { ok: true, task: result.task, removed: result.removed });
     return;
   }
 

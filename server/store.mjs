@@ -402,6 +402,66 @@ export async function upsertTasks(inputs = []) {
   return { created, updated, total: saved.length, tasks: saved };
 }
 
+export async function deletePlatformTask(id) {
+  const targetId = String(id || '').trim();
+  if (!targetId) return null;
+  const tasks = await readJson(paths.tasks, []);
+  const decodedId = decodeURIComponent(targetId);
+  const index = tasks.findIndex(task => {
+    const keys = [task.id, task.taskNo, task.zentaoId, task.zentao?.id, taskIdentityKey(task)]
+      .map(value => String(value || '').trim())
+      .filter(Boolean);
+    return keys.includes(decodedId);
+  });
+  if (index === -1) return null;
+  const task = tasks[index];
+  if (task.source !== 'platform') {
+    const error = new Error('只允许删除平台创建任务，禅道同步任务不能删除。');
+    error.code = 'TASK_DELETE_FORBIDDEN';
+    throw error;
+  }
+  tasks.splice(index, 1);
+
+  const taskNo = String(task.taskNo || task.zentaoId || task.zentao?.id || '').trim();
+  const taskIds = new Set([task.id, taskNo, taskIdentityKey(task)].filter(Boolean));
+  const briefKeys = new Set([
+    taskNo ? `task:${task.projectId}:${taskNo}` : '',
+    task.id ? `task:${task.projectId}:${slugify(task.id)}` : ''
+  ].filter(Boolean));
+  const sameTask = record => {
+    const recordTaskNo = String(record.taskNo || record.zentaoId || record.zentao?.id || '').trim();
+    return taskIds.has(record.taskId)
+      || taskIds.has(record.id)
+      || (taskNo && recordTaskNo === taskNo)
+      || (task.projectId && record.projectId === task.projectId && taskNo && recordTaskNo === taskNo)
+      || (task.projectId && record.projectId === task.projectId && briefKeys.has(String(record.groupKey || '').trim()));
+  };
+  const [reviews, notes, artBriefs] = await Promise.all([
+    readJson(paths.taskReviews, []),
+    readJson(paths.taskProcessingNotes, []),
+    readJson(paths.artBriefs, [])
+  ]);
+  const nextReviews = reviews.filter(record => !sameTask(record));
+  const nextNotes = notes.filter(record => !sameTask(record));
+  const nextArtBriefs = artBriefs.filter(record => !sameTask(record));
+
+  await Promise.all([
+    writeJson(paths.tasks, tasks),
+    writeJson(paths.taskReviews, nextReviews),
+    writeJson(paths.taskProcessingNotes, nextNotes),
+    writeJson(paths.artBriefs, nextArtBriefs)
+  ]);
+
+  return {
+    task,
+    removed: {
+      taskReviews: reviews.length - nextReviews.length,
+      taskProcessingNotes: notes.length - nextNotes.length,
+      artBriefs: artBriefs.length - nextArtBriefs.length
+    }
+  };
+}
+
 function taskContentFingerprint(task = {}) {
   return JSON.stringify({
     title: task.title || '',

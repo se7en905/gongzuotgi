@@ -148,10 +148,11 @@
       <ElTableColumn label="创建时间" min-width="150">
         <template #default="{ row }">{{ app.formatDateTime(row.zentaoCreatedAt || row.zentao?.openedDate || row.createdAt) }}</template>
       </ElTableColumn>
-      <ElTableColumn label="操作" width="110" fixed="right" align="center">
+      <ElTableColumn label="操作" width="180" fixed="right" align="center">
         <template #default="{ row }">
           <div class="table-action-row">
             <ElButton v-if="app.can('run.create')" type="primary" plain size="small" @click.stop="startRun(row)">发起执行</ElButton>
+            <ElButton v-if="app.canDeletePlatformTask(row)" type="danger" plain size="small" @click.stop="deleteTask(row)">删除</ElButton>
           </div>
         </template>
       </ElTableColumn>
@@ -306,6 +307,9 @@ export default {
       this.app.createRunFromTask(row);
       this.app.activeView = 'runs';
       this.app.pushRoute('/runs');
+    },
+    deleteTask(row) {
+      this.app.deletePlatformTask(row);
     }
   }
 };
