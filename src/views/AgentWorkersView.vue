@@ -122,12 +122,12 @@
       <div class="panel-head">
         <div>
           <h3>执行明细</h3>
-          <p>仅展示最近 10 条直接执行记录；完整明细请到左侧 AI档案 查看。</p>
+          <p>仅展示最近 10 条执行工作台记录；完整明细请到左侧 AI档案 查看。</p>
         </div>
         <ElButton plain :loading="app.loading.runs" @click="app.refreshRuns">刷新明细</ElButton>
       </div>
     </template>
-    <ElTable class="skill-clean-table" :data="app.recentDirectSkillRunRows" table-layout="fixed" empty-text="暂无执行明细">
+    <ElTable class="skill-clean-table" :data="app.recentExecutionRunRows" table-layout="fixed" empty-text="暂无执行明细">
       <ElTableColumn label="执行内容" min-width="240">
         <template #default="{ row }">
           <button type="button" class="agent-run-title" @click="app.openRun(row)">

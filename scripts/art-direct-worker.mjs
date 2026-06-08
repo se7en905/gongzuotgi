@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import os from 'node:os';
 import path from 'node:path';
-import { access } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -13,8 +13,13 @@ const pollIntervalMs = Math.max(60000, Number(process.env.ART_WORKER_POLL_INTERV
 const heartbeatIntervalMs = Math.max(60000, Number(process.env.ART_WORKER_HEARTBEAT_INTERVAL_MS || 300000));
 const localCheckTimeoutMs = Math.max(5000, Number(process.env.ART_WORKER_CHECK_TIMEOUT_MS || 15000));
 const localCheckIntervalMs = Math.max(60000, Number(process.env.ART_WORKER_LOCAL_CHECK_INTERVAL_MS || 300000));
+const requestTimeoutMs = Math.max(5000, Number(process.env.ART_WORKER_API_TIMEOUT_MS || 15000));
 const codexPath = process.env.CODEX_CLI_PATH || 'codex';
-const defaultProjectRoot = process.env.ART_WORKER_PROJECT_ROOT || process.env.ART_WORKER_HOME || process.cwd();
+const workerHome = process.env.ART_WORKER_HOME || path.join(os.homedir(), 'ArtDirectWorker');
+const defaultProjectRoot = process.env.ART_WORKER_PROJECT_ROOT || workerHome || process.cwd();
+const offlineQueuePath = process.env.ART_WORKER_OFFLINE_QUEUE_PATH || path.join(workerHome, 'state', 'offline-run-updates.json');
+const offlineQueueMaxItems = Math.max(20, Number(process.env.ART_WORKER_OFFLINE_QUEUE_MAX_ITEMS || 200));
+const offlineLogChunkMaxChars = Math.max(1000, Number(process.env.ART_WORKER_OFFLINE_LOG_CHUNK_MAX_CHARS || 8000));
 
 let cookie = '';
 let currentUser = null;
@@ -22,6 +27,8 @@ let lastHeartbeatAt = 0;
 let checkingRuns = false;
 let eventSyncStarted = false;
 let lastLocalCheckAt = 0;
+let lastOfflineNoticeAt = 0;
+let offlineQueueOperation = Promise.resolve();
 let localChecks = {
   codexReady: false,
   figmaMcpReady: false,
@@ -47,6 +54,7 @@ async function main() {
   while (true) {
     try {
       await refreshLocalChecks();
+      await flushOfflineQueue();
       await heartbeat();
       await checkAndExecuteNextRun();
     } catch (error) {
@@ -121,10 +129,12 @@ async function checkAndExecuteNextRun() {
   if (checkingRuns) return;
   checkingRuns = true;
   try {
+    await flushOfflineQueue();
     while (true) {
       const run = await claimNextRun();
       if (!run) break;
       await executeRun(run);
+      await flushOfflineQueue();
       await heartbeat(true);
     }
   } finally {
@@ -184,7 +194,7 @@ function handlePlatformEventBlock(block = '') {
 
 async function executeRun(run) {
   console.log(`[worker] 领取直接执行：${run.title} (${run.id})`);
-  await updateRunStatus(run.id, {
+  await safeUpdateRunStatus(run.id, {
     status: 'running',
     workerStatus: 'running',
     startedAt: new Date().toISOString(),
@@ -226,13 +236,13 @@ async function executeRun(run) {
   child.stdout.on('data', chunk => {
     const text = chunk.toString();
     finalText += collectReadableJsonl(text);
-    void appendRunLog(run.id, text);
+    void safeAppendRunLog(run.id, text);
     process.stdout.write(text);
   });
   child.stderr.on('data', chunk => {
     const text = chunk.toString();
     stderrText += text;
-    void appendRunLog(run.id, text);
+    void safeAppendRunLog(run.id, text);
     process.stderr.write(text);
   });
   try {
@@ -243,7 +253,7 @@ async function executeRun(run) {
 
   const exitCode = await waitForChild(child);
   const status = exitCode === 0 ? 'completed' : 'failed';
-  await updateRunStatus(run.id, {
+  await safeUpdateRunStatus(run.id, {
     status,
     workerStatus: status,
     exitCode,
@@ -262,8 +272,8 @@ async function executeRun(run) {
 
 async function failRunBeforeCodex(run, reason) {
   console.error(`[worker] ${reason}`);
-  await appendRunLog(run.id, `\n[worker blocked] ${reason}\n`);
-  await updateRunStatus(run.id, {
+  await safeAppendRunLog(run.id, `\n[worker blocked] ${reason}\n`);
+  await safeUpdateRunStatus(run.id, {
     status: 'failed',
     workerStatus: 'failed',
     exitCode: -1,
@@ -405,6 +415,103 @@ async function updateRunStatus(runId, body) {
   });
 }
 
+async function safeAppendRunLog(runId, chunk) {
+  if (!chunk) return;
+  try {
+    await fetchJson(`/api/agent-runs/${encodeURIComponent(runId)}/log`, {
+      method: 'POST',
+      body: { chunk }
+    });
+  } catch (error) {
+    await enqueueOfflineUpdate({
+      type: 'log',
+      runId,
+      body: { chunk: String(chunk).slice(-offlineLogChunkMaxChars) },
+      createdAt: new Date().toISOString()
+    });
+    logOfflineNotice(`日志回传失败，已暂存在本机：${error.message}`);
+  }
+}
+
+async function safeUpdateRunStatus(runId, body) {
+  try {
+    await updateRunStatus(runId, body);
+  } catch (error) {
+    await enqueueOfflineUpdate({
+      type: 'status',
+      runId,
+      body,
+      createdAt: new Date().toISOString()
+    });
+    logOfflineNotice(`状态回传失败，已暂存在本机：${error.message}`);
+  }
+}
+
+async function flushOfflineQueue() {
+  return withOfflineQueueLock(async () => {
+    const queue = await readOfflineQueue();
+    if (!queue.length) return;
+    const remaining = [];
+    let flushed = 0;
+    for (const item of queue) {
+      try {
+        if (item.type === 'log') {
+          await fetchJson(`/api/agent-runs/${encodeURIComponent(item.runId)}/log`, {
+            method: 'POST',
+            body: item.body
+          });
+        } else if (item.type === 'status') {
+          await updateRunStatus(item.runId, item.body);
+        }
+        flushed += 1;
+      } catch (error) {
+        remaining.push(item);
+        const tail = queue.slice(queue.indexOf(item) + 1);
+        remaining.push(...tail);
+        logOfflineNotice(`离线回传队列同步失败，稍后重试：${error.message}`);
+        break;
+      }
+    }
+    if (flushed) console.log(`[worker] 已补回离线执行数据 ${flushed} 条`);
+    await writeOfflineQueue(remaining.slice(-offlineQueueMaxItems));
+  });
+}
+
+async function enqueueOfflineUpdate(item) {
+  return withOfflineQueueLock(async () => {
+    const queue = await readOfflineQueue();
+    queue.push(item);
+    await writeOfflineQueue(queue.slice(-offlineQueueMaxItems));
+  });
+}
+
+async function readOfflineQueue() {
+  try {
+    const text = await readFile(offlineQueuePath, 'utf8');
+    const value = JSON.parse(text);
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeOfflineQueue(queue) {
+  await mkdir(path.dirname(offlineQueuePath), { recursive: true });
+  await writeFile(offlineQueuePath, JSON.stringify(queue, null, 2), 'utf8');
+}
+
+function withOfflineQueueLock(task) {
+  offlineQueueOperation = offlineQueueOperation.then(task, task);
+  return offlineQueueOperation;
+}
+
+function logOfflineNotice(message) {
+  const now = Date.now();
+  if (now - lastOfflineNoticeAt < 30000) return;
+  lastOfflineNoticeAt = now;
+  console.error(`[worker] ${message}；本机 Codex/Figma 执行不会因此中断。`);
+}
+
 function buildResultSummary(status, exitCode, finalText) {
   const failureReason = status === 'completed' ? '' : extractFailureReason(finalText) || `Codex 退出码：${exitCode}`;
   return {
@@ -458,14 +565,25 @@ function waitForChild(child) {
 }
 
 async function fetchJson(pathname, options = {}) {
-  const response = await fetch(`${apiBase}${pathname}`, {
-    method: options.method || 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(cookie ? { Cookie: cookie } : {})
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+  let response;
+  try {
+    response = await fetch(`${apiBase}${pathname}`, {
+      method: options.method || 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(cookie ? { Cookie: cookie } : {})
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error(`平台请求超时 ${requestTimeoutMs}ms：${pathname}`);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
   const text = await response.text();
   const value = text ? JSON.parse(text) : null;
   if (!response.ok) throw new Error(`${response.status} ${value?.error || response.statusText}`);

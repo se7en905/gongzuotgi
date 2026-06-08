@@ -7,10 +7,21 @@
     <div class="ai-score-head">
       <div>
         <h3>当月 AI 评分</h3>
-        <p>{{ app.aiScoreMonthDisplay }} · {{ app.aiMemberScoreRuleText }}</p>
+        <p>{{ app.aiScoreMonthDisplay }} · 默认显示上次分值，点击刷新后才重新计算</p>
+      </div>
+      <div class="ai-score-actions">
+        <span v-if="app.aiMemberScoreRowsSnapshotAt">上次刷新 {{ app.formatDateTime(app.aiMemberScoreRowsSnapshotAt) }}</span>
+        <span v-else>暂无评分快照</span>
+        <ElButton
+          type="primary"
+          :loading="app.aiMemberScoreRefreshing"
+          @click="app.refreshAiMemberScoreSnapshotManually()"
+        >
+          刷新评分
+        </ElButton>
       </div>
     </div>
-    <div v-if="!app.aiMemberScoreReady" class="ai-score-loading">正在整理当月 AI 评分...</div>
+    <div v-if="!app.aiMemberScoreReady" class="ai-score-loading">暂无上次 AI 评分，点击“刷新评分”后计算。</div>
     <div v-else class="ai-score-grid">
       <article
         v-for="member in app.aiMemberScoreRows"
@@ -146,7 +157,7 @@ export default {
   align-items: start;
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .ai-score-head h3 {
@@ -164,6 +175,21 @@ export default {
   margin: 0;
   overflow-wrap: anywhere;
   white-space: normal;
+}
+
+.ai-score-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.ai-score-actions span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .ai-score-overview {
@@ -359,6 +385,10 @@ export default {
 @media (max-width: 1180px) {
   .ai-score-head {
     grid-template-columns: 1fr;
+  }
+
+  .ai-score-actions {
+    justify-content: flex-start;
   }
 
   .ai-score-overview,

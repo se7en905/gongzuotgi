@@ -1086,6 +1086,12 @@ export default {
       return this.directSkillRunRows.slice(0, 10);
     },
 
+    recentExecutionRunRows() {
+      return [...(this.runs || [])]
+        .sort((a, b) => String(b.createdAt || b.updatedAt || b.finishedAt || b.startedAt || '').localeCompare(String(a.createdAt || a.updatedAt || a.finishedAt || a.startedAt || '')))
+        .slice(0, 10);
+    },
+
     aiExecutionArchiveRunRows() {
       return this.filteredAiExecutionArchiveRuns();
     },
@@ -2577,7 +2583,7 @@ export default {
       if (Array.isArray(this.aiMemberScoreRowsSnapshot) && this.aiMemberScoreRowsSnapshot.length) {
         return this.aiMemberScoreRowsSnapshot;
       }
-      return this.computeAiMemberScoreRows();
+      return [];
     },
 
     aiMemberScoreOverview() {
@@ -4558,7 +4564,7 @@ export default {
         this.workbenchStateRestoring = false;
         if (this.activeView === 'ai-members') {
           this.aiMembersBoardFrameReady = true;
-          this.scheduleAiMemberScoreRefresh(120);
+          this.restoreAiMemberScoreSnapshot();
         }
       }
     },
@@ -6749,7 +6755,6 @@ export default {
         this.aiMembersBoardFrameReady = true;
         this.aiMembersBoardFrameReadyTimer = 0;
       }, 80);
-      this.scheduleAiMemberScoreRefresh();
     },
 
     cancelAiMembersDeferredWork() {
@@ -6793,6 +6798,51 @@ export default {
         this.aiMemberScoreRefreshTimer = 0;
         this.refreshAiMemberScoreSnapshotQuietly();
       }, delay);
+    },
+
+    async refreshAiMemberScoreSnapshotManually() {
+      if (this.aiMemberScoreRefreshing) return;
+      this.ensureAiMemberScoreData();
+      this.aiMemberScoreRefreshing = true;
+      try {
+        await this.refreshAiMemberScoreDependenciesForManualRefresh();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const sourceMembers = this.currentAiMemberScoreSourceMembers();
+        const cacheKey = this.aiMemberScoreRowsCacheKey(sourceMembers);
+        const rows = this.computeAiMemberScoreRows();
+        if (!rows.length) {
+          ElMessage.warning('暂无可计算的 AI 评分数据，已保留上次分值。');
+          return;
+        }
+        this.saveAiMemberScoreSnapshot(rows, cacheKey);
+        this.aiMemberScoreReady = true;
+        ElMessage.success('AI 评分已按最新调用、产物、执行和验证数据刷新。');
+      } catch (error) {
+        this.restoreAiMemberScoreSnapshot();
+        ElMessage.error(this.readApiError(error) || 'AI 评分刷新失败，已保留上次分值。');
+      } finally {
+        this.aiMemberScoreRefreshing = false;
+      }
+    },
+
+    async refreshAiMemberScoreDependenciesForManualRefresh() {
+      const jobs = [
+        ['库存缓存', () => this.loadSkillInventorySavedSnapshot({ force: true, silent: true })],
+        ['版本覆盖', () => this.refreshSkillVersionOverrides()],
+        ['调用次数', () => this.refreshUsageCounters()],
+        ['验证记录', () => this.refreshSkillValidations({ force: true, silent: true })],
+        ['研究同步', () => this.refreshArtProgressEvents()],
+        ['执行记录', () => this.refreshRuns()],
+        ['成员快照', () => this.refreshAiMembers()]
+      ];
+      const results = await Promise.allSettled(jobs.map(([, run]) => run()));
+      const failed = results
+        .map((result, index) => ({ result, label: jobs[index][0] }))
+        .filter(item => item.result.status === 'rejected')
+        .map(item => item.label);
+      if (failed.length) {
+        console.warn(`AI 评分依赖刷新失败，已使用当前缓存继续计算：${failed.join('、')}`);
+      }
     },
 
     refreshAiMemberScoreSnapshotQuietly() {
