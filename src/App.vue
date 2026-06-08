@@ -6829,7 +6829,7 @@ export default {
         return String(value || '').localeCompare(String(latest || '')) > 0 ? value : latest;
       }, '');
       return [
-        'ai-score-v3-completed-run-stable-skill',
+        'ai-score-v5-product-value-and-single-line',
         this.aiScoreMonthLabel,
         sourceMembers.map(member => [member.name || member.realname || '', member.account || '', member.level || '', member.status || ''].join(':')).join('|'),
         snapshot.source?.boardUpdatedAt || '',
@@ -6869,7 +6869,7 @@ export default {
       const productItems = this.aiMemberScoreProductItems(member, summary);
       const productRows = this.aiMemberScoreProductRows(name, summary);
       const monthUsageLogs = this.aiMemberScoreEffectiveUsageLogs(name, productRows);
-      const monthUsageCount = Math.max(monthUsageLogs.length, this.aiMemberScoreHistoricalUsageCount(name, productRows));
+      const monthUsageCount = monthUsageLogs.length;
       const monthValidations = independentScoreMode ? [] : this.aiMemberScoreValidationRows(name, productRows);
       const monthRuns = this.aiMemberScoreRunRows(name, account);
       const productValue = this.aiMemberScoreProductValue(productRows, productItems, independentScoreMode);
@@ -6889,12 +6889,19 @@ export default {
       const usedProductCount = this.aiMemberScoreUniqueProductKeyCount(monthUsageLogs.map(log => log.productKey || log.target).filter(Boolean));
       const validationProductCount = new Set(monthValidations.map(row => row.productKey || row.artifactKey || row.id).filter(Boolean)).size;
       const completedRunSkillCount = this.aiMemberScoreCompletedRunSkillKeys(monthRuns).size;
+      const usageResultCount = this.aiMemberScoreUsageResultCount(monthUsageLogs);
+      const usagePeopleCount = this.aiMemberScoreUsagePeopleCount(productRows);
+      const usageCoverageRate = this.aiMemberScoreUsageCoverageRate(usagePeopleCount);
+      const usageRatioBonus = Math.min(independentScoreMode ? 4 : 6, Math.round(usageCoverageRate / 20));
+      const repeatedUsageBonus = Math.min(independentScoreMode ? 6 : 10, Math.max(0, usageResultCount - usedProductCount) * (independentScoreMode ? 1.5 : 2));
+      const completedRunCount = monthRuns.length;
+      const repeatedRunBonus = Math.min(independentScoreMode ? 3 : 5, Math.max(0, completedRunCount - completedRunSkillCount) * (independentScoreMode ? 1 : 1.5));
       const usageScore = independentScoreMode
-        ? Math.min(20, monthUsageCount * 5 + usedProductCount * 5)
-        : Math.min(35, monthUsageCount * 3 + usedProductCount * 5 + validationProductCount * 4);
+        ? Math.min(20, usedProductCount * 4 + usageResultCount * 3 + repeatedUsageBonus + usageRatioBonus)
+        : Math.min(30, usedProductCount * 4 + usageResultCount * 2 + repeatedUsageBonus + usageRatioBonus + validationProductCount * 3);
       const runScore = independentScoreMode
-        ? Math.min(15, monthRuns.length * 6 + completedRunSkillCount * 3)
-        : Math.min(25, monthRuns.length * 5 + completedRunSkillCount * 4);
+        ? Math.min(15, completedRunCount * 5 + completedRunSkillCount * 3 + repeatedRunBonus)
+        : Math.min(15, completedRunCount * 2.5 + completedRunSkillCount * 3 + repeatedRunBonus);
       const penalty = Math.min(12, blockedCount * 3);
       const score = Math.max(0, Math.min(100, Math.round(productScore + usageScore + runScore - penalty)));
       return {
@@ -6911,6 +6918,9 @@ export default {
         productValueScore: productValue.raw,
         productValueLevel: productValue.level,
         monthUsageCount,
+        monthUsageResultCount: usageResultCount,
+        monthUsagePeopleCount: usagePeopleCount,
+        monthUsageCoverageRate: usageCoverageRate,
         monthValidationCount: monthValidations.length,
         monthRunCount: monthRuns.length,
         monthRunSkillCount: completedRunSkillCount,
@@ -6928,7 +6938,7 @@ export default {
     },
 
     aiMemberScoreProductValue(productRows = [], productItems = [], independentScoreMode = false) {
-      const cap = independentScoreMode ? 60 : 40;
+      const cap = independentScoreMode ? 60 : 55;
       const rows = Array.isArray(productRows) ? productRows.filter(row => row && row.hidden !== true) : [];
       const rowValueTotal = rows
         .map(row => this.aiScoreProductRowValue(row).value)
@@ -7086,6 +7096,26 @@ export default {
         if (key && key.length >= 4 && !this.isGenericUsageNeedle(key)) keys.add(key);
       });
       return keys.size;
+    },
+
+    aiMemberScoreUsageResultCount(logs = []) {
+      return (Array.isArray(logs) ? logs : []).filter(log => this.isAiScoreClosedLoopUsageLog(log)).length;
+    },
+
+    aiMemberScoreUsagePeopleCount(productRows = []) {
+      const people = new Set();
+      (Array.isArray(productRows) ? productRows : []).forEach(row => {
+        this.skillEffectiveUsagePeople(row).forEach(person => {
+          const name = this.canonicalArtDeptPerson(person) || person;
+          if (name) people.add(name);
+        });
+      });
+      return people.size;
+    },
+
+    aiMemberScoreUsageCoverageRate(peopleCount = 0) {
+      const total = this.skillUsageCoveragePeople().length || 1;
+      return Math.max(0, Math.min(100, Math.round((Number(peopleCount || 0) / total) * 100)));
     },
 
     aiMemberScoreUsageLogs(memberName = '', productRows = []) {
@@ -8195,9 +8225,38 @@ export default {
       return [...people];
     },
 
+    skillSelfUsageCount(row = {}) {
+      const ownerKeys = [
+        ...this.personList(row.uploader),
+        ...this.personList(row.owner),
+        ...this.personList(row.flowOwner),
+        ...this.personList(row.skill?.uploaderName),
+        ...this.personList(row.skill?.owner),
+        ...this.personList(row.skill?.git?.authorName),
+        ...this.personList(row.skill?.git?.committerName),
+        this.uploaderFromSource(row.source)
+      ].map(person => this.normalizeAiScorePersonKey(this.canonicalArtDeptPerson(person) || person)).filter(Boolean);
+      if (!ownerKeys.length) return 0;
+      let count = 0;
+      const addIfOwner = (person = '', value = 1) => {
+        const key = this.normalizeAiScorePersonKey(this.canonicalArtDeptPerson(person) || person);
+        if (key && ownerKeys.includes(key)) count += Number(value || 0);
+      };
+      this.skillUsageLogs(row).forEach(item => addIfOwner(item.person, 1));
+      const historical = this.usageCounterStatsForRow(row);
+      Object.entries(historical.people || {}).forEach(([person, personCount]) => addIfOwner(person, personCount));
+      return count;
+    },
+
     skillInventoryVersionMajor(rowOrVersion = {}) {
       if (rowOrVersion && typeof rowOrVersion === 'object') {
         if (rowOrVersion.hidden === true) return '1';
+        if (this.isOwnerYushengwei(rowOrVersion)) {
+          const selfUsageCount = this.skillSelfUsageCount(rowOrVersion);
+          if (selfUsageCount >= 20) return '3';
+          if (selfUsageCount >= 3) return '2';
+          return '1';
+        }
         const peopleCount = this.skillEffectiveUsagePeople(rowOrVersion).length;
         if (peopleCount >= 6) return '3';
         if (peopleCount >= 3) return '2';
@@ -8676,6 +8735,12 @@ export default {
       const major = this.skillInventoryVersionMajor(version);
       if (version && typeof version === 'object') {
         if (version.hidden === true) return '1.0：该产物已作废，暂不计入 AI 评分；恢复后按真实使用人数更新版本。';
+        if (this.isOwnerYushengwei(version)) {
+          const selfUsageCount = this.skillSelfUsageCount(version);
+          if (major === '3') return `3.0：入口图单线产物按本人有效使用次数计算，已自行使用 ${selfUsageCount} 次，达到 20 次标准。`;
+          if (major === '2') return `2.0：入口图单线产物按本人有效使用次数计算，已自行使用 ${selfUsageCount} 次，达到 3 次标准。`;
+          return `1.0：入口图单线产物按本人有效使用次数计算，当前自行使用 ${selfUsageCount} 次。`;
+        }
         const peopleCount = this.skillEffectiveUsagePeople(version).length;
         if (major === '3') return `3.0：已有 ${peopleCount} 位有效成员使用，达到 6 人使用标准。`;
         if (major === '2') return `2.0：已有 ${peopleCount} 位有效成员使用，达到 3 人使用标准。`;
