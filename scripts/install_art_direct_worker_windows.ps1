@@ -33,6 +33,12 @@ New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $Root 'scripts') | Out-Null
 New-Item -ItemType Directory -Force -Path $StartupDir | Out-Null
 
+Get-ChildItem -Path $StartupDir -Filter 'ArtDirectWorker-*.lnk' -ErrorAction SilentlyContinue |
+  Where-Object { $_.FullName -ne $StartupShortcut } |
+  Remove-Item -Force -ErrorAction SilentlyContinue
+Get-ChildItem -Path $StartupDir -Filter 'ArtDirectWorker-*.cmd' -ErrorAction SilentlyContinue |
+  Remove-Item -Force -ErrorAction SilentlyContinue
+
 if (-not (Test-Path $Worker)) {
   throw "缺少 $Worker，请先通过工作台复制命令下载 Worker。"
 }
@@ -49,8 +55,6 @@ Set-Location $(ConvertTo-PSLiteral $Root)
 `$env:CODEX_CLI_PATH = $(ConvertTo-PSLiteral $CodexPath)
 & $(ConvertTo-PSLiteral $Node) $(ConvertTo-PSLiteral $Worker) *>> $(ConvertTo-PSLiteral (Join-Path $LogDir "art-direct-worker.$SafeUsername.log"))
 "@ | Set-Content -Path $Runner -Encoding UTF8
-
-Remove-Item -Path $LegacyStartupCommand -Force -ErrorAction SilentlyContinue
 
 $Shell = New-Object -ComObject WScript.Shell
 $Shortcut = $Shell.CreateShortcut($StartupShortcut)
@@ -73,13 +77,20 @@ try {
   $existing = @()
 }
 
-if (-not $existing) {
-  Start-Process -FilePath 'powershell.exe' -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$Runner`"" -WorkingDirectory $Root -WindowStyle Minimized
-  Write-Host "started $TaskName"
-} else {
-  Write-Host "already running $TaskName"
+if ($existing) {
+  foreach ($process in $existing) {
+    try {
+      Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+      Write-Host "stopped stale worker process $($process.ProcessId)"
+    } catch {
+      Write-Host "failed to stop stale worker process $($process.ProcessId): $($_.Exception.Message)"
+    }
+  }
+  Start-Sleep -Seconds 1
 }
 
+Start-Process -FilePath 'powershell.exe' -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$Runner`"" -WorkingDirectory $Root -WindowStyle Minimized
+Write-Host "started $TaskName"
 Write-Host "installed startup $TaskName"
 Write-Host "startup $StartupShortcut"
 Write-Host "runner $Runner"

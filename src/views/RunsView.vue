@@ -16,7 +16,7 @@
       </div>
     </template>
     <div class="run-list">
-      <button v-for="run in app.runs" :key="run.id" class="run-item" :class="[app.runStatusClass(run.status), { active: run.id === app.selectedRunId }]" @click="app.selectedRunId = run.id">
+      <button v-for="run in app.runs" :key="run.id" class="run-item" :class="[app.runStatusClass(run.status), { active: run.id === app.selectedRunId }]" @click="app.selectRunFromList(run)">
         <div class="run-item-head">
           <a v-if="app.runTaskUrl(run)" :href="app.runTaskUrl(run)" target="_blank" rel="noopener noreferrer" class="task-title-link" @click.stop>{{ app.runGroupTitle(run) }}</a>
           <strong v-else>{{ app.runGroupTitle(run) }}</strong>
@@ -55,6 +55,19 @@
           <ElButton v-if="app.can('run.codex.execute') && !app.isDirectSkillRun(app.selectedRun)" type="primary" @click="app.startSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun)" :loading="app.isRunInProgress(app.selectedRun)">{{ app.selectedRunActionLabel }}</ElButton>
           <ElButton v-if="app.can('run.codex.execute')" @click="app.cancelSelectedRun" :disabled="!app.selectedRun || !app.isRunInProgress(app.selectedRun)">中断</ElButton>
           <ElButton v-if="app.can('run.delete')" type="danger" plain @click="app.deleteSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun)">删除</ElButton>
+          <ElTooltip content="原始执行日志" placement="bottom">
+            <button
+              type="button"
+              class="top-log-icon-button run-log-icon-button"
+              aria-label="原始执行日志"
+              :disabled="!app.selectedRun"
+              @click="app.openSelectedRunLogDrawer"
+            >
+              <ElIcon>
+                <Clock />
+              </ElIcon>
+            </button>
+          </ElTooltip>
         </div>
       </div>
     </template>
@@ -134,7 +147,7 @@
         </div>
       </div>
       <div class="run-worker-note">
-        <span v-if="app.isDirectSkillFailedRun(app.selectedRun)">该任务已由执行人本机 Worker 自动领取后执行失败；请查看下方原始执行日志里的具体原因。</span>
+        <span v-if="app.isDirectSkillFailedRun(app.selectedRun)">该任务已由执行人本机 Worker 自动领取后执行失败；请点击右上角日志图标查看具体原因。</span>
         <span v-else-if="!app.directSkillWorkerForRun(app.selectedRun)">执行人需要启动本机 Worker 后，任务才会从“待领取”变为“已领取 / 执行中”。</span>
         <span v-else-if="!app.directSkillWorkerForRun(app.selectedRun)?.figmaMcpReady">该设备未通过 Figma MCP 自检，请执行人在本机完成 Figma MCP 授权。</span>
         <span v-else>本机 Worker 会把 Codex 日志和执行结果回传到当前执行记录。</span>
@@ -230,7 +243,7 @@
     <section v-if="app.selectedRun && !app.isDirectSkillRun(app.selectedRun) && app.isRunInProgress(app.selectedRun)" class="run-progress-panel">
       <strong>正在执行中</strong>
       <span>当前美术执行还没有最终结论。执行完成后，这里会显示 Figma / 规范 / Skill 处理结果、风险和下一步操作。</span>
-      <small>可以先展开下方原始执行日志查看实时输出。</small>
+      <small>可以点击右上角日志图标查看实时输出。</small>
     </section>
     <section v-if="app.shouldShowRunSkillActionsPanel(app.selectedRun)" class="run-skill-actions-panel">
       <div class="run-section-head">
@@ -297,22 +310,47 @@
         <strong>{{ app.selectedRunReferenceCount }} 个引用，明细在产物列表查看</strong>
       </div>
     </section>
-    <section v-if="app.shouldShowRunCodexChatPanel(app.selectedRun)" class="run-codex-chat-panel">
-      <div class="run-section-head">
-        <div>
-          <h4>Web 端 Codex 对话</h4>
-          <p>默认收起。展开后可选择模型、推理强度和请求标准，提交后会创建一次新的执行。</p>
+    <div
+      v-if="app.shouldShowRunCodexChatPanel(app.selectedRun)"
+      ref="runCodexFloating"
+      class="run-codex-floating"
+      :class="{ dragging: codexDrag.dragging }"
+      :style="codexFloatingStyle"
+    >
+      <button
+        type="button"
+        class="run-codex-floating-button"
+        :class="{ active: app.runChatPanelOpen }"
+        aria-label="打开 Codex 对话"
+        @click="toggleRunCodexPanel"
+        @pointerdown="startCodexDrag"
+      >
+        <img src="/codex-icon.png" alt="" />
+      </button>
+      <section v-if="app.runChatPanelOpen" class="run-codex-floating-panel">
+        <header class="run-codex-floating-head">
+          <div class="run-codex-title-block">
+            <img src="/codex-icon.png" alt="" />
+            <div>
+              <h4>Codex</h4>
+              <span>{{ app.selectedRun ? app.runGroupTitle(app.selectedRun) : '美术执行' }}</span>
+            </div>
+          </div>
+          <button type="button" class="run-codex-close" aria-label="关闭 Codex 对话" @click="app.runChatPanelOpen = false">×</button>
+        </header>
+        <div class="run-codex-floating-messages">
+          <article class="run-codex-message assistant">
+            <span class="run-codex-avatar"><img src="/codex-icon.png" alt="" /></span>
+            <div class="run-codex-bubble">
+              <strong>继续处理当前执行</strong>
+              <p>我会基于当前执行记录、Figma 线索、规范 md / Skill 线索创建一次新的追加执行，不默认读取历史长日志。</p>
+            </div>
+          </article>
+          <article v-if="app.runChatInput.trim()" class="run-codex-message user">
+            <div class="run-codex-bubble">{{ app.runChatInput.trim() }}</div>
+          </article>
         </div>
-        <ElButton size="small" plain @click="app.runChatPanelOpen = !app.runChatPanelOpen">
-          {{ app.runChatPanelOpen ? '收起对话' : '打开对话' }}
-        </ElButton>
-      </div>
-      <div v-if="!app.runChatPanelOpen" class="run-codex-chat-collapsed">
-        <span>单 md/Skill 执行不会直接展示对话窗口；需要追加要求时再展开。</span>
-        <strong>{{ app.runChatForm.model }} · 推理 {{ app.runChatForm.reasoningEffort }}</strong>
-      </div>
-      <div v-else class="run-codex-chat-body">
-        <div class="run-codex-chat-config">
+        <div class="run-codex-floating-config">
           <label>
             <span>模型</span>
             <ElSelect v-model="app.runChatForm.model" size="small" placeholder="选择模型">
@@ -326,37 +364,40 @@
             </ElSelect>
           </label>
         </div>
-        <label class="run-codex-standard-field">
-          <span>请求标准</span>
-          <ElInput
-            v-model="app.runChatForm.requestStandard"
-            type="textarea"
-            :rows="2"
-            maxlength="2000"
-            show-word-limit
-            placeholder="说明本次追加执行的验收标准、输出格式和限制。"
-          />
-        </label>
         <ElInput
-          v-model="app.runChatInput"
+          v-model="app.runChatForm.requestStandard"
+          class="run-codex-standard-input"
           type="textarea"
-          :rows="4"
-          placeholder="例如：基于本次 Figma 链接执行 ui-finalize，检查间距、字号、溢出和交付状态；结果写入产物目录。"
+          :rows="2"
+          maxlength="2000"
+          show-word-limit
+          placeholder="请求标准：验收标准、输出格式和限制"
         />
-        <div class="run-codex-chat-actions">
-          <span>只保存本次追加要求和轻量配置，不默认读取历史长日志或对话全文。</span>
-          <ElButton
-            v-if="app.can('run.codex.execute')"
-            type="primary"
-            :loading="app.runChatSubmitting"
-            :disabled="!app.runChatInput.trim() || app.isRunInProgress(app.selectedRun)"
-            @click="app.submitRunChatInstruction"
-          >
-            发送并执行
-          </ElButton>
+        <div class="run-codex-composer">
+          <ElInput
+            v-model="app.runChatInput"
+            type="textarea"
+            :autosize="{ minRows: 2, maxRows: 6 }"
+            placeholder="向 Codex 发送追加要求"
+            @keydown.meta.enter.prevent="app.submitRunChatInstruction"
+            @keydown.ctrl.enter.prevent="app.submitRunChatInstruction"
+          />
+          <div class="run-codex-composer-footer">
+            <span>{{ app.runChatForm.model }} · 推理 {{ app.runChatForm.reasoningEffort }}</span>
+            <ElButton
+              v-if="app.can('run.codex.execute')"
+              circle
+              type="primary"
+              :loading="app.runChatSubmitting"
+              :disabled="!app.runChatInput.trim() || app.isRunInProgress(app.selectedRun)"
+              @click="app.submitRunChatInstruction"
+            >
+              ↑
+            </ElButton>
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
+    </div>
     <section v-if="app.selectedRun && !app.isSkillOrMdFocusedRun(app.selectedRun) && !app.isRunInProgress(app.selectedRun) && app.selectedRun?.resultSummary" :class="['run-result-summary', app.resultSummaryClass(app.effectiveResultStatus(app.selectedRun))]">
       <div class="run-result-head">
         <div>
@@ -407,24 +448,32 @@
         </div>
       </div>
     </section>
-    <ElCollapse v-model="app.runLogCollapse" :class="['run-log-collapse', { 'is-live': app.isRunInProgress(app.selectedRun) }]">
-      <ElCollapseItem name="raw-log">
-        <template #title>
-          <span class="run-log-title-wrap">
-            <span class="run-log-title">原始执行日志</span>
-            <small v-if="app.isRunInProgress(app.selectedRun)" :key="app.logPulse" class="log-live-indicator">实时接收中</small>
-            <small v-else>调试用，默认收起</small>
-          </span>
-        </template>
-        <article
-          v-if="Array.isArray(app.runLogCollapse) && app.runLogCollapse.includes('raw-log')"
-          ref="runLogBody"
-          :class="['log-markdown markdown-report', { 'is-live': app.isRunInProgress(app.selectedRun) }]"
-          v-html="app.logHtml"
-        ></article>
-      </ElCollapseItem>
-    </ElCollapse>
   </ElCard>
+  <ElDrawer
+    v-model="app.runLogDrawerVisible"
+    title="原始执行日志"
+    direction="rtl"
+    size="50%"
+    class="run-log-drawer"
+    append-to-body
+    :with-header="true"
+  >
+    <div class="run-log-drawer-shell">
+      <div class="run-log-drawer-head">
+        <div>
+          <span>当前执行</span>
+          <strong>{{ app.selectedRun ? app.runGroupTitle(app.selectedRun) : '未选择执行记录' }}</strong>
+        </div>
+        <small v-if="app.isRunInProgress(app.selectedRun)" :key="app.logPulse" class="log-live-indicator">实时接收中</small>
+        <small v-else>只读取尾部日志摘要</small>
+      </div>
+      <article
+        ref="runLogBody"
+        :class="['run-log-drawer-markdown', 'log-markdown', 'markdown-report', { 'is-live': app.isRunInProgress(app.selectedRun) }]"
+        v-html="app.logHtml"
+      ></article>
+    </div>
+  </ElDrawer>
 </section>
 </template>
 
@@ -437,10 +486,28 @@ export default {
       required: true
     }
   },
+  data() {
+    return {
+      codexPosition: {
+        x: null,
+        y: null
+      },
+      codexDrag: {
+        dragging: false,
+        moved: false,
+        suppressClick: false,
+        startX: 0,
+        startY: 0,
+        originX: 0,
+        originY: 0
+      }
+    };
+  },
   computed: {
     logScrollSignal() {
       return [
         this.app.selectedRunId || '',
+        this.app.runLogDrawerVisible ? 'drawer' : '',
         this.app.logPulse || 0,
         this.app.logText?.length || 0,
         Array.isArray(this.app.runLogCollapse) ? this.app.runLogCollapse.join(',') : ''
@@ -469,6 +536,18 @@ export default {
         };
       }
       return this.app.focusedRunOverviewMetrics(this.app.selectedRun);
+    },
+    codexFloatingStyle() {
+      if (Number.isFinite(this.codexPosition.x) && Number.isFinite(this.codexPosition.y)) {
+        return {
+          left: `${this.codexPosition.x}px`,
+          top: `${this.codexPosition.y}px`
+        };
+      }
+      return {
+        right: '28px',
+        bottom: '28px'
+      };
     }
   },
   watch: {
@@ -479,7 +558,65 @@ export default {
   mounted() {
     this.scrollRunLogToBottom();
   },
+  beforeUnmount() {
+    this.stopCodexDrag();
+  },
   methods: {
+    toggleRunCodexPanel() {
+      if (this.codexDrag.suppressClick) {
+        this.codexDrag.suppressClick = false;
+        return;
+      }
+      this.app.runChatPanelOpen = !this.app.runChatPanelOpen;
+    },
+    startCodexDrag(event) {
+      if (event.button !== undefined && event.button !== 0) return;
+      const rect = this.$refs.runCodexFloating?.getBoundingClientRect();
+      const originX = rect?.left ?? Math.max(18, window.innerWidth - 96);
+      const originY = rect?.top ?? Math.max(18, window.innerHeight - 96);
+      this.codexPosition = { x: originX, y: originY };
+      this.codexDrag = {
+        dragging: true,
+        moved: false,
+        suppressClick: false,
+        startX: event.clientX,
+        startY: event.clientY,
+        originX,
+        originY
+      };
+      event.currentTarget?.setPointerCapture?.(event.pointerId);
+      window.addEventListener('pointermove', this.moveCodexFloating);
+      window.addEventListener('pointerup', this.stopCodexDrag);
+      window.addEventListener('pointercancel', this.stopCodexDrag);
+    },
+    moveCodexFloating(event) {
+      if (!this.codexDrag.dragging) return;
+      const dx = event.clientX - this.codexDrag.startX;
+      const dy = event.clientY - this.codexDrag.startY;
+      if (Math.abs(dx) + Math.abs(dy) > 5) this.codexDrag.moved = true;
+      const nextX = this.codexDrag.originX + dx;
+      const nextY = this.codexDrag.originY + dy;
+      this.codexPosition = this.clampCodexFloatingPosition(nextX, nextY);
+    },
+    stopCodexDrag() {
+      if (this.codexDrag.dragging && this.codexDrag.moved) {
+        this.codexDrag.suppressClick = true;
+      }
+      this.codexDrag.dragging = false;
+      window.removeEventListener('pointermove', this.moveCodexFloating);
+      window.removeEventListener('pointerup', this.stopCodexDrag);
+      window.removeEventListener('pointercancel', this.stopCodexDrag);
+    },
+    clampCodexFloatingPosition(x, y) {
+      const rect = this.$refs.runCodexFloating?.getBoundingClientRect();
+      const width = rect?.width || 56;
+      const height = rect?.height || 56;
+      const padding = 12;
+      return {
+        x: Math.min(Math.max(padding, x), Math.max(padding, window.innerWidth - width - padding)),
+        y: Math.min(Math.max(padding, y), Math.max(padding, window.innerHeight - height - padding))
+      };
+    },
     scrollRunLogToBottom() {
       this.$nextTick(() => {
         const logBody = this.$refs.runLogBody;
@@ -521,6 +658,13 @@ export default {
     justify-content: flex-end;
     gap: 8px;
     flex: 0 0 auto;
+  }
+
+  .run-log-icon-button {
+    &:disabled {
+      cursor: not-allowed;
+      opacity: 0.48;
+    }
   }
 
   .run-list {
@@ -1388,56 +1532,6 @@ export default {
     }
   }
 
-  .run-log-collapse {
-    margin: 12px 18px 18px;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    overflow: hidden;
-    --el-collapse-border-color: transparent;
-    --el-collapse-header-bg-color: var(--soft-card);
-    --el-collapse-content-bg-color: var(--panel);
-
-    :deep(.el-collapse-item__header) {
-      height: 44px;
-      padding: 0 14px;
-      border-bottom: 0;
-      color: var(--heading);
-      font-weight: 850;
-    }
-
-    :deep(.el-collapse-item),
-    :deep(.el-collapse-item__wrap) {
-      border-bottom: 0;
-    }
-
-    :deep(.el-collapse-item__content) {
-      padding-bottom: 0;
-    }
-
-    &.is-live {
-      border-color: rgba(14, 165, 233, 0.34);
-      box-shadow: 0 10px 26px rgba(14, 165, 233, 0.08);
-    }
-  }
-
-  .run-log-title-wrap {
-    display: inline-flex;
-    align-items: center;
-    padding-left: 14px;
-  }
-
-  .run-log-title {
-    margin-right: 8px;
-    color: var(--heading);
-    font-size: 13px;
-  }
-
-  .run-log-title-wrap small {
-    color: var(--muted);
-    font-size: 12px;
-    font-weight: 720;
-  }
-
   .log-live-indicator {
     position: relative;
     padding-left: 14px;
@@ -1454,31 +1548,6 @@ export default {
       background: #0ea5e9;
       transform: translateY(-50%);
       animation: logLivePulse 1s ease-in-out infinite;
-    }
-  }
-
-  .run-detail .log-markdown {
-    position: relative;
-    margin: 0;
-    min-height: 320px;
-    max-height: 430px;
-    overflow: auto;
-    padding: 16px;
-    border: 0;
-    border-top: 1px solid var(--line);
-    border-radius: 0;
-    background: var(--panel);
-
-    &.is-live {
-      border-top-color: rgba(14, 165, 233, 0.3);
-
-      &::after {
-        content: '▋';
-        display: inline-block;
-        margin-left: 4px;
-        color: #38bdf8;
-        animation: logCursorBlink 0.8s steps(2, start) infinite;
-      }
     }
   }
 
@@ -1769,13 +1838,7 @@ export default {
       grid-template-columns: 1fr;
     }
 
-    .run-codex-chat-config {
-      grid-template-columns: 1fr;
-    }
-
-    .run-codex-chat-collapsed,
-    .direct-run-actions,
-    .run-codex-chat-actions {
+    .direct-run-actions {
       align-items: flex-start;
       flex-direction: column;
     }
@@ -1822,8 +1885,7 @@ export default {
   }
 
   .run-skill-actions-panel,
-  .run-chain-panel,
-  .run-codex-chat-panel {
+  .run-chain-panel {
     display: grid;
     gap: 12px;
     margin: 0 18px 18px;
@@ -1839,84 +1901,287 @@ export default {
     background: #ffffff;
   }
 
-  .run-codex-chat-panel {
-    border-color: rgba(14, 165, 233, 0.22);
-    background: rgba(14, 165, 233, 0.05);
+  .run-codex-floating {
+    position: fixed;
+    z-index: 18;
+    display: block;
+    pointer-events: none;
 
+    &.dragging {
+      user-select: none;
+    }
+  }
+
+  .run-codex-floating-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 54px;
+    height: 54px;
+    margin: 0;
+    padding: 0;
+    border: 1px solid rgba(15, 23, 42, 0.14);
+    border-radius: 50%;
+    background: #111827;
+    box-shadow: 0 18px 44px rgba(15, 23, 42, 0.24);
+    cursor: pointer;
+    pointer-events: auto;
+    touch-action: none;
+    transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+
+    img {
+      width: 32px;
+      height: 32px;
+      border-radius: 9px;
+      object-fit: cover;
+    }
+
+    &:hover,
+    &.active {
+      border-color: rgba(14, 165, 233, 0.38);
+      box-shadow: 0 20px 48px rgba(14, 165, 233, 0.22), 0 18px 44px rgba(15, 23, 42, 0.18);
+      transform: translateY(-2px);
+    }
+  }
+
+  .run-codex-floating-panel {
+    position: absolute;
+    right: 0;
+    bottom: 68px;
+    display: grid;
+    grid-template-rows: auto minmax(120px, 1fr) auto auto auto;
+    gap: 12px;
+    width: min(520px, calc(100vw - 56px));
+    max-height: min(680px, calc(100vh - 128px));
+    padding: 14px;
+    overflow: hidden;
+    border: 1px solid rgba(15, 23, 42, 0.1);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 24px 72px rgba(15, 23, 42, 0.22);
+    pointer-events: auto;
+  }
+
+  .run-codex-floating-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  }
+
+  .run-codex-title-block {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+
+    > img {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      object-fit: cover;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+    }
+
+    h4 {
+      margin: 0;
+      color: var(--heading);
+      font-size: 16px;
+      font-weight: 900;
+      line-height: 1.2;
+    }
+
+    span {
+      display: block;
+      max-width: 360px;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 720;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .run-codex-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(15, 23, 42, 0.06);
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 20px;
+    line-height: 1;
+  }
+
+  .run-codex-floating-messages {
+    display: grid;
+    align-content: start;
+    gap: 12px;
+    min-height: 120px;
+    overflow-y: auto;
+    padding: 4px 2px;
+  }
+
+  .run-codex-message {
+    display: flex;
+    gap: 9px;
+    min-width: 0;
+
+    &.user {
+      justify-content: flex-end;
+
+      .run-codex-bubble {
+        max-width: 82%;
+        background: #f3f4f6;
+        color: var(--heading);
+      }
+    }
+
+    &.assistant .run-codex-bubble {
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      background: #ffffff;
+    }
+  }
+
+  .run-codex-avatar {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 10px;
+    background: #111827;
+
+    img {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      object-fit: cover;
+    }
+  }
+
+  .run-codex-bubble {
+    display: grid;
+    gap: 5px;
+    max-width: 88%;
+    padding: 10px 12px;
+    border-radius: 16px;
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.55;
+    overflow-wrap: anywhere;
+
+    strong {
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    p {
+      margin: 0;
+    }
+  }
+
+  .run-codex-floating-config {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px;
+
+    label {
+      display: grid;
+      gap: 5px;
+      min-width: 0;
+
+      > span {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 780;
+      }
+    }
+  }
+
+  .run-codex-standard-input {
     :deep(.el-textarea__inner) {
-      min-height: 96px !important;
-      resize: vertical;
+      min-height: 62px !important;
+      resize: none;
+      border-radius: 14px;
+      background: #f8fafc;
       font-size: 13px;
       line-height: 1.55;
     }
   }
 
-  .run-codex-chat-collapsed {
+  .run-codex-composer {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid rgba(15, 23, 42, 0.1);
+    border-radius: 18px;
+    background: #ffffff;
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+
+    :deep(.el-textarea__inner) {
+      min-height: 54px !important;
+      resize: none;
+      border: 0;
+      box-shadow: none;
+      padding: 4px 2px;
+      color: var(--heading);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+  }
+
+  .run-codex-composer-footer {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    min-height: 40px;
-    padding: 10px 12px;
-    border: 1px dashed rgba(14, 165, 233, 0.28);
-    border-radius: 8px;
-    background: #ffffff;
 
-    span,
-    strong {
+    span {
       min-width: 0;
       overflow: hidden;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
-    span {
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.4;
-    }
-
-    strong {
-      color: #0369a1;
-      font-size: 12px;
-      font-weight: 850;
+    .el-button {
+      width: 36px;
+      height: 36px;
+      font-size: 18px;
+      font-weight: 900;
     }
   }
 
-  .run-codex-chat-body {
-    display: grid;
-    gap: 12px;
-  }
-
-  .run-codex-chat-config {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 10px;
-  }
-
-  .run-codex-chat-config label,
-  .run-codex-standard-field {
-    display: grid;
-    gap: 6px;
-    min-width: 0;
-
-    > span {
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 780;
+  @media (max-width: 860px) {
+    .run-codex-floating-panel {
+      right: 10px;
+      bottom: 76px;
+      width: calc(100vw - 36px);
+      max-height: calc(100vh - 112px);
+      border-radius: 16px;
     }
-  }
 
-  .run-codex-chat-actions {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    .run-codex-floating-button {
+      width: 50px;
+      height: 50px;
+    }
 
-    span {
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.45;
+    .run-codex-floating-config {
+      grid-template-columns: 1fr;
     }
   }
 
@@ -2457,6 +2722,104 @@ export default {
       white-space: nowrap;
     }
 
+  }
+}
+
+.run-log-drawer.el-drawer.rtl,
+.run-log-drawer.el-drawer.rtl .el-drawer__header,
+.run-log-drawer.el-drawer.rtl .el-drawer__body {
+  border-radius: 0 !important;
+}
+
+.run-log-drawer .el-drawer__body {
+  padding: 0;
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.run-log-drawer-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.run-log-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--soft-card);
+
+  > div {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  span {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 760;
+  }
+
+  strong {
+    overflow: hidden;
+    color: var(--heading);
+    font-size: 14px;
+    font-weight: 900;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  small {
+    flex: 0 0 auto;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 760;
+    white-space: nowrap;
+  }
+}
+
+.run-log-drawer .log-live-indicator {
+  position: relative;
+  padding-left: 14px;
+  color: #0284c7 !important;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #0ea5e9;
+    transform: translateY(-50%);
+    animation: logLivePulse 1s ease-in-out infinite;
+  }
+}
+
+.run-log-drawer-markdown {
+  position: relative;
+  min-height: 0;
+  height: 100%;
+  margin: 0;
+  overflow: auto;
+  padding: 16px 18px 28px;
+  border: 0;
+  border-radius: 0;
+  background: var(--panel);
+
+  &.is-live::after {
+    content: '▋';
+    display: inline-block;
+    margin-left: 4px;
+    color: #38bdf8;
+    animation: logCursorBlink 0.8s steps(2, start) infinite;
   }
 }
 </style>

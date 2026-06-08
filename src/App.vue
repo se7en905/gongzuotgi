@@ -792,6 +792,8 @@ export default {
       taskBriefRealtimeLastAt: 0,
       aiArchiveBugSyncLastAt: {},
       aiArchiveTaskSyncLastAt: {},
+      runCodexFloatingRunId: '',
+      runLogDrawerVisible: false,
       runLogCollapse: [],
       logText: '选择一个任务后查看执行日志。',
       selectedArtifact: null,
@@ -3689,13 +3691,19 @@ export default {
 
     selectedRunId(value) {
       if (value) {
+        if (this.runCodexFloatingRunId && this.runCodexFloatingRunId !== value) {
+          this.runCodexFloatingRunId = '';
+        }
         this.runChatPanelOpen = false;
         this.resetRunChatForm();
-        this.runLogCollapse = this.isRunInProgress(this.selectedRun) ? ['raw-log'] : [];
+        this.runLogDrawerVisible = false;
+        this.runLogCollapse = [];
         if (this.isRunInProgress(this.selectedRun)) this.loadSelectedRunLog();
         else this.logText = '原始执行日志默认收起，展开后读取尾部摘要。';
       } else {
+        this.runCodexFloatingRunId = '';
         this.runChatPanelOpen = false;
+        this.runLogDrawerVisible = false;
         this.runLogCollapse = [];
         this.logText = '选择一个任务后查看执行日志。';
         this.selectedArtifact = null;
@@ -14561,7 +14569,8 @@ export default {
         this.runChatInput = '';
         this.runChatPanelOpen = false;
         await this.startRun(run.id);
-        this.runLogCollapse = ['raw-log'];
+        this.runLogCollapse = [];
+        this.runLogDrawerVisible = false;
         ElMessage.success('已创建新的 Codex 执行');
       } catch (error) {
         ElMessage.error(this.readApiError(error) || '发送执行要求失败');
@@ -14582,6 +14591,13 @@ export default {
     openRun(run) {
       this.selectedRunId = run.id;
       this.pushRoute('/runs');
+    },
+
+    selectRunFromList(run) {
+      const id = typeof run === 'string' ? run : run?.id;
+      if (!id) return;
+      this.runCodexFloatingRunId = id;
+      this.selectedRunId = id;
     },
 
     isTaskCenterLinkedRun(run = null) {
@@ -14679,7 +14695,16 @@ export default {
     },
 
     shouldShowRunCodexChatPanel(run = null) {
-      return Boolean(run && !this.isDirectSkillRun(run) && this.can('run.codex.execute'));
+      return Boolean(
+        run
+        && this.activeView === 'runs'
+        && run.id
+        && this.selectedRunId === run.id
+        && this.runCodexFloatingRunId === run.id
+        && !this.isRunInProgress(run)
+        && !this.isDirectSkillRun(run)
+        && this.can('run.codex.execute')
+      );
     },
 
     runFlowHelperTitle(run = null) {
@@ -16979,7 +17004,8 @@ export default {
           exitCode: null
         });
         this.logText = '执行已启动，等待日志输出...';
-        this.runLogCollapse = ['raw-log'];
+        this.runLogCollapse = [];
+        this.runLogDrawerVisible = false;
         await this.api(`/api/runs/${encodeURIComponent(runId)}/start`, { method: 'POST' });
         this.connectEvents(runId);
         await this.refreshRuns();
@@ -16993,6 +17019,17 @@ export default {
       await this.api(`/api/runs/${encodeURIComponent(this.selectedRun.id)}/cancel`, { method: 'POST' });
       await this.refreshRuns();
       ElMessage.info('已发送中断请求');
+    },
+
+    async openSelectedRunLogDrawer() {
+      if (!this.selectedRun?.id) {
+        ElMessage.warning('请先选择一条执行记录');
+        return;
+      }
+      this.runLogDrawerVisible = true;
+      if (!this.logText || /默认收起|选择一个任务后查看执行日志/.test(this.logText)) {
+        await this.loadSelectedRunLog().catch(() => {});
+      }
     },
 
     async deleteSelectedRun() {
