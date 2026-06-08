@@ -388,8 +388,9 @@ export async function upsertTasks(inputs = []) {
     const task = normalizeTask(input);
     const index = findTaskIndex(tasks, task);
     if (index >= 0) {
+      const changed = taskContentFingerprint(tasks[index]) !== taskContentFingerprint(task);
       tasks[index] = mergeTask(tasks[index], task, now);
-      updated += 1;
+      if (changed) updated += 1;
       saved.push(tasks[index]);
     } else {
       tasks.push(task);
@@ -399,6 +400,27 @@ export async function upsertTasks(inputs = []) {
   }
   await writeJson(paths.tasks, tasks);
   return { created, updated, total: saved.length, tasks: saved };
+}
+
+function taskContentFingerprint(task = {}) {
+  return JSON.stringify({
+    title: task.title || '',
+    developer: task.developer || '',
+    assignedTo: task.assignedTo || task.zentao?.assignedTo || '',
+    status: task.status || '',
+    zentaoStatus: task.zentaoStatus || '',
+    isCurrent: task.isCurrent !== false,
+    syncStatus: task.syncStatus || '',
+    archivedAt: task.archivedAt || '',
+    deadline: task.deadline || '',
+    zentaoCreatedAt: task.zentaoCreatedAt || '',
+    zentaoProgress: Number(task.zentaoProgress || 0),
+    completion: Number(task.completion || 0),
+    summary: task.summary || '',
+    issues: task.issues || '',
+    requirement: task.requirement || '',
+    zentao: task.zentao || {}
+  });
 }
 
 export async function reconcileZentaoTaskSnapshot(projectId, currentTaskIds = [], syncedAt = new Date().toISOString()) {

@@ -5086,7 +5086,7 @@ export default {
       this.zentaoAutoSyncWasRunning = this.zentaoSyncRunning;
       this.zentaoAutoSyncPollTimer = window.setInterval(() => {
         this.refreshZentaoAutoSyncStatus();
-      }, 5000);
+      }, 1000);
       this.refreshZentaoAutoSyncStatus();
     },
 
@@ -12947,7 +12947,8 @@ export default {
           if (syncKind === 'bug') {
             ElMessage.success(`同步 Bug 完成：新增 ${bugs.created || 0}，更新 ${bugs.updated || 0}`);
           } else if (syncKind === 'task') {
-            ElMessage.success(`同步任务完成：新增 ${tasks.created || 0}，更新 ${tasks.updated || 0}`);
+            const discovered = tasks.classicUserTaskDiscovery?.discovered || 0;
+            ElMessage.success(`同步任务完成：新增 ${tasks.created || 0}，更新 ${tasks.updated || 0}${discovered ? `，人员页发现 ${discovered} 个当前任务` : ''}`);
           } else {
             ElMessage.success(`同步完成：任务新增 ${tasks.created || 0}，更新 ${tasks.updated || 0}；Bug 新增 ${bugs.created || 0}，更新 ${bugs.updated || 0}`);
           }
@@ -12957,7 +12958,7 @@ export default {
         } finally {
           this.loading.syncTasks = false;
         }
-      }, 2500);
+      }, 1000);
     },
 
     zentaoSyncFailureText(message = '') {

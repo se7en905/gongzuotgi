@@ -174,6 +174,10 @@ let artDepartmentUsersCache = null;
 let artDepartmentUsersCacheAt = 0;
 let artDepartmentUsersRefreshPromise = null;
 const artDepartmentUsersCacheTtlMs = Number(process.env.ZENTAO_ART_USERS_CACHE_TTL_MS || 10 * 60 * 1000);
+let zentaoClassicCookieJar = null;
+let zentaoClassicCookiePromise = null;
+const zentaoClassicUserTaskMaxPages = Math.min(Math.max(Number(process.env.ZENTAO_CLASSIC_USER_TASK_MAX_PAGES || 80), 1), 300);
+const zentaoClassicUserTaskConcurrency = Math.min(Math.max(Number(process.env.ZENTAO_CLASSIC_USER_TASK_CONCURRENCY || 6), 1), 12);
 const dataRetentionDays = Math.max(1, Number(process.env.AWP_DATA_RETENTION_DAYS || 2) || 2);
 const dataRetentionEnabled = process.env.AWP_DATA_RETENTION_ENABLED !== '0';
 const dataRetentionCleanupIntervalMs = Math.max(60 * 60 * 1000, Number(process.env.AWP_DATA_RETENTION_CLEANUP_INTERVAL_MS || 6 * 60 * 60 * 1000) || 6 * 60 * 60 * 1000);
@@ -5564,7 +5568,7 @@ async function syncZentaoTasks(project, options = {}) {
     const limit = Math.min(Math.max(Number(syncOptions.limit || 100), 1), 200);
     const maxPages = Math.min(Math.max(Number(syncOptions.maxPages || 5), 1), 50);
     const detailConcurrency = Math.min(Math.max(Number(syncOptions.detailConcurrency || (interactive ? 6 : 4)), 1), 10);
-    const { artAccounts, userNames, artUserSource } = await getZentaoArtUsers();
+    const { artAccounts, userNames, artUserSource, artUsers } = await getZentaoArtUsers();
     const artSnapshotTasks = await listArtSnapshotTasks(project.id).catch(() => []);
     const artSeenCandidateTaskNos = await listArtSeenCandidateTaskNos().catch(() => []);
     const existingZentaoTasks = (await listTasks({ projectId: project.id }))
@@ -5586,6 +5590,9 @@ async function syncZentaoTasks(project, options = {}) {
     const detailRefreshTaskNos = detailRefreshScope === 'current'
       ? zentaoCurrentDetailRefreshTaskNos(existingZentaoTasks, artSnapshotTasks, artSeenCandidateTaskNos, aiFlowTaskNos)
       : existingZentaoTaskNos;
+    const classicUserTaskDiscovery = await discoverZentaoUserAssignedTaskNos(artUsers, syncOptions);
+    for (const taskNo of classicUserTaskDiscovery.taskNos) detailRefreshTaskNos.add(taskNo);
+    for (const taskNo of classicUserTaskDiscovery.taskNos) existingZentaoTaskNos.add(taskNo);
     const allTasks = [];
     const executionSummaries = [];
     const detailRefresh = await refreshTrackedZentaoTasks(project, detailRefreshTaskNos, existingZentaoTaskByNo, artAccounts, userNames, detailConcurrency);
@@ -5703,6 +5710,7 @@ async function syncZentaoTasks(project, options = {}) {
         failed: detailRefresh.failed.length,
         failures: detailRefresh.failed
       },
+      classicUserTaskDiscovery,
       executions: executionSummaries,
       interactive,
       syncProfile: quickSync ? 'quick' : fullScan ? 'full' : interactive ? 'interactive' : 'standard',
@@ -6531,8 +6539,10 @@ async function refreshTrackedZentaoTasks(project, taskNos = new Set(), existingT
         for (const detailTask of expandZentaoDetailTasks(task)) {
           const detailTaskNo = String(detailTask.id || detailTask.taskID || '').trim();
           const existingTask = existingTaskByNo.get(detailTaskNo);
-          const executionId = detailTask.execution || existingTask?.zentao?.execution || '';
+          const isRequestedTaskNo = String(taskNo) === detailTaskNo || ids.includes(detailTaskNo);
           const isCurrent = isCurrentArtZentaoTask(detailTask, artAccounts);
+          if (!isRequestedTaskNo && !isCurrent) continue;
+          const executionId = detailTask.execution || existingTask?.zentao?.execution || '';
           const normalized = normalizeZentaoTask(
             project,
             {
@@ -6565,14 +6575,219 @@ async function refreshTrackedZentaoTasks(project, taskNos = new Set(), existingT
   };
 }
 
+async function discoverZentaoUserAssignedTaskNos(artUsers = [], options = {}) {
+  if (options.classicUserDiscovery === false || options.userTaskDiscovery === false) {
+    return {
+      enabled: false,
+      reason: 'disabled',
+      taskNos: [],
+      discovered: 0,
+      users: 0,
+      pages: 0,
+      failed: 0,
+      failures: []
+    };
+  }
+  const users = artUsers
+    .map(user => ({
+      account: zentaoUserAccount(user),
+      realname: user.realname || user.name || user.account || '',
+      userId: zentaoUserNumericId(user)
+    }))
+    .filter(user => user.userId);
+  const result = {
+    enabled: true,
+    source: 'zentao-classic-user-task',
+    taskNos: [],
+    discovered: 0,
+    users: users.length,
+    pages: 0,
+    failed: 0,
+    failures: []
+  };
+  if (!users.length) {
+    result.reason = 'missing-user-id';
+    return result;
+  }
+
+  const taskNos = new Set();
+  let cursor = 0;
+  const concurrency = Math.min(Math.max(Number(options.userTaskDiscoveryConcurrency || zentaoClassicUserTaskConcurrency), 1), 12);
+  async function worker() {
+    while (cursor < users.length) {
+      const user = users[cursor];
+      cursor += 1;
+      try {
+        const userResult = await discoverZentaoUserAssignedTaskNosForUser(user, options);
+        for (const taskNo of userResult.taskNos) taskNos.add(taskNo);
+        result.pages += userResult.pages;
+      } catch (error) {
+        result.failed += 1;
+        result.failures.push({
+          account: user.account,
+          realname: user.realname,
+          userId: user.userId,
+          error: error.message || String(error)
+        });
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(users.length, 1)) }, () => worker()));
+  result.taskNos = [...taskNos].sort((a, b) => Number(a) - Number(b));
+  result.discovered = result.taskNos.length;
+  return result;
+}
+
+async function discoverZentaoUserAssignedTaskNosForUser(user = {}, options = {}) {
+  const taskNos = new Set();
+  const maxPages = Math.min(Math.max(Number(options.userTaskMaxPages || zentaoClassicUserTaskMaxPages), 1), 300);
+  let totalPages = 1;
+  let pages = 0;
+  for (let page = 1; page <= totalPages && page <= maxPages; page += 1) {
+    const pathname = `index.php?m=user&f=task&userID=${encodeURIComponent(user.userId)}&type=assignedTo&recTotal=0&recPerPage=1&pageID=${page}`;
+    const html = await zentaoClassicGet(pathname);
+    pages += 1;
+    for (const taskNo of parseZentaoClassicTaskNos(html)) taskNos.add(taskNo);
+    if (page === 1) {
+      const total = parseZentaoClassicRecTotal(html);
+      totalPages = Math.min(Math.max(total || 1, 1), maxPages);
+    }
+  }
+  return {
+    account: user.account,
+    realname: user.realname,
+    userId: user.userId,
+    taskNos: [...taskNos],
+    pages
+  };
+}
+
+function parseZentaoClassicTaskNos(html = '') {
+  const taskNos = new Set();
+  const text = String(html || '');
+  for (const match of text.matchAll(/m=task&f=view&taskID=(\d{1,9})/g)) taskNos.add(String(match[1]));
+  for (const match of text.matchAll(/task-view-(\d{1,9})\.html/g)) taskNos.add(String(match[1]));
+  for (const match of text.matchAll(/data-id=["']?(\d{1,9})["']?/g)) {
+    if (new RegExp(`task-(?:view|edit|start|finish|close)-${match[1]}|m=task&f=view&taskID=${match[1]}`).test(text)) {
+      taskNos.add(String(match[1]));
+    }
+  }
+  return [...taskNos].filter(taskNo => /^\d+$/.test(taskNo));
+}
+
+function parseZentaoClassicRecTotal(html = '') {
+  const text = String(html || '');
+  const matches = [
+    text.match(/recTotal[=:](\d+)/i),
+    text.match(/recTotal=(\d+)/i),
+    text.match(/data-rec-total=["']?(\d+)["']?/i)
+  ];
+  for (const match of matches) {
+    const total = Number(match?.[1] || 0);
+    if (Number.isFinite(total) && total > 0) return total;
+  }
+  return 1;
+}
+
+async function zentaoClassicGet(pathname, refererPath = '') {
+  const { api } = await zentaoContext();
+  const cookies = await getZentaoClassicCookies(api);
+  const baseUrl = zentaoClassicBaseUrl(api);
+  const url = `${baseUrl}/${String(pathname || '').replace(/^\/+/, '')}`;
+  const res = await fetch(url, {
+    headers: {
+      Cookie: cookies,
+      Referer: `${baseUrl}/${String(refererPath || pathname || '').replace(/^\/+/, '')}`
+    },
+    redirect: 'manual'
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`禅道经典页面 HTTP ${res.status}`);
+  if (isZentaoClassicLoginPage(text)) {
+    zentaoClassicCookieJar = null;
+    zentaoClassicCookiePromise = null;
+    throw new Error('禅道经典页面登录失效，无法读取人员任务页');
+  }
+  return text;
+}
+
+async function getZentaoClassicCookies(api) {
+  if (zentaoClassicCookieJar) return formatCookieJar(zentaoClassicCookieJar);
+  if (zentaoClassicCookiePromise) return zentaoClassicCookiePromise;
+  zentaoClassicCookiePromise = loginZentaoClassic(api).finally(() => {
+    zentaoClassicCookiePromise = null;
+  });
+  return zentaoClassicCookiePromise;
+}
+
+async function loginZentaoClassic(api) {
+  const baseUrl = zentaoClassicBaseUrl(api);
+  const jar = {};
+  let res = await fetch(`${baseUrl}/index.php?m=user&f=login`, { redirect: 'manual' });
+  Object.assign(jar, parseSetCookieHeaders(res.headers));
+  const body = new URLSearchParams({
+    account: api.account || '',
+    password: api.password || '',
+    keepLogin: 'on'
+  });
+  res = await fetch(`${baseUrl}/index.php?m=user&f=login`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Cookie: formatCookieJar(jar),
+      Referer: `${baseUrl}/index.php?m=user&f=login`
+    },
+    body: body.toString(),
+    redirect: 'manual'
+  });
+  Object.assign(jar, parseSetCookieHeaders(res.headers));
+  zentaoClassicCookieJar = jar;
+  return formatCookieJar(jar);
+}
+
+function zentaoClassicBaseUrl(api = {}) {
+  const raw = String(api.baseUrl || zentaoBaseUrl || '').replace(/\/$/, '');
+  if (!raw) return '';
+  return raw.replace(/\/api\.php\/v1.*$/i, '').replace(/\/index\.php.*$/i, '');
+}
+
+function parseSetCookieHeaders(headers) {
+  const list = typeof headers?.getSetCookie === 'function' ? headers.getSetCookie() : [];
+  const combined = headers?.get?.('set-cookie');
+  if (combined) list.push(combined);
+  const jar = {};
+  for (const header of list) {
+    for (const part of String(header || '').split(/,(?=[^;,]+=)/)) {
+      const match = part.match(/^\s*([^=;\s]+)=([^;]*)/);
+      if (match) jar[match[1]] = match[2];
+    }
+  }
+  return jar;
+}
+
+function formatCookieJar(jar = {}) {
+  return Object.entries(jar)
+    .filter(([, value]) => value !== undefined && value !== null)
+    .map(([key, value]) => `${key}=${value}`)
+    .join('; ');
+}
+
+function isZentaoClassicLoginPage(html = '') {
+  return /m=user&f=login|user-login|用户登录|name=["']account["'][\s\S]*name=["']password["']/i.test(String(html || ''));
+}
+
 function expandZentaoDetailTasks(task = {}) {
   const children = Array.isArray(task.children) ? task.children : [];
-  if (!children.length) return [task];
+  const brothers = Array.isArray(task.brother)
+    ? task.brother
+    : task.brother && typeof task.brother === 'object'
+      ? Object.values(task.brother)
+      : [];
+  if (!children.length && !brothers.length) return [task];
   const parentName = task.name || task.title || task.parentName || '';
   const parentExecutionName = task.executionName || task.execution?.name || '';
   const parentStoryTitle = task.storyTitle || task.story?.title || '';
-  return [
-    task,
+  const related = [
     ...children.map(child => ({
       ...child,
       parentName: child.parentName || parentName,
@@ -6580,8 +6795,22 @@ function expandZentaoDetailTasks(task = {}) {
       storyTitle: child.storyTitle || parentStoryTitle,
       story: child.story || task.story || task.storyID || '',
       storyID: child.storyID || task.storyID || task.story || ''
+    })),
+    ...brothers.map(brother => ({
+      ...brother,
+      parentName: brother.parentName || parentName,
+      executionName: brother.executionName || parentExecutionName,
+      storyTitle: brother.storyTitle || parentStoryTitle,
+      story: brother.story || task.story || task.storyID || '',
+      storyID: brother.storyID || task.storyID || task.story || ''
     }))
   ];
+  const byTaskNo = new Map();
+  for (const item of [task, ...related]) {
+    const taskNo = String(item.id || item.taskID || '').trim();
+    if (taskNo) byTaskNo.set(taskNo, item);
+  }
+  return [...byTaskNo.values()];
 }
 
 async function syncZentaoBugs(project, options = {}) {
@@ -6651,7 +6880,7 @@ async function resolveZentaoExecutionIds(options = {}) {
 }
 
 async function getZentaoArtUsers() {
-  const artUsers = await artDepartmentUsers({ fast: true });
+  const artUsers = await artDepartmentUsers({ fast: false });
   const artAccounts = new Set(artUsers.map(user => zentaoUserAccount(user)).filter(Boolean));
   if (!artAccounts.size) {
     throw new HttpError(502, `ZenTao 同步失败：未获取到部门 ID=${zentaoArtDeptId} 的美术人员，已保留现有任务列表。`);
@@ -6659,6 +6888,7 @@ async function getZentaoArtUsers() {
   return {
     artAccounts,
     artUserSource: artDepartmentUsersCache?.length ? 'zentao-users-cache' : 'platform-fallback',
+    artUsers,
     userNames: new Map(artUsers
       .map(user => [zentaoUserAccount(user), user.realname || user.name || zentaoUserAccount(user)])
       .filter(([account]) => account))
@@ -6667,6 +6897,14 @@ async function getZentaoArtUsers() {
 
 function zentaoUserAccount(user = {}) {
   return accountName(user.account || user.user || user.id || user.username);
+}
+
+function zentaoUserNumericId(user = {}) {
+  const raw = user.userId ?? user.userID ?? user.uid ?? user.id ?? user.idNumber ?? user.user?.id ?? '';
+  if (raw && typeof raw === 'object') return zentaoUserNumericId(raw);
+  const text = String(raw || '').trim();
+  if (!/^\d+$/.test(text)) return '';
+  return text;
 }
 
 function zentaoUserDeptId(user = {}) {
@@ -6923,7 +7161,9 @@ async function fetchZentaoDepartmentUsers(deptId = null) {
         account: zentaoUserAccount(user),
         realname: user.realname || user.name || user.account,
         role: user.account === 'zhangqw' ? 'owner' : 'member',
-        dept: zentaoUserDeptId(user)
+        dept: zentaoUserDeptId(user),
+        userId: zentaoUserNumericId(user),
+        userID: zentaoUserNumericId(user)
       }))
       .filter(user => user.account));
   } catch (error) {
