@@ -310,94 +310,96 @@
         <strong>{{ app.selectedRunReferenceCount }} 个引用，明细在产物列表查看</strong>
       </div>
     </section>
-    <div
-      v-if="app.shouldShowRunCodexChatPanel(app.selectedRun)"
-      ref="runCodexFloating"
-      class="run-codex-floating"
-      :class="{ dragging: codexDrag.dragging }"
-      :style="codexFloatingStyle"
-    >
-      <button
-        type="button"
-        class="run-codex-floating-button"
-        :class="{ active: app.runChatPanelOpen }"
-        aria-label="打开 Codex 对话"
-        @click="toggleRunCodexPanel"
-        @pointerdown="startCodexDrag"
+    <Teleport to="body">
+      <div
+        v-if="app.shouldShowRunCodexChatPanel(app.selectedRun)"
+        ref="runCodexFloating"
+        class="run-codex-floating"
+        :class="{ dragging: codexDrag.dragging }"
+        :style="codexFloatingStyle"
       >
-        <img src="/codex-icon.png" alt="" />
-      </button>
-      <section v-if="app.runChatPanelOpen" class="run-codex-floating-panel">
-        <header class="run-codex-floating-head">
-          <div class="run-codex-title-block">
-            <img src="/codex-icon.png" alt="" />
-            <div>
-              <h4>Codex</h4>
-              <span>{{ app.selectedRun ? app.runGroupTitle(app.selectedRun) : '美术执行' }}</span>
+        <button
+          type="button"
+          class="run-codex-floating-button"
+          :class="{ active: app.runChatPanelOpen }"
+          aria-label="打开 Codex 对话"
+          @click="toggleRunCodexPanel"
+          @pointerdown="startCodexDrag"
+        >
+          <img src="/codex-icon.png" alt="" />
+        </button>
+        <section v-if="app.runChatPanelOpen" class="run-codex-floating-panel">
+          <header class="run-codex-floating-head">
+            <div class="run-codex-title-block">
+              <img src="/codex-icon.png" alt="" />
+              <div>
+                <h4>Codex</h4>
+                <span>{{ app.selectedRun ? app.runGroupTitle(app.selectedRun) : '美术执行' }}</span>
+              </div>
             </div>
+            <button type="button" class="run-codex-close" aria-label="关闭 Codex 对话" @click="app.runChatPanelOpen = false">×</button>
+          </header>
+          <div class="run-codex-floating-messages">
+            <article class="run-codex-message assistant">
+              <span class="run-codex-avatar"><img src="/codex-icon.png" alt="" /></span>
+              <div class="run-codex-bubble">
+                <strong>继续处理当前执行</strong>
+                <p>我会基于当前执行记录、Figma 线索、规范 md / Skill 线索创建一次新的追加执行，不默认读取历史长日志。</p>
+              </div>
+            </article>
+            <article v-if="app.runChatInput.trim()" class="run-codex-message user">
+              <div class="run-codex-bubble">{{ app.runChatInput.trim() }}</div>
+            </article>
           </div>
-          <button type="button" class="run-codex-close" aria-label="关闭 Codex 对话" @click="app.runChatPanelOpen = false">×</button>
-        </header>
-        <div class="run-codex-floating-messages">
-          <article class="run-codex-message assistant">
-            <span class="run-codex-avatar"><img src="/codex-icon.png" alt="" /></span>
-            <div class="run-codex-bubble">
-              <strong>继续处理当前执行</strong>
-              <p>我会基于当前执行记录、Figma 线索、规范 md / Skill 线索创建一次新的追加执行，不默认读取历史长日志。</p>
-            </div>
-          </article>
-          <article v-if="app.runChatInput.trim()" class="run-codex-message user">
-            <div class="run-codex-bubble">{{ app.runChatInput.trim() }}</div>
-          </article>
-        </div>
-        <div class="run-codex-floating-config">
-          <label>
-            <span>模型</span>
-            <ElSelect v-model="app.runChatForm.model" size="small" placeholder="选择模型">
-              <ElOption v-for="model in app.codexModelOptions" :key="model" :label="model" :value="model" />
-            </ElSelect>
-          </label>
-          <label>
-            <span>推理</span>
-            <ElSelect v-model="app.runChatForm.reasoningEffort" size="small" placeholder="选择推理强度">
-              <ElOption v-for="option in app.codexReasoningOptions" :key="option.value" :label="option.label" :value="option.value" />
-            </ElSelect>
-          </label>
-        </div>
-        <ElInput
-          v-model="app.runChatForm.requestStandard"
-          class="run-codex-standard-input"
-          type="textarea"
-          :rows="2"
-          maxlength="2000"
-          show-word-limit
-          placeholder="请求标准：验收标准、输出格式和限制"
-        />
-        <div class="run-codex-composer">
+          <div class="run-codex-floating-config">
+            <label>
+              <span>模型</span>
+              <ElSelect v-model="app.runChatForm.model" size="small" placeholder="选择模型">
+                <ElOption v-for="model in app.codexModelOptions" :key="model" :label="model" :value="model" />
+              </ElSelect>
+            </label>
+            <label>
+              <span>推理</span>
+              <ElSelect v-model="app.runChatForm.reasoningEffort" size="small" placeholder="选择推理强度">
+                <ElOption v-for="option in app.codexReasoningOptions" :key="option.value" :label="option.label" :value="option.value" />
+              </ElSelect>
+            </label>
+          </div>
           <ElInput
-            v-model="app.runChatInput"
+            v-model="app.runChatForm.requestStandard"
+            class="run-codex-standard-input"
             type="textarea"
-            :autosize="{ minRows: 2, maxRows: 6 }"
-            placeholder="向 Codex 发送追加要求"
-            @keydown.meta.enter.prevent="app.submitRunChatInstruction"
-            @keydown.ctrl.enter.prevent="app.submitRunChatInstruction"
+            :rows="2"
+            maxlength="2000"
+            show-word-limit
+            placeholder="请求标准：验收标准、输出格式和限制"
           />
-          <div class="run-codex-composer-footer">
-            <span>{{ app.runChatForm.model }} · 推理 {{ app.runChatForm.reasoningEffort }}</span>
-            <ElButton
-              v-if="app.can('run.codex.execute')"
-              circle
-              type="primary"
-              :loading="app.runChatSubmitting"
-              :disabled="!app.runChatInput.trim() || app.isRunInProgress(app.selectedRun)"
-              @click="app.submitRunChatInstruction"
-            >
-              ↑
-            </ElButton>
+          <div class="run-codex-composer">
+            <ElInput
+              v-model="app.runChatInput"
+              type="textarea"
+              :autosize="{ minRows: 2, maxRows: 6 }"
+              placeholder="向 Codex 发送追加要求"
+              @keydown.meta.enter.prevent="app.submitRunChatInstruction"
+              @keydown.ctrl.enter.prevent="app.submitRunChatInstruction"
+            />
+            <div class="run-codex-composer-footer">
+              <span>{{ app.runChatForm.model }} · 推理 {{ app.runChatForm.reasoningEffort }}</span>
+              <ElButton
+                v-if="app.can('run.codex.execute')"
+                circle
+                type="primary"
+                :loading="app.runChatSubmitting"
+                :disabled="!app.runChatInput.trim() || app.isRunInProgress(app.selectedRun)"
+                @click="app.submitRunChatInstruction"
+              >
+                ↑
+              </ElButton>
+            </div>
           </div>
-        </div>
-      </section>
-    </div>
+        </section>
+      </div>
+    </Teleport>
     <section v-if="app.selectedRun && !app.isSkillOrMdFocusedRun(app.selectedRun) && !app.isRunInProgress(app.selectedRun) && app.selectedRun?.resultSummary" :class="['run-result-summary', app.resultSummaryClass(app.effectiveResultStatus(app.selectedRun))]">
       <div class="run-result-head">
         <div>
@@ -478,7 +480,7 @@
 </template>
 
 <script>
-const RUN_CODEX_FLOATING_POSITION_KEY = 'awp-run-codex-floating-position';
+const RUN_CODEX_FLOATING_POSITION_KEY = 'awp-run-codex-floating-window-position-v2';
 const RUN_CODEX_FLOATING_SIZE = 54;
 const RUN_CODEX_FLOATING_PADDING = 12;
 const RUN_CODEX_FLOATING_DEFAULT_OFFSET = 28;
@@ -543,15 +545,12 @@ export default {
       return this.app.focusedRunOverviewMetrics(this.app.selectedRun);
     },
     codexFloatingStyle() {
-      if (Number.isFinite(this.codexPosition.x) && Number.isFinite(this.codexPosition.y)) {
-        return {
-          left: `${this.codexPosition.x}px`,
-          top: `${this.codexPosition.y}px`
-        };
-      }
+      const position = Number.isFinite(this.codexPosition.x) && Number.isFinite(this.codexPosition.y)
+        ? this.clampCodexFloatingPosition(this.codexPosition.x, this.codexPosition.y)
+        : this.defaultCodexFloatingPosition();
       return {
-        right: '28px',
-        bottom: '28px'
+        left: `${position.x}px`,
+        top: `${position.y}px`
       };
     }
   },
