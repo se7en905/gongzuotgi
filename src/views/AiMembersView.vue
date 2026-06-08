@@ -65,8 +65,15 @@ export default {
     snapshot() {
       return this.app.aiMembersSnapshot || {};
     },
+    placeholderBoardHtml() {
+      return '<!doctype html><html lang="zh-CN"><body><p>正在加载 AI部门看板...</p></body></html>';
+    },
     boardHtml() {
-      return this.snapshot.html || '<!doctype html><html lang="zh-CN"><body><p>正在加载 AI部门看板...</p></body></html>';
+      return this.snapshot.html || this.placeholderBoardHtml;
+    },
+    hasActiveBoardHtml() {
+      const html = this.activeBoardHtml || '';
+      return this.app.isAiMembersBoardHtml ? this.app.isAiMembersBoardHtml(html) : html.length > 1000;
     },
     activeBoardHtml() {
       if (!this.app.can('menu.aiMembers.owner')) return this.snapshot.memberHtml || this.boardHtml;
@@ -79,6 +86,7 @@ export default {
   data() {
     return {
       frameHtml: '',
+      lastRealFrameHtml: '',
       frameHtmlUpdateTimer: 0
     };
   },
@@ -89,13 +97,16 @@ export default {
     activeBoardHtml: {
       immediate: true,
       handler(value) {
-        if (value === this.frameHtml) {
+        const isRealBoardHtml = this.app.isAiMembersBoardHtml ? this.app.isAiMembersBoardHtml(value) : String(value || '').length > 1000;
+        const nextValue = isRealBoardHtml ? value : this.lastRealFrameHtml || this.frameHtml || value;
+        if (nextValue === this.frameHtml) {
           this.$nextTick(() => this.syncThemeToFrame());
           return;
         }
         if (this.frameHtmlUpdateTimer) window.clearTimeout(this.frameHtmlUpdateTimer);
         this.frameHtmlUpdateTimer = window.setTimeout(() => {
-          this.frameHtml = value;
+          if (isRealBoardHtml) this.lastRealFrameHtml = value;
+          this.frameHtml = nextValue;
           this.frameHtmlUpdateTimer = 0;
           this.$nextTick(() => this.syncThemeToFrame());
         }, 0);

@@ -4195,6 +4195,10 @@ export default {
       }
       if (view === 'ai-members') {
         this.ensureAiMemberScoreData();
+        this.restoreAiMembersBoardHtmlSnapshot();
+        if (!this.loading.aiMembers && !this.hasAiMembersBoardHtml(this.aiMembersSnapshot)) {
+          this.refreshAiMembers().catch(() => {});
+        }
       }
       if (view === 'codex-config') {
         if (!this.loading.codexConfig) this.loadCodexConfig().catch(() => {});
@@ -4889,13 +4893,85 @@ export default {
           value,
           savedAt: new Date().toISOString()
         });
-        if (payload.length > 220 * 1024) {
+        const maxPayloadLength = ['aiMembersSnapshot', 'aiMembersBoardHtmlSnapshot'].includes(key) ? 900 * 1024 : 220 * 1024;
+        if (payload.length > maxPayloadLength) {
           localStorage.removeItem(this.workbenchDisplayCacheKey(key));
           return;
         }
         localStorage.setItem(this.workbenchDisplayCacheKey(key), payload);
       } catch {
       }
+    },
+
+    isAiMembersPlaceholderHtml(html = '') {
+      return /正在加载\s*AI部门看板/.test(String(html || ''));
+    },
+
+    isAiMembersBoardHtml(html = '') {
+      const text = String(html || '');
+      return text.length > 1000 && /<!doctype\s+html|<html[\s>]/i.test(text) && !this.isAiMembersPlaceholderHtml(text);
+    },
+
+    hasAiMembersBoardHtml(snapshot = {}) {
+      if (!snapshot || typeof snapshot !== 'object') return false;
+      return ['html', 'ownerHtml', 'memberHtml'].some(key => this.isAiMembersBoardHtml(snapshot[key]));
+    },
+
+    readAiMembersBoardHtmlSnapshot() {
+      try {
+        const raw = localStorage.getItem(this.workbenchDisplayCacheKey('aiMembersBoardHtmlSnapshot'));
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        const value = parsed?.value && typeof parsed.value === 'object' ? parsed.value : parsed;
+        return this.hasAiMembersBoardHtml(value) ? value : null;
+      } catch {
+        return null;
+      }
+    },
+
+    saveAiMembersBoardHtmlSnapshot(snapshot = {}) {
+      if (!this.hasAiMembersBoardHtml(snapshot)) return;
+      const payload = {
+        mode: snapshot.mode || '',
+        source: snapshot.source || {},
+        html: this.isAiMembersBoardHtml(snapshot.html) ? snapshot.html : '',
+        ownerHtml: this.isAiMembersBoardHtml(snapshot.ownerHtml) ? snapshot.ownerHtml : '',
+        memberHtml: this.isAiMembersBoardHtml(snapshot.memberHtml) ? snapshot.memberHtml : ''
+      };
+      if (!payload.html) payload.html = payload.ownerHtml || payload.memberHtml || '';
+      this.saveWorkbenchDisplayCache('aiMembersBoardHtmlSnapshot', payload);
+    },
+
+    mergeAiMembersSnapshotWithBoardCache(snapshot = {}) {
+      const source = snapshot && typeof snapshot === 'object' ? snapshot : {};
+      const current = this.aiMembersSnapshot && typeof this.aiMembersSnapshot === 'object' ? this.aiMembersSnapshot : {};
+      const cached = this.readAiMembersBoardHtmlSnapshot() || {};
+      const merged = { ...current, ...cached, ...source };
+      ['html', 'ownerHtml', 'memberHtml'].forEach(key => {
+        const sourceHtml = source[key];
+        const currentHtml = current[key];
+        const cachedHtml = cached[key];
+        merged[key] = this.isAiMembersBoardHtml(sourceHtml)
+          ? sourceHtml
+          : this.isAiMembersBoardHtml(currentHtml)
+            ? currentHtml
+            : this.isAiMembersBoardHtml(cachedHtml)
+              ? cachedHtml
+              : sourceHtml || currentHtml || cachedHtml || '';
+      });
+      if (!this.isAiMembersBoardHtml(merged.html)) {
+        merged.html = merged.mode === 'member'
+          ? (merged.memberHtml || merged.ownerHtml || merged.html || '')
+          : (merged.ownerHtml || merged.memberHtml || merged.html || '');
+      }
+      return merged;
+    },
+
+    restoreAiMembersBoardHtmlSnapshot() {
+      const merged = this.mergeAiMembersSnapshotWithBoardCache(this.aiMembersSnapshot || {});
+      if (!this.hasAiMembersBoardHtml(merged)) return false;
+      this.aiMembersSnapshot = merged;
+      return true;
     },
 
     restoreWorkbenchDisplayCacheKey(key = '') {
@@ -4982,6 +5058,7 @@ export default {
         'artProgressSummary',
         'usageCounters'
       ].forEach(key => this.restoreWorkbenchDisplayCacheKey(key));
+      this.restoreAiMembersBoardHtmlSnapshot();
       this.restoreAiMemberScoreSnapshot();
     },
 
@@ -6575,9 +6652,12 @@ export default {
     async refreshAiMembers() {
       this.loading.aiMembers = true;
       try {
-        this.aiMembersSnapshot = await this.api('/api/ai-members');
+        const snapshot = await this.api('/api/ai-members');
+        this.aiMembersSnapshot = this.mergeAiMembersSnapshotWithBoardCache(snapshot);
+        this.saveAiMembersBoardHtmlSnapshot(this.aiMembersSnapshot);
         this.saveWorkbenchDisplayCache('aiMembersSnapshot', this.aiMembersSnapshot);
       } catch (error) {
+        this.restoreAiMembersBoardHtmlSnapshot();
         ElMessage.error(this.readApiError(error) || 'AI 部门成员数据读取失败');
       } finally {
         this.loading.aiMembers = false;
@@ -6749,10 +6829,10 @@ export default {
         return String(value || '').localeCompare(String(latest || '')) > 0 ? value : latest;
       }, '');
       return [
+        'ai-score-v3-completed-run-stable-skill',
         this.aiScoreMonthLabel,
         sourceMembers.map(member => [member.name || member.realname || '', member.account || '', member.level || '', member.status || ''].join(':')).join('|'),
         snapshot.source?.boardUpdatedAt || '',
-        snapshot.source?.fetchedAt || '',
         this.projects.length,
         scanEntries.length,
         scanSkillCount,
@@ -6806,14 +6886,15 @@ export default {
       const blockedCount = blockedSources.filter(text => /failed|blocked|失败|阻塞|不可用|不通过|返工/i.test(String(text || ''))).length;
 
       const productScore = productValue.score;
-      const usedProductCount = new Set(monthUsageLogs.map(log => log.productKey || log.target).filter(Boolean)).size;
+      const usedProductCount = this.aiMemberScoreUniqueProductKeyCount(monthUsageLogs.map(log => log.productKey || log.target).filter(Boolean));
       const validationProductCount = new Set(monthValidations.map(row => row.productKey || row.artifactKey || row.id).filter(Boolean)).size;
+      const completedRunSkillCount = this.aiMemberScoreCompletedRunSkillKeys(monthRuns).size;
       const usageScore = independentScoreMode
         ? Math.min(20, monthUsageCount * 5 + usedProductCount * 5)
         : Math.min(35, monthUsageCount * 3 + usedProductCount * 5 + validationProductCount * 4);
       const runScore = independentScoreMode
-        ? Math.min(15, monthRuns.length * 8)
-        : Math.min(25, monthRuns.length * 6 + Math.min(7, usedProductCount) * 2);
+        ? Math.min(15, monthRuns.length * 6 + completedRunSkillCount * 3)
+        : Math.min(25, monthRuns.length * 5 + completedRunSkillCount * 4);
       const penalty = Math.min(12, blockedCount * 3);
       const score = Math.max(0, Math.min(100, Math.round(productScore + usageScore + runScore - penalty)));
       return {
@@ -6832,12 +6913,13 @@ export default {
         monthUsageCount,
         monthValidationCount: monthValidations.length,
         monthRunCount: monthRuns.length,
+        monthRunSkillCount: completedRunSkillCount,
         blockedCount,
         topProducts: productItems.slice(0, 3),
         latestActivityAt: [
           ...monthUsageLogs.map(log => log.time),
           ...monthValidations.map(row => row.submittedAt || row.updatedAt || row.createdAt),
-          ...monthRuns.map(run => run.finishedAt || run.startedAt || run.createdAt)
+          ...monthRuns.map(run => run.finishedAt || run.completedAt || run.startedAt || run.createdAt)
         ].filter(Boolean).sort().pop() || '',
         reason: independentScoreMode
           ? '独立产物口径：产物价值、个人使用和执行活跃综合计算'
@@ -6945,10 +7027,65 @@ export default {
         .filter(row => this.skillInventoryRowBelongsToMember(row, memberName, summary?.purposes || [], []));
       const map = new Map();
       [...rows, ...directRows].forEach(row => {
-        const key = this.skillInventoryProductNameKey(row);
+        const key = this.aiMemberScoreStableProductKeyForRow(row);
         if (key && !map.has(key)) map.set(key, row);
       });
       return [...map.values()];
+    },
+
+    aiMemberScoreStableProductKey(value = '') {
+      const text = String(value || '')
+        .trim()
+        .replace(/\\/g, '/')
+        .replace(/[?#].*$/, '')
+        .replace(/\.(md|markdown)$/i, '');
+      if (!text) return '';
+      const parts = text
+        .split('/')
+        .map(part => String(part || '').trim())
+        .filter(Boolean);
+      const rawCandidates = parts.length ? parts : [text];
+      const lastPart = rawCandidates[rawCandidates.length - 1] || '';
+      const candidates = [];
+      if (/^(skill|readme|index)$/i.test(lastPart.replace(/\.(md|markdown)$/i, '')) && rawCandidates.length > 1) {
+        candidates.push(rawCandidates[rawCandidates.length - 2]);
+      }
+      candidates.push(lastPart, ...rawCandidates.slice(0, -1).reverse(), text);
+      for (const candidate of candidates) {
+        const key = String(candidate || '')
+          .replace(/\.(md|markdown)$/i, '')
+          .toLowerCase()
+          .replace(/[\\/_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '');
+        if (key && !this.isGenericUsageNeedle(key)) return key;
+      }
+      return '';
+    },
+
+    aiMemberScoreStableProductKeyForRow(row = {}) {
+      const candidates = [
+        row.relativePath,
+        row.path,
+        row.skill?.git?.relativePath,
+        row.skill?.path,
+        row.productFileName,
+        row.productDisplayName,
+        row.title,
+        row.id
+      ];
+      for (const candidate of candidates) {
+        const key = this.aiMemberScoreStableProductKey(candidate);
+        if (key && key.length >= 4 && !this.isGenericUsageNeedle(key)) return key;
+      }
+      return '';
+    },
+
+    aiMemberScoreUniqueProductKeyCount(values = []) {
+      const keys = new Set();
+      (Array.isArray(values) ? values : []).forEach(value => {
+        const key = this.aiMemberScoreStableProductKey(value);
+        if (key && key.length >= 4 && !this.isGenericUsageNeedle(key)) keys.add(key);
+      });
+      return keys.size;
     },
 
     aiMemberScoreUsageLogs(memberName = '', productRows = []) {
@@ -6959,7 +7096,7 @@ export default {
           if (this.normalizeAiScorePersonKey(log.person) === personKey) {
             logs.push({
               ...log,
-              productKey: this.skillInventoryProductNameKey(row) || this.skillInventoryRowProductName(row) || log.target || row.id || ''
+              productKey: this.aiMemberScoreStableProductKeyForRow(row) || this.skillInventoryProductNameKey(row) || this.skillInventoryRowProductName(row) || log.target || row.id || ''
             });
           }
         }
@@ -7092,8 +7229,8 @@ export default {
       const personKey = this.normalizeAiScorePersonKey(memberName);
       const accountKey = this.normalizeAiScorePersonKey(account);
       return (this.runs || [])
-        .filter(run => this.isAiScoreMonthTime(run.finishedAt || run.startedAt || run.createdAt))
         .filter(run => this.isAiScoreCompletedRun(run))
+        .filter(run => this.isAiScoreMonthTime(run.finishedAt || run.completedAt || run.startedAt || run.createdAt))
         .filter(run => {
           const people = [
             run.developer,
@@ -7109,10 +7246,51 @@ export default {
     },
 
     isAiScoreCompletedRun(run = {}) {
-      const statusText = String(run.status || run.platformStatus || run.resultStatus || '').toLowerCase();
-      if (/cancel|canceled|cancelled|failed|blocked|error|deleted|draft|pending|queued|running|in_progress|wait/.test(statusText)) return false;
-      if (/done|success|passed|completed|finished|approved|完成|通过|成功/.test(statusText)) return true;
-      return Boolean(run.finishedAt || run.completedAt || run.resultPath || run.artifactRoot);
+      if (run.exitCode !== null && run.exitCode !== undefined && Number(run.exitCode) !== 0) return false;
+      const statusText = [
+        run.status,
+        run.platformStatus,
+        run.resultStatus,
+        run.workerStatus,
+        run.resultSummary?.status
+      ].map(value => String(value || '').toLowerCase()).join(' ');
+      if (/cancel|canceled|cancelled|failed|blocked|error|deleted|draft|pending|queued|running|in_progress|wait|失败|阻塞|取消|排队|待领取|执行中/.test(statusText)) return false;
+      const effectiveStatus = this.effectiveResultStatus(run);
+      const hasCompletedStatus = ['passed', 'conditional_pass', 'completed', 'success', 'done'].includes(effectiveStatus)
+        || /done|success|passed|completed|finished|approved|conditional|完成|通过|成功|有条件/.test(statusText);
+      const hasCompletionTime = Boolean(run.finishedAt || run.completedAt);
+      const hasResultEvidence = Boolean(run.resultSummary || run.changeSummary || run.resultPath || run.completedAt || (run.logPath && hasCompletedStatus));
+      return hasCompletedStatus && (hasCompletionTime || hasResultEvidence);
+    },
+
+    aiMemberScoreCompletedRunSkillKeys(runs = []) {
+      const keys = new Set();
+      (Array.isArray(runs) ? runs : []).forEach(run => {
+        this.aiMemberScoreRunSkillKeys(run).forEach(key => {
+          if (key) keys.add(key);
+        });
+      });
+      return keys;
+    },
+
+    aiMemberScoreRunSkillKeys(run = {}) {
+      const directValues = [
+        run.primarySkillPath,
+        run.skillPath,
+        ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
+        ...(Array.isArray(run.materials) ? run.materials.flatMap(item => [item.path, item.name, item.title]) : []),
+        ...(Array.isArray(run.referenceItems) ? run.referenceItems.flatMap(item => [item.path, item.name, item.title]) : [])
+      ];
+      const looseValues = [
+        run.stage,
+        run.showdocHints,
+        ...this.runChainReferenceItems(run, { includeSelectedLog: false })
+          .flatMap(item => [item.path, item.repoPath, item.filePath, item.skillPath, item.artifactPath, item.name, item.title])
+      ].filter(value => this.looksLikeRunSkillOrMdMaterial(value));
+      const key = [...directValues, ...looseValues]
+        .map(value => this.aiMemberScoreStableProductKey(value))
+        .find(value => value && value.length >= 4 && !this.isGenericUsageNeedle(value));
+      return key ? [key] : [];
     },
 
     aiScoreClass(score = 0) {
