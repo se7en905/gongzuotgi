@@ -14876,21 +14876,51 @@ export default {
     },
 
     directSkillRunContentKind(run = null) {
-      const text = [
+      const candidates = [
         run?.productName,
         run?.sourceTitle,
         run?.primarySkillPath,
         run?.stage,
         run?.targetPage,
         run?.title
-      ].join('\n');
-      if (/SKILL\.md$/i.test(text) || /(^|\/)skills?\//i.test(text)) return 'Skill';
-      if (/\.md$/i.test(text)) return 'md';
+      ].map(value => String(value || '').trim()).filter(Boolean);
+      if (candidates.some(value => /(^|[\\/])SKILL\.md$/i.test(value) || /SKILL\.md(?:$|[?#])/i.test(value))) return 'Skill';
+      if (candidates.some(value => /\.md(?:$|[?#])/i.test(value))) return 'md';
       if (this.isDirectSkillRun(run)) return '直接执行';
       if (run?.sourceType === 'bug') return 'Bug 执行';
       if (run?.taskId || run?.sourceType === 'task' || run?.sourceType === 'task-center' || run?.sourceType === 'task-linked') return '任务执行';
       if (run?.sourceType === 'standalone' || run?.sourceType === 'skill-inventory') return '独立执行';
       return this.workflowRunLabel(run) || '执行';
+    },
+
+    focusedRunContentName(run = null) {
+      const source = [
+        run?.primarySkillPath,
+        run?.stage,
+        run?.targetPage,
+        run?.selectedMaterialHints?.[0],
+        String(run?.showdocHints || '').split(/\r?\n/).find(Boolean),
+        run?.productName,
+        run?.productDisplayName,
+        run?.sourceTitle,
+        this.directSkillRunContentName(run)
+      ]
+        .map(value => this.focusedRunReadableContentName(value))
+        .find(value => value && !this.looksLikeNonContentTitle(value));
+      return source || this.directSkillRunContentName(run);
+    },
+
+    focusedRunReadableContentName(value = '') {
+      const text = this.cleanDirectSkillDisplayText(value);
+      if (!text) return '';
+      if (this.looksLikeFilePath(text) || /[\\/]/.test(text)) return this.meaningfulNameFromPath(text) || text;
+      return text;
+    },
+
+    focusedRunExecutionModeText(run = null) {
+      const name = this.focusedRunContentName(run);
+      const prefix = this.isSkillOrMdFocusedRun(run) ? '单技能' : this.workflowRunLabel(run);
+      return `${prefix}-${name || '未命名'}`;
     },
 
     cleanDirectSkillRunTitle(title = '') {
@@ -14910,6 +14940,13 @@ export default {
 
     looksLikeFilePath(value = '') {
       return /(^\/|^[A-Za-z]:\\|\\|\/Users\/|\/Volumes\/|\.md$|\.txt$|\.json$)/i.test(String(value || '').trim());
+    },
+
+    looksLikeNonContentTitle(value = '') {
+      const text = String(value || '').trim();
+      if (!text) return true;
+      if (this.looksLikeFilePath(text)) return false;
+      return /^(pc|web|h5|ios|android|测试|弹窗|执行|直接执行)$/i.test(text);
     },
 
     meaningfulNameFromPath(pathValue = '') {
@@ -16028,15 +16065,21 @@ export default {
       if (!run || !this.isSkillOrMdFocusedRun(run)) return [];
       const displayStages = this.selectedRun?.id === run.id ? this.selectedRunDisplayStages : this.displayRunStages(run);
       const actualStages = displayStages.length ? displayStages : this.directSkillRunDisplayStages(run);
+      const isDirect = this.isDirectSkillRun(run);
       const statusText = String(run.status || '').toLowerCase();
       const isPending = /pending|created|queued/.test(statusText) || !statusText;
       const isRunning = this.isRunInProgress(run) || /claimed/.test(statusText);
       const isFailed = /failed|error|blocked/.test(`${statusText} ${run.workerStatus || ''}`);
       const isDone = /done|success|passed|completed|finished|conditional/.test(statusText) || Boolean(run.resultSummary);
-      const targetName = this.directSkillRunContentName(run);
+      const targetName = this.focusedRunContentName(run);
       const kind = this.directSkillRunContentKind(run);
       const firstStage = actualStages[0] || {};
-      const lastStage = actualStages[actualStages.length - 1] || {};
+      const preflightStageIndex = isDirect && actualStages[1] ? 1 : -1;
+      const preflightStage = preflightStageIndex >= 0 ? actualStages[preflightStageIndex] : null;
+      const codexStageIndex = isDirect && actualStages[2] ? 2 : 0;
+      const codexStage = actualStages[codexStageIndex] || firstStage;
+      const resultStageIndex = isDirect && actualStages[3] ? 3 : -1;
+      const resultStage = resultStageIndex >= 0 ? actualStages[resultStageIndex] : null;
       const currentStageName = run.currentStage || actualStages.find(stage => /running|in_progress/i.test(stage.displayStatus || stage.status || ''))?.name || firstStage.name || '';
       const stageStatus = (index, fallback = 'pending') => {
         const stage = actualStages[index] || {};
@@ -16052,6 +16095,18 @@ export default {
       };
       const codexStatus = isFailed ? 'failed' : isDone ? 'completed' : isRunning ? 'running' : 'pending';
       const resultStatus = isFailed ? 'failed' : isDone ? 'completed' : 'pending';
+      const preflightStatus = isDirect
+        ? normalize(stageStatus(preflightStageIndex, isPending ? 'pending' : 'completed'))
+        : isPending && !run.startedAt && !run.claimedAt ? 'pending' : 'completed';
+      const contextDurationMs = this.focusedRunStepDurationMs(run, {
+        startedAt: run.createdAt || '',
+        finishedAt: run.startedAt || run.claimedAt || run.createdAt || ''
+      });
+      const preflightDurationMs = isDirect ? this.focusedRunStepDurationMs(run, preflightStage, preflightStageIndex) : 0;
+      const resultDurationMs = isDirect ? this.focusedRunStepDurationMs(run, resultStage, resultStageIndex) : this.focusedRunStepDurationMs(run, {
+        startedAt: run.finishedAt || '',
+        finishedAt: run.updatedAt || run.finishedAt || ''
+      });
       const steps = [
         {
           key: 'target',
@@ -16059,7 +16114,7 @@ export default {
           summary: `${kind} · ${targetName}`,
           status: run.createdAt ? 'completed' : 'pending',
           time: run.createdAt,
-          durationText: '累计 -'
+          durationMs: 0
         },
         {
           key: 'context',
@@ -16067,31 +16122,31 @@ export default {
           summary: run.figmaLinks ? '已记录 Figma 目标和补充要求' : '读取当前任务要求和 Skill/md 内容',
           status: isPending && !run.startedAt && !run.claimedAt ? 'pending' : 'completed',
           time: run.startedAt || run.claimedAt || run.createdAt,
-          durationText: run.createdAt ? `累计 ${this.formatLiveDuration(Math.max(0, Date.parse(run.startedAt || run.claimedAt || run.createdAt || '') - Date.parse(run.createdAt || '')) || 0)}` : '累计 -'
+          durationMs: contextDurationMs
         },
         {
           key: 'preflight',
           title: '执行自检',
-          summary: this.isDirectSkillRun(run) ? '检查执行人本机 Codex 与 Figma MCP' : '检查项目、路径和执行参数',
-          status: isPending && !run.startedAt && !run.claimedAt ? 'pending' : 'completed',
-          time: firstStage.startedAt || run.startedAt || run.claimedAt || '',
-          durationText: this.stageDurationText(firstStage, run, 0)
+          summary: isDirect ? '检查执行人本机 Codex 与 Figma MCP' : '检查项目、路径和执行参数',
+          status: preflightStatus,
+          time: preflightStage?.startedAt || run.startedAt || run.claimedAt || '',
+          durationMs: preflightDurationMs
         },
         {
           key: 'codex',
           title: 'Codex 执行',
           summary: currentStageName || '按当前 md/Skill 执行',
-          status: normalize(stageStatus(0, codexStatus)),
+          status: normalize(stageStatus(codexStageIndex, codexStatus)),
           time: run.startedAt || run.claimedAt || '',
-          durationText: isRunning ? `累计 ${this.liveRunDurationText(run)}` : this.stageDurationText(actualStages[1] || firstStage, run, actualStages[1] ? 1 : 0)
+          durationMs: this.focusedRunStepDurationMs(run, codexStage, codexStageIndex)
         },
         {
           key: 'result',
           title: '结果回传',
           summary: this.resultStatusLabel(this.effectiveResultStatus(run)),
-          status: normalize(isFailed ? 'failed' : isDone ? 'completed' : isRunning ? 'pending' : resultStatus),
+          status: normalize(resultStageIndex >= 0 ? stageStatus(resultStageIndex, resultStatus) : isFailed ? 'failed' : isDone ? 'completed' : isRunning ? 'pending' : resultStatus),
           time: run.finishedAt || run.updatedAt || '',
-          durationText: this.stageDurationText(lastStage, run, Math.max(actualStages.length - 1, 0))
+          durationMs: resultDurationMs
         },
         {
           key: 'archive',
@@ -16099,7 +16154,7 @@ export default {
           summary: isDone || isFailed ? '可进入 AI档案查看明细' : '等待执行完成后归档',
           status: isFailed ? 'failed' : isDone ? 'completed' : 'pending',
           time: run.finishedAt || '',
-          durationText: run.finishedAt ? `累计 ${this.liveRunDurationText(run)}` : '累计 -'
+          durationMs: 0
         }
       ];
       return steps.map((step, index) => {
@@ -16111,9 +16166,25 @@ export default {
           status,
           label: this.stageStepLabel(status),
           className: this.focusedRunStepClass(status, current),
+          durationClockText: this.formatClockDuration(step.durationMs),
           timeText: step.time ? this.formatDateTime(step.time) : ''
         };
       });
+    },
+
+    focusedRunStepDurationMs(run = null, stage = {}, index = -1) {
+      if (!run || !stage) return 0;
+      const explicit = Number(stage.durationMs || 0);
+      if (explicit > 0) return explicit;
+      const start = Date.parse(stage.startedAt || '');
+      const finish = Date.parse(stage.finishedAt || '');
+      if (start && finish && finish >= start) return finish - start;
+      const isRunningStage = /running|in_progress|claimed/i.test(String(stage.displayStatus || stage.status || ''));
+      if ((this.isRunInProgress(run) || /claimed/i.test(String(run?.status || ''))) && isRunningStage) {
+        return start ? Math.max(0, this.nowTick - start) : this.runDurationMs(run);
+      }
+      const value = this.stageDurationMs(stage, run, index);
+      return value > 0 ? value : 0;
     },
 
     focusedRunStepIsCurrent(steps = [], index = -1, run = null) {
@@ -16713,10 +16784,22 @@ export default {
       return `${seconds}秒`;
     },
 
+    formatClockDuration(ms) {
+      const totalSeconds = Math.max(0, Math.floor(Number(ms || 0) / 1000));
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      return [hours, minutes, seconds].map(value => String(value).padStart(2, '0')).join(':');
+    },
+
     liveRunDurationText(run) {
       if (!run) return '-';
       const duration = this.runDurationMs(run);
       return duration ? this.formatLiveDuration(duration) : '-';
+    },
+
+    liveRunClockDurationText(run) {
+      return run ? this.formatClockDuration(this.runDurationMs(run)) : '00:00:00';
     },
 
     runDisplayTime(run = {}) {

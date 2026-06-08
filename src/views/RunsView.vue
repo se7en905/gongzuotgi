@@ -58,7 +58,7 @@
         </div>
       </div>
     </template>
-    <section v-if="app.selectedRun" :class="['run-live-status', app.runStatusClass(app.selectedRun.status)]">
+    <section v-if="app.selectedRun && !app.isSkillOrMdFocusedRun(app.selectedRun)" :class="['run-live-status', app.runStatusClass(app.selectedRun.status)]">
       <div>
         <span>当前状态</span>
         <strong>{{ app.isDirectSkillRun(app.selectedRun) ? app.directSkillRunStatusLabel(app.selectedRun) : app.runStatusLabel(app.selectedRun.status) }}</strong>
@@ -82,7 +82,10 @@
           <h4>执行步骤明细</h4>
           <p>查看当前任务的执行步骤明细。</p>
         </div>
-        <span>{{ app.focusedRunStepFlow(app.selectedRun).length }} 步</span>
+        <span class="focused-run-total-time">
+          <small>累计执行耗时</small>
+          <strong>{{ app.liveRunClockDurationText(app.selectedRun) }}</strong>
+        </span>
       </div>
       <div class="focused-run-step-flow">
         <article
@@ -94,13 +97,14 @@
           <div class="focused-step-body">
             <strong>{{ step.title }}</strong>
             <span>{{ step.summary }}</span>
-            <small>{{ step.label }} · {{ step.durationText || step.timeText || '累计 -' }}</small>
+            <small class="focused-step-status">{{ step.label }}</small>
+            <small class="focused-step-duration">{{ step.durationClockText }}</small>
           </div>
         </article>
       </div>
-      <div v-if="app.selectedRunReferenceCount" class="run-reference-list">
-        <span>md / SKILL.md 引用</span>
-        <strong>{{ app.selectedRunReferenceCount }} 个引用</strong>
+      <div class="run-reference-list focused-run-mode-line">
+        <span>执行模式：</span>
+        <strong>{{ app.focusedRunExecutionModeText(app.selectedRun) }}</strong>
       </div>
     </section>
     <section v-if="app.selectedRun && app.isDirectSkillRun(app.selectedRun)" class="run-worker-panel">
@@ -754,6 +758,7 @@ export default {
   .focused-run-flow-panel {
     display: grid;
     gap: 14px;
+    min-width: 0;
     margin: 14px 18px 14px;
     padding: 14px;
     border: 1px solid rgba(245, 158, 11, 0.24);
@@ -761,22 +766,51 @@ export default {
     background: rgba(255, 251, 235, 0.62);
   }
 
+  .focused-run-total-time {
+    display: grid;
+    justify-items: end;
+    gap: 3px;
+    min-width: 112px;
+
+    small,
+    strong {
+      display: block;
+      white-space: nowrap;
+    }
+
+    small {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+    }
+
+    strong {
+      color: var(--heading);
+      font-size: 16px;
+      font-weight: 900;
+      line-height: 1.2;
+    }
+  }
+
   .focused-run-step-flow {
     display: grid;
-    grid-auto-columns: minmax(136px, 1fr);
+    grid-auto-columns: minmax(180px, 1fr);
     grid-auto-flow: column;
     gap: 0;
-    min-width: max-content;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     overflow-x: auto;
-    padding: 4px 0 6px;
+    padding: 4px 0 10px;
+    scrollbar-gutter: stable;
   }
 
   .focused-run-step {
     position: relative;
     display: grid;
-    grid-template-rows: 34px minmax(88px, auto);
+    grid-template-rows: 34px minmax(112px, auto);
     justify-items: center;
-    min-width: 136px;
+    min-width: 180px;
     color: #64748b;
 
     &::before {
@@ -875,9 +909,9 @@ export default {
 
   .focused-step-body {
     display: grid;
-    gap: 5px;
+    gap: 6px;
     justify-items: center;
-    width: 124px;
+    width: 164px;
     min-width: 0;
     padding-top: 6px;
     text-align: center;
@@ -888,8 +922,6 @@ export default {
       display: block;
       width: 100%;
       min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
     }
 
     strong {
@@ -897,25 +929,33 @@ export default {
       font-size: 13px;
       font-weight: 900;
       line-height: 1.35;
-      white-space: nowrap;
-    }
-
-    span {
-      display: -webkit-box;
-      color: var(--text);
-      font-size: 12px;
-      line-height: 1.35;
-      -webkit-box-orient: vertical;
-      -webkit-line-clamp: 2;
       white-space: normal;
     }
 
+    span {
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.4;
+      white-space: normal;
+      word-break: break-word;
+    }
+
     small {
-      color: currentColor;
       font-size: 12px;
       font-weight: 760;
       line-height: 1.25;
-      white-space: nowrap;
+      white-space: normal;
+    }
+
+    .focused-step-status {
+      color: currentColor;
+      font-weight: 900;
+    }
+
+    .focused-step-duration {
+      color: currentColor;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-weight: 850;
     }
   }
 
@@ -2139,6 +2179,24 @@ export default {
       font-size: 12px;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+  }
+
+  .focused-run-mode-line {
+    display: flex;
+    align-self: start;
+    align-items: baseline;
+    gap: 0;
+    max-width: 100%;
+
+    > span,
+    > strong {
+      white-space: normal;
+      word-break: break-word;
+    }
+
+    > span {
+      flex: 0 0 auto;
     }
   }
 
