@@ -351,20 +351,6 @@
               <div class="run-codex-bubble">{{ app.runChatInput.trim() }}</div>
             </article>
           </div>
-          <div class="run-codex-floating-config">
-            <label>
-              <span>模型</span>
-              <ElSelect v-model="app.runChatForm.model" size="small" placeholder="选择模型">
-                <ElOption v-for="model in app.codexModelOptions" :key="model" :label="model" :value="model" />
-              </ElSelect>
-            </label>
-            <label>
-              <span>推理</span>
-              <ElSelect v-model="app.runChatForm.reasoningEffort" size="small" placeholder="选择推理强度">
-                <ElOption v-for="option in app.codexReasoningOptions" :key="option.value" :label="option.label" :value="option.value" />
-              </ElSelect>
-            </label>
-          </div>
           <ElInput
             v-model="app.runChatForm.requestStandard"
             class="run-codex-standard-input"
@@ -384,7 +370,15 @@
               @keydown.ctrl.enter.prevent="app.submitRunChatInstruction"
             />
             <div class="run-codex-composer-footer">
-              <span>{{ app.runChatForm.model }} · 推理 {{ app.runChatForm.reasoningEffort }}</span>
+              <div class="run-codex-inline-config" aria-label="Codex 模型和推理设置">
+                <ElSelect v-model="app.runChatForm.model" size="small" placeholder="模型" class="run-codex-inline-select model" popper-class="run-codex-inline-popper">
+                  <ElOption v-for="model in app.codexModelOptions" :key="model" :label="model" :value="model" />
+                </ElSelect>
+                <span>·</span>
+                <ElSelect v-model="app.runChatForm.reasoningEffort" size="small" placeholder="推理" class="run-codex-inline-select reasoning" popper-class="run-codex-inline-popper">
+                  <ElOption v-for="option in app.codexReasoningOptions" :key="option.value" :label="`推理 ${option.label}`" :value="option.value" />
+                </ElSelect>
+              </div>
               <ElButton
                 v-if="app.can('run.codex.execute')"
                 circle
@@ -2774,24 +2768,6 @@ export default {
   }
 }
 
-.run-codex-floating-config {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 10px;
-
-  label {
-    display: grid;
-    gap: 5px;
-    min-width: 0;
-
-    > span {
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 780;
-    }
-  }
-}
-
 .run-codex-standard-input {
   .el-textarea__inner {
     min-height: 62px !important;
@@ -2830,7 +2806,7 @@ export default {
   justify-content: space-between;
   gap: 12px;
 
-  span {
+  > span {
     min-width: 0;
     overflow: hidden;
     color: var(--muted);
@@ -2848,6 +2824,62 @@ export default {
   }
 }
 
+.run-codex-inline-config {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: calc(100% - 52px);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 760;
+
+  > span {
+    color: rgba(100, 116, 139, 0.72);
+    font-weight: 900;
+  }
+}
+
+.run-codex-inline-select {
+  flex: 0 0 auto;
+  width: auto;
+
+  &.model {
+    width: 104px;
+  }
+
+  &.reasoning {
+    width: 112px;
+  }
+
+  .el-select__wrapper {
+    min-height: 26px;
+    padding: 0 6px;
+    border-radius: 8px;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .el-select__placeholder,
+  .el-select__selected-item {
+    overflow: visible;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 760;
+    text-overflow: clip;
+    white-space: nowrap;
+  }
+
+  .el-select__caret {
+    color: rgba(100, 116, 139, 0.72);
+    font-size: 12px;
+  }
+}
+
+.run-codex-inline-popper {
+  min-width: 120px;
+}
+
 @media (max-width: 860px) {
   .run-codex-floating-panel {
     right: 10px;
@@ -2862,8 +2894,13 @@ export default {
     height: 50px;
   }
 
-  .run-codex-floating-config {
-    grid-template-columns: 1fr;
+  .run-codex-inline-config {
+    max-width: calc(100% - 48px);
+  }
+
+  .run-codex-inline-select.model,
+  .run-codex-inline-select.reasoning {
+    width: 104px;
   }
 }
 </style>
