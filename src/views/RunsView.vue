@@ -76,6 +76,38 @@
         <strong>{{ app.liveRunDurationText(app.selectedRun) }}</strong>
       </div>
     </section>
+    <section v-if="app.shouldShowRunTopChainPanel(app.selectedRun)" class="run-chain-panel run-chain-panel-top">
+      <div class="run-section-head">
+        <div>
+          <h4>执行步骤</h4>
+          <p>这条记录已指定 md/Skill，按实际操作流程查看当前走到哪一步。</p>
+        </div>
+        <span>步骤 {{ app.runChainTimeline(app.selectedRun).length || 0 }}</span>
+      </div>
+      <div class="run-chain-list">
+        <div
+          v-for="step in app.runChainTimeline(app.selectedRun)"
+          :key="step.key"
+          :class="['run-chain-step', app.runChainStepClass(step.status)]"
+        >
+          <div class="run-chain-marker"></div>
+          <div class="run-chain-content">
+            <div class="run-chain-title">
+              <strong>{{ step.title }}</strong>
+              <span>{{ step.time ? app.formatDateTime(step.time) : app.runActionStatusLabel(step.status) }}</span>
+            </div>
+            <p>{{ step.summary }}</p>
+            <div v-if="step.meta?.length" class="run-chain-meta">
+              <span v-for="item in step.meta" :key="item">{{ item }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div v-if="app.selectedRunReferenceCount" class="run-reference-list">
+        <span>md / SKILL.md 引用</span>
+        <strong>{{ app.selectedRunReferenceCount }} 个引用</strong>
+      </div>
+    </section>
     <section v-if="app.selectedRun && app.isDirectSkillRun(app.selectedRun)" class="run-worker-panel">
       <div class="run-section-head">
         <div>
@@ -201,7 +233,7 @@
       <span>当前美术执行还没有最终结论。执行完成后，这里会显示 Figma / 规范 / Skill 处理结果、风险和下一步操作。</span>
       <small>可以先展开下方原始执行日志查看实时输出。</small>
     </section>
-    <section v-if="app.shouldShowRunWorkflowPanels(app.selectedRun)" class="run-skill-actions-panel">
+    <section v-if="app.shouldShowRunSkillActionsPanel(app.selectedRun)" class="run-skill-actions-panel">
       <div class="run-section-head">
         <div>
           <h4>关键动作概览</h4>
@@ -234,7 +266,7 @@
         <strong>{{ app.selectedRunOtherSkillActionSummary.count }} 类，合计 {{ app.selectedRunOtherSkillActionSummary.total }} 次</strong>
       </div>
     </section>
-    <section v-if="app.shouldShowRunWorkflowPanels(app.selectedRun)" class="run-chain-panel">
+    <section v-if="app.shouldShowRunChainPanel(app.selectedRun)" class="run-chain-panel">
       <div class="run-section-head">
         <div>
           <h4>任务链路</h4>
@@ -266,7 +298,7 @@
         <strong>{{ app.selectedRunReferenceCount }} 个引用，明细在产物列表查看</strong>
       </div>
     </section>
-    <section v-if="app.shouldShowRunWorkflowPanels(app.selectedRun)" class="run-codex-chat-panel">
+    <section v-if="app.shouldShowRunCodexChatPanel(app.selectedRun)" class="run-codex-chat-panel">
       <div class="run-section-head">
         <div>
           <h4>继续和 Codex 沟通</h4>
@@ -1531,6 +1563,12 @@ export default {
     border: 1px solid var(--line);
     border-radius: 8px;
     background: var(--soft-card);
+  }
+
+  .run-chain-panel-top {
+    margin-top: 14px;
+    margin-bottom: 14px;
+    background: #ffffff;
   }
 
   .run-codex-chat-panel {

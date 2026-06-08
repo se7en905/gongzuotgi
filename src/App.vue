@@ -14584,13 +14584,40 @@ export default {
       return run?.sourceType === 'direct-skill' || run?.executionMode === 'direct-skill';
     },
 
+    isSingleSkillWorkflowRun(run = null) {
+      if (!run || this.isDirectSkillRun(run)) return false;
+      const workflow = normalizeWorkflowId(run.workflow || '');
+      return workflow === 'art-single-skill';
+    },
+
+    isSkillOrMdFocusedRun(run = null) {
+      return Boolean(this.isDirectSkillRun(run) || this.isSingleSkillWorkflowRun(run));
+    },
+
     shouldShowRunWorkflowPanels(run = null) {
+      return Boolean(run && !this.isSkillOrMdFocusedRun(run));
+    },
+
+    shouldShowRunSkillActionsPanel(run = null) {
+      return Boolean(run && !this.isSkillOrMdFocusedRun(run));
+    },
+
+    shouldShowRunTopChainPanel(run = null) {
+      return Boolean(run && this.isSingleSkillWorkflowRun(run));
+    },
+
+    shouldShowRunChainPanel(run = null) {
+      return Boolean(run && !this.isDirectSkillRun(run) && !this.shouldShowRunTopChainPanel(run));
+    },
+
+    shouldShowRunCodexChatPanel(run = null) {
       return Boolean(run && !this.isDirectSkillRun(run));
     },
 
     runFlowHelperTitle(run = null) {
       if (!run) return '选择执行记录 → 查看右侧进度和结果';
       if (this.isDirectSkillRun(run)) return '选择直接执行记录 → 看 Worker 状态 → 看执行结果 → 进入 AI档案';
+      if (this.isSingleSkillWorkflowRun(run)) return '选择单技能记录 → 看执行步骤 → 看结果明细';
       return '选择执行记录 → 启动 / 查看进度 → 看任务链路 → 到产物列表看明细';
     },
 
@@ -14599,11 +14626,15 @@ export default {
       if (this.isDirectSkillRun(run)) {
         return '引用 Skill/md 的直接执行只展示执行对象、执行人本机状态、阶段进度和档案入口，不展示普通任务的关键动作、任务链路和继续对话。';
       }
+      if (this.isSingleSkillWorkflowRun(run)) {
+        return '新建单里选择 md/Skill 的单技能执行按操作流程展示步骤和结果，不展示关键动作概览。';
+      }
       return '执行台只看任务推进和关键动作是否发生；具体调用明细、截图、文件和验证内容放在产物列表对应明细里。';
     },
 
     runDetailTitle(run = null) {
       if (!run) return 'AI 执行过程';
+      if (this.isSingleSkillWorkflowRun(run)) return '单技能执行过程';
       return this.isDirectSkillRun(run) ? '直接执行结果' : 'AI 执行过程';
     },
 
@@ -14611,6 +14642,9 @@ export default {
       if (!run) return '请先从左侧选择一条执行记录。';
       if (this.isDirectSkillRun(run)) {
         return '这是引用 Skill/md 的本机直接执行，只展示 Worker 状态、执行进度、结果和 AI档案入口。';
+      }
+      if (this.isSingleSkillWorkflowRun(run)) {
+        return '这条记录已指定 md/Skill，右侧按执行步骤、结果明细和日志查看，不展示关键动作概览。';
       }
       return '查看阶段进度、关键动作概览和任务链路。产物明细请到产物列表查看。';
     },
