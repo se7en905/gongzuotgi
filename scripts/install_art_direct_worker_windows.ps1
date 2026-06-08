@@ -12,6 +12,10 @@ function ConvertTo-PSLiteral([string]$Value) {
   return "'" + ($Value -replace "'", "''") + "'"
 }
 
+function ConvertTo-WindowsArgument([string]$Value) {
+  return '"' + $Value + '"'
+}
+
 if (-not $Api) { throw '缺少 ART_PLATFORM_API，例如：http://工作台服务器IP:4288' }
 if (-not $Username) { throw '缺少 ART_PLATFORM_USERNAME' }
 if (-not $Password) { throw '缺少 ART_PLATFORM_PASSWORD' }
@@ -58,8 +62,9 @@ Set-Location $(ConvertTo-PSLiteral $Root)
 
 $Shell = New-Object -ComObject WScript.Shell
 $Shortcut = $Shell.CreateShortcut($StartupShortcut)
+$RunnerArgument = ConvertTo-WindowsArgument $Runner
 $Shortcut.TargetPath = 'powershell.exe'
-$Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File `"$Runner`""
+$Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File $RunnerArgument"
 $Shortcut.WorkingDirectory = $Root
 $Shortcut.WindowStyle = 7
 $Shortcut.Description = '美术工作台本机直接执行 Worker'
@@ -89,7 +94,8 @@ if ($existing) {
   Start-Sleep -Seconds 1
 }
 
-Start-Process -FilePath 'powershell.exe' -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$Runner`"" -WorkingDirectory $Root -WindowStyle Minimized
+$StartArguments = "-NoProfile -ExecutionPolicy Bypass -File $RunnerArgument"
+Start-Process -FilePath 'powershell.exe' -ArgumentList $StartArguments -WorkingDirectory $Root -WindowStyle Minimized
 Write-Host "started $TaskName"
 Write-Host "installed startup $TaskName"
 Write-Host "startup $StartupShortcut"
