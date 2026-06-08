@@ -2567,12 +2567,41 @@ function isUsageLikeOperationLog(log = {}) {
   const actionName = cleanString(log.actionName);
   const targetType = cleanString(log.targetType);
   const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
+  if (isNonUsageOperationLog(log)) return false;
   if (metadata.countAsSkillUsage === true || metadata.countAsProductUsage === true) return true;
   if (metadata.countAsSkillUsage === false || metadata.countAsProductUsage === false) return false;
   if (['START_RUN', 'RETRY_RUN'].includes(action)) return true;
   const text = `${action} ${actionName} ${targetType} ${log.targetName || ''} ${log.description || ''}`;
   return /(生成|执行|启动|复用|调用|使用|generate|execute|start|reuse|run)/i.test(text)
     && !/(删除|作废|恢复|隐藏|展示|编辑|修改|保存|登录|退出|同步任务|同步 Bug|刷新库存)/i.test(text);
+}
+
+function isNonUsageOperationLog(log = {}) {
+  const action = cleanString(log.action);
+  const module = cleanString(log.module);
+  const targetType = cleanString(log.targetType);
+  if ([
+    'VIEW_PAGE',
+    'LOGIN',
+    'LOGOUT',
+    'SESSION_EXPIRED',
+    'UPDATE_SKILL_ALIAS',
+    'UPDATE_SKILL_VERSION',
+    'HIDE_SKILL_ASSET',
+    'HIDE_SCAN_SOURCE_PRODUCT',
+    'SHOW_SCAN_SOURCE_PRODUCT',
+    'UPDATE_PROJECT',
+    'UPDATE_ROLE',
+    'UPSERT_TASK_CENTER_CONFIG',
+    'UPDATE_AGENT_WORKER_ALIAS',
+    'TRIGGER_ZENTAO_TASK_SYNC',
+    'TRIGGER_ZENTAO_TASK_SYNC_ONLY',
+    'SYNC_ZENTAO_TASKS',
+    'SYNC_ZENTAO_TASKS_ONLY',
+    'SYNC_ZENTAO_BUGS'
+  ].includes(action)) return true;
+  if (module === 'workbench' && targetType === 'view') return true;
+  return false;
 }
 
 function buildUsageTargets(values = [], common = {}) {

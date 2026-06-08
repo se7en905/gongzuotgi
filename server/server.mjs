@@ -652,6 +652,16 @@ async function handleApi(req, res, url) {
       requirePermission(currentUser, 'api.skillVersion.manage');
     }
     const result = await saveSkillVersionOverride({ ...body, allowAliases: true });
+    const aliasChanged = Object.prototype.hasOwnProperty.call(body, 'aliases');
+    const usagePatch = aliasChanged
+      ? await recordUsageCountersForSkillAliases(result.aliases || body.aliases || [], {
+        target: result.title || body.title || result.relativePath || body.relativePath || body.id || result.key,
+        kind: 'usage'
+      }).catch(error => {
+        console.warn('调用别名历史计数补录失败', error);
+        return { matched: 0 };
+      })
+      : { matched: 0 };
     const actionName = inventoryKindChange
       ? '修改产物类型'
       : displayNameChange && Object.prototype.hasOwnProperty.call(body, 'aliases')
@@ -673,6 +683,13 @@ async function handleApi(req, res, url) {
       description: `${currentUser.displayName || currentUser.username} ${actionName}`
     });
     broadcastPlatformEvent('skill-version-overrides.changed', { module: 'skill-inventory' });
+    if (usagePatch.matched) {
+      broadcastPlatformEvent('usage-counters.changed', {
+        module: 'skill-inventory',
+        target: result.title || result.relativePath || '',
+        matched: usagePatch.matched
+      });
+    }
     sendJson(res, 200, result);
     return;
   }
@@ -2100,11 +2117,20 @@ async function handleApi(req, res, url) {
     const effectiveCodexModel = runCodexRequest.model || globalCodexConfig.model || '';
     const effectiveReasoningEffort = runCodexRequest.reasoningEffort || '';
     const startMode = ['resume', 'restart'].includes(String(body.mode || '').trim()) ? String(body.mode).trim() : 'start';
-    const started = await startRun(project, { ...run, startedBy: currentUser.id, startMode });
-    const usagePatch = await recordUsageCountersForRun(started, { source: `run-${startMode}` }).catch(error => {
-      console.warn('美术执行调用次数累计失败', error);
-      return null;
-    });
+    const startResult = await startRun(project, { ...run, startedBy: currentUser.id, startMode });
+    const started = {
+      ...run,
+      ...startResult,
+      status: startResult?.blocked ? 'blocked' : 'running',
+      startedBy: currentUser.id,
+      startMode
+    };
+    const usagePatch = startResult?.blocked
+      ? null
+      : await recordUsageCountersForRun(started, { source: `run-${startMode}` }).catch(error => {
+        console.warn('美术执行调用次数累计失败', error);
+        return null;
+      });
     await writeOperationLog(req, {
       user: currentUser,
       module: 'run',
