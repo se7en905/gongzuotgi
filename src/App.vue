@@ -1358,7 +1358,12 @@ export default {
     selectedRunActionLabel() {
       if (this.isDirectSkillRun(this.selectedRun)) return this.selectedRun?.status === 'pending' ? '等待 Worker 自动领取' : '本机执行';
       if (this.isRunInProgress(this.selectedRun)) return '执行中';
+      if (this.canResumeRun(this.selectedRun)) return '继续执行';
       return this.hasRunExecuted(this.selectedRun) ? '再次执行' : '发起执行';
+    },
+
+    canRestartSelectedRun() {
+      return Boolean(this.selectedRun && !this.isDirectSkillRun(this.selectedRun) && !this.isRunInProgress(this.selectedRun) && this.hasRunExecuted(this.selectedRun));
     },
 
     runDiffPreviewTitle() {
@@ -15045,6 +15050,11 @@ export default {
       return /running|conditional|passed|completed|done|failed|blocked|cancelled|canceled/i.test(String(run.status || ''));
     },
 
+    canResumeRun(run = null) {
+      if (!run || this.isDirectSkillRun(run) || this.isRunInProgress(run)) return false;
+      return /cancelled|canceled|blocked|failed/i.test(String(run.status || ''));
+    },
+
     isRunInProgress(run = null) {
       return /running|in_progress/i.test(String(run?.status || ''));
     },
@@ -17410,10 +17420,20 @@ export default {
         ElMessage.info('当前任务正在执行中');
         return;
       }
-      this.startConfirm.visible = true;
+      const mode = this.canResumeRun(this.selectedRun) ? 'resume' : this.hasRunExecuted(this.selectedRun) ? 'restart' : 'start';
+      return this.confirmStartRun(mode);
     },
 
-    async confirmStartRun() {
+    restartSelectedRun() {
+      if (!this.selectedRun) return;
+      if (this.isRunInProgress(this.selectedRun)) {
+        ElMessage.info('当前任务正在执行中');
+        return;
+      }
+      return this.confirmStartRun('restart');
+    },
+
+    async confirmStartRun(mode = 'start') {
       if (!this.selectedRun) return;
       if (this.isRunInProgress(this.selectedRun)) {
         this.startConfirm.visible = false;
@@ -17423,27 +17443,24 @@ export default {
       if (this.startConfirm.submitting) return;
       this.startConfirm.submitting = true;
       const sourceRun = this.selectedRun;
-      const shouldRetryAsNewRun = this.hasRunExecuted(sourceRun);
       try {
         this.startConfirm.visible = false;
-        const run = shouldRetryAsNewRun
-          ? await this.api(`/api/runs/${encodeURIComponent(sourceRun.id)}/retry`, { method: 'POST' })
-          : sourceRun;
-        const runId = run.id;
-        if (shouldRetryAsNewRun) {
-          this.runs = [run, ...this.runs];
-          this.selectedRunId = run.id;
-        }
+        const runId = sourceRun.id;
         this.patchRun(runId, {
           status: 'running',
           resultSummary: null,
           changeSummary: null,
-          exitCode: null
+          exitCode: null,
+          blocker: null,
+          cancelledBy: ''
         });
         this.logText = '执行已启动，等待日志输出...';
         this.runLogCollapse = [];
         this.runLogDrawerVisible = false;
-        await this.api(`/api/runs/${encodeURIComponent(runId)}/start`, { method: 'POST' });
+        await this.api(`/api/runs/${encodeURIComponent(runId)}/start`, {
+          method: 'POST',
+          body: JSON.stringify({ mode })
+        });
         this.connectEvents(runId);
         await this.refreshRuns();
       } finally {

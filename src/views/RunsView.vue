@@ -53,6 +53,7 @@
         </div>
         <div class="run-actions">
           <ElButton v-if="app.can('run.codex.execute') && !app.isDirectSkillRun(app.selectedRun)" type="primary" @click="app.startSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun)" :loading="app.isRunInProgress(app.selectedRun)">{{ app.selectedRunActionLabel }}</ElButton>
+          <ElButton v-if="app.can('run.codex.execute') && app.canRestartSelectedRun" plain @click="app.restartSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun)">重新执行</ElButton>
           <ElButton v-if="app.can('run.codex.execute')" @click="app.cancelSelectedRun" :disabled="!app.selectedRun || !app.isRunInProgress(app.selectedRun)">中断</ElButton>
           <ElButton v-if="app.can('run.delete')" type="danger" plain @click="app.deleteSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun)">删除</ElButton>
           <ElTooltip content="原始执行日志" placement="bottom">

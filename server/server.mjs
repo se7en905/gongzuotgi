@@ -2079,6 +2079,7 @@ async function handleApi(req, res, url) {
   const runStart = url.pathname.match(/^\/api\/runs\/([^/]+)\/start$/);
   if (req.method === 'POST' && runStart) {
     const run = await requireRun(runStart[1]);
+    const body = await readBody(req).catch(() => ({}));
     const project = await requireProject(run.projectId);
     requireProjectAccess(currentUser, project.id, 'developer', 'run.codex.execute');
     if (run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill') {
@@ -2088,7 +2089,8 @@ async function handleApi(req, res, url) {
     const runCodexRequest = run.codexRequest || {};
     const effectiveCodexModel = runCodexRequest.model || globalCodexConfig.model || '';
     const effectiveReasoningEffort = runCodexRequest.reasoningEffort || '';
-    const started = await startRun(project, { ...run, startedBy: currentUser.id });
+    const startMode = ['resume', 'restart'].includes(String(body.mode || '').trim()) ? String(body.mode).trim() : 'start';
+    const started = await startRun(project, { ...run, startedBy: currentUser.id, startMode });
     await writeOperationLog(req, {
       user: currentUser,
       module: 'run',

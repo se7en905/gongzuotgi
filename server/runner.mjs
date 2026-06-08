@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { appendRunLog, createArtProgressEvent, getCodexConfig, getRunWorkspace, paths, updateRun } from './store.mjs';
 
 const processes = new Map();
+const processTokens = new Map();
 const subscribers = new Map();
 const runStageBuffers = new Map();
 const handledRunProcessErrors = new Set();
@@ -70,23 +71,34 @@ export async function startRun(project, run) {
   const logPath = path.join(workspace, 'run.log');
   const artifactRoot = run.artifactRoot || buildRunArtifactRoot(project, run);
   const materialPath = run.materialPath || path.join(artifactRoot, '资料.md');
-  const prompt = await buildPrompt(project, run);
+  const startMode = normalizeStartMode(run.startMode, run);
+  const isResume = startMode === 'resume';
+  const previousLogTail = isResume ? await readTextTail(logPath, 12000) : '';
+  const prompt = await buildPrompt(project, { ...run, startMode, previousLogTail });
   const beforeChanges = await collectGitChanges(project.rootPath);
   await prepareArtifactRoot(artifactRoot, run);
   await fs.writeFile(promptPath, prompt);
-  await fs.writeFile(logPath, '');
+  if (isResume) await appendRunLog(run.id, `\n\n[resume] ${new Date().toISOString()} 继续执行：保留既有产物和日志，从未完成步骤接着处理。\n`);
+  else await fs.writeFile(logPath, '');
 
   await updateRun(run.id, {
     status: 'running',
-    currentStage: run.stages?.[0]?.name || null,
-    stages: markInitialRunningStage(run.stages || []),
+    currentStage: initialRunStageName(run, startMode),
+    stages: markInitialRunningStage(run.stages || [], startMode),
     startedAt: new Date().toISOString(),
     startedBy: run.startedBy || '',
     finishedAt: null,
+    cancelledBy: '',
+    startMode,
     promptPath,
     logPath,
     artifactRoot,
     materialPath,
+    blocker: null,
+    resultSummary: isResume ? run.resultSummary || null : null,
+    strictCheck: isResume ? run.strictCheck || null : null,
+    exitCode: null,
+    pid: null,
     changeSummary: {
       before: beforeChanges,
       after: [],
@@ -100,8 +112,8 @@ export async function startRun(project, run) {
   await reportRunProgress(project, run, {
     eventType: 'task_started',
     status: 'running',
-    stage: run.stages?.[0]?.name || '',
-    summary: `开始执行：${run.title}`
+    stage: initialRunStageName(run, startMode) || '',
+    summary: startMode === 'resume' ? `继续执行：${run.title}` : `开始执行：${run.title}`
   });
   emit(run.id, { type: 'status', status: 'running', message: 'Codex execution started' });
   const codexConfig = mergeRunCodexConfig(await getCodexConfig(), run.codexRequest);
@@ -123,13 +135,15 @@ export async function startRun(project, run) {
     env: codexEnvironment(codexConfig),
     stdio: ['pipe', 'pipe', 'pipe']
   });
+  const processToken = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   processes.set(run.id, child);
+  processTokens.set(run.id, processToken);
   runStageBuffers.set(run.id, '');
-  child.stdout.on('data', data => handleChunk(run.id, data));
-  child.stderr.on('data', data => handleChunk(run.id, data, true));
-  child.on('error', error => handleError(run.id, error));
-  child.stdin.on('error', error => handleError(run.id, error));
-  child.on('close', code => handleClose(run.id, code));
+  child.stdout.on('data', data => handleChunk(run.id, data, false, processToken));
+  child.stderr.on('data', data => handleChunk(run.id, data, true, processToken));
+  child.on('error', error => handleError(run.id, error, processToken));
+  child.stdin.on('error', error => handleError(run.id, error, processToken));
+  child.on('close', code => handleClose(run.id, code, processToken));
   await updateRun(run.id, { pid: child.pid });
   child.stdin.end(prompt);
   return { pid: child.pid, promptPath, logPath };
@@ -167,18 +181,64 @@ function tomlString(value = '') {
 
 function markInitialRunningStage(stages = []) {
   const now = new Date().toISOString();
+  const startIndex = firstRunnableStageIndex(stages);
   return stages.map((stage, index) => ({
     ...stage,
-    status: index === 0 ? 'running' : 'pending',
-    startedAt: index === 0 ? now : stage.startedAt || null,
+    status: index === startIndex ? 'running' : 'pending',
+    startedAt: index === startIndex ? now : null,
     finishedAt: null,
     durationMs: 0
   }));
 }
 
+function markInitialRunningStageForResume(stages = []) {
+  const now = new Date().toISOString();
+  const startIndex = firstRunnableStageIndex(stages);
+  return stages.map((stage, index) => {
+    if (index < startIndex && isCompletedStageStatus(stage.status)) return stage;
+    return {
+      ...stage,
+      status: index === startIndex ? 'running' : 'pending',
+      startedAt: index === startIndex ? now : stage.startedAt || null,
+      finishedAt: index === startIndex ? null : isCompletedStageStatus(stage.status) ? stage.finishedAt || null : null,
+      durationMs: index === startIndex ? 0 : stage.durationMs || 0
+    };
+  });
+}
+
+function normalizeStartMode(mode = '', run = {}) {
+  const value = String(mode || '').trim().toLowerCase();
+  if (value === 'resume' && canResumeRunOnServer(run)) return 'resume';
+  if (value === 'restart') return 'restart';
+  return 'start';
+}
+
+function canResumeRunOnServer(run = {}) {
+  return /cancelled|canceled|blocked|failed/i.test(String(run.status || ''));
+}
+
+function initialRunStageName(run = {}, startMode = 'start') {
+  const stages = Array.isArray(run.stages) ? run.stages : [];
+  return stages[firstRunnableStageIndex(stages, startMode)]?.name || null;
+}
+
+function firstRunnableStageIndex(stages = [], startMode = 'start') {
+  if (!Array.isArray(stages) || !stages.length) return 0;
+  if (startMode === 'resume') {
+    const index = stages.findIndex(stage => !isCompletedStageStatus(stage.status));
+    return index >= 0 ? index : stages.length - 1;
+  }
+  return 0;
+}
+
+function isCompletedStageStatus(status = '') {
+  return /passed|conditional_pass|done|completed|success|skipped/i.test(String(status || ''));
+}
+
 export async function cancelRun(runId, cancelledBy = '') {
   const child = processes.get(runId);
   if (!child) {
+    processTokens.delete(runId);
     await updateRun(runId, { status: 'cancelled', cancelledBy });
     await reportRunProgress(null, { id: runId, startedBy: cancelledBy }, {
       eventType: 'task_blocked',
@@ -189,6 +249,7 @@ export async function cancelRun(runId, cancelledBy = '') {
   }
   child.kill('SIGTERM');
   processes.delete(runId);
+  processTokens.delete(runId);
   await updateRun(runId, { status: 'cancelled', cancelledBy });
   await reportRunProgress(null, { id: runId, startedBy: cancelledBy }, {
     eventType: 'task_blocked',
@@ -550,17 +611,21 @@ function customWorkflowStrictPrompt(run = {}) {
   ].join('\n');
 }
 
-async function handleChunk(runId, data, isError = false) {
+async function handleChunk(runId, data, isError = false, processToken = '') {
+  if (!isCurrentProcess(runId, processToken)) return;
   const text = data.toString();
   await appendRunLog(runId, text);
   await processStageMarkers(runId, text);
   emit(runId, { type: isError ? 'stderr' : 'stdout', text });
 }
 
-async function handleError(runId, error) {
-  if (handledRunProcessErrors.has(runId)) return;
-  handledRunProcessErrors.add(runId);
+async function handleError(runId, error, processToken = '') {
+  if (!isCurrentProcess(runId, processToken)) return;
+  const errorKey = processErrorKey(runId, processToken);
+  if (handledRunProcessErrors.has(errorKey)) return;
+  handledRunProcessErrors.add(errorKey);
   processes.delete(runId);
+  processTokens.delete(runId);
   await appendRunLog(runId, `\n[runner error] ${error.message}\n`);
   await updateRun(runId, {
     status: 'failed',
@@ -578,13 +643,17 @@ async function handleError(runId, error) {
   emit(runId, { type: 'error', message: error.message });
 }
 
-async function handleClose(runId, code) {
-  if (handledRunProcessErrors.has(runId)) {
-    handledRunProcessErrors.delete(runId);
+async function handleClose(runId, code, processToken = '') {
+  const errorKey = processErrorKey(runId, processToken);
+  if (handledRunProcessErrors.has(errorKey)) {
+    handledRunProcessErrors.delete(errorKey);
     runStageBuffers.delete(runId);
+    processTokens.delete(runId);
     return;
   }
+  if (!isCurrentProcess(runId, processToken)) return;
   processes.delete(runId);
+  processTokens.delete(runId);
   runStageBuffers.delete(runId);
   const baseStatus = code === 0 ? 'conditional_pass' : 'failed';
   const currentRun = await import('./store.mjs').then(mod => mod.getRun(runId));
@@ -637,6 +706,14 @@ async function handleClose(runId, code) {
   if (changeSummary) emit(runId, { type: 'changeSummary', changeSummary });
   emit(runId, { type: 'resultSummary', resultSummary });
   emit(runId, { type: 'done' });
+}
+
+function isCurrentProcess(runId, processToken = '') {
+  return Boolean(processToken && processTokens.get(runId) === processToken);
+}
+
+function processErrorKey(runId, processToken = '') {
+  return `${runId}:${processToken}`;
 }
 
 async function processStageMarkers(runId, text) {

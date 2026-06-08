@@ -124,6 +124,8 @@
   - 新建美术执行弹窗默认来源必须是 `独立执行`；`关联任务` 只在负责人明确选择任务中心记录时使用。
   - 无任务关联执行的 `sourceType` 必须使用 `standalone` 或同等独立来源标识；任务中心发起的执行使用 `task-center` 或明确任务关联标识。前端判断任务链路、人工验收入口、任务中心执行次数时必须先判断是否确实有关联任务，不得仅凭 `zentaoId/taskNo` 字符串匹配。
   - 独立执行创建后只刷新 `/api/runs`，不得刷新任务中心、触发禅道同步、库存扫描、Git 拉取、本地路径扫描或共享盘扫描。
+  - 美术执行台右侧顶部按钮 `再次执行` 必须在当前执行记录上继续启动，不得新建执行清单记录、不得新增一条 AI档案明细、不得丢失原执行记录里的 Figma 链接、补充要求、任务描述、Skill/md 线索、执行对象、执行模式和环境信息。
+  - 同一条执行记录中断后再点 `再次执行` 时，只允许清理旧的运行状态、结果摘要、变更摘要、退出码、阻塞信息、旧日志和旧进程信息；原始上下文字段必须沿用当前记录继续执行。
   - 美术执行台右侧任务明细必须使用统一基础结构：顶部标题和操作按钮、`执行步骤明细`、结果明细模块、执行对象、执行环境、问题提示、下一步操作和 `查看档案` 入口。不同执行类型只能在这套基础结构后面新增补充模块，不得替换成另一套主展示。
   - 普通“新建美术执行”或分阶段执行可以额外展示关键动作概览、任务链路和继续和 Codex 沟通，但这些只能作为结果明细后的补充内容，不能替代统一的任务明细基础结构。
   - 只要执行记录已经明确选择了某个 md、SKILL.md 或 Skill 作为本次执行依据，右侧不得再展示关键动作概览、任务链路、md/SKILL.md 引用汇总或“明细在产物列表查看”这类重复说明；这些内容属于创建时已选定信息，不是执行中的有效明细。判断时必须同时看创建字段和执行链路解析结果，例如 `primarySkillPath`、`selectedMaterialHints`、`showdocHints`、`stage`、`executionMode === single-skill`、`workflow === art-single-skill`、`direct-skill`、以及 `runReferenceCount(run) > 0`，不得只看单一字段。
@@ -326,7 +328,7 @@
   - 只有 Figma 写入工具真实返回 `createdNodeIds` 或 `mutatedNodeIds`，才允许判定写入完成。
 - Web 端 Codex 对话数据约定：
   - Web 对话入口复用普通执行权限 `run.codex.execute`，只对非 `direct-skill` 执行记录开放；直接执行仍由执行人本机 Worker 领取，不走平台对话启动。
-  - Web 对话新增执行必须调用 `/api/runs/:id/retry` 创建新执行，再通过 `/api/runs/:id/start` 启动；不得直接在当前记录上覆盖结果。
+  - 只有 Web 对话提交追加沟通时，才必须调用 `/api/runs/:id/retry` 创建新执行，再通过 `/api/runs/:id/start` 启动；美术执行台顶部按钮 `再次执行` 不得调用 `/retry`，必须复用当前记录直接调用 `/api/runs/:id/start`。
   - `/api/runs/:id/retry` 请求体必须使用字段白名单，只允许 `title`、`requirement`、`figmaLinks`、`showdocHints`、`targetPage`、`stage`、`codexRequest` 这类追加执行字段覆盖到新执行；不得允许前端传入任意字段覆盖项目、权限、状态、执行人或路径。
   - `codexRequest` 只允许保存 `model`、`reasoningEffort`、`requestStandard`、`source`；`requestStandard` 必须限制长度，不能保存完整聊天历史、大日志、API Key、Figma token 或本机敏感路径。
   - 后端启动普通执行时必须将全局 Codex 配置和 `run.codexRequest` 合并：API Key、Base URL 和 provider 来自全局配置，单次 `model` 和 `reasoningEffort` 可覆盖本次启动参数。
@@ -414,8 +416,8 @@
   - 发现新任务或全量扫描必须使用独立接口或独立 `syncProfile/mode`，并接受独立权限校验；不得让普通 `同步任务` 请求默认进入全量扫描。
   - `/api/runs`：创建普通执行；当 `sourceType` 或 `executionMode` 为 `direct-skill` 时创建直接执行。
   - `/api/runs` 创建普通执行时必须支持无任务关联的独立执行：无 `taskId` 且未显式要求创建任务时，只写 `runs` 执行记录和产物目录，不写 `tasks` 任务中心数据。
-  - `/api/runs/:id/retry`：基于当前执行记录创建一次新的追加执行；只允许白名单字段和 `codexRequest` 进入新执行。
-  - `/api/runs/:id/start`：启动普通执行；必须应用全局 Codex 配置和该执行上的 `codexRequest` 单次模型/推理配置；不得启动 `direct-skill`。
+  - `/api/runs/:id/retry`：只用于 Web Codex 对话追加沟通，基于当前执行记录创建一次新的追加执行；只允许白名单字段和 `codexRequest` 进入新执行。
+  - `/api/runs/:id/start`：启动普通执行；必须应用全局 Codex 配置和该执行上的 `codexRequest` 单次模型/推理配置；不得启动 `direct-skill`。已执行、已失败、已取消或中断后的同一条普通执行再次启动时，仍复用当前 `run.id`，不得自动克隆新记录。
   - `DELETE /api/runs?from=...&to=...`：AI档案按筛选范围删除执行明细；只允许有 `api.aiArchive.delete` 权限的账号调用。
   - `/api/runs/direct-skill`：创建直接执行。
   - `/api/agent-workers`：读取 Worker 状态。
@@ -491,6 +493,7 @@
   - 禁止只生成本地脚本或提示词就声称 Figma 写入完成。
   - 禁止直接执行 Worker 领取或回传不属于当前执行人的任务。
   - 禁止直接执行 Worker 在执行人本机下载目录里调用 `codex exec` 时漏掉 `--skip-git-repo-check`。
+  - 禁止美术执行台顶部 `再次执行` 为普通执行调用 `/api/runs/:id/retry` 克隆新记录；普通再次执行必须复用当前执行记录。
   - 禁止把本机执行状态页藏在深层入口。
   - 禁止新增界面、新按钮、新接口后不更新角色管理权限目录。
   - 禁止新增权限只写前端显隐，不写后端 API 校验。
