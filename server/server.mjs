@@ -5730,6 +5730,16 @@ async function syncZentaoTasks(project, options = {}) {
       lastError: '',
       lastSummary: compactZentaoSyncSummary(result)
     };
+    broadcastPlatformEvent('tasks.changed', {
+      projectId: project.id,
+      module: 'task-sync',
+      syncKind: 'task',
+      syncedAt: result.syncedAt,
+      created: result.created || 0,
+      updated: result.updated || 0,
+      markedCurrent: result.markedCurrent || 0,
+      markedNonCurrent: result.markedNonCurrent || 0
+    });
     return result;
   } catch (error) {
     const failedAt = new Date().toISOString();
@@ -6845,6 +6855,15 @@ async function syncZentaoBugs(project, options = {}) {
         bugs: result
       })
     };
+    broadcastPlatformEvent('tasks.changed', {
+      projectId: project.id,
+      module: 'bug-sync',
+      syncKind: 'bug',
+      syncedAt: result.syncedAt || new Date().toISOString(),
+      created: result.created || 0,
+      updated: result.updated || 0,
+      removed: result.removed || 0
+    });
     return result;
   } catch (error) {
     const failedAt = new Date().toISOString();

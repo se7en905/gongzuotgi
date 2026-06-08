@@ -5045,6 +5045,15 @@ export default {
           await this.refreshRuns();
         }, 300);
       }
+      if (type === 'tasks.changed' && this.can('menu.tasks')) {
+        this.schedulePlatformRefresh('tasks', async () => {
+          await Promise.all([
+            this.refreshTasks(),
+            this.refreshTaskProcessingNotes(),
+            this.refreshConfig()
+          ]);
+        }, 300);
+      }
       if (type === 'agent-workers.changed' && this.can('menu.agentWorkers')) {
         if (document.visibilityState === 'hidden') return;
         if (!['agent-workers', 'runs'].includes(this.activeView)) return;
