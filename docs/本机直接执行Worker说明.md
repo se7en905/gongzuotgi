@@ -64,7 +64,7 @@ node "$HOME/ArtDirectWorker/scripts/art-direct-worker.mjs"
 
 ### Windows 开机自启
 
-在执行人 Windows 电脑的 PowerShell 中执行；命令会下载 Worker 和安装脚本到该电脑的用户目录：
+在执行人 Windows 电脑的 PowerShell 中执行；命令会下载 Worker 和安装脚本到该电脑的用户目录，并写入当前 Windows 用户的启动项，不需要管理员权限：
 
 ```powershell
 $root = "$env:USERPROFILE\ArtDirectWorker"
@@ -78,7 +78,7 @@ $env:ART_WORKER_HOME = $root
 powershell -NoProfile -ExecutionPolicy Bypass -File "$root\scripts\install_art_direct_worker_windows.ps1"
 ```
 
-安装后会注册 Windows 计划任务，组员登录 Windows 时自动启动本机 Worker。
+安装后会写入当前 Windows 用户启动项，组员登录 Windows 时自动启动本机 Worker。重复执行同一段开机自启命令会覆盖同一个启动项，不会创建多份启动配置。
 
 ### macOS 开机自启
 

@@ -265,6 +265,8 @@
   - 组员本机 Worker 必须使用执行人自己的 Codex CLI、Figma MCP、Figma OAuth 和 Figma 文件权限。
   - 组员电脑默认没有负责人本机的项目代码，Worker 启动命令不得依赖负责人本机路径、相对 `scripts/` 路径或整套项目代码。
   - Worker 启动命令必须通过工作台服务 URL 下载 Worker 脚本到组员自己的用户目录；默认目录为 Windows `%USERPROFILE%\ArtDirectWorker`、macOS `$HOME/ArtDirectWorker`。
+  - Windows `复制开机自启` 必须使用当前用户启动项安装 Worker，不得依赖管理员权限或必须注册系统计划任务；普通组员 PowerShell 可直接执行，重复安装只覆盖同一个启动项。
+  - macOS `复制开机自启` 使用当前用户 LaunchAgent；开机自启安装只需要操作一次，后续电脑登录系统自动启动 Worker，除非脚本、账号或工作台地址需要更新。
   - 直接执行 Worker 必须优先使用平台随任务下发的 Skill/md 内容快照，不得要求组员电脑能读取负责人本机 Skill/md 文件路径。
   - 直接执行 Worker 默认运行在执行人自己的 `ArtDirectWorker` 目录，该目录不保证是 Git 仓库或 Codex 已信任目录；Worker 拉起 `codex exec` 时必须带 `--skip-git-repo-check`，避免还未真正执行 Figma 写入就因目录信任检查秒失败。
   - Figma 必须走原生授权和 Figma MCP；组员登录工作台后，也必须在自己的电脑使用自己的 Figma 账号和本机 Figma MCP。
