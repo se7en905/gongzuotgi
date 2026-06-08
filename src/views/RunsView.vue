@@ -71,25 +71,7 @@
         </div>
       </div>
     </template>
-    <section v-if="app.selectedRun && !app.isSkillOrMdFocusedRun(app.selectedRun)" :class="['run-live-status', app.runStatusClass(app.selectedRun.status)]">
-      <div>
-        <span>当前状态</span>
-        <strong>{{ app.isDirectSkillRun(app.selectedRun) ? app.directSkillRunStatusLabel(app.selectedRun) : app.runStatusLabel(app.selectedRun.status) }}</strong>
-      </div>
-      <div>
-        <span>当前阶段</span>
-        <strong>{{ app.currentRunStageText(app.selectedRun) }}</strong>
-      </div>
-      <div>
-        <span>执行模式</span>
-        <strong>{{ app.workflowRunLabel(app.selectedRun) }}</strong>
-      </div>
-      <div>
-        <span>{{ app.isRunInProgress(app.selectedRun) ? '已执行时长' : '执行耗时' }}</span>
-        <strong>{{ app.liveRunDurationText(app.selectedRun) }}</strong>
-      </div>
-    </section>
-    <section v-if="app.selectedRun && app.isSkillOrMdFocusedRun(app.selectedRun)" class="focused-run-flow-panel">
+    <section v-if="app.selectedRun" class="focused-run-flow-panel">
       <div class="run-section-head">
         <div>
           <h4>执行步骤明细</h4>
@@ -168,11 +150,11 @@
         </div>
       </div>
     </section>
-    <section v-if="app.selectedRun && app.isSkillOrMdFocusedRun(app.selectedRun)" class="direct-run-overview-panel">
+    <section v-if="app.selectedRun" class="direct-run-overview-panel">
       <div class="run-section-head">
         <div>
-          <h4>{{ app.isDirectSkillRun(app.selectedRun) ? '直接执行结果' : '单技能执行结果' }}</h4>
-          <p>{{ app.isDirectSkillRun(app.selectedRun) ? '这条记录来自 Skill/md 引用，只看执行对象、Worker 回传和当前结论。' : '这条记录只引用一个 md/Skill，结果区域只展示交付判定、执行对象、环境和待处理问题。' }}</p>
+          <h4>{{ app.isDirectSkillRun(app.selectedRun) ? '直接执行结果' : app.isSkillOrMdFocusedRun(app.selectedRun) ? '单技能执行结果' : '执行结果明细' }}</h4>
+          <p>{{ app.isDirectSkillRun(app.selectedRun) ? '这条记录来自 Skill/md 引用，只看执行对象、Worker 回传和当前结论。' : app.isSkillOrMdFocusedRun(app.selectedRun) ? '这条记录只引用一个 md/Skill，结果区域只展示交付判定、执行对象、环境和待处理问题。' : '这条记录按统一任务明细展示交付判定、执行对象、环境和待处理问题；关键动作和任务链路在下方补充。' }}</p>
         </div>
         <ElTag size="large" effect="dark" class="run-result-status-tag" :type="app.runTagType(app.effectiveResultStatus(app.selectedRun))">{{ app.resultStatusLabel(app.effectiveResultStatus(app.selectedRun)) }}</ElTag>
       </div>
@@ -218,32 +200,10 @@
         <span>{{ focusedRunDetail.nextAction }}</span>
         <div>
           <ElButton type="primary" @click="app.openRunArchive(app.selectedRun)">查看档案</ElButton>
+          <ElButton v-if="!app.isDirectSkillRun(app.selectedRun) && app.can('review.submit') && app.businessTaskForRun(app.selectedRun)" @click="app.openRunBusinessTaskReview(app.selectedRun)">去人工验收</ElButton>
           <ElButton v-if="app.isDirectSkillRun(app.selectedRun) && app.can('menu.agentWorkers')" @click="app.switchView('agent-workers')">Worker 心跳</ElButton>
         </div>
       </div>
-    </section>
-    <div v-if="app.selectedRun && !app.isSkillOrMdFocusedRun(app.selectedRun) && app.selectedRunDisplayStages.length" class="stage-steps-wrap">
-      <ElSteps :active="app.activeRunStage" finish-status="success" direction="horizontal" class="stage-steps">
-        <ElStep
-          v-for="stage in app.selectedRunDisplayStages"
-          :key="stage.no"
-          :class="[stage.stepClass, { 'is-current-running-stage': stage.isCurrent }]"
-          :title="stage.name"
-          :status="stage.stepStatus"
-        >
-          <template #description>
-            <span class="stage-step-detail">
-              <span>{{ stage.stepLabel }}</span>
-              <small>{{ stage.durationText }}</small>
-            </span>
-          </template>
-        </ElStep>
-      </ElSteps>
-    </div>
-    <section v-if="app.selectedRun && !app.isDirectSkillRun(app.selectedRun) && app.isRunInProgress(app.selectedRun)" class="run-progress-panel">
-      <strong>正在执行中</strong>
-      <span>当前美术执行还没有最终结论。执行完成后，这里会显示 Figma / 规范 / Skill 处理结果、风险和下一步操作。</span>
-      <small>可以点击右上角日志图标查看实时输出。</small>
     </section>
     <section v-if="app.shouldShowRunSkillActionsPanel(app.selectedRun)" class="run-skill-actions-panel">
       <div class="run-section-head">
@@ -394,33 +354,6 @@
         </section>
       </div>
     </Teleport>
-    <section v-if="app.selectedRun && !app.isSkillOrMdFocusedRun(app.selectedRun) && !app.isRunInProgress(app.selectedRun) && app.selectedRun?.resultSummary" :class="['run-result-summary', app.resultSummaryClass(app.effectiveResultStatus(app.selectedRun))]">
-      <div class="run-result-head">
-        <div>
-          <span>交付判定</span>
-          <strong>{{ app.resultStatusTitle(app.selectedRun.resultSummary, app.selectedRun) }}</strong>
-        </div>
-        <ElTag size="large" effect="dark" class="run-result-status-tag" :type="app.runTagType(app.effectiveResultStatus(app.selectedRun))">{{ app.resultStatusLabel(app.effectiveResultStatus(app.selectedRun)) }}</ElTag>
-      </div>
-      <p class="run-result-summary-text">{{ app.resultSummaryText(app.selectedRun.resultSummary, app.selectedRun) }}</p>
-      <div class="result-fact-list">
-        <div v-for="item in app.resultDecisionFacts(app.selectedRun)" :key="item.label" :class="['result-fact-item', item.status]">
-          <span>{{ item.label }}</span>
-          <strong>{{ item.value }}</strong>
-        </div>
-      </div>
-      <div class="result-action-bar">
-        <span>{{ app.resultNextActionText(app.selectedRun) }}</span>
-        <div>
-          <ElButton type="primary" @click="app.openRunArchive(app.selectedRun)">查看档案</ElButton>
-          <ElButton v-if="app.can('review.submit') && app.businessTaskForRun(app.selectedRun)" @click="app.openRunBusinessTaskReview(app.selectedRun)">去人工验收</ElButton>
-        </div>
-      </div>
-      <div v-if="app.selectedRun.resultSummary.validationCommands?.length" class="result-list">
-        <span>验证命令</span>
-        <code v-for="command in app.selectedRun.resultSummary.validationCommands" :key="command">{{ command }}</code>
-      </div>
-    </section>
     <section v-if="app.selectedRun && app.selectedRunChangeItems.length" class="run-change-summary">
       <div class="run-change-head">
         <div>
@@ -527,7 +460,7 @@ export default {
       return this.app.directSkillRunOverviewMetrics(this.app.selectedRun);
     },
     focusedRunDetail() {
-      if (!this.app.selectedRun || !this.app.isSkillOrMdFocusedRun(this.app.selectedRun)) {
+      if (!this.app.selectedRun) {
         return {
           summaryCards: [],
           targetRows: [],

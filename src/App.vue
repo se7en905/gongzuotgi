@@ -14722,7 +14722,7 @@ export default {
       if (this.isSingleSkillWorkflowRun(run)) {
         return '单 md/Skill 执行默认展示当前任务的执行步骤明细、交付判定和轻量结果，不直接展开 Codex 对话。';
       }
-      return '执行台只看任务推进和关键动作是否发生；具体调用明细、截图、文件和验证内容放在产物列表对应明细里。';
+      return '右侧统一展示执行步骤、结果明细、执行对象和环境；关键动作、任务链路作为补充模块继续保留。';
     },
 
     runDetailTitle(run = null) {
@@ -14739,7 +14739,7 @@ export default {
       if (this.isSingleSkillWorkflowRun(run)) {
         return '查看当前任务的执行步骤明细。';
       }
-      return '查看阶段进度、关键动作概览和任务链路。产物明细请到产物列表查看。';
+      return '查看当前任务的执行步骤明细、结果明细和补充链路。产物明细请到产物列表查看。';
     },
 
     directSkillWorkerForRun(run = null) {
@@ -16087,10 +16087,10 @@ export default {
     },
 
     focusedRunStepFlow(run = null) {
-      if (!run || !this.isSkillOrMdFocusedRun(run)) return [];
+      if (!run) return [];
       const displayStages = this.selectedRun?.id === run.id ? this.selectedRunDisplayStages : this.displayRunStages(run);
-      const actualStages = displayStages.length ? displayStages : this.directSkillRunDisplayStages(run);
       const isDirect = this.isDirectSkillRun(run);
+      const actualStages = displayStages.length ? displayStages : isDirect ? this.directSkillRunDisplayStages(run) : [];
       const statusText = String(run.status || '').toLowerCase();
       const isPending = /pending|created|queued/.test(statusText) || !statusText;
       const isRunning = this.isRunInProgress(run) || /claimed/.test(statusText);
@@ -16099,11 +16099,19 @@ export default {
       const targetName = this.focusedRunContentName(run);
       const kind = this.directSkillRunContentKind(run);
       const firstStage = actualStages[0] || {};
-      const preflightStageIndex = isDirect && actualStages[1] ? 1 : -1;
+      const lastStageIndex = actualStages.length ? actualStages.length - 1 : -1;
+      const currentStageIndex = actualStages.findIndex(stage => /running|in_progress/i.test(stage.displayStatus || stage.status || ''));
+      const firstPendingStageIndex = actualStages.findIndex(stage => /pending|created|queued|wait/i.test(stage.displayStatus || stage.status || ''));
+      const codexFallbackIndex = currentStageIndex >= 0
+        ? currentStageIndex
+        : firstPendingStageIndex >= 0
+          ? firstPendingStageIndex
+          : lastStageIndex;
+      const preflightStageIndex = isDirect && actualStages[1] ? 1 : !isDirect && actualStages.length > 1 ? 0 : -1;
       const preflightStage = preflightStageIndex >= 0 ? actualStages[preflightStageIndex] : null;
-      const codexStageIndex = isDirect && actualStages[2] ? 2 : 0;
+      const codexStageIndex = isDirect && actualStages[2] ? 2 : Math.max(0, codexFallbackIndex);
       const codexStage = actualStages[codexStageIndex] || firstStage;
-      const resultStageIndex = isDirect && actualStages[3] ? 3 : -1;
+      const resultStageIndex = isDirect && actualStages[3] ? 3 : lastStageIndex >= 0 ? lastStageIndex : -1;
       const resultStage = resultStageIndex >= 0 ? actualStages[resultStageIndex] : null;
       const currentStageName = run.currentStage || actualStages.find(stage => /running|in_progress/i.test(stage.displayStatus || stage.status || ''))?.name || firstStage.name || '';
       const stageStatus = (index, fallback = 'pending') => {
@@ -16122,13 +16130,15 @@ export default {
       const resultStatus = isFailed ? 'failed' : isDone ? 'completed' : 'pending';
       const preflightStatus = isDirect
         ? normalize(stageStatus(preflightStageIndex, isPending ? 'pending' : 'completed'))
-        : isPending && !run.startedAt && !run.claimedAt ? 'pending' : 'completed';
+        : actualStages.length
+          ? normalize(stageStatus(preflightStageIndex, isPending && !run.startedAt ? 'pending' : 'completed'))
+          : isPending && !run.startedAt && !run.claimedAt ? 'pending' : 'completed';
       const contextDurationMs = this.focusedRunStepDurationMs(run, {
         startedAt: run.createdAt || '',
         finishedAt: run.startedAt || run.claimedAt || run.createdAt || ''
       });
-      const preflightDurationMs = isDirect ? this.focusedRunStepDurationMs(run, preflightStage, preflightStageIndex) : 0;
-      const resultDurationMs = isDirect ? this.focusedRunStepDurationMs(run, resultStage, resultStageIndex) : this.focusedRunStepDurationMs(run, {
+      const preflightDurationMs = preflightStageIndex >= 0 ? this.focusedRunStepDurationMs(run, preflightStage, preflightStageIndex) : 0;
+      const resultDurationMs = resultStageIndex >= 0 ? this.focusedRunStepDurationMs(run, resultStage, resultStageIndex) : this.focusedRunStepDurationMs(run, {
         startedAt: run.finishedAt || '',
         finishedAt: run.updatedAt || run.finishedAt || ''
       });
@@ -16136,7 +16146,7 @@ export default {
         {
           key: 'target',
           title: '选择执行内容',
-          summary: `${kind} · ${targetName}`,
+          summary: `${kind} · ${targetName || this.runGroupTitle(run)}`,
           status: run.createdAt ? 'completed' : 'pending',
           time: run.createdAt,
           durationMs: 0
@@ -16144,7 +16154,7 @@ export default {
         {
           key: 'context',
           title: '读取任务上下文',
-          summary: run.figmaLinks ? '已记录 Figma 目标和补充要求' : '读取当前任务要求和 Skill/md 内容',
+          summary: run.figmaLinks ? '已记录 Figma 目标和补充要求' : this.isSkillOrMdFocusedRun(run) ? '读取当前任务要求和 Skill/md 内容' : '读取任务要求、阶段和执行参数',
           status: isPending && !run.startedAt && !run.claimedAt ? 'pending' : 'completed',
           time: run.startedAt || run.claimedAt || run.createdAt,
           durationMs: contextDurationMs
@@ -16160,7 +16170,7 @@ export default {
         {
           key: 'codex',
           title: 'Codex 执行',
-          summary: currentStageName || '按当前 md/Skill 执行',
+          summary: currentStageName || (this.isSkillOrMdFocusedRun(run) ? '按当前 md/Skill 执行' : '按当前任务步骤执行'),
           status: normalize(stageStatus(codexStageIndex, codexStatus)),
           time: run.startedAt || run.claimedAt || '',
           durationMs: this.focusedRunStepDurationMs(run, codexStage, codexStageIndex)
