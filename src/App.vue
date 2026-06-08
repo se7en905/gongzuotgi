@@ -14780,6 +14780,7 @@ export default {
         ? run.selectedMaterialHints.filter(value => String(value || '').trim())
         : [];
       if (selectedMaterials.length) return true;
+      if (this.runReferenceCount(run) > 0) return true;
       return [
         run.primarySkillPath,
         run.skillPath,
