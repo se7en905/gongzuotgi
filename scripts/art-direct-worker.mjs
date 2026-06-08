@@ -428,6 +428,8 @@ async function safeAppendRunLog(runId, chunk) {
       runId,
       body: { chunk: String(chunk).slice(-offlineLogChunkMaxChars) },
       createdAt: new Date().toISOString()
+    }).catch(queueError => {
+      console.error(`[worker] 离线日志暂存失败：${queueError.message}`);
     });
     logOfflineNotice(`日志回传失败，已暂存在本机：${error.message}`);
   }
@@ -442,6 +444,8 @@ async function safeUpdateRunStatus(runId, body) {
       runId,
       body,
       createdAt: new Date().toISOString()
+    }).catch(queueError => {
+      console.error(`[worker] 离线状态暂存失败：${queueError.message}`);
     });
     logOfflineNotice(`状态回传失败，已暂存在本机：${error.message}`);
   }

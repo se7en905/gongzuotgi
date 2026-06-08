@@ -817,7 +817,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/ai-members') {
-    requirePermission(currentUser, 'menu.aiMembers');
+    requireAnyPermission(currentUser, ['api.aiMembers.read', 'menu.aiMembers']);
     sendJson(res, 200, await loadAiMembersSnapshot(currentUser));
     return;
   }
@@ -8012,8 +8012,8 @@ function isSgProjectTask(task = {}) {
 async function loadAiMembersSnapshot(currentUser = {}) {
   const ownerBoardPath = path.join(aiWeekDir, '美术部 AI 可视化看板.html');
   const memberBoardPath = path.join(aiWeekDir, '美术部AI看板.html');
-  const canViewOwnerBoard = hasPermission(currentUser, 'menu.aiMembers');
-  const canViewMemberBoard = hasPermission(currentUser, 'menu.aiMembers');
+  const canViewOwnerBoard = hasPermission(currentUser, 'menu.aiMembers.owner');
+  const canViewMemberBoard = hasPermission(currentUser, 'menu.aiMembers.member') || !canViewOwnerBoard;
   const boardPath = canViewOwnerBoard ? ownerBoardPath : memberBoardPath;
   const memberDataPath = memberBoardPath;
   const [boardStat, boardHtml, memberBoardHtml, ownerBoardHtml] = await Promise.all([

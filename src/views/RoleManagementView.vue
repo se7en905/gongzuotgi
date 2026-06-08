@@ -207,6 +207,10 @@ export default {
         'workflow.manage': '工作流模板',
         'menu.agentWorkers': '本机执行状态',
         'menu.aiArchive': 'AI档案',
+        'menu.aiMembers.owner': '负责人 AI部门看板',
+        'menu.aiMembers.member': '组员 AI部门看板',
+        'aiMembers.score.view': '查看 AI 评分',
+        'aiMembers.score.refresh': '刷新 AI 评分',
         'api.agentRuns.create': '直接执行创建 API',
         'api.agentWorkers.read': 'Worker 状态读取 API',
         'api.agentWorkers.heartbeat': 'Worker 心跳 API',
@@ -214,7 +218,10 @@ export default {
         'api.agentRuns.claim': '直接执行领取 API',
         'api.agentRuns.log': '直接执行日志 API',
         'api.agentRuns.status': '直接执行状态 API',
-        'api.aiArchive.delete': 'AI档案范围删除 API'
+        'api.aiArchive.delete': 'AI档案范围删除 API',
+        'api.aiMembers.read': 'AI部门看板读取 API',
+        'api.aiMembers.score.read': 'AI评分依赖读取 API',
+        'api.aiMembers.refresh': 'AI部门看板刷新 API'
       };
       return this.app.permissionCatalog.find(item => item.id === id)?.name || fallbackNames[id] || '未知权限';
     },

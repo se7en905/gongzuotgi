@@ -1,9 +1,9 @@
 <template>
 <section v-show="app.activeView === 'ai-members'" class="ai-board-embed-view">
-  <div v-if="app.isPlatformAdmin" class="ai-board-switcher">
-    <ElSegmented v-if="boardModeOptions.length > 1" v-model="app.aiMembersBoardMode" :options="boardModeOptions" />
+  <div v-if="boardModeOptions.length > 1" class="ai-board-switcher">
+    <ElSegmented v-model="app.aiMembersBoardMode" :options="boardModeOptions" />
   </div>
-  <section class="ai-score-panel">
+  <section v-if="app.canViewAiMemberScore" class="ai-score-panel">
     <div class="ai-score-head">
       <div>
         <h3>当月 AI 评分</h3>
@@ -13,6 +13,7 @@
         <span v-if="app.aiMemberScoreRowsSnapshotAt">上次刷新 {{ app.formatDateTime(app.aiMemberScoreRowsSnapshotAt) }}</span>
         <span v-else>暂无评分快照</span>
         <ElButton
+          v-if="app.canRefreshAiMemberScore"
           type="primary"
           :loading="app.aiMemberScoreRefreshing"
           @click="app.refreshAiMemberScoreSnapshotManually()"
@@ -21,7 +22,9 @@
         </ElButton>
       </div>
     </div>
-    <div v-if="!app.aiMemberScoreReady" class="ai-score-loading">暂无上次 AI 评分，点击“刷新评分”后计算。</div>
+    <div v-if="!app.aiMemberScoreReady" class="ai-score-loading">
+      {{ app.canRefreshAiMemberScore ? '暂无上次 AI 评分，点击“刷新评分”后计算。' : '暂无上次 AI 评分。' }}
+    </div>
     <div v-else class="ai-score-grid">
       <article
         v-for="member in app.aiMemberScoreRows"

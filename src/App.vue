@@ -534,25 +534,27 @@ const RUN_LOG_LINE_MAX_CHARS = 2400;
 
 const roleLevelPermissionPresets = {
   4: [
-    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive', 'menu.users', 'menu.roles', 'menu.operationLogs',
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.owner', 'menu.aiMembers.member', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive', 'menu.users', 'menu.roles', 'menu.operationLogs',
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy', 'task.personPressure.view',
     'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'run.start', 'run.cancel', 'run.delete', 'review.submit', 'review.image.submit',
     'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.source.delete', 'skill.asset.create', 'skill.asset.void', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
+    'aiMembers.score.view', 'aiMembers.score.refresh',
     'codex.config.manage', 'user.manage', 'role.manage',
-    'api.skillSources.manage', 'api.skillSources.delete', 'api.skillScan.run', 'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.runs.delete', 'api.aiArchive.delete', 'api.reviews.submit', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.skillAsset.void', 'api.codex.config.read', 'api.codex.config.manage', 'api.users.manage', 'api.roles.manage', 'api.taskCenter.config.manage', 'api.operationLogs.read', 'api.operationLogs.delete'
+    'api.skillSources.manage', 'api.skillSources.delete', 'api.skillScan.run', 'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.runs.delete', 'api.aiArchive.delete', 'api.reviews.submit', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.skillAsset.void', 'api.aiMembers.read', 'api.aiMembers.score.read', 'api.aiMembers.refresh', 'api.codex.config.read', 'api.codex.config.manage', 'api.users.manage', 'api.roles.manage', 'api.taskCenter.config.manage', 'api.operationLogs.read', 'api.operationLogs.delete'
   ],
   3: [
-    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive',
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive',
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy',
     'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'run.start', 'run.cancel', 'review.submit', 'review.image.submit',
     'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.asset.create', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
-    'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.reviews.submit', 'api.codex.config.read', 'api.skillSources.manage', 'api.skillScan.run', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create'
+    'aiMembers.score.view',
+    'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.reviews.submit', 'api.codex.config.read', 'api.skillSources.manage', 'api.skillScan.run', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.aiMembers.read', 'api.aiMembers.score.read'
   ],
   2: [
-    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.runs', 'menu.aiArchive',
-    'task.codexPrompt.copy', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'api.reviews.submit', 'api.skillAlias.manage'
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'menu.runs', 'menu.aiArchive',
+    'task.codexPrompt.copy', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.reviews.submit', 'api.skillAlias.manage', 'api.aiMembers.read', 'api.aiMembers.score.read'
   ],
-  1: ['menu.tasks', 'menu.skillList', 'menu.aiMembers', 'skill.usageLogs.view']
+  1: ['menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.aiMembers.read', 'api.aiMembers.score.read']
 };
 
 export default {
@@ -685,11 +687,9 @@ export default {
       aiMembersSnapshot: null,
       aiMembersViewMounted: false,
       aiMemberScoreReady: false,
-      aiMemberScoreReadyTimer: 0,
       aiMemberScoreRowsSnapshot: [],
       aiMemberScoreRowsSnapshotKey: '',
       aiMemberScoreRowsSnapshotAt: '',
-      aiMemberScoreRefreshTimer: 0,
       aiMemberScoreRefreshing: false,
       aiMembersBoardFrameReady: false,
       aiMembersBoardFrameReadyTimer: 0,
@@ -2598,8 +2598,16 @@ export default {
       ];
     },
 
+    canViewAiMemberScore() {
+      return this.can('aiMembers.score.view') || this.isPlatformAdmin;
+    },
+
+    canRefreshAiMemberScore() {
+      return this.can('aiMembers.score.refresh') || this.isPlatformAdmin;
+    },
+
     aiMemberScoreRuleText() {
-      return '产物分按有效价值计算：通用性、复用人数、调用次数、质量和版本越高分越高；已作废、低复用或被替代的产物降权。';
+      return '普通组员按产物价值 55、使用 30、执行 15 计算；盛威单线入口图按本人有效使用计算版本和价值。';
     },
 
     skillInventoryProductStats() {
@@ -3920,8 +3928,6 @@ export default {
 
   beforeUnmount() {
     if (this.zentaoSyncTimer) clearTimeout(this.zentaoSyncTimer);
-    if (this.aiMemberScoreReadyTimer) clearTimeout(this.aiMemberScoreReadyTimer);
-    if (this.aiMemberScoreRefreshTimer) clearTimeout(this.aiMemberScoreRefreshTimer);
     if (this.aiMembersBoardFrameReadyTimer) clearTimeout(this.aiMembersBoardFrameReadyTimer);
     this.stopZentaoAutoSyncPolling();
     this.stopTaskBriefRealtimeSync();
@@ -4529,6 +4535,7 @@ export default {
       this.workbenchStateRestoring = true;
       const jobs = [];
       const lightRunViews = ['runs', 'agent-workers', 'ai-archive'];
+      const aiMembersView = this.activeView === 'ai-members';
       try {
         if (lightRunViews.includes(this.activeView)) {
           jobs.push(['执行记录', () => this.refreshRuns()]);
@@ -4538,24 +4545,29 @@ export default {
           if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length) {
             jobs.push(['账号列表', () => this.refreshUsers()]);
           }
-        } else if (this.can('menu.skillList')) {
+        } else if (!aiMembersView && this.can('menu.skillList')) {
           jobs.push(['库存缓存', () => this.loadSkillInventorySavedSnapshot()]);
           jobs.push(['人工研究清单', () => this.refreshAiAssetSheet()]);
           jobs.push(['验证回填', () => this.refreshSkillValidations({ force: true, silent: true })]);
           jobs.push(['调用次数', () => this.refreshUsageCounters()]);
           jobs.push(['版本覆盖', () => this.refreshSkillVersionOverrides()]);
         }
-        if (!lightRunViews.includes(this.activeView) && (this.can('menu.skillList') || this.can('menu.aiMembers'))) {
+        if (!lightRunViews.includes(this.activeView) && !aiMembersView && (this.can('menu.skillList') || this.can('menu.aiMembers'))) {
           jobs.push(['AI 研究同步', () => this.refreshArtProgressEvents()]);
         }
-        if (!lightRunViews.includes(this.activeView) && this.can('menu.aiMembers')) {
+        if (aiMembersView && this.can('api.aiMembers.read')) {
+          this.restoreAiMembersBoardHtmlSnapshot();
+          if (!this.hasAiMembersBoardHtml(this.aiMembersSnapshot)) {
+            jobs.push(['成员快照', () => this.refreshAiMembers({ silent: true })]);
+          }
+        } else if (!lightRunViews.includes(this.activeView) && this.can('menu.aiMembers')) {
           jobs.push(['成员快照', () => this.refreshAiMembers()]);
         }
         const results = await Promise.allSettled(jobs.map(([, run]) => run()));
         results.forEach((result, index) => {
           if (result.status === 'rejected') console.warn(`${jobs[index][0]}恢复失败，已保留当前页面状态`, result.reason);
         });
-        if (!lightRunViews.includes(this.activeView) && this.can('menu.skillList')) {
+        if (!lightRunViews.includes(this.activeView) && !aiMembersView && this.can('menu.skillList')) {
           this.applySkillAliasOverridesToScans();
           this.saveWorkbenchDisplayCache('scans', this.scans);
         }
@@ -5701,7 +5713,8 @@ export default {
         const result = await this.api('/api/skill-validations');
         if (!Array.isArray(result.records)) {
           const message = result.error || result.message || '验证回填接口未返回有效记录，已保留当前列表';
-	          ElMessage.warning(message);
+	          if (!silent) ElMessage.warning(message);
+	          if (silent) throw new Error(message);
 	          return;
 	        }
         this.skillValidationRows = this.filterVisibleSkillValidationRecords(result.records);
@@ -5716,7 +5729,8 @@ export default {
       try {
         return await this.skillValidationRefreshPromise;
 	      } catch (error) {
-	        ElMessage.error(this.readApiError(error) || 'Skill 验证信息读取失败');
+	        if (!silent) ElMessage.error(this.readApiError(error) || 'Skill 验证信息读取失败');
+	        if (silent) throw error;
       } finally {
         if (!silent) this.loading.skillValidations = false;
         this.skillValidationRefreshPromise = null;
@@ -6143,8 +6157,9 @@ export default {
       if (/^[A-Za-z]:\\/.test(text)) return `file:///${text.replace(/\\/g, '/')}`;
       return '';
     },
-    async refreshArtProgressEvents() {
-      this.loading.artProgressEvents = true;
+    async refreshArtProgressEvents(options = {}) {
+      const silent = options.silent === true;
+      if (!silent) this.loading.artProgressEvents = true;
       try {
         const [summary, events] = await Promise.all([
           this.api('/api/art-progress-events/summary'),
@@ -6152,7 +6167,9 @@ export default {
         ]);
         this.artProgressSummary = summary || null;
         if (!Array.isArray(events)) {
-          ElMessage.warning('AI 研究同步接口未返回有效记录，已保留当前列表');
+          const message = 'AI 研究同步接口未返回有效记录，已保留当前列表';
+          if (!silent) ElMessage.warning(message);
+          if (silent) throw new Error(message);
           return;
         }
         this.artProgressEvents = events;
@@ -6164,9 +6181,10 @@ export default {
         if (this.canViewArtProgressAccessLogs) await this.refreshArtProgressLifecycleLogs();
       } catch (error) {
         this.restoreWorkbenchDisplayCacheKey('artProgressSummary');
-        ElMessage.error(this.readApiError(error) || 'AI 研究同步读取失败');
+        if (!silent) ElMessage.error(this.readApiError(error) || 'AI 研究同步读取失败');
+        if (silent) throw error;
       } finally {
-        this.loading.artProgressEvents = false;
+        if (!silent) this.loading.artProgressEvents = false;
       }
     },
 
@@ -6655,8 +6673,9 @@ export default {
       return 'info';
     },
 
-    async refreshAiMembers() {
-      this.loading.aiMembers = true;
+    async refreshAiMembers(options = {}) {
+      const silent = options.silent === true;
+      if (!silent) this.loading.aiMembers = true;
       try {
         const snapshot = await this.api('/api/ai-members');
         this.aiMembersSnapshot = this.mergeAiMembersSnapshotWithBoardCache(snapshot);
@@ -6664,9 +6683,10 @@ export default {
         this.saveWorkbenchDisplayCache('aiMembersSnapshot', this.aiMembersSnapshot);
       } catch (error) {
         this.restoreAiMembersBoardHtmlSnapshot();
-        ElMessage.error(this.readApiError(error) || 'AI 部门成员数据读取失败');
+        if (!silent) ElMessage.error(this.readApiError(error) || 'AI 部门成员数据读取失败');
+        if (silent) throw error;
       } finally {
-        this.loading.aiMembers = false;
+        if (!silent) this.loading.aiMembers = false;
       }
     },
 
@@ -6758,10 +6778,6 @@ export default {
     },
 
     cancelAiMembersDeferredWork() {
-      if (this.aiMemberScoreReadyTimer) {
-        clearTimeout(this.aiMemberScoreReadyTimer);
-        this.aiMemberScoreReadyTimer = 0;
-      }
       if (this.aiMembersBoardFrameReadyTimer) {
         clearTimeout(this.aiMembersBoardFrameReadyTimer);
         this.aiMembersBoardFrameReadyTimer = 0;
@@ -6792,21 +6808,18 @@ export default {
       return rows;
     },
 
-    scheduleAiMemberScoreRefresh(delay = 180) {
-      if (this.aiMemberScoreRefreshTimer) clearTimeout(this.aiMemberScoreRefreshTimer);
-      this.aiMemberScoreRefreshTimer = setTimeout(() => {
-        this.aiMemberScoreRefreshTimer = 0;
-        this.refreshAiMemberScoreSnapshotQuietly();
-      }, delay);
-    },
-
     async refreshAiMemberScoreSnapshotManually() {
+      if (!this.canRefreshAiMemberScore) {
+        ElMessage.warning('当前账号没有刷新 AI 评分的权限');
+        return;
+      }
       if (this.aiMemberScoreRefreshing) return;
       this.ensureAiMemberScoreData();
       this.aiMemberScoreRefreshing = true;
       try {
         await this.refreshAiMemberScoreDependenciesForManualRefresh();
         await new Promise(resolve => setTimeout(resolve, 0));
+        this.clearAiMemberScoreCache();
         const sourceMembers = this.currentAiMemberScoreSourceMembers();
         const cacheKey = this.aiMemberScoreRowsCacheKey(sourceMembers);
         const rows = this.computeAiMemberScoreRows();
@@ -6831,9 +6844,9 @@ export default {
         ['版本覆盖', () => this.refreshSkillVersionOverrides()],
         ['调用次数', () => this.refreshUsageCounters()],
         ['验证记录', () => this.refreshSkillValidations({ force: true, silent: true })],
-        ['研究同步', () => this.refreshArtProgressEvents()],
+        ['研究同步', () => this.refreshArtProgressEvents({ silent: true })],
         ['执行记录', () => this.refreshRuns()],
-        ['成员快照', () => this.refreshAiMembers()]
+        ['成员快照', () => this.refreshAiMembers({ silent: true })]
       ];
       const results = await Promise.allSettled(jobs.map(([, run]) => run()));
       const failed = results
@@ -6841,28 +6854,9 @@ export default {
         .filter(item => item.result.status === 'rejected')
         .map(item => item.label);
       if (failed.length) {
-        console.warn(`AI 评分依赖刷新失败，已使用当前缓存继续计算：${failed.join('、')}`);
+        console.warn(`AI 评分依赖刷新失败，已保留上次分值：${failed.join('、')}`);
+        throw new Error(`AI 评分依赖刷新失败：${failed.join('、')}`);
       }
-    },
-
-    refreshAiMemberScoreSnapshotQuietly() {
-      if (this.aiMemberScoreRefreshing || this.workbenchStateRestoring) return;
-      const sourceMembers = this.currentAiMemberScoreSourceMembers();
-      const cacheKey = this.aiMemberScoreRowsCacheKey(sourceMembers);
-      if (cacheKey && cacheKey === this.aiMemberScoreRowsSnapshotKey && this.aiMemberScoreRowsSnapshot.length) {
-        this.aiMemberScoreReady = true;
-        return;
-      }
-      this.aiMemberScoreRefreshing = true;
-      setTimeout(() => {
-        try {
-          const rows = this.computeAiMemberScoreRows();
-          this.saveAiMemberScoreSnapshot(rows, cacheKey);
-          this.aiMemberScoreReady = true;
-        } finally {
-          this.aiMemberScoreRefreshing = false;
-        }
-      }, 0);
     },
 
     aiMemberScoreRowsCacheKey(sourceMembers = []) {

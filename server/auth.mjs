@@ -18,6 +18,8 @@ const permissionCatalog = [
   { id: 'menu.tasks', name: '任务中心', type: 'menu', group: '一级菜单', description: '访问美术任务中心。' },
   { id: 'menu.skillList', name: 'AI 产物清单', type: 'menu', group: '一级菜单', description: '查看 AI 产物清单、产物数量统计和产物列表。' },
   { id: 'menu.aiMembers', name: 'AI 部门看板', type: 'menu', group: '一级菜单', description: '访问 AI 部门看板和当月 AI 评分。' },
+  { id: 'menu.aiMembers.owner', name: '负责人 AI部门看板', type: 'menu', group: 'AI部门看板', description: '查看负责人视角的 AI 部门看板。' },
+  { id: 'menu.aiMembers.member', name: '组员 AI部门看板', type: 'menu', group: 'AI部门看板', description: '查看组员视角的 AI 部门看板。' },
   { id: 'menu.codexConfig', name: 'Codex 配置', type: 'menu', group: '一级菜单', description: '访问 Codex 配置页。' },
   { id: 'menu.runs', name: '美术执行台', type: 'menu', group: '一级菜单', description: '访问美术执行台。' },
   { id: 'menu.agentWorkers', name: '本机执行状态', type: 'menu', group: '一级菜单', description: '查看组员 Worker 心跳、自检和执行明细。' },
@@ -50,6 +52,8 @@ const permissionCatalog = [
   { id: 'skill.version.manage', name: '维护产物版本', type: 'button', group: 'AI 产物清单', description: '编辑产物预览里的版本号。' },
   { id: 'skill.alias.manage', name: '维护产物调用别名', type: 'button', group: 'AI 产物清单', description: '编辑产物预览里的调用别名，不允许修改版本。' },
   { id: 'skill.usageLogs.view', name: '查看产物使用明细', type: 'button', group: 'AI 产物清单', description: '查看产物调用次数、成员调用统计和版本迭代记录。' },
+  { id: 'aiMembers.score.view', name: '查看 AI 评分', type: 'button', group: 'AI部门看板', description: '查看 AI 部门看板里的当月 AI 评分。' },
+  { id: 'aiMembers.score.refresh', name: '刷新 AI 评分', type: 'button', group: 'AI部门看板', description: '手动刷新 AI 评分相关轻量依赖并重新计算评分快照。' },
   { id: 'codex.config.manage', name: '管理 Codex 配置', type: 'button', group: 'AI 管理', description: '保存 Codex 模型、Provider 和 API Key。' },
   { id: 'user.manage', name: '管理账号', type: 'button', group: '用户管理', description: '新增、编辑、禁用账号和重置密码。' },
   { id: 'role.manage', name: '管理角色', type: 'button', group: '用户管理', description: '新增、编辑、删除角色。' },
@@ -74,6 +78,9 @@ const permissionCatalog = [
   { id: 'api.skillAlias.manage', name: '产物调用别名 API', type: 'api', group: '后端接口', description: '保存产物调用别名，不允许修改版本。' },
   { id: 'api.skillAsset.create', name: '手动产物保存 API', type: 'api', group: '后端接口', description: '保存手动创建的技能或规范产物。' },
   { id: 'api.skillAsset.void', name: '产物作废 API', type: 'api', group: '后端接口', description: '作废或恢复 AI 产物清单产物。' },
+  { id: 'api.aiMembers.read', name: 'AI部门看板读取 API', type: 'api', group: '后端接口', description: '读取 AI 部门成员快照和看板 HTML 缓存。' },
+  { id: 'api.aiMembers.score.read', name: 'AI评分依赖读取 API', type: 'api', group: '后端接口', description: '读取 AI 评分所需轻量缓存或快照。' },
+  { id: 'api.aiMembers.refresh', name: 'AI部门看板刷新 API', type: 'api', group: '后端接口', description: '刷新 AI 部门成员快照或研究同步，不触发库存扫描。' },
   { id: 'api.codex.config.read', name: 'Codex 配置读取 API', type: 'api', group: '后端接口', description: '读取 Codex 脱敏配置。' },
   { id: 'api.codex.config.manage', name: 'Codex 配置保存 API', type: 'api', group: '后端接口', description: '保存 Codex 配置。' },
   { id: 'api.users.manage', name: '账号管理 API', type: 'api', group: '后端接口', description: '账号管理接口。' },
@@ -86,17 +93,18 @@ const allPermissionIds = permissionCatalog.map(item => item.id);
 const levelPermissions = {
   4: allPermissionIds,
   3: [
-    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive',
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive',
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy',
     'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'run.start', 'run.cancel', 'review.submit', 'review.image.submit',
     'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.asset.create', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
-    'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.reviews.submit', 'api.codex.config.read', 'api.skillSources.manage', 'api.skillScan.run', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create'
+    'aiMembers.score.view',
+    'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.reviews.submit', 'api.codex.config.read', 'api.skillSources.manage', 'api.skillScan.run', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.aiMembers.read', 'api.aiMembers.score.read'
   ],
   2: [
-    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.runs', 'menu.aiArchive',
-    'task.codexPrompt.copy', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'api.reviews.submit', 'api.skillAlias.manage'
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'menu.runs', 'menu.aiArchive',
+    'task.codexPrompt.copy', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.reviews.submit', 'api.skillAlias.manage', 'api.aiMembers.read', 'api.aiMembers.score.read'
   ],
-  1: ['menu.tasks', 'menu.skillList', 'menu.aiMembers', 'skill.usageLogs.view']
+  1: ['menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.aiMembers.read', 'api.aiMembers.score.read']
 };
 const defaultRoles = [
   {
@@ -193,14 +201,14 @@ export async function ensureDefaultRoles() {
 function legacyRolePermissionAdditions(roleId = '') {
   if (roleId === 'admin') return levelPermissions[4];
   if (roleId === 'developer') return [
-    'menu.skillList', 'menu.aiMembers', 'menu.agentWorkers',
+    'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'menu.agentWorkers',
     'run.directSkill.create', 'run.directSkill.workerCommand',
-    'skill.alias.manage', 'skill.usageLogs.view',
-    'api.skillAlias.manage', 'api.agentRuns.create', 'api.agentWorkers.read',
+    'skill.alias.manage', 'skill.usageLogs.view', 'aiMembers.score.view',
+    'api.skillAlias.manage', 'api.aiMembers.read', 'api.aiMembers.score.read', 'api.agentRuns.create', 'api.agentWorkers.read',
     'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status'
   ];
-  if (roleId === 'reviewer') return ['menu.skillList', 'menu.aiMembers', 'skill.alias.manage', 'skill.usageLogs.view', 'api.skillAlias.manage'];
-  if (roleId === 'viewer') return ['menu.skillList', 'menu.aiMembers', 'skill.usageLogs.view'];
+  if (roleId === 'reviewer') return ['menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'skill.alias.manage', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.skillAlias.manage', 'api.aiMembers.read', 'api.aiMembers.score.read'];
+  if (roleId === 'viewer') return ['menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.aiMembers.read', 'api.aiMembers.score.read'];
   return [];
 }
 
@@ -675,7 +683,7 @@ function expandLegacyPermission(permission = '') {
     'menu.repository': ['menu.skillList', 'skill.source.connect', 'skill.source.edit'],
     'menu.skillManagement': ['menu.skillList'],
     'menu.skillMembers': ['menu.skillList'],
-    'menu.aiMembers': ['menu.aiMembers'],
+    'menu.aiMembers': ['menu.aiMembers', 'menu.aiMembers.member', 'aiMembers.score.view', 'api.aiMembers.read', 'api.aiMembers.score.read'],
     'project.create': ['skill.source.connect', 'api.skillSources.manage'],
     'project.edit': ['skill.source.edit', 'api.skillSources.manage'],
     'project.delete': ['skill.source.delete', 'api.skillSources.delete'],
