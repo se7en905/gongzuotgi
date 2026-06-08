@@ -40,6 +40,7 @@
         <span>类型</span>
         <ElSelect v-model="app.aiExecutionArchiveFilters.sourceType" clearable placeholder="全部类型">
           <ElOption label="直接执行" value="direct-skill" />
+          <ElOption label="独立执行" value="standalone" />
           <ElOption label="任务执行" value="task" />
           <ElOption label="Bug 执行" value="bug" />
         </ElSelect>

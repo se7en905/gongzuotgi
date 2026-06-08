@@ -520,6 +520,12 @@ const AI_FLOW_STAGE_FIELDS = [
   { key: 'autoFix', label: '自动修复' }
 ];
 const CODEX_MODEL_OPTIONS = ['gpt-5.5', 'gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2'];
+const CODEX_REASONING_OPTIONS = [
+  { label: '低', value: 'low' },
+  { label: '中', value: 'medium' },
+  { label: '高', value: 'high' },
+  { label: '极高', value: 'xhigh' }
+];
 const RUN_LOG_FETCH_TAIL_BYTES = 48 * 1024;
 const RUN_LOG_BUFFER_MAX_CHARS = 160 * 1024;
 const RUN_LOG_RENDER_MAX_CHARS = 80 * 1024;
@@ -934,7 +940,14 @@ export default {
         sourceType: 'task'
       },
       runChatInput: '',
+      runChatPanelOpen: false,
       runChatSubmitting: false,
+      runChatForm: {
+        model: 'gpt-5.5',
+        reasoningEffort: 'xhigh',
+        requestStandard: '沿用当前任务上下文，只处理本次补充要求；输出交付结论、变更点、验证方式和下一步。'
+      },
+      codexReasoningOptions: CODEX_REASONING_OPTIONS,
       projectForm: emptyProjectForm(),
       taskSyncForm: {
         projectId: '',
@@ -3676,10 +3689,13 @@ export default {
 
     selectedRunId(value) {
       if (value) {
+        this.runChatPanelOpen = false;
+        this.resetRunChatForm();
         this.runLogCollapse = this.isRunInProgress(this.selectedRun) ? ['raw-log'] : [];
         if (this.isRunInProgress(this.selectedRun)) this.loadSelectedRunLog();
         else this.logText = '原始执行日志默认收起，展开后读取尾部摘要。';
       } else {
+        this.runChatPanelOpen = false;
         this.runLogCollapse = [];
         this.logText = '选择一个任务后查看执行日志。';
         this.selectedArtifact = null;
@@ -3808,7 +3824,13 @@ export default {
         this.runForm.taskId = '';
         if (!this.runForm.title) this.runForm.title = 'Figma 界面执行';
       }
+      if (value === 'standalone') {
+        this.runForm.taskId = '';
+        this.runForm.zentaoId = '';
+        if (!this.runForm.title) this.runForm.title = '独立执行实验';
+      }
       if (value === 'completed-task') {
+        this.runForm.taskId = '';
         if (!this.runForm.title) this.runForm.title = '基于已完成任务继续处理';
       }
     },
@@ -5219,6 +5241,7 @@ export default {
         // Use the cached config when the dedicated endpoint is temporarily unavailable.
       }
       this.codexConfigForm = emptyCodexConfigForm(config);
+      this.runChatForm.model = this.codexConfigForm.model || this.runChatForm.model || 'gpt-5.5';
       this.codexApiKeyDraft = '';
       this.codexApiKeyVisible = false;
     },
@@ -5244,6 +5267,7 @@ export default {
           ...emptyCodexConfigForm(config),
           hasApiKey: shouldClearApiKey ? false : (config.hasApiKey === true || Boolean(submittedApiKey))
         };
+        this.runChatForm.model = this.codexConfigForm.model || this.runChatForm.model || 'gpt-5.5';
         this.codexApiKeyDraft = shouldClearApiKey ? '' : submittedApiKey;
         ElMessage.success('Codex 配置已保存');
       } catch (error) {
@@ -14093,6 +14117,7 @@ export default {
       this.openRunCreateDrawer({
         taskId: task.id,
         projectId: task.projectId,
+        sourceMode: 'zentao-task',
         executionMode: 'level-process',
         workflow: workflowForLevel(workloadLevel),
         workflowLevel: workloadLevel,
@@ -14100,7 +14125,8 @@ export default {
         zentaoId: task.taskNo || '',
         developer: task.developer || this.defaultRunDeveloperName,
         requirement: executionInstructionForTask(task),
-        sourceType: 'task'
+        sourceType: 'task-center',
+        createTaskForRun: true
       });
     },
 
@@ -14119,7 +14145,7 @@ export default {
       ].filter(Boolean);
       this.openRunCreateDrawer({
         projectId,
-        sourceMode: 'zentao-task',
+        sourceMode: 'standalone',
         executionMode: 'single-skill',
         workflow: 'art-single-skill',
         workflowLevel: 'XS',
@@ -14134,7 +14160,7 @@ export default {
           ...sourceLines,
           '执行时优先读取该 md / SKILL.md 或产物路径，按当前对话补充要求处理，并在产物明细中保留执行依据和结果。'
         ].join('\n'),
-        sourceType: 'skill-inventory'
+        sourceType: 'standalone'
       });
       this.activeView = 'runs';
       this.pushRoute('/runs');
@@ -14343,13 +14369,14 @@ export default {
       }
       this.openRunCreateDrawer({
         projectId: saved.projectId || this.selectedProjectId || '',
+        sourceMode: 'standalone',
         executionMode: 'custom-workflow',
         workflow: 'custom-workflow',
         workflowLevel: 'CUSTOM',
         customWorkflowId: saved.id,
         title: saved.name,
         requirement: saved.description || '请按自定义工作流模板执行，并在每个阶段记录产物与结论。',
-        sourceType: 'task'
+        sourceType: 'standalone'
       });
     },
 
@@ -14463,6 +14490,12 @@ export default {
       }
       const payload = {
         ...this.runForm,
+        sourceType: this.runForm.taskId
+          ? 'task-center'
+          : this.isBugFixRun
+            ? 'bug'
+            : 'standalone',
+        createTaskForRun: Boolean(this.runForm.taskId),
         workflow: this.isBugFixRun
           ? 'bug-fix'
           : this.isSingleSkillRun
@@ -14479,9 +14512,10 @@ export default {
       this.runDrawer = false;
       this.activeView = 'runs';
       this.pushRoute('/runs');
+      const linkedTaskRun = Boolean(payload.taskId);
       this.runForm = this.newRunForm({ projectId: this.selectedProjectId || '' });
-      await Promise.all([this.refreshTasks(), this.refreshRuns()]);
-      ElMessage.success('任务已创建');
+      await this.refreshRuns();
+      ElMessage.success(linkedTaskRun ? '任务执行已创建' : '独立执行已创建');
     },
 
     async submitRunChatInstruction() {
@@ -14494,6 +14528,9 @@ export default {
       }
       this.runChatSubmitting = true;
       try {
+        const model = String(this.runChatForm.model || this.codexConfigForm.model || '').trim();
+        const reasoningEffort = String(this.runChatForm.reasoningEffort || '').trim();
+        const requestStandard = String(this.runChatForm.requestStandard || '').trim();
         const run = await this.api(`/api/runs/${encodeURIComponent(sourceRun.id)}/retry`, {
           method: 'POST',
           body: JSON.stringify({
@@ -14503,18 +14540,26 @@ export default {
               '',
               '## 工作台追加沟通',
               instruction,
+              requestStandard ? `\n## 请求标准\n${requestStandard}` : '',
               '',
               '请基于上一轮执行的产物、资料.md、Figma 线索、规范 md / Skill 线索继续处理；不要重复无关步骤，结果继续写入本次新的 artifactRoot。'
             ].filter(Boolean).join('\n'),
             figmaLinks: sourceRun.figmaLinks || '',
             showdocHints: sourceRun.showdocHints || '',
             targetPage: sourceRun.targetPage || '',
-            stage: sourceRun.stage || ''
+            stage: sourceRun.stage || '',
+            codexRequest: {
+              model,
+              reasoningEffort,
+              requestStandard,
+              source: 'web-chat'
+            }
           })
         });
         this.runs = [run, ...this.runs.filter(item => item.id !== run.id)];
         this.selectedRunId = run.id;
         this.runChatInput = '';
+        this.runChatPanelOpen = false;
         await this.startRun(run.id);
         this.runLogCollapse = ['raw-log'];
         ElMessage.success('已创建新的 Codex 执行');
@@ -14525,13 +14570,30 @@ export default {
       }
     },
 
+    resetRunChatForm() {
+      const existing = this.runChatForm || {};
+      this.runChatForm = {
+        model: existing.model || this.codexConfigForm.model || 'gpt-5.5',
+        reasoningEffort: existing.reasoningEffort || 'xhigh',
+        requestStandard: existing.requestStandard || '沿用当前任务上下文，只处理本次补充要求；输出交付结论、变更点、验证方式和下一步。'
+      };
+    },
+
     openRun(run) {
       this.selectedRunId = run.id;
       this.pushRoute('/runs');
     },
 
+    isTaskCenterLinkedRun(run = null) {
+      if (!run) return false;
+      return Boolean(run.taskId)
+        || ['task', 'task-center', 'task-linked'].includes(String(run.sourceType || ''));
+    },
+
     runsForTask(task) {
+      if (!task?.id) return [];
       return this.runs
+        .filter(run => this.isTaskCenterLinkedRun(run))
         .filter(run => run.taskId === task.id || (task.taskNo && run.zentaoId === task.taskNo))
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
     },
@@ -14539,7 +14601,12 @@ export default {
     runAttemptNumber(run = {}) {
       if (Number(run.attemptNo) > 0) return Number(run.attemptNo);
       const related = this.runs
-        .filter(item => item.taskId === run.taskId || (run.zentaoId && item.zentaoId === run.zentaoId))
+        .filter(item => {
+          if (this.isTaskCenterLinkedRun(run)) {
+            return item.taskId === run.taskId || (run.zentaoId && item.zentaoId === run.zentaoId);
+          }
+          return !this.isTaskCenterLinkedRun(item) && item.title === run.title;
+        })
         .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
       const index = related.findIndex(item => item.id === run.id);
       return index >= 0 ? index + 1 : 1;
@@ -14557,6 +14624,7 @@ export default {
 
     runTaskUrl(run) {
       if (!run) return '';
+      if (!this.isTaskCenterLinkedRun(run)) return '';
       const task = this.businessTasks.find(item => item.id === run.taskId || (item.taskNo && item.taskNo === run.zentaoId));
       return this.zentaoTaskUrl(task || { zentaoId: run.zentaoId, taskNo: run.zentaoId, title: run.title });
     },
@@ -14603,15 +14671,15 @@ export default {
     },
 
     shouldShowRunTopChainPanel(run = null) {
-      return Boolean(run && this.isSingleSkillWorkflowRun(run));
+      return false;
     },
 
     shouldShowRunChainPanel(run = null) {
-      return Boolean(run && !this.isDirectSkillRun(run) && !this.shouldShowRunTopChainPanel(run));
+      return Boolean(run && !this.isSkillOrMdFocusedRun(run));
     },
 
     shouldShowRunCodexChatPanel(run = null) {
-      return Boolean(run && !this.isDirectSkillRun(run));
+      return Boolean(run && !this.isDirectSkillRun(run) && this.can('run.codex.execute'));
     },
 
     runFlowHelperTitle(run = null) {
@@ -14627,7 +14695,7 @@ export default {
         return '引用 Skill/md 的直接执行只展示执行对象、执行人本机状态、阶段进度和档案入口，不展示普通任务的关键动作、任务链路和继续对话。';
       }
       if (this.isSingleSkillWorkflowRun(run)) {
-        return '新建单里选择 md/Skill 的单技能执行按操作流程展示步骤和结果，不展示关键动作概览。';
+        return '单 md/Skill 执行默认展示当前任务的执行步骤明细、交付判定和轻量结果，不直接展开 Codex 对话。';
       }
       return '执行台只看任务推进和关键动作是否发生；具体调用明细、截图、文件和验证内容放在产物列表对应明细里。';
     },
@@ -14644,7 +14712,7 @@ export default {
         return '这是引用 Skill/md 的本机直接执行，只展示 Worker 状态、执行进度、结果和 AI档案入口。';
       }
       if (this.isSingleSkillWorkflowRun(run)) {
-        return '这条记录已指定 md/Skill，右侧按执行步骤、结果明细和日志查看，不展示关键动作概览。';
+        return '查看当前任务的执行步骤明细。';
       }
       return '查看阶段进度、关键动作概览和任务链路。产物明细请到产物列表查看。';
     },
@@ -14820,7 +14888,8 @@ export default {
       if (/\.md$/i.test(text)) return 'md';
       if (this.isDirectSkillRun(run)) return '直接执行';
       if (run?.sourceType === 'bug') return 'Bug 执行';
-      if (run?.sourceType === 'task') return '任务执行';
+      if (run?.taskId || run?.sourceType === 'task' || run?.sourceType === 'task-center' || run?.sourceType === 'task-linked') return '任务执行';
+      if (run?.sourceType === 'standalone' || run?.sourceType === 'skill-inventory') return '独立执行';
       return this.workflowRunLabel(run) || '执行';
     },
 
@@ -15490,6 +15559,47 @@ export default {
       };
     },
 
+    focusedRunOverviewMetrics(run = null) {
+      if (!run) return {
+        summaryCards: [],
+        targetRows: [],
+        environmentRows: [],
+        issueRows: [],
+        nextAction: '',
+        resultTitle: '',
+        resultText: ''
+      };
+      const detail = this.isDirectSkillRun(run)
+        ? this.directSkillRunOverviewMetrics(run)
+        : this.aiExecutionArchiveDetailMetrics(run);
+      const summary = run.resultSummary || {};
+      const status = this.effectiveResultStatus(run);
+      const isPending = /pending|created|queued/i.test(String(run.status || ''));
+      const isRunning = this.isRunInProgress(run);
+      const issueRows = [];
+      const blocker = String(summary.blockerReason || run.blocker?.reason || '').trim();
+      if (blocker && !this.isPlaceholderResultText(blocker)) {
+        issueRows.push({
+          label: status === 'failed' || status === 'blocked' ? '阻塞原因' : '风险提示',
+          value: this.humanizeRunResultText(blocker),
+          tone: status === 'failed' || status === 'blocked' ? 'danger' : 'warning'
+        });
+      } else if (isPending) {
+        issueRows.push({ label: '当前等待', value: this.isDirectSkillRun(run) ? '等待执行人本机 Worker 自动领取。' : '等待负责人点击启动执行。', tone: 'muted' });
+      } else if (isRunning) {
+        issueRows.push({ label: '当前处理', value: 'Codex 正在按当前步骤执行，等待结果回传。', tone: 'muted' });
+      } else {
+        issueRows.push({ label: '当前问题', value: '未记录阻塞或失败原因。', tone: 'muted' });
+      }
+      return {
+        ...detail,
+        issueRows,
+        resultTitle: this.resultStatusTitle(summary, run),
+        resultText: this.resultSummaryText(summary, run),
+        nextAction: this.resultNextActionText(run)
+      };
+    },
+
     directSkillWriteModeLabel(mode = '') {
       return {
         'target-node': '写入指定节点',
@@ -15679,6 +15789,7 @@ export default {
 
     businessTaskForRun(run) {
       if (!run) return null;
+      if (!this.isTaskCenterLinkedRun(run)) return null;
       return (this.businessTasks || []).find(task => task.id === run.taskId || (task.taskNo && task.taskNo === run.zentaoId)) || null;
     },
 
@@ -15913,6 +16024,115 @@ export default {
       ];
     },
 
+    focusedRunStepFlow(run = null) {
+      if (!run || !this.isSkillOrMdFocusedRun(run)) return [];
+      const displayStages = this.selectedRun?.id === run.id ? this.selectedRunDisplayStages : this.displayRunStages(run);
+      const actualStages = displayStages.length ? displayStages : this.directSkillRunDisplayStages(run);
+      const statusText = String(run.status || '').toLowerCase();
+      const isPending = /pending|created|queued/.test(statusText) || !statusText;
+      const isRunning = this.isRunInProgress(run) || /claimed/.test(statusText);
+      const isFailed = /failed|error|blocked/.test(`${statusText} ${run.workerStatus || ''}`);
+      const isDone = /done|success|passed|completed|finished|conditional/.test(statusText) || Boolean(run.resultSummary);
+      const targetName = this.directSkillRunContentName(run);
+      const kind = this.directSkillRunContentKind(run);
+      const firstStage = actualStages[0] || {};
+      const lastStage = actualStages[actualStages.length - 1] || {};
+      const currentStageName = run.currentStage || actualStages.find(stage => /running|in_progress/i.test(stage.displayStatus || stage.status || ''))?.name || firstStage.name || '';
+      const stageStatus = (index, fallback = 'pending') => {
+        const stage = actualStages[index] || {};
+        return stage.displayStatus || stage.status || fallback;
+      };
+      const normalize = status => {
+        const value = String(status || '').toLowerCase();
+        if (/failed|error|blocked|阻塞|失败/.test(value)) return 'failed';
+        if (/conditional|有条件|skipped|skip|跳过/.test(value)) return 'conditional';
+        if (/running|in_progress|claimed/.test(value)) return 'running';
+        if (/done|success|passed|completed|finished|通过|完成/.test(value)) return 'completed';
+        return 'pending';
+      };
+      const codexStatus = isFailed ? 'failed' : isDone ? 'completed' : isRunning ? 'running' : 'pending';
+      const resultStatus = isFailed ? 'failed' : isDone ? 'completed' : 'pending';
+      const steps = [
+        {
+          key: 'target',
+          title: '选择执行内容',
+          summary: `${kind} · ${targetName}`,
+          status: run.createdAt ? 'completed' : 'pending',
+          time: run.createdAt,
+          durationText: '累计 -'
+        },
+        {
+          key: 'context',
+          title: '读取任务上下文',
+          summary: run.figmaLinks ? '已记录 Figma 目标和补充要求' : '读取当前任务要求和 Skill/md 内容',
+          status: isPending && !run.startedAt && !run.claimedAt ? 'pending' : 'completed',
+          time: run.startedAt || run.claimedAt || run.createdAt,
+          durationText: run.createdAt ? `累计 ${this.formatLiveDuration(Math.max(0, Date.parse(run.startedAt || run.claimedAt || run.createdAt || '') - Date.parse(run.createdAt || '')) || 0)}` : '累计 -'
+        },
+        {
+          key: 'preflight',
+          title: '执行自检',
+          summary: this.isDirectSkillRun(run) ? '检查执行人本机 Codex 与 Figma MCP' : '检查项目、路径和执行参数',
+          status: isPending && !run.startedAt && !run.claimedAt ? 'pending' : 'completed',
+          time: firstStage.startedAt || run.startedAt || run.claimedAt || '',
+          durationText: this.stageDurationText(firstStage, run, 0)
+        },
+        {
+          key: 'codex',
+          title: 'Codex 执行',
+          summary: currentStageName || '按当前 md/Skill 执行',
+          status: normalize(stageStatus(0, codexStatus)),
+          time: run.startedAt || run.claimedAt || '',
+          durationText: isRunning ? `累计 ${this.liveRunDurationText(run)}` : this.stageDurationText(actualStages[1] || firstStage, run, actualStages[1] ? 1 : 0)
+        },
+        {
+          key: 'result',
+          title: '结果回传',
+          summary: this.resultStatusLabel(this.effectiveResultStatus(run)),
+          status: normalize(isFailed ? 'failed' : isDone ? 'completed' : isRunning ? 'pending' : resultStatus),
+          time: run.finishedAt || run.updatedAt || '',
+          durationText: this.stageDurationText(lastStage, run, Math.max(actualStages.length - 1, 0))
+        },
+        {
+          key: 'archive',
+          title: '归档验收',
+          summary: isDone || isFailed ? '可进入 AI档案查看明细' : '等待执行完成后归档',
+          status: isFailed ? 'failed' : isDone ? 'completed' : 'pending',
+          time: run.finishedAt || '',
+          durationText: run.finishedAt ? `累计 ${this.liveRunDurationText(run)}` : '累计 -'
+        }
+      ];
+      return steps.map((step, index) => {
+        const current = this.focusedRunStepIsCurrent(steps, index, run);
+        const status = current ? 'running' : step.status;
+        return {
+          ...step,
+          no: index + 1,
+          status,
+          label: this.stageStepLabel(status),
+          className: this.focusedRunStepClass(status, current),
+          timeText: step.time ? this.formatDateTime(step.time) : ''
+        };
+      });
+    },
+
+    focusedRunStepIsCurrent(steps = [], index = -1, run = null) {
+      if (!run || !this.isRunInProgress(run) && !/claimed/i.test(String(run?.status || ''))) return false;
+      const active = steps.findIndex(step => /running|in_progress|claimed/i.test(String(step.status || '')));
+      if (active >= 0) return index === active;
+      const firstPending = steps.findIndex(step => /pending|created|queued|wait/i.test(String(step.status || '')));
+      return index === (firstPending >= 0 ? firstPending : steps.length - 1);
+    },
+
+    focusedRunStepClass(status = '', current = false) {
+      if (current) return 'is-current';
+      const value = String(status || '').toLowerCase();
+      if (/failed|error|blocked/.test(value)) return 'is-failed';
+      if (/conditional|skipped/.test(value)) return 'is-warning';
+      if (/done|success|passed|completed|finished/.test(value)) return 'is-done';
+      return 'is-pending';
+    },
+
     displayRunStages(run = null) {
       const stages = (run?.stages || []).map(stage => ({ ...stage }));
       if (!stages.length && this.isDirectSkillRun(run)) return this.directSkillRunDisplayStages(run);
@@ -15937,6 +16157,7 @@ export default {
 
     runChainTask(run = this.selectedRun) {
       if (!run) return null;
+      if (!this.isTaskCenterLinkedRun(run)) return null;
       const taskNo = String(run.zentaoId || run.taskNo || '').trim();
       return this.businessTaskRows.find(task => task.id === run.taskId)
         || this.businessTasks.find(task => task.id === run.taskId)
@@ -17993,7 +18214,7 @@ function canonicalSkillValidationPerson(value = '') {
 
 function emptyRunForm() {
   return {
-    sourceMode: 'zentao-task',
+    sourceMode: 'standalone',
     taskId: '',
     projectId: '',
     executionMode: 'level-process',
@@ -18009,7 +18230,7 @@ function emptyRunForm() {
     showdocHints: '',
     selectedMaterialHints: [],
     requirement: '',
-    sourceType: 'task'
+    sourceType: 'standalone'
   };
 }
 

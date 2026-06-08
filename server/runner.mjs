@@ -104,7 +104,7 @@ export async function startRun(project, run) {
     summary: `开始执行：${run.title}`
   });
   emit(run.id, { type: 'status', status: 'running', message: 'Codex execution started' });
-  const codexConfig = await getCodexConfig();
+  const codexConfig = mergeRunCodexConfig(await getCodexConfig(), run.codexRequest);
   const args = [
     'exec',
     '--cd',
@@ -138,10 +138,21 @@ export async function startRun(project, run) {
 function codexConfigArgs(config = {}) {
   const args = [];
   if (config.model) args.push('-m', config.model);
+  if (config.modelReasoningEffort) args.push('-c', `model_reasoning_effort=${tomlString(config.modelReasoningEffort)}`);
   if (config.modelProvider) args.push('-c', `model_provider=${tomlString(config.modelProvider)}`);
   if (config.baseUrl && config.modelProvider) args.push('-c', `model_providers.${config.modelProvider}.base_url=${tomlString(config.baseUrl)}`);
   if (config.wireApi && config.modelProvider) args.push('-c', `model_providers.${config.modelProvider}.wire_api=${tomlString(config.wireApi)}`);
   return args;
+}
+
+function mergeRunCodexConfig(base = {}, request = {}) {
+  const reasoningEffort = String(request?.reasoningEffort || '').trim();
+  const model = String(request?.model || '').trim();
+  return {
+    ...base,
+    model: model || base.model,
+    modelReasoningEffort: reasoningEffort || base.modelReasoningEffort || ''
+  };
 }
 
 function codexEnvironment(config = {}) {

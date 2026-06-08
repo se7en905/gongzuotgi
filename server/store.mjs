@@ -784,20 +784,25 @@ export async function getRun(id) {
 export async function createRun(input) {
   const now = new Date().toISOString();
   const project = await getProject(input.projectId);
-  const task = await ensureTaskForRun(input);
+  const task = await resolveTaskForRun(input);
   const workflowLevel = normalizeLevel(input.workflowLevel || input.level);
   const workflow = normalizeWorkflowId(input.workflow || workflowForLevel(workflowLevel));
   const customWorkflow = workflow === 'custom-workflow'
     ? await resolveCustomWorkflowForRun(input)
     : null;
-  const taskNo = cleanTaskNo(input.zentaoId || input.taskNo || task.taskNo || input.title);
-  const title = formatRunTitle(taskNo, input.title || task.title || 'Untitled task');
+  const taskNo = cleanTaskNo(input.zentaoId || input.taskNo || task?.taskNo || '');
+  const title = formatRunTitle(taskNo, input.title || task?.title || 'Untitled task');
   const taskFolderName = sanitizeTaskFolderName(title);
   const runs = await readJson(paths.runs, []);
-  const attemptNo = runs.filter(item => item.taskId === task.id || (taskNo && item.zentaoId === taskNo)).length + 1;
+  const attemptNo = runs.filter(item => {
+    if (task?.id && item.taskId === task.id) return true;
+    if (taskNo && item.zentaoId === taskNo) return true;
+    if (!task?.id && !taskNo) return item.title === title && !item.taskId && !item.zentaoId;
+    return false;
+  }).length + 1;
   const run = {
     id: randomUUID(),
-    taskId: task.id,
+    taskId: task?.id || '',
     projectId: input.projectId,
     title,
     taskFolderName,
@@ -809,8 +814,8 @@ export async function createRun(input) {
     stage: input.stage || '',
     targetPage: input.targetPage || '',
     zentaoId: input.zentaoId || taskNo || '',
-    developer: input.developer || task.developer || '',
-    agentModel: input.agentModel || task.agentModel || '',
+    developer: input.developer || task?.developer || '',
+    agentModel: input.agentModel || task?.agentModel || '',
     figmaLinks: input.figmaLinks || '',
     showdocHints: input.showdocHints || '',
     selectedMaterialHints: normalizeLineList(input.selectedMaterialHints),
@@ -820,14 +825,15 @@ export async function createRun(input) {
     primarySkillContent: input.primarySkillContent || input.skillContent || '',
     figmaWriteMode: input.figmaWriteMode || '',
     assignedToUserId: input.assignedToUserId || input.assigneeUserId || '',
-    assignedToName: input.assignedToName || input.assigneeName || input.developer || task.developer || '',
+    assignedToName: input.assignedToName || input.assigneeName || input.developer || task?.developer || '',
     claimedByDeviceId: input.claimedByDeviceId || '',
     claimedAt: input.claimedAt || '',
     workerStatus: input.workerStatus || '',
     workerCapabilities: normalizeLineList(input.workerCapabilities),
     executionMode: input.executionMode || '',
+    codexRequest: normalizeRunCodexRequest(input.codexRequest),
     requirement: input.requirement || '',
-    sourceType: input.sourceType || (workflow === 'bug-fix' ? 'bug' : 'task'),
+    sourceType: input.sourceType || (workflow === 'bug-fix' ? 'bug' : (task?.id ? 'task-center' : 'standalone')),
     status: 'pending',
     currentStage: null,
     stages: workflow === 'custom-workflow' ? normalizeCustomStages(customWorkflow?.stages || input.customStages) : buildStages(workflow, input.stage, workflowLevel),
@@ -846,11 +852,26 @@ export async function createRun(input) {
   run.attemptNo = attemptNo;
   run.artifactRoot = project ? buildRunArtifactRoot(project, run) : '';
   run.materialPath = run.artifactRoot ? path.join(run.artifactRoot, '资料.md') : '';
-  if (run.artifactRoot) await prepareInitialRunArtifacts(project, run, task);
+  if (run.artifactRoot) await prepareInitialRunArtifacts(project, run, task || {});
   runs.push(run);
   await writeJson(paths.runs, runs);
   await fs.mkdir(getRunWorkspace(run.id), { recursive: true });
   return run;
+}
+
+async function resolveTaskForRun(input = {}) {
+  if (input.taskId) {
+    const existing = await getTask(input.taskId);
+    if (existing) return existing;
+  }
+  const sourceMode = cleanString(input.sourceMode);
+  const sourceType = cleanString(input.sourceType);
+  const shouldCreateTask = Boolean(input.createTaskForRun)
+    || Boolean(input.taskId)
+    || sourceType === 'task-linked'
+    || sourceType === 'task-center';
+  if (!shouldCreateTask) return null;
+  return ensureTaskForRun(input);
 }
 
 export async function listAgentWorkers(filters = {}) {
@@ -967,6 +988,10 @@ export async function cloneRunForRetry(id, overrides = {}) {
     figmaLinks: source.figmaLinks,
     showdocHints: source.showdocHints,
     requirement: source.requirement,
+    sourceType: source.sourceType,
+    executionMode: source.executionMode,
+    createTaskForRun: Boolean(source.taskId),
+    codexRequest: normalizeRunCodexRequest(overrides.codexRequest || source.codexRequest),
     ...overrides
   });
 }
@@ -1163,6 +1188,7 @@ async function prepareInitialRunArtifacts(project, run, task) {
 
 async function buildRunMaterial(project = {}, run = {}, task = {}) {
   const isBug = run.sourceType === 'bug' || run.workflow === 'bug-fix';
+  const linkedTask = Boolean(run.taskId || task.id);
   const figmaItems = parseLineItems(run.figmaLinks);
   const specSkillItems = parseLineItems(run.showdocHints);
   const themes = await detectProjectThemes(project);
@@ -1171,9 +1197,10 @@ async function buildRunMaterial(project = {}, run = {}, task = {}) {
   return [
     '## 最小必填资料',
     '',
-    '### 禅道入口',
+    `### ${linkedTask ? '任务来源' : '执行来源'}`,
     '',
-    `- 禅道 ID / 链接：${run.zentaoId || task.taskNo || '待补充'}`,
+    `- 任务中心关联：${run.taskId || task.id ? '已关联' : '未关联，作为独立执行记录追溯'}`,
+    `- 禅道 ID / 线索：${run.zentaoId || task.taskNo || '无'}`,
     `- 类型：${isBug ? 'Bug 修复' : '美术执行'}`,
     `- 负责人 / 执行人：${run.developer || task.developer || '待补充'}`,
     '',
@@ -1994,6 +2021,17 @@ function normalizeCodexConfig(input = {}) {
     apiKey,
     keyFingerprint: String(input.keyFingerprint || (apiKey ? codexKeyFingerprint(apiKey) : '')).trim(),
     updatedAt: input.updatedAt || ''
+  };
+}
+
+function normalizeRunCodexRequest(input = {}) {
+  const allowedReasoning = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
+  const reasoningEffort = String(input.reasoningEffort || input.modelReasoningEffort || '').trim();
+  return {
+    model: String(input.model || '').trim(),
+    reasoningEffort: allowedReasoning.has(reasoningEffort) ? reasoningEffort : '',
+    requestStandard: String(input.requestStandard || '').trim().slice(0, 2000),
+    source: String(input.source || '').trim().slice(0, 80)
   };
 }
 

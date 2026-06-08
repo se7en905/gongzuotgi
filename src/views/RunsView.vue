@@ -76,32 +76,27 @@
         <strong>{{ app.liveRunDurationText(app.selectedRun) }}</strong>
       </div>
     </section>
-    <section v-if="app.shouldShowRunTopChainPanel(app.selectedRun)" class="run-chain-panel run-chain-panel-top">
+    <section v-if="app.selectedRun && app.isSkillOrMdFocusedRun(app.selectedRun)" class="focused-run-flow-panel">
       <div class="run-section-head">
         <div>
-          <h4>执行步骤</h4>
-          <p>这条记录已指定 md/Skill，按实际操作流程查看当前走到哪一步。</p>
+          <h4>执行步骤明细</h4>
+          <p>查看当前任务的执行步骤明细。</p>
         </div>
-        <span>步骤 {{ app.runChainTimeline(app.selectedRun).length || 0 }}</span>
+        <span>{{ app.focusedRunStepFlow(app.selectedRun).length }} 步</span>
       </div>
-      <div class="run-chain-list">
-        <div
-          v-for="step in app.runChainTimeline(app.selectedRun)"
+      <div class="focused-run-step-flow">
+        <article
+          v-for="step in app.focusedRunStepFlow(app.selectedRun)"
           :key="step.key"
-          :class="['run-chain-step', app.runChainStepClass(step.status)]"
+          :class="['focused-run-step', step.className]"
         >
-          <div class="run-chain-marker"></div>
-          <div class="run-chain-content">
-            <div class="run-chain-title">
-              <strong>{{ step.title }}</strong>
-              <span>{{ step.time ? app.formatDateTime(step.time) : app.runActionStatusLabel(step.status) }}</span>
-            </div>
-            <p>{{ step.summary }}</p>
-            <div v-if="step.meta?.length" class="run-chain-meta">
-              <span v-for="item in step.meta" :key="item">{{ item }}</span>
-            </div>
+          <div class="focused-step-dot">{{ step.no }}</div>
+          <div class="focused-step-body">
+            <strong>{{ step.title }}</strong>
+            <span>{{ step.summary }}</span>
+            <small>{{ step.label }} · {{ step.durationText || step.timeText || '累计 -' }}</small>
           </div>
-        </div>
+        </article>
       </div>
       <div v-if="app.selectedRunReferenceCount" class="run-reference-list">
         <span>md / SKILL.md 引用</span>
@@ -156,17 +151,17 @@
         </div>
       </div>
     </section>
-    <section v-if="app.selectedRun && app.isDirectSkillRun(app.selectedRun)" class="direct-run-overview-panel">
+    <section v-if="app.selectedRun && app.isSkillOrMdFocusedRun(app.selectedRun)" class="direct-run-overview-panel">
       <div class="run-section-head">
         <div>
-          <h4>直接执行结果</h4>
-          <p>这条记录来自 Skill/md 引用，只看执行对象、Worker 回传和当前结论。</p>
+          <h4>{{ app.isDirectSkillRun(app.selectedRun) ? '直接执行结果' : '单技能执行结果' }}</h4>
+          <p>{{ app.isDirectSkillRun(app.selectedRun) ? '这条记录来自 Skill/md 引用，只看执行对象、Worker 回传和当前结论。' : '这条记录只引用一个 md/Skill，结果区域只展示交付判定、执行对象、环境和待处理问题。' }}</p>
         </div>
         <ElTag size="large" effect="dark" class="run-result-status-tag" :type="app.runTagType(app.effectiveResultStatus(app.selectedRun))">{{ app.resultStatusLabel(app.effectiveResultStatus(app.selectedRun)) }}</ElTag>
       </div>
       <div class="direct-run-summary-grid">
         <div
-          v-for="card in directRunDetail.summaryCards"
+          v-for="card in focusedRunDetail.summaryCards"
           :key="card.label"
           :class="['direct-run-summary-card', card.tone]"
         >
@@ -178,7 +173,7 @@
       <div class="direct-run-info-grid">
         <div class="direct-run-info-group">
           <span class="direct-run-group-title">执行对象</span>
-          <div v-for="row in directRunDetail.targetRows" :key="row.label" class="direct-run-info-row">
+          <div v-for="row in focusedRunDetail.targetRows" :key="row.label" class="direct-run-info-row">
             <span>{{ row.label }}</span>
             <a v-if="row.href" :href="row.href" target="_blank" rel="noopener noreferrer">{{ row.value }}</a>
             <strong v-else>{{ row.value }}</strong>
@@ -186,15 +181,15 @@
         </div>
         <div class="direct-run-info-group">
           <span class="direct-run-group-title">执行环境</span>
-          <div v-for="row in directRunDetail.environmentRows" :key="row.label" class="direct-run-info-row">
+          <div v-for="row in focusedRunDetail.environmentRows" :key="row.label" class="direct-run-info-row">
             <span>{{ row.label }}</span>
             <strong>{{ row.value }}</strong>
           </div>
         </div>
       </div>
-      <div v-if="directRunDetail.issueRows.length" class="direct-run-issue-list">
+      <div v-if="focusedRunDetail.issueRows.length" class="direct-run-issue-list">
         <div
-          v-for="row in directRunDetail.issueRows"
+          v-for="row in focusedRunDetail.issueRows"
           :key="row.label"
           :class="['direct-run-issue-row', row.tone]"
         >
@@ -203,14 +198,14 @@
         </div>
       </div>
       <div class="direct-run-actions">
-        <span>{{ directRunDetail.nextAction }}</span>
+        <span>{{ focusedRunDetail.nextAction }}</span>
         <div>
-          <ElButton type="primary" @click="app.openRunArchive(app.selectedRun)">进入 AI档案</ElButton>
-          <ElButton v-if="app.can('menu.agentWorkers')" @click="app.switchView('agent-workers')">Worker 心跳</ElButton>
+          <ElButton type="primary" @click="app.openRunArchive(app.selectedRun)">查看档案</ElButton>
+          <ElButton v-if="app.isDirectSkillRun(app.selectedRun) && app.can('menu.agentWorkers')" @click="app.switchView('agent-workers')">Worker 心跳</ElButton>
         </div>
       </div>
     </section>
-    <div v-if="app.selectedRun && app.selectedRunDisplayStages.length" class="stage-steps-wrap">
+    <div v-if="app.selectedRun && !app.isSkillOrMdFocusedRun(app.selectedRun) && app.selectedRunDisplayStages.length" class="stage-steps-wrap">
       <ElSteps :active="app.activeRunStage" finish-status="success" direction="horizontal" class="stage-steps">
         <ElStep
           v-for="stage in app.selectedRunDisplayStages"
@@ -301,31 +296,64 @@
     <section v-if="app.shouldShowRunCodexChatPanel(app.selectedRun)" class="run-codex-chat-panel">
       <div class="run-section-head">
         <div>
-          <h4>继续和 Codex 沟通</h4>
-          <p>基于当前执行记录继续下达要求。提交后会创建一次新的执行，并真实启动 Codex 落地处理。</p>
+          <h4>Web 端 Codex 对话</h4>
+          <p>默认收起。展开后可选择模型、推理强度和请求标准，提交后会创建一次新的执行。</p>
         </div>
-        <span>会生成新执行</span>
-      </div>
-      <ElInput
-        v-model="app.runChatInput"
-        type="textarea"
-        :rows="4"
-        placeholder="例如：基于本次 Figma 链接执行 ui-finalize，检查间距、字号、溢出和交付状态；结果写入产物目录。"
-      />
-      <div class="run-codex-chat-actions">
-        <span>适合补充 Figma 链接、指定 md / Skill、追加验收标准或要求重新生成产物。</span>
-        <ElButton
-          v-if="app.can('run.codex.execute')"
-          type="primary"
-          :loading="app.runChatSubmitting"
-          :disabled="!app.runChatInput.trim() || app.isRunInProgress(app.selectedRun)"
-          @click="app.submitRunChatInstruction"
-        >
-          发送并执行
+        <ElButton size="small" plain @click="app.runChatPanelOpen = !app.runChatPanelOpen">
+          {{ app.runChatPanelOpen ? '收起对话' : '打开对话' }}
         </ElButton>
       </div>
+      <div v-if="!app.runChatPanelOpen" class="run-codex-chat-collapsed">
+        <span>单 md/Skill 执行不会直接展示对话窗口；需要追加要求时再展开。</span>
+        <strong>{{ app.runChatForm.model }} · 推理 {{ app.runChatForm.reasoningEffort }}</strong>
+      </div>
+      <div v-else class="run-codex-chat-body">
+        <div class="run-codex-chat-config">
+          <label>
+            <span>模型</span>
+            <ElSelect v-model="app.runChatForm.model" size="small" placeholder="选择模型">
+              <ElOption v-for="model in app.codexModelOptions" :key="model" :label="model" :value="model" />
+            </ElSelect>
+          </label>
+          <label>
+            <span>推理</span>
+            <ElSelect v-model="app.runChatForm.reasoningEffort" size="small" placeholder="选择推理强度">
+              <ElOption v-for="option in app.codexReasoningOptions" :key="option.value" :label="option.label" :value="option.value" />
+            </ElSelect>
+          </label>
+        </div>
+        <label class="run-codex-standard-field">
+          <span>请求标准</span>
+          <ElInput
+            v-model="app.runChatForm.requestStandard"
+            type="textarea"
+            :rows="2"
+            maxlength="2000"
+            show-word-limit
+            placeholder="说明本次追加执行的验收标准、输出格式和限制。"
+          />
+        </label>
+        <ElInput
+          v-model="app.runChatInput"
+          type="textarea"
+          :rows="4"
+          placeholder="例如：基于本次 Figma 链接执行 ui-finalize，检查间距、字号、溢出和交付状态；结果写入产物目录。"
+        />
+        <div class="run-codex-chat-actions">
+          <span>只保存本次追加要求和轻量配置，不默认读取历史长日志或对话全文。</span>
+          <ElButton
+            v-if="app.can('run.codex.execute')"
+            type="primary"
+            :loading="app.runChatSubmitting"
+            :disabled="!app.runChatInput.trim() || app.isRunInProgress(app.selectedRun)"
+            @click="app.submitRunChatInstruction"
+          >
+            发送并执行
+          </ElButton>
+        </div>
+      </div>
     </section>
-    <section v-if="app.selectedRun && !app.isDirectSkillRun(app.selectedRun) && !app.isRunInProgress(app.selectedRun) && app.selectedRun?.resultSummary" :class="['run-result-summary', app.resultSummaryClass(app.effectiveResultStatus(app.selectedRun))]">
+    <section v-if="app.selectedRun && !app.isSkillOrMdFocusedRun(app.selectedRun) && !app.isRunInProgress(app.selectedRun) && app.selectedRun?.resultSummary" :class="['run-result-summary', app.resultSummaryClass(app.effectiveResultStatus(app.selectedRun))]">
       <div class="run-result-head">
         <div>
           <span>交付判定</span>
@@ -425,6 +453,18 @@ export default {
         };
       }
       return this.app.directSkillRunOverviewMetrics(this.app.selectedRun);
+    },
+    focusedRunDetail() {
+      if (!this.app.selectedRun || !this.app.isSkillOrMdFocusedRun(this.app.selectedRun)) {
+        return {
+          summaryCards: [],
+          targetRows: [],
+          environmentRows: [],
+          issueRows: [],
+          nextAction: ''
+        };
+      }
+      return this.app.focusedRunOverviewMetrics(this.app.selectedRun);
     }
   },
   watch: {
@@ -709,6 +749,174 @@ export default {
     overflow-x: auto;
     overflow-y: visible;
     border-bottom: 1px solid var(--line);
+  }
+
+  .focused-run-flow-panel {
+    display: grid;
+    gap: 14px;
+    margin: 14px 18px 14px;
+    padding: 14px;
+    border: 1px solid rgba(245, 158, 11, 0.24);
+    border-radius: 8px;
+    background: rgba(255, 251, 235, 0.62);
+  }
+
+  .focused-run-step-flow {
+    display: grid;
+    grid-auto-columns: minmax(136px, 1fr);
+    grid-auto-flow: column;
+    gap: 0;
+    min-width: max-content;
+    overflow-x: auto;
+    padding: 4px 0 6px;
+  }
+
+  .focused-run-step {
+    position: relative;
+    display: grid;
+    grid-template-rows: 34px minmax(88px, auto);
+    justify-items: center;
+    min-width: 136px;
+    color: #64748b;
+
+    &::before {
+      content: '';
+      position: absolute;
+      top: 16px;
+      left: 0;
+      right: 50%;
+      height: 2px;
+      background: rgba(148, 163, 184, 0.34);
+    }
+
+    &::after {
+      content: '';
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      right: 0;
+      height: 2px;
+      background: rgba(148, 163, 184, 0.34);
+    }
+
+    &:first-child::before,
+    &:last-child::after {
+      display: none;
+    }
+
+    &.is-done {
+      color: #047857;
+
+      &::before,
+      &::after {
+        background: rgba(16, 185, 129, 0.46);
+      }
+    }
+
+    &.is-current {
+      color: #d97706;
+
+      &::before {
+        background: rgba(16, 185, 129, 0.46);
+      }
+
+      &::after {
+        background: linear-gradient(90deg, rgba(245, 158, 11, 0.82), rgba(245, 158, 11, 0.1));
+        background-size: 200% 100%;
+        animation: focusedStepLineFlow 1.1s linear infinite;
+      }
+    }
+
+    &.is-warning {
+      color: #b45309;
+    }
+
+    &.is-failed {
+      color: #b91c1c;
+
+      &::before,
+      &::after {
+        background: rgba(220, 38, 38, 0.4);
+      }
+    }
+  }
+
+  .focused-step-dot {
+    position: relative;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: 2px solid currentColor;
+    border-radius: 50%;
+    background: #ffffff;
+    color: currentColor;
+    font-size: 13px;
+    font-weight: 900;
+    box-shadow: 0 0 0 5px rgba(255, 251, 235, 0.9);
+  }
+
+  .focused-run-step.is-current .focused-step-dot {
+    background: #f59e0b;
+    color: #ffffff;
+    animation: currentStagePulse 1.25s ease-in-out infinite;
+    box-shadow: 0 0 0 7px rgba(245, 158, 11, 0.16), 0 10px 24px rgba(245, 158, 11, 0.28);
+  }
+
+  .focused-run-step.is-done .focused-step-dot {
+    background: #ecfdf5;
+  }
+
+  .focused-run-step.is-failed .focused-step-dot {
+    background: #fef2f2;
+  }
+
+  .focused-step-body {
+    display: grid;
+    gap: 5px;
+    justify-items: center;
+    width: 124px;
+    min-width: 0;
+    padding-top: 6px;
+    text-align: center;
+
+    strong,
+    span,
+    small {
+      display: block;
+      width: 100%;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    strong {
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 900;
+      line-height: 1.35;
+      white-space: nowrap;
+    }
+
+    span {
+      display: -webkit-box;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.35;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      white-space: normal;
+    }
+
+    small {
+      color: currentColor;
+      font-size: 12px;
+      font-weight: 760;
+      line-height: 1.25;
+      white-space: nowrap;
+    }
   }
 
   .stage-steps {
@@ -1122,6 +1330,15 @@ export default {
     }
   }
 
+  @keyframes focusedStepLineFlow {
+    from {
+      background-position: 0 0;
+    }
+    to {
+      background-position: 200% 0;
+    }
+  }
+
   @keyframes liveStatusSweep {
     0% {
       transform: translateX(0);
@@ -1511,6 +1728,17 @@ export default {
     .direct-run-info-grid {
       grid-template-columns: 1fr;
     }
+
+    .run-codex-chat-config {
+      grid-template-columns: 1fr;
+    }
+
+    .run-codex-chat-collapsed,
+    .direct-run-actions,
+    .run-codex-chat-actions {
+      align-items: flex-start;
+      flex-direction: column;
+    }
   }
 
   .run-progress-panel {
@@ -1580,6 +1808,62 @@ export default {
       resize: vertical;
       font-size: 13px;
       line-height: 1.55;
+    }
+  }
+
+  .run-codex-chat-collapsed {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 40px;
+    padding: 10px 12px;
+    border: 1px dashed rgba(14, 165, 233, 0.28);
+    border-radius: 8px;
+    background: #ffffff;
+
+    span,
+    strong {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    strong {
+      color: #0369a1;
+      font-size: 12px;
+      font-weight: 850;
+    }
+  }
+
+  .run-codex-chat-body {
+    display: grid;
+    gap: 12px;
+  }
+
+  .run-codex-chat-config {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .run-codex-chat-config label,
+  .run-codex-standard-field {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+
+    > span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 780;
     }
   }
 

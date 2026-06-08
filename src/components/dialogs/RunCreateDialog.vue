@@ -6,20 +6,21 @@
           v-model="app.runForm.sourceMode"
           class="art-run-source-segment"
           :options="[
-            { label: '禅道任务', value: 'zentao-task' },
+            { label: '独立执行', value: 'standalone' },
+            { label: '关联任务', value: 'zentao-task' },
             { label: '已完成任务 ID', value: 'completed-task' },
             { label: 'Figma 链接', value: 'figma-link' }
           ]"
         />
-        <div class="field-hint">选择这次工作从哪里发起：接入中的禅道任务、已有完成任务继续处理，或直接用 Figma 界面链接发起。</div>
+        <div class="field-hint">执行台默认用于实验、复查和独立操作，只保留执行过程与结果追溯；只有从任务中心发起或主动关联任务时，才和任务中心记录挂靠。</div>
       </ElFormItem>
       <ElFormItem label="项目" class="is-required-field">
         <ElSelect v-model="app.runForm.projectId" placeholder="选择项目">
           <ElOption v-for="project in app.projects" :key="project.id" :label="project.name" :value="project.id" />
         </ElSelect>
       </ElFormItem>
-      <ElFormItem v-if="app.runForm.sourceMode === 'zentao-task'" label="接入禅道任务">
-        <ElSelect v-model="app.runForm.taskId" placeholder="可选；建议关联禅道任务，方便自动归档和验收" clearable filterable>
+      <ElFormItem v-if="app.runForm.sourceMode === 'zentao-task'" label="关联任务中心记录">
+        <ElSelect v-model="app.runForm.taskId" placeholder="选择后才会和任务中心挂靠；不选则只创建独立执行记录" clearable filterable>
           <ElOption
             v-for="task in app.businessTasksForProject(app.runForm.projectId)"
             :key="task.id"
@@ -29,7 +30,7 @@
         </ElSelect>
       </ElFormItem>
       <ElFormItem v-else-if="app.runForm.sourceMode === 'completed-task'" label="已完成任务 ID / 禅道 ID" class="is-required-field">
-        <ElInput v-model="app.runForm.zentaoId" placeholder="例如：48270；用于让 Codex 找到历史产物、报告和上下文继续处理" />
+        <ElInput v-model="app.runForm.zentaoId" placeholder="例如：48270；仅作为执行上下文线索，不自动在任务中心创建或挂靠" />
       </ElFormItem>
       <ElFormItem label="美术执行方式" class="is-required-field">
         <ElSelect v-model="app.runForm.executionMode" :disabled="app.isBugFixRun">
@@ -87,7 +88,7 @@
             <div class="field-hint">这里保存具体 md / SKILL.md 路径，作为主执行依据；需要补充多个规范时用下方资料库选择。</div>
           </ElFormItem>
         </ElCol>
-        <ElCol :span="12"><ElFormItem label="任务 ID / 禅道 ID"><ElInput v-model="app.runForm.zentaoId" placeholder="48031" /></ElFormItem></ElCol>
+        <ElCol :span="12"><ElFormItem label="任务 ID / 禅道 ID"><ElInput v-model="app.runForm.zentaoId" placeholder="可选；仅作为执行线索，不自动挂靠任务中心" /></ElFormItem></ElCol>
       </ElRow>
       <ElFormItem label="负责人 / 执行人"><ElInput v-model="app.runForm.developer" placeholder="成员姓名" /></ElFormItem>
       <ElFormItem :label="app.isBugFixRun ? '影响页面' : '目标页面备注 / Figma 放置说明'">

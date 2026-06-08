@@ -110,7 +110,13 @@
   - 美术执行台右侧详情必须按执行类型拆分展示：普通“新建美术执行”或分阶段执行才展示关键动作概览、任务链路和继续和 Codex 沟通。
   - 引用单个 md/Skill 的直接执行（`direct-skill`）右侧只展示 Worker 状态、轻量阶段进度、直接执行结果、执行对象、执行环境、问题提示和 AI档案入口；不得展示关键动作概览、任务链路、查看具体明细式链路文案或继续和 Codex 沟通入口。
   - 在“新建美术执行”里已选择 md/Skill 的单技能执行（`art-single-skill`）也不得展示关键动作概览；右侧必须按正常操作流程展示执行步骤、结果明细和日志。
-  - 如果任务链路本质是在表达步骤流程，单技能执行时必须上移到当前状态下方、阶段进度附近，标题使用 `执行步骤`；不得放在关键动作概览下方作为独立下沉模块。
+  - 单 md/Skill 执行右侧标题说明必须使用 `查看当前任务的执行步骤明细` 口径。
+  - 如果任务链路本质是在表达步骤流程，单 md/Skill 执行时必须上移到当前状态下方、阶段进度附近，标题使用 `执行步骤明细`；不得放在关键动作概览下方作为独立下沉模块。
+  - 单 md/Skill 执行步骤必须使用横向流程步骤图展示，按 `选择执行内容`、`读取任务上下文`、`执行自检`、`Codex 执行`、`结果回传`、`归档验收` 这类负责人可理解的步骤呈现；当前运行步骤必须高亮，已完成、失败、待执行要有清晰状态。
+  - 单 md/Skill 执行结果必须模块化展示交付判定、成功数量、失败数量、扫描点、数据类、执行对象、执行环境、问题提示和 `查看档案` 入口；不得默认重复展示旧的纵向任务链路或关键动作概览。
+  - Web 端 Codex 对话窗口必须默认收起；单 md/Skill 执行不允许直接展开对话窗口。展开后才渲染输入框、模型、推理强度和请求标准。
+  - Web 端 Codex 对话提交后创建新的执行记录，不在当前记录里追加长对话历史；默认不得读取或渲染历史长日志、整段模型事件或大段上下文。
+  - Web 端 Codex 对话可选择模型和推理强度；单次配置只作为新执行的 `codexRequest` 保存和启动参数使用，不得保存 API Key 或 Figma OAuth token。
   - 直接执行如果后端没有阶段数据，右侧阶段进度必须兜底展示 `已创建`、`Worker 领取`、`本机执行`、`结果回传`，让负责人能按步骤判断状态。
   - 分阶段普通任务仍必须按阶段一步步展示，适合使用横向阶段步骤呈现；不得因直接执行轻量视图而删除普通分阶段任务的阶段进度。
 - `/agent-workers` 本机执行状态页：
@@ -259,6 +265,14 @@
   - Figma 必须走原生授权和 Figma MCP；组员登录工作台后，也必须在自己的电脑使用自己的 Figma 账号和本机 Figma MCP。
   - 如果执行人本机 Codex 不可用、Figma MCP 未配置、Figma OAuth 失效、目标 Figma 文件无编辑权限或工具列表缺少写入工具，Worker 必须停止执行并回传阻塞原因。
   - 只有 Figma 写入工具真实返回 `createdNodeIds` 或 `mutatedNodeIds`，才允许判定写入完成。
+- Web 端 Codex 对话数据约定：
+  - Web 对话入口复用普通执行权限 `run.codex.execute`，只对非 `direct-skill` 执行记录开放；直接执行仍由执行人本机 Worker 领取，不走平台对话启动。
+  - Web 对话新增执行必须调用 `/api/runs/:id/retry` 创建新执行，再通过 `/api/runs/:id/start` 启动；不得直接在当前记录上覆盖结果。
+  - `/api/runs/:id/retry` 请求体必须使用字段白名单，只允许 `title`、`requirement`、`figmaLinks`、`showdocHints`、`targetPage`、`stage`、`codexRequest` 这类追加执行字段覆盖到新执行；不得允许前端传入任意字段覆盖项目、权限、状态、执行人或路径。
+  - `codexRequest` 只允许保存 `model`、`reasoningEffort`、`requestStandard`、`source`；`requestStandard` 必须限制长度，不能保存完整聊天历史、大日志、API Key、Figma token 或本机敏感路径。
+  - 后端启动普通执行时必须将全局 Codex 配置和 `run.codexRequest` 合并：API Key、Base URL 和 provider 来自全局配置，单次 `model` 和 `reasoningEffort` 可覆盖本次启动参数。
+  - `reasoningEffort` 允许值必须受控，例如 `low`、`medium`、`high`、`xhigh`；不得把未校验字符串直接拼入 Codex CLI 参数。
+  - Web 对话默认不新增轮询、不新增持续心跳、不保存多轮全量消息流；只在用户展开并提交时创建一条新执行，避免卡顿和数据暴增。
 - Worker 数据与接口：
   - Worker 心跳写入 `agent-workers` 数据，至少包含执行人、设备、最近心跳、Codex 是否就绪、Figma MCP 是否就绪、能力标记和检查消息。
   - Worker 设备花名保存为独立展示字段；后续心跳不得因未携带花名而清空已保存花名。
@@ -322,6 +336,8 @@
   - `/api/bugs/sync-zentao`：普通 Bug 同步入口；只同步 Bug 队列，不得触发任务同步。
   - 发现新任务或全量扫描必须使用独立接口或独立 `syncProfile/mode`，并接受独立权限校验；不得让普通 `同步任务` 请求默认进入全量扫描。
   - `/api/runs`：创建普通执行；当 `sourceType` 或 `executionMode` 为 `direct-skill` 时创建直接执行。
+  - `/api/runs/:id/retry`：基于当前执行记录创建一次新的追加执行；只允许白名单字段和 `codexRequest` 进入新执行。
+  - `/api/runs/:id/start`：启动普通执行；必须应用全局 Codex 配置和该执行上的 `codexRequest` 单次模型/推理配置；不得启动 `direct-skill`。
   - `DELETE /api/runs?from=...&to=...`：AI档案按筛选范围删除执行明细；只允许有 `api.aiArchive.delete` 权限的账号调用。
   - `/api/runs/direct-skill`：创建直接执行。
   - `/api/agent-workers`：读取 Worker 状态。

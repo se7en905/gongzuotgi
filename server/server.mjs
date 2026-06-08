@@ -2036,7 +2036,10 @@ async function handleApi(req, res, url) {
     if (run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill') {
       throw new HttpError(409, '直接执行任务只能由执行人本机 Worker 领取，不能在平台服务器启动。');
     }
-    const codexConfig = redactCodexConfig(await getCodexConfig());
+    const globalCodexConfig = redactCodexConfig(await getCodexConfig());
+    const runCodexRequest = run.codexRequest || {};
+    const effectiveCodexModel = runCodexRequest.model || globalCodexConfig.model || '';
+    const effectiveReasoningEffort = runCodexRequest.reasoningEffort || '';
     const started = await startRun(project, { ...run, startedBy: currentUser.id });
     await writeOperationLog(req, {
       user: currentUser,
@@ -2049,15 +2052,17 @@ async function handleApi(req, res, url) {
       before: run,
       after: started,
       metadata: {
-        codexKeyFingerprint: codexConfig.keyFingerprint || '',
-        codexHasApiKey: codexConfig.hasApiKey === true,
-        codexModel: codexConfig.model || '',
-        codexBaseUrl: codexConfig.baseUrl || '',
+        codexKeyFingerprint: globalCodexConfig.keyFingerprint || '',
+        codexHasApiKey: globalCodexConfig.hasApiKey === true,
+        codexModel: effectiveCodexModel,
+        codexReasoningEffort: effectiveReasoningEffort,
+        codexRequestSource: runCodexRequest.source || '',
+        codexBaseUrl: globalCodexConfig.baseUrl || '',
         runId: run.id,
         projectId: project.id,
         startedBy: currentUser.id
       },
-      description: `${currentUser.displayName || currentUser.username} 启动执行「${run.title}」${codexConfig.keyFingerprint ? `，使用 Key ${codexConfig.keyFingerprint}` : '，使用本机 Codex 配置'}`
+      description: `${currentUser.displayName || currentUser.username} 启动执行「${run.title}」${globalCodexConfig.keyFingerprint ? `，使用 Key ${globalCodexConfig.keyFingerprint}` : '，使用本机 Codex 配置'}`
     });
     sendJson(res, 200, started);
     return;
@@ -2067,7 +2072,15 @@ async function handleApi(req, res, url) {
   if (req.method === 'POST' && runRetry) {
     const source = await requireRun(runRetry[1]);
     requireProjectAccess(currentUser, source.projectId, 'developer', 'run.codex.execute');
+    const body = await readBody(req);
     const retryRun = await cloneRunForRetry(source.id, {
+      title: body.title,
+      requirement: body.requirement,
+      figmaLinks: body.figmaLinks,
+      showdocHints: body.showdocHints,
+      targetPage: body.targetPage,
+      stage: body.stage,
+      codexRequest: body.codexRequest,
       createdBy: currentUser.id,
       ownerUserId: currentUser.id
     });
