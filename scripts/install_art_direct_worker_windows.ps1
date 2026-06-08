@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+$InstallScriptVersion = '2026-06-08-ps51'
 
 $Root = if ($env:ART_WORKER_HOME) { $env:ART_WORKER_HOME } elseif ($env:ART_WORKER_PROJECT_ROOT) { $env:ART_WORKER_PROJECT_ROOT } else { Join-Path $env:USERPROFILE 'ArtDirectWorker' }
 $Username = $env:ART_PLATFORM_USERNAME
@@ -6,6 +7,7 @@ $Password = $env:ART_PLATFORM_PASSWORD
 $Api = $env:ART_PLATFORM_API
 $PollInterval = if ($env:ART_WORKER_POLL_INTERVAL_MS) { $env:ART_WORKER_POLL_INTERVAL_MS } else { '300000' }
 $HeartbeatInterval = if ($env:ART_WORKER_HEARTBEAT_INTERVAL_MS) { $env:ART_WORKER_HEARTBEAT_INTERVAL_MS } else { '300000' }
+$LocalCheckInterval = if ($env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS) { $env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS } else { '300000' }
 $CodexPath = if ($env:CODEX_CLI_PATH) { $env:CODEX_CLI_PATH } else { 'codex' }
 
 function ConvertTo-PSLiteral([string]$Value) {
@@ -16,11 +18,48 @@ function ConvertTo-WindowsArgument([string]$Value) {
   return '"' + $Value + '"'
 }
 
-if (-not $Api) { throw '缺少 ART_PLATFORM_API，例如：http://工作台服务器IP:4288' }
-if (-not $Username) { throw '缺少 ART_PLATFORM_USERNAME' }
-if (-not $Password) { throw '缺少 ART_PLATFORM_PASSWORD' }
+if (-not $Api) { throw 'Missing ART_PLATFORM_API, for example: http://platform-server-ip:4288' }
+if (-not $Username) { throw 'Missing ART_PLATFORM_USERNAME' }
+if (-not $Password) { throw 'Missing ART_PLATFORM_PASSWORD' }
 
-$Node = (Get-Command node -ErrorAction Stop).Source
+$Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$Principal = New-Object Security.Principal.WindowsPrincipal($Identity)
+if ($Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+  Write-Warning 'Running as Administrator. Startup will be installed for the current Windows account. Use the member normal Windows account if that is the account used at login.'
+}
+
+try {
+  $LoginUri = $Api.TrimEnd('/') + '/api/auth/login'
+  $LoginBody = @{ username = $Username; password = $Password } | ConvertTo-Json
+  $LoginResult = Invoke-RestMethod -Uri $LoginUri -Method Post -ContentType 'application/json' -Body $LoginBody -ErrorAction Stop
+  if (-not $LoginResult.user) {
+    throw 'Login API did not return a valid user'
+  }
+} catch {
+  throw "Platform login check failed. Check platform URL, username and password: $($_.Exception.Message)"
+}
+
+$NodeCommand = Get-Command node -ErrorAction SilentlyContinue
+if (-not $NodeCommand) {
+  throw 'Missing Node.js. Install Node.js 20 or newer, then copy the startup command again.'
+}
+$Node = $NodeCommand.Source
+$NodeVersionText = (& $Node -p "process.versions.node" 2>$null)
+$NodeMajor = 0
+if ($NodeVersionText) {
+  $NodeVersionParts = $NodeVersionText.Split('.')
+  $NodeMajor = [int]$NodeVersionParts[0]
+}
+if ($NodeMajor -lt 20) {
+  throw "Node.js version is too old: $NodeVersionText. Install Node.js 20 or newer."
+}
+
+$CodexCommand = Get-Command $CodexPath -ErrorAction SilentlyContinue
+if (-not $CodexCommand) {
+  throw 'Missing Codex CLI. Confirm codex --help works on this computer, then run the startup command again.'
+}
+$CodexPath = $CodexCommand.Source
+
 $SafeUsername = ($Username -replace '[\\/:*?"<>|]', '_')
 $TaskName = "ArtDirectWorker-$SafeUsername"
 $LogDir = Join-Path $Root 'logs'
@@ -44,7 +83,7 @@ Get-ChildItem -Path $StartupDir -Filter 'ArtDirectWorker-*.cmd' -ErrorAction Sil
   Remove-Item -Force -ErrorAction SilentlyContinue
 
 if (-not (Test-Path $Worker)) {
-  throw "缺少 $Worker，请先通过工作台复制命令下载 Worker。"
+  throw "Missing $Worker. Copy the worker command from the platform again first."
 }
 
 @"
@@ -56,9 +95,14 @@ Set-Location $(ConvertTo-PSLiteral $Root)
 `$env:ART_WORKER_PROJECT_ROOT = $(ConvertTo-PSLiteral $Root)
 `$env:ART_WORKER_POLL_INTERVAL_MS = $(ConvertTo-PSLiteral $PollInterval)
 `$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = $(ConvertTo-PSLiteral $HeartbeatInterval)
+`$env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS = $(ConvertTo-PSLiteral $LocalCheckInterval)
 `$env:CODEX_CLI_PATH = $(ConvertTo-PSLiteral $CodexPath)
 & $(ConvertTo-PSLiteral $Node) $(ConvertTo-PSLiteral $Worker) *>> $(ConvertTo-PSLiteral (Join-Path $LogDir "art-direct-worker.$SafeUsername.log"))
 "@ | Set-Content -Path $Runner -Encoding UTF8
+
+if (-not (Test-Path $Runner)) {
+  throw "Failed to write worker runner: $Runner"
+}
 
 $Shell = New-Object -ComObject WScript.Shell
 $Shortcut = $Shell.CreateShortcut($StartupShortcut)
@@ -67,8 +111,11 @@ $Shortcut.TargetPath = 'powershell.exe'
 $Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File $RunnerArgument"
 $Shortcut.WorkingDirectory = $Root
 $Shortcut.WindowStyle = 7
-$Shortcut.Description = '美术工作台本机直接执行 Worker'
+$Shortcut.Description = 'Art platform direct worker'
 $Shortcut.Save()
+if (-not (Test-Path $StartupShortcut)) {
+  throw "Failed to create startup shortcut: $StartupShortcut"
+}
 
 try {
   Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
@@ -96,7 +143,19 @@ if ($existing) {
 
 $StartArguments = "-NoProfile -ExecutionPolicy Bypass -File $RunnerArgument"
 Start-Process -FilePath 'powershell.exe' -ArgumentList $StartArguments -WorkingDirectory $Root -WindowStyle Minimized
+Start-Sleep -Seconds 3
+$started = @()
+try {
+  $started = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction Stop |
+    Where-Object { $_.CommandLine -like '*art-direct-worker.mjs*' -and $_.CommandLine -like "*$Root*" }
+} catch {
+  $started = @()
+}
+if (-not $started) {
+  Write-Warning "Startup shortcut was created, but no running node.exe worker was detected. Check log: $(Join-Path $LogDir "art-direct-worker.$SafeUsername.log")"
+}
 Write-Host "started $TaskName"
 Write-Host "installed startup $TaskName"
 Write-Host "startup $StartupShortcut"
 Write-Host "runner $Runner"
+Write-Host "install script version $InstallScriptVersion"

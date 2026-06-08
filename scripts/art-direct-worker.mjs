@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import os from 'node:os';
 import path from 'node:path';
+import { access } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -11,6 +12,7 @@ const deviceId = process.env.ART_WORKER_DEVICE_ID || `${os.hostname()}-${os.user
 const pollIntervalMs = Math.max(60000, Number(process.env.ART_WORKER_POLL_INTERVAL_MS || 300000));
 const heartbeatIntervalMs = Math.max(60000, Number(process.env.ART_WORKER_HEARTBEAT_INTERVAL_MS || 300000));
 const localCheckTimeoutMs = Math.max(5000, Number(process.env.ART_WORKER_CHECK_TIMEOUT_MS || 15000));
+const localCheckIntervalMs = Math.max(60000, Number(process.env.ART_WORKER_LOCAL_CHECK_INTERVAL_MS || 300000));
 const codexPath = process.env.CODEX_CLI_PATH || 'codex';
 const defaultProjectRoot = process.env.ART_WORKER_PROJECT_ROOT || process.env.ART_WORKER_HOME || process.cwd();
 
@@ -19,6 +21,7 @@ let currentUser = null;
 let lastHeartbeatAt = 0;
 let checkingRuns = false;
 let eventSyncStarted = false;
+let lastLocalCheckAt = 0;
 let localChecks = {
   codexReady: false,
   figmaMcpReady: false,
@@ -32,10 +35,10 @@ main().catch(error => {
 });
 
 async function main() {
-  await login();
+  await waitForLogin();
   console.log(`[worker] 已登录 ${apiBase}，当前账号：${currentUser?.displayName || currentUser?.username || username}`);
   await heartbeat(true);
-  localChecks = await runLocalChecks();
+  localChecks = await refreshLocalChecks(true);
   console.log(`[worker] 已连接 ${apiBase}，当前账号：${currentUser?.displayName || currentUser?.username || username}`);
   console.log(`[worker] Codex: ${localChecks.codexMessage}`);
   console.log(`[worker] Figma MCP: ${localChecks.figmaMessage}`);
@@ -43,13 +46,35 @@ async function main() {
   startPlatformEventSync();
   while (true) {
     try {
+      await refreshLocalChecks();
       await heartbeat();
       await checkAndExecuteNextRun();
     } catch (error) {
       console.error(`[worker] ${error.message}`);
-      if (/401|登录态|认证/.test(error.message)) await login();
+      if (/401|登录态|认证/.test(error.message)) await relogin();
     }
     await sleep(pollIntervalMs);
+  }
+}
+
+async function waitForLogin() {
+  while (true) {
+    try {
+      await login();
+      return;
+    } catch (error) {
+      console.error(`[worker] 平台登录失败，30 秒后重试：${error.message}`);
+      await sleep(30000);
+    }
+  }
+}
+
+async function relogin() {
+  try {
+    await login();
+    await heartbeat(true);
+  } catch (error) {
+    console.error(`[worker] 平台重新登录失败，稍后继续重试：${error.message}`);
   }
 }
 
@@ -84,6 +109,14 @@ async function claimNextRun() {
   return result.run || null;
 }
 
+async function refreshLocalChecks(force = false) {
+  const now = Date.now();
+  if (!force && now - lastLocalCheckAt < localCheckIntervalMs) return localChecks;
+  localChecks = await runLocalChecks();
+  lastLocalCheckAt = now;
+  return localChecks;
+}
+
 async function checkAndExecuteNextRun() {
   if (checkingRuns) return;
   checkingRuns = true;
@@ -111,7 +144,7 @@ async function platformEventLoop() {
       await readPlatformEvents();
     } catch (error) {
       console.error(`[worker] 平台事件监听断开：${error.message}`);
-      if (/401|登录态|认证/.test(error.message)) await login();
+      if (/401|登录态|认证/.test(error.message)) await relogin();
       await sleep(30000);
     }
   }
@@ -159,23 +192,37 @@ async function executeRun(run) {
   });
 
   const prompt = buildPrompt(run);
+  const cwd = run.projectRoot || defaultProjectRoot;
+  const cwdExists = await pathExists(cwd);
+  if (!cwdExists) {
+    await failRunBeforeCodex(run, `执行目录不存在：${cwd}`);
+    return;
+  }
   const args = [
     'exec',
     '--json',
     '--cd',
-    run.projectRoot || defaultProjectRoot,
+    cwd,
     '--skip-git-repo-check',
     '--sandbox',
     'workspace-write',
     '-'
   ];
-  const child = spawn(codexPath, args, {
-    cwd: run.projectRoot || defaultProjectRoot,
-    stdio: ['pipe', 'pipe', 'pipe']
-  });
-
   let finalText = '';
   let stderrText = '';
+  let child = null;
+  try {
+    child = spawn(codexPath, args, {
+      cwd,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+  } catch (error) {
+    await failRunBeforeCodex(run, `Codex 启动失败：${error.message}`);
+    return;
+  }
+  child.on('error', error => {
+    stderrText += `\nCodex 启动失败：${error.message}\n`;
+  });
   child.stdout.on('data', chunk => {
     const text = chunk.toString();
     finalText += collectReadableJsonl(text);
@@ -188,7 +235,11 @@ async function executeRun(run) {
     void appendRunLog(run.id, text);
     process.stderr.write(text);
   });
-  child.stdin.end(prompt);
+  try {
+    child.stdin.end(prompt);
+  } catch (error) {
+    stderrText += `\nCodex 输入失败：${error.message}\n`;
+  }
 
   const exitCode = await waitForChild(child);
   const status = exitCode === 0 ? 'completed' : 'failed';
@@ -207,6 +258,26 @@ async function executeRun(run) {
     }
   });
   console.log(`[worker] 执行结束：${run.title} (${status})`);
+}
+
+async function failRunBeforeCodex(run, reason) {
+  console.error(`[worker] ${reason}`);
+  await appendRunLog(run.id, `\n[worker blocked] ${reason}\n`);
+  await updateRunStatus(run.id, {
+    status: 'failed',
+    workerStatus: 'failed',
+    exitCode: -1,
+    finishedAt: new Date().toISOString(),
+    currentStage: '本机 Codex 执行',
+    resultSummary: buildResultSummary('failed', -1, reason),
+    workerResult: {
+      deviceId,
+      hostname: os.hostname(),
+      exitCode: -1,
+      finalText: '',
+      stderrText: reason
+    }
+  });
 }
 
 function buildPrompt(run = {}) {
@@ -310,6 +381,15 @@ function runCommand(command, args = [], options = {}) {
   });
 }
 
+async function pathExists(targetPath) {
+  try {
+    await access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function appendRunLog(runId, chunk) {
   if (!chunk) return;
   await fetchJson(`/api/agent-runs/${encodeURIComponent(runId)}/log`, {
@@ -365,9 +445,15 @@ function collectReadableJsonl(text = '') {
 }
 
 function waitForChild(child) {
-  return new Promise((resolve, reject) => {
-    child.on('error', reject);
-    child.on('close', code => resolve(Number(code || 0)));
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = code => {
+      if (settled) return;
+      settled = true;
+      resolve(Number(code ?? -1));
+    };
+    child.on('error', () => finish(-1));
+    child.on('close', code => finish(Number(code || 0)));
   });
 }
 

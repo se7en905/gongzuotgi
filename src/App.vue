@@ -15026,16 +15026,24 @@ export default {
       }
       if (os === 'windows') {
         return [
+          '# 请在组员本人常用 Windows 账号的 PowerShell 里运行；不要用其他人的 Administrator 账号代跑。',
+          '$ErrorActionPreference = "Stop"',
+          '$ProgressPreference = "SilentlyContinue"',
           `$root = "${windowsRoot}"`,
           'New-Item -ItemType Directory -Force -Path "$root\\scripts" | Out-Null',
-          `Invoke-WebRequest -UseBasicParsing -Uri ${this.powershellQuote(`${apiBase}/worker/art-direct-worker.mjs`)} -OutFile "$root\\scripts\\art-direct-worker.mjs"`,
+          `Invoke-WebRequest -UseBasicParsing -Uri ${this.powershellQuote(`${apiBase}/worker/art-direct-worker.mjs`)} -OutFile "$root\\scripts\\art-direct-worker.mjs" -ErrorAction Stop`,
+          'if (-not (Test-Path "$root\\scripts\\art-direct-worker.mjs")) { throw "Worker 下载失败，请确认工作台地址可访问" }',
+          '$node = Get-Command node -ErrorAction SilentlyContinue; if (-not $node) { throw "缺少 Node.js 20 或以上版本" }',
+          '$nodeVersion = & $node.Source -p "process.versions.node"; if ([int]($nodeVersion.Split(".")[0]) -lt 20) { throw "Node.js 版本过低：$nodeVersion" }',
+          '$codex = Get-Command codex -ErrorAction SilentlyContinue; if (-not $codex) { throw "缺少 Codex CLI，请先确认本机 PowerShell 可运行 codex --help" }; $env:CODEX_CLI_PATH = $codex.Source',
           '$env:ART_PLATFORM_API = ' + this.powershellQuote(apiBase),
           '$env:ART_PLATFORM_USERNAME = ' + this.powershellQuote(username || '组员账号'),
           '$env:ART_PLATFORM_PASSWORD = ' + this.powershellQuote(safePassword),
           '$env:ART_WORKER_HOME = $root',
           '$env:ART_WORKER_POLL_INTERVAL_MS = ' + this.powershellQuote('300000'),
           '$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = ' + this.powershellQuote('300000'),
-          'node "$root\\scripts\\art-direct-worker.mjs"'
+          '$env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS = ' + this.powershellQuote('300000'),
+          '& $node.Source "$root\\scripts\\art-direct-worker.mjs"'
         ].join('\n');
       }
       return [
@@ -15069,16 +15077,23 @@ export default {
       }
       if (os === 'windows') {
         return [
+          '# 请在组员本人常用 Windows 账号的 PowerShell 里运行；不要用其他人的 Administrator 账号代跑。',
+          '$ErrorActionPreference = "Stop"',
+          '$ProgressPreference = "SilentlyContinue"',
           `$root = "${windowsRoot}"`,
           'New-Item -ItemType Directory -Force -Path "$root\\scripts" | Out-Null',
-          `Invoke-WebRequest -UseBasicParsing -Uri ${this.powershellQuote(`${apiBase}/worker/art-direct-worker.mjs`)} -OutFile "$root\\scripts\\art-direct-worker.mjs"`,
-          `Invoke-WebRequest -UseBasicParsing -Uri ${this.powershellQuote(`${apiBase}/worker/install_art_direct_worker_windows.ps1`)} -OutFile "$root\\scripts\\install_art_direct_worker_windows.ps1"`,
+          `Invoke-WebRequest -UseBasicParsing -Uri ${this.powershellQuote(`${apiBase}/worker/art-direct-worker.mjs`)} -OutFile "$root\\scripts\\art-direct-worker.mjs" -ErrorAction Stop`,
+          `Invoke-WebRequest -UseBasicParsing -Uri ${this.powershellQuote(`${apiBase}/worker/install_art_direct_worker_windows.ps1`)} -OutFile "$root\\scripts\\install_art_direct_worker_windows.ps1" -ErrorAction Stop`,
+          'if (-not (Test-Path "$root\\scripts\\art-direct-worker.mjs")) { throw "Worker 下载失败，请确认工作台地址可访问" }',
+          'if (-not (Test-Path "$root\\scripts\\install_art_direct_worker_windows.ps1")) { throw "开机自启安装脚本下载失败，请确认工作台地址可访问" }',
+          '$installScript = Get-Content -Raw -Path "$root\\scripts\\install_art_direct_worker_windows.ps1"; Set-Content -Path "$root\\scripts\\install_art_direct_worker_windows.ps1" -Value $installScript -Encoding UTF8',
           '$env:ART_PLATFORM_API = ' + this.powershellQuote(apiBase),
           '$env:ART_PLATFORM_USERNAME = ' + this.powershellQuote(username || '组员账号'),
           '$env:ART_PLATFORM_PASSWORD = ' + this.powershellQuote(safePassword),
           '$env:ART_WORKER_HOME = $root',
           '$env:ART_WORKER_POLL_INTERVAL_MS = ' + this.powershellQuote('300000'),
           '$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = ' + this.powershellQuote('300000'),
+          '$env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS = ' + this.powershellQuote('300000'),
           'powershell -NoProfile -ExecutionPolicy Bypass -File "$root\\scripts\\install_art_direct_worker_windows.ps1"'
         ].join('\n');
       }
