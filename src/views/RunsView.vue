@@ -478,6 +478,11 @@
 </template>
 
 <script>
+const RUN_CODEX_FLOATING_POSITION_KEY = 'awp-run-codex-floating-position';
+const RUN_CODEX_FLOATING_SIZE = 54;
+const RUN_CODEX_FLOATING_PADDING = 12;
+const RUN_CODEX_FLOATING_DEFAULT_OFFSET = 28;
+
 export default {
   name: 'RunsView',
   props: {
@@ -556,10 +561,13 @@ export default {
     }
   },
   mounted() {
+    this.restoreCodexFloatingPosition();
     this.scrollRunLogToBottom();
+    window.addEventListener('resize', this.keepCodexFloatingInViewport);
   },
   beforeUnmount() {
     this.stopCodexDrag();
+    window.removeEventListener('resize', this.keepCodexFloatingInViewport);
   },
   methods: {
     toggleRunCodexPanel() {
@@ -571,10 +579,11 @@ export default {
     },
     startCodexDrag(event) {
       if (event.button !== undefined && event.button !== 0) return;
-      const rect = this.$refs.runCodexFloating?.getBoundingClientRect();
-      const originX = rect?.left ?? Math.max(18, window.innerWidth - 96);
-      const originY = rect?.top ?? Math.max(18, window.innerHeight - 96);
-      this.codexPosition = { x: originX, y: originY };
+      event.preventDefault();
+      const fallback = this.defaultCodexFloatingPosition();
+      const originX = Number.isFinite(this.codexPosition.x) ? this.codexPosition.x : fallback.x;
+      const originY = Number.isFinite(this.codexPosition.y) ? this.codexPosition.y : fallback.y;
+      this.codexPosition = this.clampCodexFloatingPosition(originX, originY);
       this.codexDrag = {
         dragging: true,
         moved: false,
@@ -601,20 +610,57 @@ export default {
     stopCodexDrag() {
       if (this.codexDrag.dragging && this.codexDrag.moved) {
         this.codexDrag.suppressClick = true;
+        this.saveCodexFloatingPosition();
       }
       this.codexDrag.dragging = false;
       window.removeEventListener('pointermove', this.moveCodexFloating);
       window.removeEventListener('pointerup', this.stopCodexDrag);
       window.removeEventListener('pointercancel', this.stopCodexDrag);
     },
-    clampCodexFloatingPosition(x, y) {
-      const rect = this.$refs.runCodexFloating?.getBoundingClientRect();
-      const width = rect?.width || 56;
-      const height = rect?.height || 56;
-      const padding = 12;
+    defaultCodexFloatingPosition() {
       return {
-        x: Math.min(Math.max(padding, x), Math.max(padding, window.innerWidth - width - padding)),
-        y: Math.min(Math.max(padding, y), Math.max(padding, window.innerHeight - height - padding))
+        x: Math.max(RUN_CODEX_FLOATING_PADDING, window.innerWidth - RUN_CODEX_FLOATING_SIZE - RUN_CODEX_FLOATING_DEFAULT_OFFSET),
+        y: Math.max(RUN_CODEX_FLOATING_PADDING, window.innerHeight - RUN_CODEX_FLOATING_SIZE - RUN_CODEX_FLOATING_DEFAULT_OFFSET)
+      };
+    },
+    restoreCodexFloatingPosition() {
+      let position = this.defaultCodexFloatingPosition();
+      try {
+        const stored = JSON.parse(localStorage.getItem(RUN_CODEX_FLOATING_POSITION_KEY) || 'null');
+        if (Number.isFinite(stored?.x) && Number.isFinite(stored?.y)) {
+          position = { x: stored.x, y: stored.y };
+        }
+      } catch {
+        position = this.defaultCodexFloatingPosition();
+      }
+      this.codexPosition = this.clampCodexFloatingPosition(position.x, position.y);
+    },
+    saveCodexFloatingPosition() {
+      if (!Number.isFinite(this.codexPosition.x) || !Number.isFinite(this.codexPosition.y)) return;
+      try {
+        localStorage.setItem(RUN_CODEX_FLOATING_POSITION_KEY, JSON.stringify({
+          x: Math.round(this.codexPosition.x),
+          y: Math.round(this.codexPosition.y)
+        }));
+      } catch {
+        // 悬浮位置只是本地 UI 偏好，保存失败不影响执行台操作。
+      }
+    },
+    keepCodexFloatingInViewport() {
+      if (!Number.isFinite(this.codexPosition.x) || !Number.isFinite(this.codexPosition.y)) {
+        this.restoreCodexFloatingPosition();
+        return;
+      }
+      const next = this.clampCodexFloatingPosition(this.codexPosition.x, this.codexPosition.y);
+      if (next.x !== this.codexPosition.x || next.y !== this.codexPosition.y) {
+        this.codexPosition = next;
+        this.saveCodexFloatingPosition();
+      }
+    },
+    clampCodexFloatingPosition(x, y) {
+      return {
+        x: Math.min(Math.max(RUN_CODEX_FLOATING_PADDING, x), Math.max(RUN_CODEX_FLOATING_PADDING, window.innerWidth - RUN_CODEX_FLOATING_SIZE - RUN_CODEX_FLOATING_PADDING)),
+        y: Math.min(Math.max(RUN_CODEX_FLOATING_PADDING, y), Math.max(RUN_CODEX_FLOATING_PADDING, window.innerHeight - RUN_CODEX_FLOATING_SIZE - RUN_CODEX_FLOATING_PADDING))
       };
     },
     scrollRunLogToBottom() {
@@ -1940,7 +1986,6 @@ export default {
     &.active {
       border-color: rgba(14, 165, 233, 0.38);
       box-shadow: 0 20px 48px rgba(14, 165, 233, 0.22), 0 18px 44px rgba(15, 23, 42, 0.18);
-      transform: translateY(-2px);
     }
   }
 

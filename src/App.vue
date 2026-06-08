@@ -14700,7 +14700,6 @@ export default {
         && this.activeView === 'runs'
         && run.id
         && this.selectedRunId === run.id
-        && this.runCodexFloatingRunId === run.id
         && !this.isRunInProgress(run)
         && !this.isDirectSkillRun(run)
         && this.can('run.codex.execute')

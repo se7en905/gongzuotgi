@@ -10,6 +10,7 @@ const password = process.env.ART_PLATFORM_PASSWORD || process.env.AWP_PASSWORD |
 const deviceId = process.env.ART_WORKER_DEVICE_ID || `${os.hostname()}-${os.userInfo().username}`;
 const pollIntervalMs = Math.max(60000, Number(process.env.ART_WORKER_POLL_INTERVAL_MS || 300000));
 const heartbeatIntervalMs = Math.max(60000, Number(process.env.ART_WORKER_HEARTBEAT_INTERVAL_MS || 300000));
+const localCheckTimeoutMs = Math.max(5000, Number(process.env.ART_WORKER_CHECK_TIMEOUT_MS || 15000));
 const codexPath = process.env.CODEX_CLI_PATH || 'codex';
 const defaultProjectRoot = process.env.ART_WORKER_PROJECT_ROOT || process.env.ART_WORKER_HOME || process.cwd();
 
@@ -32,6 +33,8 @@ main().catch(error => {
 
 async function main() {
   await login();
+  console.log(`[worker] 已登录 ${apiBase}，当前账号：${currentUser?.displayName || currentUser?.username || username}`);
+  await heartbeat(true);
   localChecks = await runLocalChecks();
   console.log(`[worker] 已连接 ${apiBase}，当前账号：${currentUser?.displayName || currentUser?.username || username}`);
   console.log(`[worker] Codex: ${localChecks.codexMessage}`);
@@ -264,8 +267,10 @@ function workerPayload() {
 }
 
 async function runLocalChecks() {
-  const codex = await runCommand(codexPath, ['--help']);
-  const mcp = await runCommand(codexPath, ['mcp', 'list']);
+  const codex = await runCommand(codexPath, ['--help'], { timeoutMs: localCheckTimeoutMs });
+  const mcp = codex.code === 0
+    ? await runCommand(codexPath, ['mcp', 'list'], { timeoutMs: localCheckTimeoutMs })
+    : { code: -1, stdout: '', stderr: '', error: 'Codex 不可用，跳过 Figma MCP 自检' };
   const figmaReady = mcp.code === 0 && /figma/i.test(`${mcp.stdout}\n${mcp.stderr}`);
   return {
     codexReady: codex.code === 0,
@@ -275,15 +280,33 @@ async function runLocalChecks() {
   };
 }
 
-function runCommand(command, args = []) {
+function runCommand(command, args = [], options = {}) {
   return new Promise(resolve => {
+    const timeoutMs = Math.max(0, Number(options.timeoutMs || 0));
+    let settled = false;
     const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
+    let timer = null;
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(result);
+    };
+    if (timeoutMs) {
+      timer = setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+        }
+        finish({ code: -1, stdout, stderr, error: `命令超时 ${timeoutMs}ms：${command} ${args.join(' ')}` });
+      }, timeoutMs);
+    }
     child.stdout.on('data', chunk => { stdout += chunk.toString(); });
     child.stderr.on('data', chunk => { stderr += chunk.toString(); });
-    child.on('error', error => resolve({ code: -1, stdout, stderr, error: error.message }));
-    child.on('close', code => resolve({ code: Number(code || 0), stdout, stderr }));
+    child.on('error', error => finish({ code: -1, stdout, stderr, error: error.message }));
+    child.on('close', code => finish({ code: Number(code || 0), stdout, stderr }));
   });
 }
 

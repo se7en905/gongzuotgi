@@ -36,12 +36,10 @@
       </article>
     </div>
   </section>
-  <div v-if="!app.aiMembersBoardFrameReady" class="ai-board-frame-loading">正在载入 AI 部门看板...</div>
   <iframe
-    v-else
     ref="boardFrame"
     class="ai-board-embed-frame"
-    :srcdoc="frameHtml"
+    :srcdoc="frameHtml || activeBoardHtml"
     title="AI部门看板"
     @load="syncThemeToFrame"
   />
@@ -91,7 +89,6 @@ export default {
     activeBoardHtml: {
       immediate: true,
       handler(value) {
-        if (!this.app.aiMembersBoardFrameReady) return;
         if (value === this.frameHtml) {
           this.$nextTick(() => this.syncThemeToFrame());
           return;
@@ -103,20 +100,6 @@ export default {
           this.$nextTick(() => this.syncThemeToFrame());
         }, 0);
       }
-    },
-    'app.aiMembersBoardFrameReady'(ready) {
-      if (!ready) return;
-      const value = this.activeBoardHtml;
-      if (value === this.frameHtml) {
-        this.$nextTick(() => this.syncThemeToFrame());
-        return;
-      }
-      if (this.frameHtmlUpdateTimer) window.clearTimeout(this.frameHtmlUpdateTimer);
-      this.frameHtmlUpdateTimer = window.setTimeout(() => {
-        this.frameHtml = value;
-        this.frameHtmlUpdateTimer = 0;
-        this.$nextTick(() => this.syncThemeToFrame());
-      }, 0);
     }
   },
   beforeUnmount() {
