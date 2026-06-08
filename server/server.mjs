@@ -78,6 +78,7 @@ import {
   recordUsageCountersForArtProgressEvent,
   recordUsageCountersForExpiredSkillValidations,
   recordUsageCountersForOperationLog,
+  recordUsageCountersForRun,
   recordUsageCountersForDirectSkillRun,
   recordUsageCountersForSkillValidation,
   recordUsageCountersForSkillAliases,
@@ -2020,9 +2021,11 @@ async function handleApi(req, res, url) {
     if (body.sourceType === 'direct-skill' || body.executionMode === 'direct-skill') {
       requireProjectAccess(currentUser, project.id, 'developer', 'api.agentRuns.create');
       const run = await createDirectSkillRunFromBody(req, project, body, currentUser);
-      await recordUsageCountersForDirectSkillRun(run).catch(error => {
+      const usagePatch = await recordUsageCountersForDirectSkillRun(run).catch(error => {
         console.warn('直接执行调用次数累计失败', error);
+        return null;
       });
+      broadcastUsageCountersChanged(usagePatch, { module: 'direct-skill-run', runId: run.id, projectId: project.id });
       sendJson(res, 201, run);
       return;
     }
@@ -2037,6 +2040,11 @@ async function handleApi(req, res, url) {
       targetId: run.id,
       targetName: run.title,
       after: run,
+      metadata: {
+        countAsSkillUsage: false,
+        countAsProductUsage: false,
+        ...runUsageLogMetadata(run)
+      },
       description: `${currentUser.displayName || currentUser.username} 创建执行「${run.title}」`
     });
     sendJson(res, 201, run);
@@ -2048,9 +2056,11 @@ async function handleApi(req, res, url) {
     const project = await requireProject(body.projectId);
     requireProjectAccess(currentUser, project.id, 'developer', 'api.agentRuns.create');
     const run = await createDirectSkillRunFromBody(req, project, body, currentUser);
-    await recordUsageCountersForDirectSkillRun(run).catch(error => {
+    const usagePatch = await recordUsageCountersForDirectSkillRun(run).catch(error => {
       console.warn('直接执行调用次数累计失败', error);
+      return null;
     });
+    broadcastUsageCountersChanged(usagePatch, { module: 'direct-skill-run', runId: run.id, projectId: project.id });
     sendJson(res, 201, run);
     return;
   }
@@ -2091,6 +2101,10 @@ async function handleApi(req, res, url) {
     const effectiveReasoningEffort = runCodexRequest.reasoningEffort || '';
     const startMode = ['resume', 'restart'].includes(String(body.mode || '').trim()) ? String(body.mode).trim() : 'start';
     const started = await startRun(project, { ...run, startedBy: currentUser.id, startMode });
+    const usagePatch = await recordUsageCountersForRun(started, { source: `run-${startMode}` }).catch(error => {
+      console.warn('美术执行调用次数累计失败', error);
+      return null;
+    });
     await writeOperationLog(req, {
       user: currentUser,
       module: 'run',
@@ -2110,10 +2124,14 @@ async function handleApi(req, res, url) {
         codexBaseUrl: globalCodexConfig.baseUrl || '',
         runId: run.id,
         projectId: project.id,
-        startedBy: currentUser.id
+        startedBy: currentUser.id,
+        countAsSkillUsage: false,
+        countAsProductUsage: false,
+        ...runUsageLogMetadata(started)
       },
       description: `${currentUser.displayName || currentUser.username} 启动执行「${run.title}」${globalCodexConfig.keyFingerprint ? `，使用 Key ${globalCodexConfig.keyFingerprint}` : '，使用本机 Codex 配置'}`
     });
+    broadcastUsageCountersChanged(usagePatch, { module: 'run', runId: started.id, projectId: project.id, action: 'START_RUN' });
     sendJson(res, 200, started);
     return;
   }
@@ -2130,6 +2148,14 @@ async function handleApi(req, res, url) {
       showdocHints: body.showdocHints,
       targetPage: body.targetPage,
       stage: body.stage,
+      productName: source.productName,
+      sourceTitle: source.sourceTitle,
+      primarySkillPath: source.primarySkillPath,
+      primarySkillContent: source.primarySkillContent,
+      selectedMaterialHints: source.selectedMaterialHints,
+      figmaWriteMode: source.figmaWriteMode,
+      assignedToUserId: source.assignedToUserId,
+      assignedToName: source.assignedToName,
       codexRequest: body.codexRequest,
       createdBy: currentUser.id,
       ownerUserId: currentUser.id
@@ -2144,6 +2170,11 @@ async function handleApi(req, res, url) {
       targetName: retryRun.title,
       before: source,
       after: retryRun,
+      metadata: {
+        countAsSkillUsage: false,
+        countAsProductUsage: false,
+        ...runUsageLogMetadata(retryRun)
+      },
       description: `${currentUser.displayName || currentUser.username} 基于「${source.title}」创建再次执行`
     });
     sendJson(res, 201, retryRun);
@@ -2354,10 +2385,13 @@ async function createDirectSkillRunFromBody(req, project, body = {}, currentUser
     targetName: run.title,
     after: run,
     metadata: {
+      countAsSkillUsage: false,
+      countAsProductUsage: false,
       primarySkillPath,
       figmaLinks,
       assigneeUserId,
-      figmaWriteMode: run.figmaWriteMode || ''
+      figmaWriteMode: run.figmaWriteMode || '',
+      ...runUsageLogMetadata(run)
     },
     description: `${currentUser.displayName || currentUser.username} 创建直接执行「${run.title}」，指派给 ${assigneeName || assigneeUserId || '未指定成员'}`
   });
@@ -2424,6 +2458,47 @@ function broadcastPlatformEvent(type, payload = {}) {
   for (const client of platformEventClients) {
     if (canReceivePlatformEvent(client, event)) sendPlatformEvent(client, 'message', event);
   }
+}
+
+function broadcastUsageCountersChanged(result = null, payload = {}) {
+  if (!result || Number(result.matched || 0) <= 0) return;
+  broadcastPlatformEvent('usage-counters.changed', {
+    ...payload,
+    matched: Number(result.matched || 0)
+  });
+}
+
+function runUsageLogMetadata(run = {}) {
+  const selectedMaterialHints = Array.isArray(run.selectedMaterialHints)
+    ? run.selectedMaterialHints.map(item => String(item || '').trim()).filter(Boolean)
+    : String(run.selectedMaterialHints || '')
+      .split(/\n|,|，|、/)
+      .map(item => item.trim())
+      .filter(Boolean);
+  const artifactNames = [
+    run.productName,
+    run.sourceTitle,
+    run.title
+  ].map(item => String(item || '').trim()).filter(Boolean);
+  const artifactPaths = [
+    run.primarySkillPath,
+    run.skillPath,
+    run.stage,
+    ...selectedMaterialHints
+  ].map(item => String(item || '').trim()).filter(Boolean);
+  return {
+    productName: String(run.productName || '').trim(),
+    artifactName: artifactNames[0] || '',
+    skillName: artifactNames[0] || '',
+    operationName: String(run.title || '').trim(),
+    path: artifactPaths[0] || '',
+    filePath: artifactPaths[0] || '',
+    skillPath: String(run.primarySkillPath || run.skillPath || run.stage || '').trim(),
+    artifactPath: artifactPaths[0] || '',
+    artifactNames: [...new Set(artifactNames)],
+    artifactPaths: [...new Set(artifactPaths)],
+    selectedMaterialHints
+  };
 }
 
 function sendPlatformEvent(client, eventName, payload = {}) {
@@ -5616,7 +5691,10 @@ async function syncZentaoTasks(project, options = {}) {
     const detailConcurrency = Math.min(Math.max(Number(syncOptions.detailConcurrency || (interactive ? 6 : 4)), 1), 10);
     const { artAccounts, userNames, artUserSource, artUsers } = await getZentaoArtUsers();
     const artSnapshotTasks = await listArtSnapshotTasks(project.id).catch(() => []);
-    const artSeenCandidateTaskNos = await listArtSeenCandidateTaskNos().catch(() => []);
+    const artSeenCandidateMaxAgeMs = currentOnlySync
+      ? Number(syncOptions.artSeenCandidateMaxAgeMs ?? 2 * 24 * 60 * 60 * 1000)
+      : Number(syncOptions.artSeenCandidateMaxAgeMs ?? 0);
+    const artSeenCandidateTaskNos = await listArtSeenCandidateTaskNos({ maxAgeMs: artSeenCandidateMaxAgeMs }).catch(() => []);
     const existingZentaoTasks = (await listTasks({ projectId: project.id }))
       .filter(task => task.source === 'zentao' && task.taskNo);
     const aiFlowTaskNos = (await listAiFlowRecords({ projectId: project.id }))
@@ -5709,10 +5787,25 @@ async function syncZentaoTasks(project, options = {}) {
     const existingCurrentZentaoTasks = existingZentaoTasks
       .filter(task => task.isCurrent !== false && isArtTask(task, artAccounts));
     const incomingCurrentTaskCount = [...taskByNo.values()].filter(task => task.isCurrent !== false).length;
-    const preserveExistingCurrentTasks = existingCurrentZentaoTasks.length >= 10
+    const currentSnapshotReliable = isReliableZentaoCurrentSnapshot({
+      currentOnlySync,
+      classicUserTaskDiscovery,
+      detailRefresh,
+      detailRefreshCandidateCount: detailRefreshTaskNos.size,
+      executionSummaries
+    });
+    const preserveExistingCurrentTasks = !currentSnapshotReliable
+      && existingCurrentZentaoTasks.length >= 10
       && incomingCurrentTaskCount > 0
       && incomingCurrentTaskCount < Math.ceil(existingCurrentZentaoTasks.length * 0.5);
     if (preserveExistingCurrentTasks) {
+      for (const task of existingCurrentZentaoTasks) {
+        if (task.taskNo && !taskByNo.has(String(task.taskNo))) taskByNo.set(String(task.taskNo), task);
+      }
+    }
+
+    const noReliableIncomingTasks = !currentSnapshotReliable && incomingCurrentTaskCount === 0 && existingCurrentZentaoTasks.length > 0;
+    if (noReliableIncomingTasks) {
       for (const task of existingCurrentZentaoTasks) {
         if (task.taskNo && !taskByNo.has(String(task.taskNo))) taskByNo.set(String(task.taskNo), task);
       }
@@ -5724,7 +5817,9 @@ async function syncZentaoTasks(project, options = {}) {
       task.id,
       task.projectId && task.taskNo ? `${task.projectId}:${task.taskNo}` : ''
     ]).filter(Boolean);
-    const hasReliableCurrentSnapshot = currentTaskIds.length > 0 || detailRefresh.refreshed > 0 || executionSummaries.some(item => Number(item.matched || 0) > 0);
+    const hasReliableCurrentSnapshot = currentSnapshotReliable
+      || detailRefresh.refreshed > 0
+      || executionSummaries.some(item => Number(item.matched || 0) > 0);
     if (interactive && !hasReliableCurrentSnapshot) {
       for (const task of existingCurrentZentaoTasks) {
         currentTaskIds.push(task.id, task.projectId && task.taskNo ? `${task.projectId}:${task.taskNo}` : '');
@@ -5738,14 +5833,17 @@ async function syncZentaoTasks(project, options = {}) {
         }
       }
     }
+    const uniqueCurrentTaskIds = [...new Set(currentTaskIds.filter(Boolean))];
     const snapshot = await reconcileZentaoTaskSnapshot(
       project.id,
-      currentTaskIds,
+      uniqueCurrentTaskIds,
       syncedAt
     );
+    const currentTaskCount = uniqueCurrentTaskIds.filter(id => String(id || '').includes(':')).length;
     const result = {
       ...saved,
       ...snapshot,
+      currentTaskCount,
       artDeptId: zentaoArtDeptId,
       artUserCount: artAccounts.size,
       artUserSource,
@@ -5762,9 +5860,12 @@ async function syncZentaoTasks(project, options = {}) {
       syncProfile: quickSync ? 'quick' : fullScan ? 'full' : interactive ? 'interactive' : 'standard',
       detailRefreshScope,
       detailRefreshCandidates: detailRefreshTaskNos.size,
+      currentSnapshotReliable,
+      artSeenCandidateMaxAgeMs,
       currentOnlySync,
       scannedExecutions: scanExecutions.length,
       preservedExistingCurrentTasks: preserveExistingCurrentTasks,
+      preservedExistingTasks: noReliableIncomingTasks,
       syncedAt
     };
     markZentaoQueueSuccess('tasks', result, result.syncedAt);
@@ -6023,7 +6124,7 @@ function compactZentaoSyncSummary(summary = null) {
   if (!summary || typeof summary !== 'object') return summary;
   const output = { ...summary };
   if (Array.isArray(output.tasks)) {
-    output.taskCount = output.tasks.length;
+    output.taskCount = Number(output.currentTaskCount || 0) || output.tasks.length;
     delete output.tasks;
   }
   if (Array.isArray(output.bugs)) {
@@ -6589,9 +6690,8 @@ async function refreshTrackedZentaoTasks(project, taskNos = new Set(), existingT
       cursor += 1;
       try {
         const payload = await zentao.getTask(zentaoApi, { id: taskNo });
-        const result = payload.result || payload.data || payload;
-        const task = result.task || result;
-        if (!task || !(task.id || task.taskID)) throw new Error('ZenTao 未返回任务详情');
+        const task = unwrapZentaoTaskPayload(payload);
+        if (!task || !(task.id || task.taskID)) throw new Error(`ZenTao 未返回任务详情：${describeZentaoPayloadShape(payload)}`);
         for (const detailTask of expandZentaoDetailTasks(task)) {
           const detailTaskNo = String(detailTask.id || detailTask.taskID || '').trim();
           const existingTask = existingTaskByNo.get(detailTaskNo);
@@ -6629,6 +6729,62 @@ async function refreshTrackedZentaoTasks(project, taskNos = new Set(), existingT
     refreshed: refreshedTasks.length,
     failed
   };
+}
+
+function unwrapZentaoTaskPayload(payload = {}) {
+  const candidates = [
+    payload?.result?.task,
+    payload?.result,
+    payload?.data?.task,
+    payload?.data,
+    payload?.task,
+    payload
+  ];
+  return candidates.find(candidate => candidate && typeof candidate === 'object' && (candidate.id || candidate.taskID)) || null;
+}
+
+function describeZentaoPayloadShape(payload = {}) {
+  if (!payload || typeof payload !== 'object') return typeof payload;
+  const result = payload.result;
+  const data = payload.data;
+  return JSON.stringify({
+    status: payload.status,
+    msg: payload.msg,
+    keys: Object.keys(payload).slice(0, 12),
+    resultType: Array.isArray(result) ? 'array' : typeof result,
+    resultKeys: result && typeof result === 'object' && !Array.isArray(result) ? Object.keys(result).slice(0, 12) : [],
+    dataType: Array.isArray(data) ? 'array' : typeof data,
+    dataKeys: data && typeof data === 'object' && !Array.isArray(data) ? Object.keys(data).slice(0, 12) : []
+  });
+}
+
+function isReliableZentaoCurrentSnapshot({
+  currentOnlySync = false,
+  classicUserTaskDiscovery = {},
+  detailRefresh = {},
+  detailRefreshCandidateCount = 0,
+  executionSummaries = []
+} = {}) {
+  const discoveryUsers = Number(classicUserTaskDiscovery.users || 0);
+  const discoveryFailed = Number(classicUserTaskDiscovery.failed || 0);
+  const discoveryPages = Number(classicUserTaskDiscovery.pages || 0);
+  const discoveryDiscovered = Number(classicUserTaskDiscovery.discovered || classicUserTaskDiscovery.taskNos?.length || 0);
+  const discoveryReliable = classicUserTaskDiscovery.enabled !== false
+    && !classicUserTaskDiscovery.reason
+    && discoveryUsers > 0
+    && discoveryPages > 0
+    && discoveryFailed < discoveryUsers
+    && discoveryDiscovered > 0;
+  const refreshFailed = Array.isArray(detailRefresh.failed)
+    ? detailRefresh.failed.length
+    : Number(detailRefresh.failed || 0);
+  const refreshCandidates = Number(detailRefreshCandidateCount || 0);
+  const detailReliable = refreshCandidates > 0
+    && Number(detailRefresh.refreshed || 0) > 0
+    && refreshFailed < refreshCandidates;
+  if (currentOnlySync) return discoveryReliable || detailReliable;
+  const executionReliable = executionSummaries.some(item => Number(item.matched || 0) > 0 && !item.error);
+  return discoveryReliable || detailReliable || executionReliable;
 }
 
 async function discoverZentaoUserAssignedTaskNos(artUsers = [], options = {}) {
@@ -6945,14 +7101,22 @@ async function resolveZentaoExecutionIds(options = {}) {
 }
 
 async function getZentaoArtUsers() {
-  const artUsers = await artDepartmentUsers({ fast: false });
+  let artUsers = await artDepartmentUsers({ fast: false });
+  if (artUsers.length && artUsers.some(user => !zentaoUserNumericId(user))) {
+    const liveUsers = await fetchZentaoDepartmentUsers();
+    if (liveUsers.length) {
+      artUsers = liveUsers;
+      artDepartmentUsersCache = liveUsers;
+      artDepartmentUsersCacheAt = Date.now();
+    }
+  }
   const artAccounts = new Set(artUsers.map(user => zentaoUserAccount(user)).filter(Boolean));
   if (!artAccounts.size) {
     throw new HttpError(502, `ZenTao 同步失败：未获取到部门 ID=${zentaoArtDeptId} 的美术人员，已保留现有任务列表。`);
   }
   return {
     artAccounts,
-    artUserSource: artDepartmentUsersCache?.length ? 'zentao-users-cache' : 'platform-fallback',
+    artUserSource: artUsers.some(user => zentaoUserNumericId(user)) ? 'zentao-users' : 'platform-fallback',
     artUsers,
     userNames: new Map(artUsers
       .map(user => [zentaoUserAccount(user), user.realname || user.name || zentaoUserAccount(user)])
@@ -7309,16 +7473,22 @@ async function listArtSnapshotTasks(projectId = artProjectId) {
     .map(task => artTaskToPlatformTask(report, task, projectId));
 }
 
-async function listArtSeenCandidateTaskNos() {
+async function listArtSeenCandidateTaskNos(options = {}) {
   const names = [
     'zentao_owner_seen_items_zhangqw.json',
     'zentao_seen_items.json',
     'zentao_seen_items_zhangqw.json'
   ];
   const taskNos = new Set();
+  const maxAgeMs = Number(options.maxAgeMs || 0);
+  const now = Date.now();
   for (const name of names) {
     try {
       const file = path.join(artDashboardDataDir, name);
+      if (maxAgeMs > 0) {
+        const stat = await fs.stat(file);
+        if (now - stat.mtimeMs > maxAgeMs) continue;
+      }
       const data = JSON.parse(await fs.readFile(file, 'utf8'));
       const seen = data?.seen && typeof data.seen === 'object' ? data.seen : {};
       for (const item of Object.values(seen)) {

@@ -48,7 +48,9 @@ const currentTaskIds = new Set();
 const existingZentaoTaskNos = new Set([...taskMap.values()]
   .filter(task => task.projectId === projectId && task.source === 'zentao' && task.taskNo)
   .map(task => String(task.taskNo)));
-const artSeenCandidateTaskNos = await listArtSeenCandidateTaskNos();
+const artSeenCandidateTaskNos = await listArtSeenCandidateTaskNos({
+  maxAgeMs: Number(process.env.ZENTAO_SEEN_CANDIDATE_MAX_AGE_MS || 2 * 24 * 60 * 60 * 1000)
+});
 for (const taskNo of artSeenCandidateTaskNos) existingZentaoTaskNos.add(String(taskNo));
 const existingCurrentZentaoKeys = new Set([...taskMap.entries()]
   .filter(([, task]) => task.projectId === projectId && task.source === 'zentao' && task.taskNo && task.isCurrent !== false && isArtTask(task))
@@ -101,8 +103,8 @@ let detailRefreshed = 0;
 for (const taskNo of existingZentaoTaskNos) {
   try {
     const result = await zentao.getTask(api, { id: taskNo });
-    const zentaoTask = result?.result?.task || result?.result || result?.data?.task || result?.data || result;
-    if (!zentaoTask || !(zentaoTask.id || zentaoTask.taskID)) throw new Error('ZenTao 未返回任务详情');
+    const zentaoTask = unwrapZentaoTaskPayload(result);
+    if (!zentaoTask || !(zentaoTask.id || zentaoTask.taskID)) throw new Error(`ZenTao 未返回任务详情：${describeZentaoPayloadShape(result)}`);
     for (const detailTask of expandZentaoDetailTasks(zentaoTask)) {
       const detailTaskNo = String(detailTask.id || detailTask.taskID || '').trim();
       const normalized = normalizeZentaoTask(
@@ -135,10 +137,24 @@ for (const taskNo of existingZentaoTaskNos) {
 
 let markedCurrent = 0;
 let markedNonCurrent = 0;
+const currentSnapshotReliable = hasReliableCurrentSnapshot({
+  currentTaskCount: currentTaskIds.size,
+  detailRefreshed,
+  detailRefreshFailures,
+  detailRefreshCandidateCount: existingZentaoTaskNos.size,
+  matchedTaskCount: matched,
+  executionErrors,
+  executionCount: executions.length
+});
 const preserveExistingCurrentTasks = existingCurrentZentaoKeys.size >= 10
+  && !currentSnapshotReliable
   && currentTaskIds.size > 0
   && currentTaskIds.size < Math.ceil(existingCurrentZentaoKeys.size * 0.5);
 if (preserveExistingCurrentTasks) {
+  for (const key of existingCurrentZentaoKeys) currentTaskIds.add(key);
+}
+const noReliableIncomingTasks = !currentSnapshotReliable && currentTaskIds.size === 0 && existingCurrentZentaoKeys.size > 0;
+if (noReliableIncomingTasks) {
   for (const key of existingCurrentZentaoKeys) currentTaskIds.add(key);
 }
 for (const [key, task] of taskMap) {
@@ -173,6 +189,7 @@ console.log(JSON.stringify({
   detailRefreshed,
   detailRefreshFailures,
   preservedExistingCurrentTasks: preserveExistingCurrentTasks,
+  preservedExistingTasks: noReliableIncomingTasks,
   markedCurrent,
   markedNonCurrent,
   created,
@@ -193,17 +210,87 @@ function mapKey(task = {}) {
 
 function mergeDuplicateTask(previous, next) {
   if (!previous) return next;
+  const previousTime = taskMergeTime(previous);
+  const nextTime = taskMergeTime(next);
+  const primary = nextTime >= previousTime ? next : previous;
+  const secondary = primary === next ? previous : next;
+  const isCurrent = Object.prototype.hasOwnProperty.call(primary, 'isCurrent')
+    ? primary.isCurrent !== false
+    : secondary.isCurrent !== false;
   return {
-    ...previous,
-    ...next,
+    ...secondary,
+    ...primary,
     id: previous.id || next.id,
-    isCurrent: previous.isCurrent !== false || next.isCurrent !== false,
-    syncStatus: previous.isCurrent !== false || next.isCurrent !== false ? 'current' : next.syncStatus || previous.syncStatus,
+    isCurrent,
+    syncStatus: isCurrent ? 'current' : 'non_current',
     createdAt: previous.createdAt || next.createdAt,
     updatedAt: latestDate(previous.updatedAt, next.updatedAt),
     lastSyncedAt: latestDate(previous.lastSyncedAt, next.lastSyncedAt),
-    archivedAt: previous.isCurrent !== false || next.isCurrent !== false ? '' : previous.archivedAt || next.archivedAt || ''
+    archivedAt: isCurrent ? '' : previous.archivedAt || next.archivedAt || ''
   };
+}
+
+function taskMergeTime(task = {}) {
+  return Math.max(
+    parseTaskDate(task.lastSyncedAt),
+    parseTaskDate(task.updatedAt),
+    parseTaskDate(task.createdAt)
+  );
+}
+
+function parseTaskDate(value = '') {
+  const text = String(value || '').trim();
+  if (!text || /^0{4}-0{2}-0{2}/.test(text)) return 0;
+  const time = Date.parse(text);
+  return Number.isFinite(time) ? time : 0;
+}
+
+function hasReliableCurrentSnapshot({
+  currentTaskCount = 0,
+  detailRefreshed = 0,
+  detailRefreshFailures = [],
+  detailRefreshCandidateCount = 0,
+  matchedTaskCount = 0,
+  executionErrors = [],
+  executionCount = 0
+} = {}) {
+  const refreshFailed = Array.isArray(detailRefreshFailures)
+    ? detailRefreshFailures.length
+    : Number(detailRefreshFailures || 0);
+  const detailReliable = Number(detailRefreshCandidateCount || 0) > 0
+    && Number(detailRefreshed || 0) > 0
+    && refreshFailed < Number(detailRefreshCandidateCount || 0);
+  const executionReliable = Number(executionCount || 0) > 0
+    && Number(matchedTaskCount || 0) > 0
+    && (!Array.isArray(executionErrors) || executionErrors.length < Number(executionCount || 0));
+  return Number(currentTaskCount || 0) > 0 && (detailReliable || executionReliable);
+}
+
+function unwrapZentaoTaskPayload(payload = {}) {
+  const candidates = [
+    payload?.result?.task,
+    payload?.result,
+    payload?.data?.task,
+    payload?.data,
+    payload?.task,
+    payload
+  ];
+  return candidates.find(candidate => candidate && typeof candidate === 'object' && (candidate.id || candidate.taskID)) || null;
+}
+
+function describeZentaoPayloadShape(payload = {}) {
+  if (!payload || typeof payload !== 'object') return typeof payload;
+  const result = payload.result;
+  const data = payload.data;
+  return JSON.stringify({
+    status: payload.status,
+    msg: payload.msg,
+    keys: Object.keys(payload).slice(0, 12),
+    resultType: Array.isArray(result) ? 'array' : typeof result,
+    resultKeys: result && typeof result === 'object' && !Array.isArray(result) ? Object.keys(result).slice(0, 12) : [],
+    dataType: Array.isArray(data) ? 'array' : typeof data,
+    dataKeys: data && typeof data === 'object' && !Array.isArray(data) ? Object.keys(data).slice(0, 12) : []
+  });
 }
 
 function latestDate(a, b) {
@@ -332,16 +419,22 @@ function isBugLikeTask(task = {}) {
   return /【\s*(?:内部|线上)?\s*bug\s*】|内部\s*bug|线上\s*bug|sourceType\s*[:：]?\s*bug/i.test(text);
 }
 
-async function listArtSeenCandidateTaskNos() {
+async function listArtSeenCandidateTaskNos(options = {}) {
   const names = [
     'zentao_owner_seen_items_zhangqw.json',
     'zentao_seen_items.json',
     'zentao_seen_items_zhangqw.json'
   ];
   const taskNos = new Set();
+  const maxAgeMs = Number(options.maxAgeMs || 0);
+  const now = Date.now();
   for (const name of names) {
     try {
       const file = path.join(artDashboardDataDir, name);
+      if (maxAgeMs > 0) {
+        const stat = await fs.stat(file);
+        if (now - stat.mtimeMs > maxAgeMs) continue;
+      }
       const data = JSON.parse(await fs.readFile(file, 'utf8'));
       const seen = data?.seen && typeof data.seen === 'object' ? data.seen : {};
       for (const item of Object.values(seen)) {

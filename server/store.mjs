@@ -68,12 +68,7 @@ const useMysqlStore = process.env.AWP_USE_MYSQL === '1';
 const retentionDays = Math.max(1, Number(process.env.AWP_DATA_RETENTION_DAYS || 2) || 2);
 const retentionEnabled = process.env.AWP_DATA_RETENTION_ENABLED !== '0';
 const retentionPaths = new Set([
-  paths.tasks,
-  paths.bugs,
   paths.aiFlowRecords,
-  paths.taskReviews,
-  paths.taskProcessingNotes,
-  paths.artBriefs,
   paths.runs,
   paths.operationLogs,
   paths.artProgressEvents
@@ -771,9 +766,14 @@ export async function recordUsageCountersForOperationLog(log = {}) {
   if (targets.length) await updateUsageCounters(targets);
 }
 
-export async function recordUsageCountersForDirectSkillRun(run = {}) {
-  const targets = usageTargetsFromDirectSkillRun(run);
+export async function recordUsageCountersForRun(run = {}, options = {}) {
+  const targets = usageTargetsFromRun(run, options);
   if (targets.length) await updateUsageCounters(targets);
+  return { matched: targets.length };
+}
+
+export async function recordUsageCountersForDirectSkillRun(run = {}) {
+  return recordUsageCountersForRun(run, { source: 'direct-skill-run' });
 }
 
 export async function recordUsageCountersForSkillAliases(aliases = [], options = {}) {
@@ -1746,18 +1746,39 @@ function taskIdentityKey(task = {}) {
 
 function mergeDuplicateTask(previous, next) {
   if (!previous) return next;
-  const isCurrent = previous.isCurrent !== false || next.isCurrent !== false;
+  const previousTime = taskMergeTime(previous);
+  const nextTime = taskMergeTime(next);
+  const primary = nextTime >= previousTime ? next : previous;
+  const secondary = primary === next ? previous : next;
+  const isCurrent = Object.prototype.hasOwnProperty.call(primary, 'isCurrent')
+    ? primary.isCurrent !== false
+    : secondary.isCurrent !== false;
   return {
-    ...previous,
-    ...next,
+    ...secondary,
+    ...primary,
     id: previous.id || next.id,
     createdAt: previous.createdAt || next.createdAt,
     updatedAt: String(previous.updatedAt || '') > String(next.updatedAt || '') ? previous.updatedAt : next.updatedAt,
     lastSyncedAt: String(previous.lastSyncedAt || '') > String(next.lastSyncedAt || '') ? previous.lastSyncedAt : next.lastSyncedAt,
     isCurrent,
-    syncStatus: isCurrent ? 'current' : next.syncStatus || previous.syncStatus,
+    syncStatus: isCurrent ? 'current' : 'non_current',
     archivedAt: isCurrent ? '' : previous.archivedAt || next.archivedAt || ''
   };
+}
+
+function taskMergeTime(task = {}) {
+  return Math.max(
+    parseTaskDate(task.lastSyncedAt),
+    parseTaskDate(task.updatedAt),
+    parseTaskDate(task.createdAt)
+  );
+}
+
+function parseTaskDate(value = '') {
+  const text = String(value || '').trim();
+  if (!text || /^0{4}-0{2}-0{2}/.test(text)) return 0;
+  const time = Date.parse(text);
+  return Number.isFinite(time) ? time : 0;
 }
 
 function normalizeBug(input) {
@@ -2426,22 +2447,52 @@ function usageTargetsFromOperationLog(log = {}) {
   });
 }
 
-function usageTargetsFromDirectSkillRun(run = {}) {
+function usageTargetsFromRun(run = {}, options = {}) {
+  if (!isUsageLikeRun(run)) return [];
+  const source = cleanString(options.source || 'run');
+  const at = cleanString(options.at || run.startedAt || run.createdAt);
   const values = [
     run.primarySkillPath,
+    run.skillPath,
     run.stage,
     run.title,
     run.sourceTitle,
     run.productName,
-    ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : [])
+    ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
+    ...(Array.isArray(run.materials) ? run.materials.flatMap(item => [item?.path, item?.name, item?.title]) : []),
+    ...(Array.isArray(run.referenceItems) ? run.referenceItems.flatMap(item => [item?.path, item?.name, item?.title]) : [])
   ];
   return buildUsageTargets(values, {
     person: cleanString(run.assignedToName || run.developer || run.createdBy || run.ownerUserId),
-    at: cleanString(run.createdAt),
-    source: 'direct-skill-run',
+    at,
+    source,
     kind: 'usage',
-    eventKey: usageEventKey('direct-skill-run', run.id || run.primarySkillPath || run.title, run.createdAt)
+    eventKey: usageEventKey(source, run.id || run.primarySkillPath || run.stage || run.title, at)
   });
+}
+
+function isUsageLikeRun(run = {}) {
+  if (!run || typeof run !== 'object') return false;
+  if (run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill') return true;
+  if (normalizeWorkflowId(run.workflow || '') === 'art-single-skill') return true;
+  if (cleanString(run.executionMode) === 'single-skill') return true;
+  const values = [
+    run.primarySkillPath,
+    run.skillPath,
+    run.stage,
+    run.showdocHints,
+    ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : [])
+  ].map(cleanString).filter(Boolean);
+  if (!values.length) return false;
+  return values.some(looksLikeSkillOrMarkdownMaterial);
+}
+
+function looksLikeSkillOrMarkdownMaterial(value = '') {
+  const text = cleanString(value).replace(/\\/g, '/');
+  if (!text) return false;
+  return /(^|\/)SKILL\.md(?:$|[?#])/i.test(text)
+    || /\.(md|markdown)(?:$|[?#])/i.test(text)
+    || /\/(skills?|\.codex|\.claude|规范|资料库|references)\//i.test(text);
 }
 
 function usageSearchTextFromRecord(record = {}, source = 'art-progress') {
