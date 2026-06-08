@@ -8226,6 +8226,11 @@ export default {
       return this.skillInventoryUsageStatsForList(row);
     },
 
+    skillInventoryUsageCountDisplay(row = {}) {
+      if (row.hidden === true) return '-';
+      return Number(row.usageCount || 0);
+    },
+
     skillInventoryUsageStatsForList(row = {}) {
       const historical = this.usageCounterStatsForRow(row);
       const people = new Set();
@@ -8464,6 +8469,7 @@ export default {
     },
 
     skillUsageRateDisplay(row = {}) {
+      if (row.hidden === true) return '-';
       if (this.isOwnerYushengwei(row)) return '-';
       return `${Number(row.usageRate || 0)}%`;
     },
@@ -11585,6 +11591,7 @@ export default {
       })).sort((left, right) => String(right.time || '').localeCompare(String(left.time || '')));
       const pageSize = previous.pageSize || 10;
       const maxPage = Math.max(1, Math.ceil(logs.length / pageSize));
+      const hidden = row.hidden === true;
       return {
         visible: previous.visible !== false,
         row,
@@ -11597,10 +11604,10 @@ export default {
         effectivePeopleCount: effectivePeople.length,
         versionEntries,
         metrics: [
-          { label: '调用次数', value: totalCount || 0 },
+          { label: '调用次数', value: hidden ? '-' : (totalCount || 0) },
           { label: '计入等级人数', value: effectivePeople.length },
           { label: '人均次数', value: people.size ? Math.round((totalCount / people.size) * 10) / 10 : 0 },
-          { label: '有效占比', value: validationCoverage.excluded ? '-' : `${validationCoverage.rate}%` }
+          { label: '有效占比', value: hidden || validationCoverage.excluded ? '-' : `${validationCoverage.rate}%` }
         ]
       };
     },
@@ -15580,6 +15587,27 @@ export default {
         .replace(/\s{2,}/g, ' ')
         .replace(/^[\s·:：\-—_]+|[\s·:：\-—_]+$/g, '')
         .trim();
+    },
+
+    taskRequirementPreviewHtml(task = {}) {
+      const raw = this.taskRequirementPreviewSource(task);
+      if (!raw) return '';
+      return sanitizeTaskRequirementHtml(raw, this.zentaoTaskUrl(task) || this.appConfig.zentaoBaseUrl || '');
+    },
+
+    taskRequirementPreviewSource(task = {}) {
+      const candidates = [
+        task.requirement,
+        task.description,
+        task.zentao?.desc,
+        task.zentao?.description,
+        task.zentao?.requirement,
+        task.summary
+      ];
+      return String(candidates.find(value => {
+        const text = String(value || '').replace(/<br\s*\/?>/gi, '').trim();
+        return text && text !== '-';
+      }) || '').trim();
     },
 
     isUrgentTask(task = {}) {
@@ -20091,5 +20119,73 @@ function escapeHtml(value) {
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;');
+}
+
+function sanitizeTaskRequirementHtml(value = '', baseUrl = '') {
+  const decoded = decodeHtmlEntities(String(value || '').trim());
+  if (!decoded || /^<br\s*\/?>$/i.test(decoded)) return '';
+  const looksLikeHtml = /<\/?[a-z][\s\S]*>/i.test(decoded);
+  const html = looksLikeHtml ? decoded : escapeHtml(decoded).replace(/\r?\n/g, '<br>');
+  if (typeof window === 'undefined' || typeof window.DOMParser === 'undefined') {
+    return html.replace(/<script[\s\S]*?<\/script>/gi, '');
+  }
+  const parser = new window.DOMParser();
+  const doc = parser.parseFromString(`<div>${html}</div>`, 'text/html');
+  const allowedTags = new Set([
+    'A', 'B', 'BR', 'CODE', 'DIV', 'EM', 'H1', 'H2', 'H3', 'H4', 'HR', 'I',
+    'IMG', 'LI', 'OL', 'P', 'PRE', 'S', 'SPAN', 'STRONG', 'TABLE', 'TBODY',
+    'TD', 'TH', 'THEAD', 'TR', 'U', 'UL'
+  ]);
+  const allowedAttrs = new Set(['alt', 'colspan', 'href', 'rowspan', 'src', 'target', 'title']);
+  const root = doc.body.firstElementChild;
+  const sanitizeNode = node => {
+    if (node.nodeType === Node.COMMENT_NODE) {
+      node.remove();
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    if (!allowedTags.has(node.tagName)) {
+      node.replaceWith(...Array.from(node.childNodes));
+      return;
+    }
+    for (const attr of Array.from(node.attributes)) {
+      const name = attr.name.toLowerCase();
+      if (name.startsWith('on') || name === 'style' || !allowedAttrs.has(name)) {
+        node.removeAttribute(attr.name);
+        continue;
+      }
+      if (['href', 'src'].includes(name)) {
+        const safeUrl = safeTaskRequirementUrl(attr.value, baseUrl);
+        if (!safeUrl) node.removeAttribute(attr.name);
+        else node.setAttribute(attr.name, safeUrl);
+      }
+    }
+    if (node.tagName === 'A') {
+      node.setAttribute('target', '_blank');
+      node.setAttribute('rel', 'noopener noreferrer');
+    }
+    if (node.tagName === 'IMG') {
+      node.setAttribute('loading', 'lazy');
+      node.setAttribute('alt', node.getAttribute('alt') || '任务描述图片');
+    }
+    Array.from(node.childNodes).forEach(sanitizeNode);
+  };
+  Array.from(root?.childNodes || []).forEach(sanitizeNode);
+  return root?.innerHTML?.trim() || '';
+}
+
+function safeTaskRequirementUrl(value = '', baseUrl = '') {
+  const raw = String(value || '').trim();
+  if (!raw || /^(?:javascript|data):/i.test(raw)) return '';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^\/\//.test(raw)) return `https:${raw}`;
+  try {
+    const fallback = 'https://cd.baa360.cc:20088/index.php';
+    const base = String(baseUrl || fallback).replace(/\/$/, '');
+    const url = new URL(raw, base.endsWith('/index.php') ? base : `${base}/`);
+    return url.toString();
+  } catch {
+    return '';
+  }
 }
 </script>

@@ -104,8 +104,37 @@
         <template #default="{ row }">
           <div class="project-cell draggable-task-cell" draggable="true" @dragstart.stop="event => app.startTaskAssignDrag(row, event)" @dragend="app.clearTaskAssignDrag" @click.stop="selectTask(row)">
             <div class="task-title-row">
+              <ElPopover
+                v-if="app.taskRequirementPreviewHtml(row)"
+                trigger="hover"
+                placement="right-start"
+                popper-class="task-requirement-popover"
+                :width="520"
+                :show-after="220"
+                :hide-after="80"
+                :teleported="true"
+              >
+                <template #reference>
+                  <a
+                    v-if="app.zentaoTaskUrl(row)"
+                    :href="app.zentaoTaskUrl(row)"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="task-title-link task-title-preview-trigger"
+                    @click.stop
+                  >{{ row.displayTitle }}</a>
+                  <strong v-else class="task-title-preview-trigger" @click.stop="selectTask(row)">{{ row.displayTitle }}</strong>
+                </template>
+                <div class="task-requirement-preview">
+                  <div class="task-requirement-preview-head">
+                    <strong>{{ row.displayTitle }}</strong>
+                    <span>{{ row.developer || '未指定' }} · {{ row.deadline || row.zentao?.deadline || '无截止时间' }}</span>
+                  </div>
+                  <div class="task-requirement-preview-body" v-html="app.taskRequirementPreviewHtml(row)"></div>
+                </div>
+              </ElPopover>
               <a
-                v-if="app.zentaoTaskUrl(row)"
+                v-else-if="app.zentaoTaskUrl(row)"
                 :href="app.zentaoTaskUrl(row)"
                 target="_blank"
                 rel="noopener noreferrer"

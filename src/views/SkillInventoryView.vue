@@ -320,7 +320,7 @@
       </ElTableColumn>
       <ElTableColumn label="调用次数" width="88">
         <template #default="{ row }">
-          <span class="skill-table-number">{{ row.usageCount || 0 }}</span>
+          <span class="skill-table-number">{{ app.skillInventoryUsageCountDisplay(row) }}</span>
         </template>
       </ElTableColumn>
       <ElTableColumn label="有效占比" width="88">
