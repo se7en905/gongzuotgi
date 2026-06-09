@@ -118,7 +118,16 @@ export async function applyZentaoSplitPlan(task = {}, plan = {}, options = {}) {
         parent: row.parent || taskId,
         executionId: row.executionId || plan.executionId || executionIdOf(detail, task)
       });
-      results.push({ type: 'child', ok: true, taskId: String(created.id || ''), name, assignedTo });
+      results.push({
+        type: 'child',
+        ok: true,
+        taskId: String(created.id || ''),
+        name: created.name || name,
+        assignedTo: created.assignedTo || assignedTo,
+        parent: created.parent || '',
+        story: created.story || '',
+        execution: created.execution || ''
+      });
     } catch (error) {
       results.push({ type: 'child', ok: false, taskId: '', name, assignedTo, error: error.message || String(error) });
     }
@@ -192,7 +201,7 @@ function taskAssigneeCandidates(task = {}) {
 }
 
 function taskAssignBodyFromForm(html = '', detail = {}, task = {}, updates = {}) {
-  const formHtml = firstFormHtml(html);
+  const formHtml = formHtmlWithFields(html, ['assignedTo', 'left']) || firstFormHtml(html);
   const body = formBodyFromHtml(formHtml || html);
   const uid = String(html.match(/\bvar\s+kuid\s*=\s*['"]([^'"]+)['"]/)?.[1] || '').trim();
   const assignedTo = String(updates.assignedTo || accountName(detail.assignedTo) || '').trim();
@@ -203,11 +212,11 @@ function taskAssignBodyFromForm(html = '', detail = {}, task = {}, updates = {})
   else body.delete('comment');
   ensureFormValue(body, 'env', detail.env || task.zentao?.env || '');
   ensureFormValue(body, 'estStarted', validDate(detail.estStarted || task.zentao?.estStarted || ''));
-  setFormValue(body, 'deadline', validDate(detail.deadline || task.deadline || task.zentao?.deadline));
-  setFormValue(body, 'estimate', classicHour(detail.estimate ?? task.estimate ?? task.zentao?.estimate ?? 0));
-  setFormValue(body, 'left', classicHour(detail.left ?? task.zentao?.left ?? 0));
+  setFormValue(body, 'deadline', validDate(detail.deadline || task.deadline || task.zentao?.deadline || body.get('deadline')));
+  setFormValue(body, 'estimate', classicHour(firstValue(detail.estimate, task.estimate, task.zentao?.estimate, body.get('estimate'), 0)));
+  setFormValue(body, 'left', classicHour(firstValue(detail.left, task.zentao?.left, body.get('left'), 0)));
   ensureFormValue(body, 'relatedModules', detail.relatedModules || task.zentao?.relatedModules || '');
-  setFormValue(body, 'status', detail.status || task.zentaoStatus || task.zentao?.originalStatus || 'wait');
+  setFormValue(body, 'status', detail.status || task.zentaoStatus || task.zentao?.originalStatus || body.get('status') || 'wait');
   return body;
 }
 
@@ -275,29 +284,60 @@ async function createChildTaskClassic(api, detail = {}, task = {}, row = {}) {
     parentId,
     estimate
   });
+  const beforeIds = await listExecutionTaskIds(api, executionId);
   await classicPost(
     api,
     createPath,
     body,
     createOnlyBodyPath
   );
-  return { id: '', name: row.name, assignedTo: row.assignedTo };
+  const created = await findCreatedChildTask(api, {
+    executionId,
+    beforeIds,
+    name: row.name,
+    assignedTo: row.assignedTo,
+    parentId,
+    storyId,
+    parentTaskId: zentaoTaskId(task) || zentaoTaskId(detail)
+  });
+  if (!created?.id) {
+    throw new Error(`子单「${row.name || ''}」提交后未在禅道执行 ${executionId} 中查到新任务，已停止标记成功`);
+  }
+  const expectedParent = String(parentId || '');
+  const actualParent = String(created.parent || '');
+  const allowedParents = new Set([
+    expectedParent,
+    String(detail.parent || task.parent || task.zentao?.parent || '')
+  ].filter(Boolean));
+  if (allowedParents.size && actualParent && !allowedParents.has(actualParent)) {
+    throw new Error(`子单「${row.name || ''}」已创建为 ${created.id}，但父任务为 ${actualParent}，不是 ${[...allowedParents].join(' 或 ')}`);
+  }
+  return {
+    id: String(created.id || ''),
+    name: created.name || row.name,
+    assignedTo: accountName(created.assignedTo) || row.assignedTo,
+    parent: actualParent,
+    story: String(created.story || ''),
+    execution: String(created.execution || executionId)
+  };
 }
 
 function taskCreateBodyFromForm(html = '', detail = {}, task = {}, row = {}) {
-  const formHtml = firstFormHtml(html);
+  const formHtml = formHtmlWithFields(html, ['execution', 'module', 'story', 'assignedTo[]', 'name'])
+    || formHtmlWithFields(html, ['execution', 'module', 'story', 'assignedTo[]'])
+    || firstFormHtml(html);
   if (!formHtml) throw new Error(`子单「${row.name || ''}」未读取到禅道创建表单，已停止创建以避免取消关联`);
   const body = formBodyFromHtml(formHtml || html);
   const storyId = String(row.storyId || idValue(firstValue(detail.story, detail.storyID, task.zentao?.story, 0)) || '0');
   const parentId = String(row.parentId || zentaoTaskId(task) || '0');
   const moduleId = String(row.moduleId || idValue(firstValue(detail.module, task.zentao?.module, 0)) || '0');
   const executionId = String(row.executionId || executionIdOf(detail, task));
-  requireFormFields(body, ['execution', 'module', 'story', 'parent'], `子单「${row.name || ''}」`);
+  requireFormFields(body, ['execution', 'module', 'story'], `子单「${row.name || ''}」`);
 
   setFormValue(body, 'execution', executionId);
   setFormValue(body, 'module', moduleId);
   setFormValue(body, 'story', storyId);
-  setFormValue(body, 'parent', parentId);
+  if (body.has('parent')) setFormValue(body, 'parent', parentId);
   setFormValue(body, 'name', row.name || '未命名子任务');
   setFormValue(body, 'pri', String(row.pri || body.get('pri') || 2));
   setFormValue(body, 'estimate', String(row.estimate ?? body.get('estimate') ?? 0));
@@ -315,6 +355,112 @@ function taskCreateBodyFromForm(html = '', detail = {}, task = {}, row = {}) {
   body.append('assignedTo[]', row.assignedTo);
   if (!body.has('mailto[]')) body.append('mailto[]', '');
   return body;
+}
+
+async function listExecutionTaskIds(api, executionId) {
+  const ids = new Set();
+  try {
+    const payload = await api.request({
+      method: 'GET',
+      path: `/api.php/v1/executions/${encodeURIComponent(executionId)}/tasks`
+    });
+    for (const task of extractZentaoTasks(payload)) {
+      const id = String(task.id || task.taskID || '').trim();
+      if (id) ids.add(id);
+    }
+  } catch {
+    // 创建前快照只用于识别新任务，失败时仍允许提交，提交后再按名称查回。
+  }
+  return ids;
+}
+
+async function findCreatedChildTask(api, options = {}) {
+  const executionId = String(options.executionId || '').trim();
+  const parentTaskId = String(options.parentTaskId || '').trim();
+  const beforeIds = options.beforeIds instanceof Set ? options.beforeIds : new Set();
+  const expectedName = normalizeTaskName(options.name);
+  const expectedAssignee = String(options.assignedTo || '').trim().toLowerCase();
+  const expectedStory = String(options.storyId || '').trim();
+  const candidates = [];
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const tasks = [
+      ...(parentTaskId ? await listRelatedTasksFromTask(api, parentTaskId).catch(() => []) : []),
+      ...await listExecutionTasks(api, executionId).catch(() => [])
+    ];
+    for (const task of tasks) {
+      const id = String(task.id || task.taskID || '').trim();
+      if (!id || beforeIds.has(id)) continue;
+      const name = normalizeTaskName(task.name || task.title || '');
+      if (expectedName && name !== expectedName) continue;
+      const assignee = accountName(task.assignedTo).toLowerCase();
+      const story = String(task.story || task.storyID || '').trim();
+      const score = [
+        expectedAssignee && assignee === expectedAssignee,
+        expectedStory && story === expectedStory
+      ].filter(Boolean).length;
+      candidates.push({ task, score });
+    }
+    if (candidates.length) break;
+    await new Promise(resolve => setTimeout(resolve, 300 + attempt * 250));
+  }
+  candidates.sort((a, b) => b.score - a.score);
+  const created = candidates[0]?.task || null;
+  if (!created) return null;
+  const id = String(created.id || created.taskID || '').trim();
+  try {
+    const payload = await api.request({ method: 'GET', path: `/api.php/v1/tasks/${encodeURIComponent(id)}` });
+    return unwrapTask(payload);
+  } catch {
+    return created;
+  }
+}
+
+async function listRelatedTasksFromTask(api, taskId) {
+  const payload = await api.request({ method: 'GET', path: `/api.php/v1/tasks/${encodeURIComponent(taskId)}` });
+  return extractRelatedTasks(unwrapTask(payload));
+}
+
+async function listExecutionTasks(api, executionId) {
+  const payload = await api.request({
+    method: 'GET',
+    path: `/api.php/v1/executions/${encodeURIComponent(executionId)}/tasks`
+  });
+  return extractZentaoTasks(payload);
+}
+
+function extractZentaoTasks(payload = {}) {
+  const result = payload?.result || payload?.data || payload;
+  const tasks = Array.isArray(result?.tasks)
+    ? result.tasks
+    : Array.isArray(result)
+      ? result
+      : [];
+  return tasks.flatMap(task => {
+    const children = Array.isArray(task.children) ? task.children : [];
+    const brothers = Array.isArray(task.brother)
+      ? task.brother
+      : task.brother && typeof task.brother === 'object'
+        ? Object.values(task.brother)
+        : [];
+    return [task, ...children, ...brothers];
+  });
+}
+
+function extractRelatedTasks(task = {}) {
+  if (!task || typeof task !== 'object') return [];
+  const children = Array.isArray(task.children) ? task.children : [];
+  const brothers = Array.isArray(task.brother)
+    ? task.brother
+    : task.brother && typeof task.brother === 'object'
+      ? Object.values(task.brother)
+      : [];
+  return [task, ...children, ...brothers];
+}
+
+function normalizeTaskName(value = '') {
+  return htmlDecode(stripAutoTaskTypePrefix(value))
+    .replace(/\s+/g, '')
+    .trim();
 }
 
 function requireFormFields(body, names = [], label = '禅道表单') {
@@ -395,6 +541,15 @@ function parseSetCookie(setCookie = '') {
 
 function firstFormHtml(html = '') {
   return String(html || '').match(/<form\b[^>]*>([\s\S]*?)<\/form>/i)?.[1] || '';
+}
+
+function formHtmlWithFields(html = '', requiredFields = []) {
+  const forms = [...String(html || '').matchAll(/<form\b[^>]*>([\s\S]*?)<\/form>/gi)]
+    .map(match => match[1] || '');
+  return forms.find(formHtml => {
+    const body = formBodyFromHtml(formHtml);
+    return requiredFields.every(field => body.has(field));
+  }) || '';
 }
 
 function formBodyFromHtml(html = '') {
@@ -485,7 +640,7 @@ function htmlDecode(value = '') {
 
 function classicHour(value) {
   const text = String(value ?? '').trim();
-  if (!text || text === '0') return '0.0';
+  if (!text) return '0';
   return text;
 }
 
