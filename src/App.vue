@@ -13679,11 +13679,7 @@ export default {
           })
         });
         this.applyUpdatedBusinessTask(updated);
-        if (updated.zentaoAssignSynced === false || updated.zentaoAssignError) {
-          ElMessage.warning(`已指派给 ${person.name || this.getTaskAssigneeName(account)}，工作台已更新；禅道写回待后续同步。`);
-        } else {
-          ElMessage.success(`已指派给 ${person.name || this.getTaskAssigneeName(account)}，并写入禅道。`);
-        }
+        ElMessage.success(`已指派给 ${person.name || this.getTaskAssigneeName(account)}，并写入禅道。`);
         this.refreshTasks().catch(() => {});
       } catch (error) {
         ElMessage.error(this.readApiError(error) || '任务指派失败');

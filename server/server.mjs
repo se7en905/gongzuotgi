@@ -1684,16 +1684,13 @@ async function handleApi(req, res, url) {
     const before = task;
     const changedAt = new Date().toISOString();
     let zentaoTask = null;
-    let zentaoAssignError = '';
-    if (assignee.account) {
-      try {
-        zentaoTask = await assignZentaoTask(task, assignee);
-      } catch (error) {
-        zentaoAssignError = zentaoSyncErrorMessage(error);
-        console.warn(`ZenTao assign fallback for task ${task.taskNo || task.id}: ${zentaoAssignError}`);
-      }
-    } else {
-      zentaoAssignError = '未匹配到禅道账号，已先更新工作台负责人。';
+    if (!assignee.account) throw new HttpError(400, '未匹配到禅道账号，无法实时指派禅道。');
+    try {
+      zentaoTask = await assignZentaoTask(task, assignee);
+    } catch (error) {
+      const zentaoAssignError = zentaoSyncErrorMessage(error);
+      console.warn(`ZenTao assign failed for task ${task.taskNo || task.id}: ${zentaoAssignError}`);
+      throw new HttpError(502, `禅道实时指派失败：${zentaoAssignError}`);
     }
     const updated = await upsertTask({
       ...task,
@@ -1707,12 +1704,12 @@ async function handleApi(req, res, url) {
         assignedDate: zentaoTask?.assignedDate || task.zentao?.assignedDate || '',
         originalStatus: zentaoTask?.status || task.zentaoStatus || task.zentao?.originalStatus || '',
         assignSync: {
-          status: zentaoAssignError ? (assignee.account ? 'pending_retry' : 'local_only') : 'synced',
+          status: 'synced',
           targetAccount: assignee.account,
           targetName: assignee.realname || assignee.account,
-          syncedAt: zentaoAssignError ? '' : changedAt,
-          lastErrorAt: zentaoAssignError ? changedAt : '',
-          lastError: zentaoAssignError
+          syncedAt: changedAt,
+          lastErrorAt: '',
+          lastError: ''
         }
       },
       updatedAt: changedAt
@@ -1720,20 +1717,18 @@ async function handleApi(req, res, url) {
     await writeOperationLog(req, {
       user: currentUser,
       module: 'task',
-      action: zentaoAssignError ? 'ASSIGN_TASK_LOCAL_WITH_ZENTAO_RETRY' : 'ASSIGN_ZENTAO_TASK',
-      actionName: zentaoAssignError ? '拖拽指派任务（禅道待补同步）' : '拖拽指派禅道任务',
+      action: 'ASSIGN_ZENTAO_TASK',
+      actionName: '拖拽指派禅道任务',
       targetType: 'task',
       targetId: task.id,
       targetName: task.displayTitle || task.title || task.taskNo || task.id,
       before,
       after: updated,
-      metadata: { taskNo: task.taskNo || task.zentao?.id || '', assignedTo: assignee.account, assignedToName: assignee.realname, zentaoAssignError },
-      description: zentaoAssignError
-        ? `${currentUser.displayName || currentUser.username} 将任务「${task.displayTitle || task.title || task.taskNo || task.id}」在工作台指派给 ${assignee.realname || assignee.account}，禅道写回待补同步`
-        : `${currentUser.displayName || currentUser.username} 将任务「${task.displayTitle || task.title || task.taskNo || task.id}」指派给 ${assignee.realname || assignee.account}`
+      metadata: { taskNo: task.taskNo || task.zentao?.id || '', assignedTo: assignee.account, assignedToName: assignee.realname, zentaoAssignError: '' },
+      description: `${currentUser.displayName || currentUser.username} 将任务「${task.displayTitle || task.title || task.taskNo || task.id}」指派给 ${assignee.realname || assignee.account}`
     });
     broadcastPlatformEvent('tasks.changed', { projectId: task.projectId || artProjectId, taskId: task.id, taskNo: task.taskNo || '', module: 'zentao-task-assign' });
-    sendJson(res, 200, { ...updated, zentaoAssignError, zentaoAssignSynced: !zentaoAssignError });
+    sendJson(res, 200, { ...updated, zentaoAssignError: '', zentaoAssignSynced: true });
     return;
   }
 

@@ -213,8 +213,8 @@ function taskAssignBodyFromForm(html = '', detail = {}, task = {}, updates = {})
   ensureFormValue(body, 'env', detail.env || task.zentao?.env || '');
   ensureFormValue(body, 'estStarted', validDate(detail.estStarted || task.zentao?.estStarted || ''));
   setFormValue(body, 'deadline', validDate(detail.deadline || task.deadline || task.zentao?.deadline || body.get('deadline')));
-  setFormValue(body, 'estimate', classicHour(firstValue(detail.estimate, task.estimate, task.zentao?.estimate, body.get('estimate'), 0)));
-  setFormValue(body, 'left', classicHour(firstValue(detail.left, task.zentao?.left, body.get('left'), 0)));
+  setFormValue(body, 'estimate', classicRequiredHour(firstValue(detail.estimate, task.estimate, task.zentao?.estimate, body.get('estimate'), 0)));
+  setFormValue(body, 'left', classicRequiredHour(firstValue(detail.left, task.zentao?.left, body.get('left'), 0)));
   ensureFormValue(body, 'relatedModules', detail.relatedModules || task.zentao?.relatedModules || '');
   setFormValue(body, 'status', detail.status || task.zentaoStatus || task.zentao?.originalStatus || body.get('status') || 'wait');
   return body;
@@ -641,6 +641,12 @@ function htmlDecode(value = '') {
 function classicHour(value) {
   const text = String(value ?? '').trim();
   if (!text) return '0';
+  return text;
+}
+
+function classicRequiredHour(value) {
+  const text = String(value ?? '').trim();
+  if (!text || Number(text) <= 0) return '1';
   return text;
 }
 
