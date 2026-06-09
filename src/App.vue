@@ -13843,12 +13843,17 @@ export default {
       }
       try {
         this.loading.taskSplit = true;
-        await this.api(`/api/tasks/${encodeURIComponent(taskKey)}/split-apply`, {
+        const result = await this.api(`/api/tasks/${encodeURIComponent(taskKey)}/split-apply`, {
           method: 'POST',
           body: JSON.stringify({ plan: this.taskSplitDialog.plan })
         });
         this.taskSplitDialog.visible = false;
-        ElMessage.success('拆单已写入禅道。');
+        const failed = Array.isArray(result?.results) ? result.results.filter(item => item.ok === false) : [];
+        if (failed.length) {
+          ElMessage.warning(`拆单已处理，成功 ${result.successCount || 0} 条，失败 ${failed.length} 条；失败项请查看操作日志。`);
+        } else {
+          ElMessage.success('拆单已写入禅道。');
+        }
         await this.refreshTasks();
       } catch (error) {
         ElMessage.error(this.readApiError(error) || '拆单写入失败');

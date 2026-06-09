@@ -18,22 +18,22 @@ export async function assignZentaoTask(task = {}, assignee = {}, options = {}) {
 
   const api = await getZentaoApi();
   const detail = unwrapTask(await api.request({ method: 'GET', path: `/api.php/v1/tasks/${taskId}` }));
-  const body = taskEditBody(detail, task, {
-    assignedTo,
-    name: options.name || options.title || '',
-    comment: options.comment || ''
-  });
-  await classicPost(api, `index.php?m=task&f=edit&taskID=${taskId}`, body, `index.php?m=task&f=edit&taskID=${taskId}&onlybody=yes`);
-
-  const fresh = unwrapTask(await api.request({ method: 'GET', path: `/api.php/v1/tasks/${taskId}` }));
-  const currentAssignee = accountName(fresh.assignedTo);
-  if (currentAssignee !== assignedTo) {
-    const brother = fresh?.brother && typeof fresh.brother === 'object' ? fresh.brother[String(taskId)] : null;
-    if (accountName(brother?.assignedTo) !== assignedTo) {
-      throw new Error(`禅道指派验证失败，当前负责人仍为 ${currentAssignee || '空'}`);
-    }
+  const attempts = [];
+  try {
+    await classicAssignTask(api, detail, task, {
+      assignedTo,
+      comment: options.comment || ''
+    });
+    attempts.push('assignTo');
+  } catch (error) {
+    attempts.push(`assignTo失败：${error.message || error}`);
+    throw new Error(`禅道指派提交失败（${attempts.join('；')}）。为避免取消父任务或需求关联，已停止提交编辑任务表单。`);
   }
-  return fresh;
+
+  const fresh = await waitForAssignedTask(api, taskId, assignedTo, assignee);
+  if (taskAssigneeMatches(fresh, assignedTo, assignee)) return fresh;
+  const currentAssignee = describeTaskAssignee(fresh);
+  throw new Error(`禅道指派验证失败，当前负责人仍为 ${currentAssignee || '空'}（已尝试：${attempts.join('；')}）`);
 }
 
 export async function buildZentaoSplitPlan(task = {}) {
@@ -93,10 +93,14 @@ export async function applyZentaoSplitPlan(task = {}, plan = {}, options = {}) {
   const results = [];
   const mainAssignee = String(plan.mainAssignee || '').trim();
   if (mainAssignee) {
-    const fresh = await assignZentaoTask({ ...task, ...detail, taskNo: taskId, zentao: { ...(task.zentao || {}), id: taskId } }, { account: mainAssignee }, {
-      comment: options.comment || ''
-    });
-    results.push({ type: 'main', ok: true, taskId, assignedTo: accountName(fresh.assignedTo) || mainAssignee });
+    try {
+      const fresh = await assignZentaoTask({ ...task, ...detail, taskNo: taskId, zentao: { ...(task.zentao || {}), id: taskId } }, { account: mainAssignee }, {
+        comment: options.comment || ''
+      });
+      results.push({ type: 'main', ok: true, taskId, assignedTo: describeTaskAssignee(fresh) || mainAssignee });
+    } catch (error) {
+      results.push({ type: 'main', ok: false, taskId, assignedTo: mainAssignee, error: error.message || String(error) });
+    }
   }
 
   const children = Array.isArray(plan.children) ? plan.children : [];
@@ -105,16 +109,21 @@ export async function applyZentaoSplitPlan(task = {}, plan = {}, options = {}) {
     const name = String(row.name || '').trim();
     const assignedTo = String(row.assignedTo || '').trim();
     if (!name || !assignedTo) continue;
-    const created = await createChildTaskClassic(api, detail, task, {
-      ...row,
-      name,
-      assignedTo,
-      parent: row.parent || taskId,
-      executionId: row.executionId || plan.executionId || executionIdOf(detail, task)
-    });
-    results.push({ type: 'child', ok: true, taskId: String(created.id || ''), name, assignedTo });
+    try {
+      const created = await createChildTaskClassic(api, detail, task, {
+        ...row,
+        name,
+        assignedTo,
+        parent: row.parent || taskId,
+        executionId: row.executionId || plan.executionId || executionIdOf(detail, task)
+      });
+      results.push({ type: 'child', ok: true, taskId: String(created.id || ''), name, assignedTo });
+    } catch (error) {
+      results.push({ type: 'child', ok: false, taskId: '', name, assignedTo, error: error.message || String(error) });
+    }
   }
-  return { taskId, results };
+  const failed = results.filter(item => item.ok === false);
+  return { taskId, results, ok: failed.length === 0, failedCount: failed.length, successCount: results.length - failed.length };
 }
 
 async function classicAssignTask(api, detail = {}, task = {}, updates = {}) {
@@ -127,6 +136,58 @@ async function classicAssignTask(api, detail = {}, task = {}, updates = {}) {
   const html = await classicGet(api, path, `index.php?m=task&f=view&taskID=${taskId}&onlybody=yes`);
   const body = taskAssignBodyFromForm(html, detail, task, updates);
   await classicPost(api, path, body, path);
+}
+
+async function waitForAssignedTask(api, taskId, assignedTo, assignee = {}) {
+  let fresh = {};
+  for (let index = 0; index < 3; index += 1) {
+    fresh = unwrapTask(await api.request({ method: 'GET', path: `/api.php/v1/tasks/${taskId}` }));
+    if (taskAssigneeMatches(fresh, assignedTo, assignee)) return fresh;
+    await new Promise(resolve => setTimeout(resolve, 260 + index * 220));
+  }
+  return fresh;
+}
+
+function taskAssigneeMatches(task = {}, assignedTo = '', assignee = {}) {
+  const expectedAccount = String(assignedTo || assignee.account || '').trim().toLowerCase();
+  const expectedName = String(assignee.realname || assignee.name || '').trim().toLowerCase();
+  const candidates = taskAssigneeCandidates(task).map(value => String(value || '').trim().toLowerCase()).filter(Boolean);
+  if (expectedAccount && candidates.includes(expectedAccount)) return true;
+  if (expectedName && candidates.includes(expectedName)) return true;
+  return false;
+}
+
+function describeTaskAssignee(task = {}) {
+  return taskAssigneeCandidates(task).find(Boolean) || '';
+}
+
+function taskAssigneeCandidates(task = {}) {
+  const brother = task?.brother && typeof task.brother === 'object'
+    ? task.brother[String(zentaoTaskId(task))]
+    : null;
+  const nestedTask = task?.task && typeof task.task === 'object' ? task.task : null;
+  return [
+    task.assignedTo,
+    task.assignedToName,
+    task.assignedToRealName,
+    task.assignedTo?.account,
+    task.assignedTo?.realname,
+    task.assignedTo?.name,
+    nestedTask?.assignedTo,
+    nestedTask?.assignedToName,
+    nestedTask?.assignedToRealName,
+    nestedTask?.assignedTo?.account,
+    nestedTask?.assignedTo?.realname,
+    nestedTask?.assignedTo?.name,
+    brother?.assignedTo,
+    brother?.assignedToName,
+    brother?.assignedToRealName,
+    brother?.assignedTo?.account,
+    brother?.assignedTo?.realname,
+    brother?.assignedTo?.name
+  ].flatMap(value => Array.isArray(value) ? value : [value])
+    .map(value => accountName(value) || personName(value))
+    .filter(Boolean);
 }
 
 function taskAssignBodyFromForm(html = '', detail = {}, task = {}, updates = {}) {
@@ -146,69 +207,6 @@ function taskAssignBodyFromForm(html = '', detail = {}, task = {}, updates = {})
   ensureFormValue(body, 'relatedModules', detail.relatedModules || task.zentao?.relatedModules || '');
   setFormValue(body, 'status', detail.status || task.zentaoStatus || task.zentao?.originalStatus || 'wait');
   return body;
-}
-
-function taskEditBody(detail = {}, task = {}, updates = {}) {
-  const executionId = String(firstValue(
-    detail.execution?.id,
-    detail.executionID,
-    detail.executionId,
-    detail.execution,
-    detail.project?.id,
-    detail.projectID,
-    task.zentao?.execution,
-    task.executionId,
-    task.executionID
-  ));
-  const currentParent = idValue(firstValue(detail.parent, task.zentao?.parent, 0)) || '0';
-  const currentStory = idValue(firstValue(detail.story, detail.storyID, task.zentao?.story, 0)) || '0';
-  const name = firstValue(updates.name, detail.name, detail.title, task.title, task.displayTitle);
-  if (!executionId) throw new Error('所属版本为空，无法提交禅道指派');
-  if (!name) throw new Error('任务标题为空，无法提交禅道指派');
-
-  return new URLSearchParams({
-    color: detail.color || '',
-    name,
-    desc: firstValue(detail.desc, detail.description, task.requirement, task.summary),
-    comment: updates.comment || '',
-    lastEditedDate: normalizeClassicDateTime(detail.lastEditedDate),
-    consumed: String(detail.consumed ?? 0),
-    storyAssess: detail.storyAssess || '',
-    isGoldChange: detail.isGoldChange || '0',
-    isSureStory: detail.isSureStory || 'unknown',
-    execution: executionId,
-    module: String(detail.module ?? task.zentao?.module ?? 0),
-    source: detail.source ?? 'customer',
-    category: detail.category ?? 'feature',
-    story: currentStory,
-    parent: currentParent,
-    assignedTo: updates.assignedTo || accountName(detail.assignedTo),
-    type: detail.type ?? task.zentao?.type ?? 'study',
-    subtype: detail.subtype ?? '',
-    ordertype: detail.ordertype ?? task.zentao?.ordertype ?? '',
-    status: detail.status ?? task.zentaoStatus ?? 'wait',
-    pri: String(detail.pri ?? task.pri ?? task.priority ?? 3),
-    env: detail.env ?? '',
-    isSelfTest: detail.isSelfTest || '0',
-    selfTest: detail.selfTest || '',
-    demandReview: detail.demandReview || '0',
-    artReview: detail.artReview || '0',
-    optimizationResults: detail.optimizationResults || '',
-    onlineFeedback: detail.onlineFeedback || '',
-    estStarted: detail.estStarted ?? '',
-    deadline: validDate(detail.deadline || task.deadline || task.zentao?.deadline),
-    estimate: String(detail.estimate ?? task.estimate ?? task.zentao?.estimate ?? 0),
-    left: String(detail.left ?? task.zentao?.left ?? 0),
-    realStarted: detail.realStarted || '',
-    finishedBy: accountName(detail.finishedBy),
-    finishedDate: normalizeClassicDateTime(detail.finishedDate),
-    canceledBy: accountName(detail.canceledBy),
-    canceledDate: normalizeClassicDateTime(detail.canceledDate),
-    closedBy: accountName(detail.closedBy),
-    closedReason: detail.closedReason || '',
-    closedDate: normalizeClassicDateTime(detail.closedDate),
-    mode: detail.mode ?? ''
-  });
 }
 
 async function classicGet(api, pathname, refererPath) {
@@ -255,46 +253,86 @@ async function createChildTaskClassic(api, detail = {}, task = {}, row = {}) {
   const executionId = String(row.executionId || executionIdOf(detail, task));
   if (!executionId) throw new Error(`子单「${row.name || ''}」缺少所属版本，无法创建`);
   const parentId = String(row.parent || zentaoTaskId(task));
-  const storyId = String(detail.story || detail.storyID || task.zentao?.story || 0);
-  const moduleId = String(detail.module || task.zentao?.module || 0);
+  const storyId = String(idValue(firstValue(detail.story, detail.storyID, task.zentao?.story, 0)) || '0');
+  const moduleId = String(idValue(firstValue(detail.module, task.zentao?.module, 0)) || '0');
   const estimate = String(row.estimate ?? 0);
-  const body = new URLSearchParams({
-    execution: executionId,
-    category: 'feature',
-    pri: String(row.pri || 2),
-    estimate,
-    source: 'customer',
-    type: row.type || 'study',
-    subtype: '',
-    selectTestStory: '0',
-    ordertype: detail.ordertype || task.zentao?.ordertype || '',
-    teamMember: '',
-    multiple: '0',
-    mode: '',
-    module: moduleId,
-    status: 'wait',
-    story: storyId,
-    parent: parentId,
-    color: '',
+  if (zentaoTaskId(task) && !parentId) throw new Error(`子单「${row.name || ''}」缺少父任务，已停止创建以避免取消关联`);
+  if (idValue(firstValue(detail.story, detail.storyID, task.zentao?.story)) && (!storyId || storyId === '0')) {
+    throw new Error(`子单「${row.name || ''}」缺少关联需求，已停止创建以避免取消关联`);
+  }
+  const createPath = `index.php?m=task&f=create&executionID=${executionId}&storyID=${storyId}&moduleID=${moduleId}&taskID=${parentId}`;
+  const createOnlyBodyPath = `${createPath}&onlybody=yes`;
+  const html = await classicGet(api, createOnlyBodyPath, createOnlyBodyPath);
+  const body = taskCreateBodyFromForm(html, detail, task, {
+    ...row,
     name: stripAutoTaskTypePrefix(row.name),
-    storyEstimate: '',
-    storyDesc: '',
-    storyPri: '',
-    env: '',
-    desc: row.desc || '',
-    estStarted: '',
-    deadline: validDate(row.deadline || detail.deadline || task.deadline || task.zentao?.deadline),
-    after: 'toTaskList'
+    assignedTo: row.assignedTo,
+    executionId,
+    storyId,
+    moduleId,
+    parentId,
+    estimate
   });
-  body.append('assignedTo[]', row.assignedTo);
-  body.append('mailto[]', '');
   await classicPost(
     api,
-    `index.php?m=task&f=create&executionID=${executionId}&storyID=${storyId}&moduleID=${moduleId}&taskID=${parentId}`,
+    createPath,
     body,
-    `index.php?m=task&f=create&executionID=${executionId}&storyID=${storyId}&moduleID=${moduleId}&taskID=${parentId}&onlybody=yes`
+    createOnlyBodyPath
   );
   return { id: '', name: row.name, assignedTo: row.assignedTo };
+}
+
+function taskCreateBodyFromForm(html = '', detail = {}, task = {}, row = {}) {
+  const formHtml = firstFormHtml(html);
+  if (!formHtml) throw new Error(`子单「${row.name || ''}」未读取到禅道创建表单，已停止创建以避免取消关联`);
+  const body = formBodyFromHtml(formHtml || html);
+  const storyId = String(row.storyId || idValue(firstValue(detail.story, detail.storyID, task.zentao?.story, 0)) || '0');
+  const parentId = String(row.parentId || zentaoTaskId(task) || '0');
+  const moduleId = String(row.moduleId || idValue(firstValue(detail.module, task.zentao?.module, 0)) || '0');
+  const executionId = String(row.executionId || executionIdOf(detail, task));
+  requireFormFields(body, ['execution', 'module', 'story', 'parent'], `子单「${row.name || ''}」`);
+
+  setFormValue(body, 'execution', executionId);
+  setFormValue(body, 'module', moduleId);
+  setFormValue(body, 'story', storyId);
+  setFormValue(body, 'parent', parentId);
+  setFormValue(body, 'name', row.name || '未命名子任务');
+  setFormValue(body, 'pri', String(row.pri || body.get('pri') || 2));
+  setFormValue(body, 'estimate', String(row.estimate ?? body.get('estimate') ?? 0));
+  setFormValue(body, 'deadline', validDate(row.deadline || detail.deadline || task.deadline || task.zentao?.deadline));
+  setFormValue(body, 'desc', row.desc || inheritedChildTaskDesc(detail, task) || body.get('desc') || '');
+  setFormValue(body, 'status', body.get('status') || 'wait');
+  setFormValue(body, 'type', row.type || body.get('type') || detail.type || task.zentao?.type || 'study');
+  ensureFormValue(body, 'category', body.get('category') || 'feature');
+  ensureFormValue(body, 'source', body.get('source') || detail.source || 'customer');
+  ensureFormValue(body, 'ordertype', body.get('ordertype') || detail.ordertype || task.zentao?.ordertype || '');
+  ensureFormValue(body, 'after', body.get('after') || 'toTaskList');
+  body.delete('assignedTo');
+  body.delete('assignedTo[]');
+  body.append('assignedTo[]', row.assignedTo);
+  if (!body.has('mailto[]')) body.append('mailto[]', '');
+  return body;
+}
+
+function requireFormFields(body, names = [], label = '禅道表单') {
+  const missing = names.filter(name => !body.has(name));
+  if (missing.length) {
+    throw new Error(`${label} 缺少禅道原始字段 ${missing.join(', ')}，已停止提交以避免取消关联`);
+  }
+}
+
+function inheritedChildTaskDesc(detail = {}, task = {}) {
+  return firstValue(
+    detail.desc,
+    detail.description,
+    detail.requirement,
+    task.desc,
+    task.description,
+    task.requirement,
+    task.zentao?.desc,
+    task.zentao?.description,
+    task.zentao?.requirement
+  );
 }
 
 let classicCookieJar = null;

@@ -1557,7 +1557,7 @@ async function handleApi(req, res, url) {
   if (req.method === 'POST' && url.pathname === '/api/tasks') {
     const body = await readBody(req);
     await requireProject(body.projectId);
-    requireProjectAccess(currentUser, body.projectId, 'developer', 'api.runs.execute');
+    requireProjectAccess(currentUser, body.projectId, 'developer', 'task.sync');
     if (isBugLikeTaskInput(body)) {
       const saved = await upsertBugs([taskInputToBug(body)]);
       await writeOperationLog(req, {
@@ -1574,7 +1574,19 @@ async function handleApi(req, res, url) {
       sendJson(res, 201, saved.bugs[0]);
       return;
     }
-    const task = await upsertTask({ ...body, createdBy: currentUser.id });
+    const assignee = findArtAssignee(body.assignedTo || body.developer || body.assignedName || '') || null;
+    const task = await upsertTask({
+      ...body,
+      source: body.source || 'platform',
+      developer: body.developer || assignee?.realname || body.assignedName || '',
+      assignedTo: body.assignedTo || assignee?.account || '',
+      zentao: {
+        ...(body.zentao || {}),
+        assignedTo: body.assignedTo || assignee?.account || body.zentao?.assignedTo || '',
+        assignedToName: body.assignedName || body.developer || assignee?.realname || body.zentao?.assignedToName || ''
+      },
+      createdBy: currentUser.id
+    });
     await writeOperationLog(req, {
       user: currentUser,
       module: 'task',

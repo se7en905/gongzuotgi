@@ -143,7 +143,6 @@
               >{{ row.displayTitle }}</a>
               <strong v-else @click.stop="selectTask(row)">{{ row.displayTitle }}</strong>
               <ElTag v-for="tag in app.taskPriorityFlags(row)" :key="tag.type" size="small" :class="['task-flag-tag', 'status-pending', tag.type]" effect="dark">{{ tag.label }}</ElTag>
-              <ElButton v-if="app.shouldShowTaskSplitButton(row)" size="small" type="primary" plain class="task-split-button" @click.stop="app.openTaskSplitDialog(row)">拆单</ElButton>
             </div>
             <span>{{ row.projectName }} · {{ row.sourceLabel }}</span>
           </div>
@@ -177,9 +176,10 @@
       <ElTableColumn label="创建时间" min-width="150">
         <template #default="{ row }">{{ app.formatDateTime(row.zentaoCreatedAt || row.zentao?.openedDate || row.createdAt) }}</template>
       </ElTableColumn>
-      <ElTableColumn label="操作" width="180" fixed="right" align="center">
+      <ElTableColumn label="操作" width="260" fixed="right" align="center">
         <template #default="{ row }">
           <div class="table-action-row">
+            <ElButton v-if="app.shouldShowTaskSplitButton(row)" size="small" type="primary" plain class="task-split-button" @click.stop="app.openTaskSplitDialog(row)">拆单</ElButton>
             <ElButton v-if="app.can('run.create')" type="primary" plain size="small" @click.stop="startRun(row)">发起执行</ElButton>
             <ElButton v-if="app.canDeletePlatformTask(row)" type="danger" plain size="small" @click.stop="deleteTask(row)">删除</ElButton>
           </div>
