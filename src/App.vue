@@ -17388,7 +17388,7 @@ export default {
       return {
         wait: '未开始',
         doing: '进行中',
-        pause: '未开始',
+        pause: '已暂停',
         done: '已完成',
         closed: '已关闭',
         cancel: '已取消',

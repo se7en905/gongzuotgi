@@ -6719,7 +6719,10 @@ async function refreshTrackedZentaoTasks(project, taskNos = new Set(), existingT
           const detailTaskNo = String(detailTask.id || detailTask.taskID || '').trim();
           const existingTask = existingTaskByNo.get(detailTaskNo);
           const isRequestedTaskNo = String(taskNo) === detailTaskNo || ids.includes(detailTaskNo);
-          const isCurrent = isCurrentArtZentaoTask(detailTask, artAccounts);
+          const isTrackedCurrent = isRequestedTaskNo
+            && existingTask?.isCurrent !== false
+            && isUnfinishedZentaoTask(detailTask);
+          const isCurrent = isCurrentArtZentaoTask(detailTask, artAccounts) || isTrackedCurrent;
           if (!isRequestedTaskNo && !isCurrent) continue;
           const executionId = detailTask.execution || existingTask?.zentao?.execution || '';
           const normalized = normalizeZentaoTask(
