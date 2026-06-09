@@ -608,7 +608,11 @@ export async function listOperationLogs(filters = {}) {
 }
 
 function operationLogMatchesFilters(log = {}, filters = {}, prepared = {}) {
-  if (filters.userId && log.userId !== filters.userId) return false;
+  if (filters.userId) {
+    const userFilter = cleanString(filters.userId);
+    const userValues = [log.userId, log.username, log.displayName].map(cleanString).filter(Boolean);
+    if (!userValues.includes(userFilter)) return false;
+  }
   if (filters.module && log.module !== filters.module) return false;
   if (filters.includeArtProgress !== '1' && log.module === 'art-progress') return false;
   const actions = prepared.actions || [];

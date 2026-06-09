@@ -4243,6 +4243,7 @@ export default {
         if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
       }
       if (view === 'operation-logs') {
+        if (!this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
         if (!this.operationLogs.length && !this.loading.operationLogs) this.refreshOperationLogs().catch(() => {});
       }
     },
@@ -7694,6 +7695,19 @@ export default {
       this.refreshOperationLogs();
     },
 
+    applyOperationLogFilters(options = {}) {
+      this.operationLogPage = 1;
+      if (this._operationLogFilterTimer) {
+        clearTimeout(this._operationLogFilterTimer);
+        this._operationLogFilterTimer = null;
+      }
+      const delay = options.debounce ? 300 : 0;
+      this._operationLogFilterTimer = setTimeout(() => {
+        this._operationLogFilterTimer = null;
+        if (this.activeView === 'operation-logs') this.refreshOperationLogs();
+      }, delay);
+    },
+
     operationLogActiveDeleteFilters() {
       const filters = {};
       Object.entries(this.operationLogFilters || {}).forEach(([key, value]) => {
@@ -7712,7 +7726,7 @@ export default {
       const hasFilters = Object.keys(filters).length > 0;
       const rangeText = hasFilters ? '当前筛选范围内' : '全部';
       const confirmed = await ElMessageBox.confirm(
-        `确认删除${rangeText}操作日志？删除后不会继续占用后台日志数据量。`,
+        `确认删除${rangeText}操作日志？删除后会从后台数据中彻底移除，不再留存；已累计的 AI 产物调用次数不受影响。`,
         '删除操作日志',
         {
           confirmButtonText: hasFilters ? '删除当前范围' : '删除全部日志',

@@ -11,22 +11,22 @@
     </template>
 
     <div class="operation-log-filters">
-      <label class="operation-filter-field">
+      <label class="operation-filter-field operation-filter-user">
         <span>用户</span>
         <ElSelect v-model="app.operationLogFilters.userId" clearable filterable placeholder="全部用户">
-          <ElOption v-for="user in app.users" :key="user.id" :label="user.displayName || user.username" :value="user.id">
+          <ElOption v-for="user in operationLogUserOptions" :key="user.id" :label="user.displayName || user.username" :value="user.id">
             <span>{{ user.displayName || user.username }}</span>
             <small>{{ user.username }}</small>
           </ElOption>
         </ElSelect>
       </label>
-      <label class="operation-filter-field">
+      <label class="operation-filter-field operation-filter-module">
         <span>模块</span>
         <ElSelect v-model="app.operationLogFilters.module" clearable placeholder="全部模块">
           <ElOption v-for="item in moduleOptions" :key="item.value" :label="item.label" :value="item.value" />
         </ElSelect>
       </label>
-      <label class="operation-filter-field">
+      <label class="operation-filter-field operation-filter-result">
         <span>结果</span>
         <ElSelect v-model="app.operationLogFilters.result" clearable placeholder="全部结果">
           <ElOption label="成功" value="success" />
@@ -37,7 +37,7 @@
         <span>关键词</span>
         <ElInput v-model="app.operationLogFilters.keyword" clearable placeholder="用户、对象、描述、IP" @keyup.enter="app.refreshOperationLogs" />
       </label>
-      <label class="operation-filter-field">
+      <label class="operation-filter-field operation-filter-date">
         <span>开始时间</span>
         <ElDatePicker
           v-model="app.operationLogFilters.from"
@@ -46,7 +46,7 @@
           placeholder="不限"
         />
       </label>
-      <label class="operation-filter-field">
+      <label class="operation-filter-field operation-filter-date">
         <span>结束时间</span>
         <ElDatePicker
           v-model="app.operationLogFilters.to"
@@ -56,7 +56,6 @@
         />
       </label>
       <div class="operation-filter-actions">
-        <ElButton type="primary" :loading="app.loading.operationLogs" @click="app.refreshOperationLogs">查询</ElButton>
         <ElButton plain @click="app.resetOperationLogFilters">重置</ElButton>
         <ElButton v-if="app.can('api.operationLogs.delete')" type="danger" plain :loading="app.loading.operationLogs" @click="app.deleteOperationLogsByCurrentFilters">删除当前范围</ElButton>
       </div>
@@ -80,8 +79,8 @@
           </div>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="模块" width="96">
-        <template #default="{ row }"><ElTag effect="plain">{{ moduleLabel(row.module) }}</ElTag></template>
+      <ElTableColumn label="模块" width="132">
+        <template #default="{ row }"><ElTag effect="plain" class="operation-module-tag">{{ moduleLabel(row.module) }}</ElTag></template>
       </ElTableColumn>
       <ElTableColumn label="操作" width="180">
         <template #default="{ row }">
@@ -176,6 +175,25 @@ export default {
     }
   },
   computed: {
+    operationLogUserOptions() {
+      const map = new Map();
+      const addUser = user => {
+        const id = String(user?.id || user?.userId || user?.username || '').trim();
+        const username = String(user?.username || user?.userId || id || '').trim();
+        const displayName = String(user?.displayName || user?.realname || username || id || '').trim();
+        if (!id) return;
+        map.set(id, { id, username, displayName });
+      };
+      (Array.isArray(this.app.users) ? this.app.users : []).forEach(addUser);
+      (Array.isArray(this.app.operationLogs) ? this.app.operationLogs : []).forEach(log => {
+        addUser({
+          id: log.userId || log.username,
+          username: log.username || log.userId,
+          displayName: log.displayName || log.username || log.userId
+        });
+      });
+      return [...map.values()].sort((a, b) => String(a.displayName || a.username).localeCompare(String(b.displayName || b.username), 'zh-Hans-CN'));
+    },
     moduleOptions() {
       return [
         { label: '认证', value: 'auth' },
@@ -187,7 +205,13 @@ export default {
         { label: '执行', value: 'run' },
         { label: 'Codex', value: 'codex' },
         { label: '复核', value: 'review' },
-        { label: '工作流', value: 'workflow' }
+        { label: '工作流', value: 'workflow' },
+        { label: '操作日志', value: 'operation-log' },
+        { label: '成员上报', value: 'art-progress' },
+        { label: 'AI产物', value: 'skill' },
+        { label: 'AI看板', value: 'ai-members' },
+        { label: '本机执行', value: 'agent-worker' },
+        { label: '任务中心', value: 'task-center' }
       ];
     }
   },
@@ -197,6 +221,26 @@ export default {
     },
     actionLabel(value = '') {
       return String(value || '').replace(/_/g, ' ');
+    }
+  },
+  watch: {
+    'app.operationLogFilters.userId'() {
+      this.app.applyOperationLogFilters();
+    },
+    'app.operationLogFilters.module'() {
+      this.app.applyOperationLogFilters();
+    },
+    'app.operationLogFilters.result'() {
+      this.app.applyOperationLogFilters();
+    },
+    'app.operationLogFilters.keyword'() {
+      this.app.applyOperationLogFilters({ debounce: true });
+    },
+    'app.operationLogFilters.from'() {
+      this.app.applyOperationLogFilters();
+    },
+    'app.operationLogFilters.to'() {
+      this.app.applyOperationLogFilters();
     }
   }
 };
@@ -217,10 +261,10 @@ export default {
   }
 
   .operation-log-filters {
-    display: grid;
-    grid-template-columns: 170px 140px 120px minmax(220px, 1fr) 180px 180px auto;
+    display: flex;
+    flex-wrap: nowrap;
     gap: 12px;
-    align-items: center;
+    align-items: end;
     padding: 14px 16px;
     border-bottom: 1px solid var(--line);
     background: var(--soft-card);
@@ -229,6 +273,7 @@ export default {
   .operation-filter-field {
     display: grid;
     gap: 6px;
+    flex: 0 0 148px;
     min-width: 0;
 
     > span {
@@ -244,8 +289,33 @@ export default {
     }
   }
 
+  .operation-filter-field .el-date-editor.el-input {
+    width: 100%;
+  }
+
+  .operation-filter-user {
+    flex-basis: 164px;
+  }
+
+  .operation-filter-module {
+    flex-basis: 150px;
+  }
+
+  .operation-filter-result {
+    flex-basis: 132px;
+  }
+
+  .operation-filter-date {
+    flex-basis: 190px;
+  }
+
+  .operation-filter-keyword {
+    flex: 1 1 260px;
+  }
+
   .operation-filter-actions {
     display: flex;
+    flex: 0 0 auto;
     align-self: end;
     justify-content: flex-end;
     gap: 8px;
@@ -266,6 +336,11 @@ export default {
 
   .operation-log-table .el-table__row {
     height: 62px;
+  }
+
+  .operation-module-tag {
+    max-width: 100%;
+    white-space: nowrap;
   }
 
   .operation-log-pagination {
@@ -371,7 +446,7 @@ export default {
 @media (max-width: 1180px) {
   .operation-log-view {
     .operation-log-filters {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      flex-wrap: wrap;
     }
 
     .operation-filter-actions {
@@ -382,9 +457,12 @@ export default {
 
 @media (min-width: 1500px) {
   .operation-log-view {
-    .operation-log-filters {
-      grid-template-columns: 220px 180px 150px minmax(320px, 520px) auto;
-      justify-content: start;
+    .operation-filter-field {
+      flex-basis: 180px;
+    }
+
+    .operation-filter-keyword {
+      flex-basis: 420px;
     }
   }
 }

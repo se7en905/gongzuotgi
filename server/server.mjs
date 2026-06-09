@@ -882,21 +882,6 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const filters = body?.filters && typeof body.filters === 'object' ? body.filters : {};
     const result = await deleteOperationLogsByFilters(filters);
-    if (result.deletedCount > 0) {
-      await writeOperationLog(req, {
-        user: currentUser,
-        module: 'operation-log',
-        action: 'DELETE_OPERATION_LOG_RANGE',
-        actionName: '范围删除操作日志',
-        targetType: 'operation-log',
-        targetId: 'range',
-        targetName: '操作日志范围',
-        result: 'success',
-        before: { filters },
-        after: { deletedCount: result.deletedCount },
-        description: `${currentUser.displayName || currentUser.username} 删除操作日志 ${result.deletedCount} 条`
-      });
-    }
     broadcastPlatformEvent('operation-logs.changed', { module: 'operation-log' });
     sendJson(res, 200, result);
     return;
