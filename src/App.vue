@@ -4460,8 +4460,16 @@ export default {
         || this.isArtDeptPerson(bug.assignedTo)
         || this.isArtDeptPerson(bug.assignedToName)
         || this.isArtDeptPerson(bug.developer)
+        || this.isArtDeptPerson(bug.openedBy)
+        || this.isArtDeptPerson(bug.openedByName)
+        || this.isArtDeptPerson(bug.resolvedBy)
+        || this.isArtDeptPerson(bug.resolvedByName)
         || this.isArtDeptPerson(bug.zentao?.assignedTo)
-        || this.isArtDeptPerson(bug.zentao?.assignedToName);
+        || this.isArtDeptPerson(bug.zentao?.assignedToName)
+        || this.isArtDeptPerson(bug.zentao?.openedBy)
+        || this.isArtDeptPerson(bug.zentao?.openedByName)
+        || this.isArtDeptPerson(bug.zentao?.resolvedBy)
+        || this.isArtDeptPerson(bug.zentao?.resolvedByName);
     },
 
     async bootstrapAuth() {
@@ -13174,7 +13182,7 @@ export default {
             bugLimit: 100,
             bugMaxPages: 10,
             bugRefreshTracked: true,
-            bugCurrentOnly: true,
+            bugCurrentOnly: syncKind !== 'bug',
             bugTrackedConcurrency: 4
           })
         });

@@ -189,12 +189,13 @@ async function resolveBugProductIds(zentao, api, value) {
 export function isArtDepartmentBug(bug, artAccounts) {
   const assignedTo = accountName(bug.assignedTo);
   const openedBy = accountName(bug.openedBy);
+  const resolvedBy = accountName(bug.resolvedBy);
   const status = String(bug.status || '').toLowerCase();
   const closedBy = accountName(bug.closedBy);
   const closedDate = validDate(bug.closedDate);
   const deleted = bug.deleted === true || bug.deleted === '1';
   if (deleted || status === 'closed' || closedBy || closedDate) return false;
-  return Boolean(artAccounts.has(assignedTo) || (artAccounts.has(openedBy) && isPendingCloseBug(bug)));
+  return Boolean(artAccounts.has(assignedTo) || artAccounts.has(openedBy) || artAccounts.has(resolvedBy));
 }
 
 export function normalizeZentaoBug(project, bug, product, userNames = new Map()) {
@@ -202,7 +203,7 @@ export function normalizeZentaoBug(project, bug, product, userNames = new Map())
   const assignee = accountName(bug.assignedTo);
   const openedBy = accountName(bug.openedBy);
   const resolvedBy = accountName(bug.resolvedBy);
-  const artOwner = [assignee, openedBy, resolvedBy].find(account => userNames.has(account)) || assignee || openedBy || resolvedBy;
+  const artOwner = selectArtBugOwner(bug, userNames);
   const status = isPendingCloseBug(bug) && (userNames.has(assignee) || userNames.has(openedBy))
     ? 'pending_close'
     : bug.status || '';
@@ -246,6 +247,13 @@ export function normalizeZentaoBug(project, bug, product, userNames = new Map())
       lastEditedDate: bug.lastEditedDate || ''
     }
   };
+}
+
+function selectArtBugOwner(bug = {}, userNames = new Map()) {
+  const assignee = accountName(bug.assignedTo);
+  const openedBy = accountName(bug.openedBy);
+  const resolvedBy = accountName(bug.resolvedBy);
+  return [assignee, openedBy, resolvedBy].find(account => userNames.has(account)) || assignee || openedBy || resolvedBy;
 }
 
 function isPendingCloseBug(bug = {}) {
