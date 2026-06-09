@@ -5702,7 +5702,7 @@ async function syncZentaoTasks(project, options = {}) {
           limit: options.limit ?? 100,
           detailConcurrency: options.detailConcurrency ?? (quickSync ? 6 : options.detailConcurrency),
           executionScanLimit: options.executionScanLimit ?? (quickSync ? 24 : options.executionScanLimit),
-          detailRefreshScope: options.detailRefreshScope || (quickSync ? 'current' : options.detailRefreshScope)
+          detailRefreshScope: options.detailRefreshScope || (quickSync ? 'tracked' : options.detailRefreshScope)
         };
     if (quickSync && !currentOnlySync) {
       syncOptions.executionScanLimit = Math.max(Number(syncOptions.executionScanLimit || 0), 80);
@@ -7528,13 +7528,19 @@ async function listArtSeenCandidateTaskNos(options = {}) {
   return [...taskNos];
 }
 
-function zentaoCurrentDetailRefreshTaskNos(existingZentaoTasks = [], artSnapshotTasks = [], _artSeenCandidateTaskNos = [], _aiFlowTaskNos = []) {
+function zentaoCurrentDetailRefreshTaskNos(existingZentaoTasks = [], artSnapshotTasks = [], artSeenCandidateTaskNos = [], aiFlowTaskNos = []) {
   const taskNos = new Set();
   for (const task of existingZentaoTasks) {
     if (task?.taskNo && task.isCurrent !== false) taskNos.add(String(task.taskNo));
   }
   for (const task of artSnapshotTasks) {
     if (task?.taskNo && task.isCurrent !== false) taskNos.add(String(task.taskNo));
+  }
+  for (const taskNo of artSeenCandidateTaskNos) {
+    if (taskNo) taskNos.add(String(taskNo));
+  }
+  for (const taskNo of aiFlowTaskNos) {
+    if (taskNo) taskNos.add(String(taskNo));
   }
   return taskNos;
 }

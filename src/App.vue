@@ -13173,7 +13173,7 @@ export default {
             interactive: true,
             syncProfile: 'quick',
             quick: true,
-            detailRefreshScope: 'current',
+            detailRefreshScope: 'tracked',
             limit: 100,
             maxPages: 3,
             executionMaxPages: 5,
