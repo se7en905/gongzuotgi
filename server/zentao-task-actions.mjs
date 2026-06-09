@@ -22,7 +22,7 @@ export async function assignZentaoTask(task = {}, assignee = {}, options = {}) {
   try {
     await classicAssignTask(api, detail, task, {
       assignedTo,
-      comment: options.comment || ''
+      comment: explicitZentaoComment(options)
     });
     attempts.push('assignTo');
   } catch (error) {
@@ -95,7 +95,8 @@ export async function applyZentaoSplitPlan(task = {}, plan = {}, options = {}) {
   if (mainAssignee) {
     try {
       const fresh = await assignZentaoTask({ ...task, ...detail, taskNo: taskId, zentao: { ...(task.zentao || {}), id: taskId } }, { account: mainAssignee }, {
-        comment: options.comment || ''
+        comment: explicitZentaoComment(options),
+        allowZentaoComment: options.allowZentaoComment === true
       });
       results.push({ type: 'main', ok: true, taskId, assignedTo: describeTaskAssignee(fresh) || mainAssignee });
     } catch (error) {
@@ -198,7 +199,8 @@ function taskAssignBodyFromForm(html = '', detail = {}, task = {}, updates = {})
 
   if (uid) setFormValue(body, 'uid', uid);
   setFormValue(body, 'assignedTo', assignedTo);
-  setFormValue(body, 'comment', updates.comment || '');
+  if (hasExplicitText(updates.comment)) setFormValue(body, 'comment', updates.comment);
+  else body.delete('comment');
   ensureFormValue(body, 'env', detail.env || task.zentao?.env || '');
   ensureFormValue(body, 'estStarted', validDate(detail.estStarted || task.zentao?.estStarted || ''));
   setFormValue(body, 'deadline', validDate(detail.deadline || task.deadline || task.zentao?.deadline));
@@ -307,6 +309,7 @@ function taskCreateBodyFromForm(html = '', detail = {}, task = {}, row = {}) {
   ensureFormValue(body, 'source', body.get('source') || detail.source || 'customer');
   ensureFormValue(body, 'ordertype', body.get('ordertype') || detail.ordertype || task.zentao?.ordertype || '');
   ensureFormValue(body, 'after', body.get('after') || 'toTaskList');
+  body.delete('comment');
   body.delete('assignedTo');
   body.delete('assignedTo[]');
   body.append('assignedTo[]', row.assignedTo);
@@ -333,6 +336,15 @@ function inheritedChildTaskDesc(detail = {}, task = {}) {
     task.zentao?.description,
     task.zentao?.requirement
   );
+}
+
+function explicitZentaoComment(options = {}) {
+  if (options.allowZentaoComment !== true) return '';
+  return String(options.comment || '').trim();
+}
+
+function hasExplicitText(value) {
+  return String(value || '').trim().length > 0;
 }
 
 let classicCookieJar = null;
