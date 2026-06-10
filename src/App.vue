@@ -736,6 +736,8 @@ export default {
       selectedSkillId: '',
       skillContentCache: {},
       skillInventoryMetricsCache: {},
+      skillInventoryScanSignature: '',
+      skillInventoryRowsCacheToken: '',
       skillOwnerOverrides: {},
       skillDisplayNameOverrides: {},
       skillVersionOverrides: {},
@@ -839,7 +841,6 @@ export default {
       taskArtBriefLoading: {},
       manualReviewRecords: [],
       scanOutput: '等待扫描。',
-      skillVersionMenuKey: '',
       loading: {
         projects: false,
         tasks: false,
@@ -2288,16 +2289,22 @@ export default {
     },
 
     skillInventoryRows() {
+      const token = this.skillInventoryRowsCacheKey();
+      if (this._skillInventoryRowsCache?.token === token && Array.isArray(this._skillInventoryRowsCache.rows)) {
+        return this._skillInventoryRowsCache.rows;
+      }
       const rows = this.projectRows.flatMap(projectRow => {
         const skills = Array.isArray(projectRow.scan?.skills) ? projectRow.scan.skills : [];
         return skills
           .filter(skill => this.isMemberArtReporterRow(skill) || !this.isFigmaUseConnectorArtifact(skill))
           .map(skill => this.buildSkillInventoryRow(projectRow, skill));
       });
-      return this.dedupeSkillInventoryRows(rows).sort((a, b) => {
+      const nextRows = this.dedupeSkillInventoryRows(rows).sort((a, b) => {
         const timeDiff = String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || ''));
         return timeDiff || a.title.localeCompare(b.title);
       });
+      this._skillInventoryRowsCache = { token, rows: nextRows };
+      return nextRows;
     },
 
     skillInventoryValidationCandidateRows() {
@@ -2314,9 +2321,19 @@ export default {
     },
 
     skillInventoryVisibleRows() {
-      return this.skillInventoryRows
+      const token = this.skillInventoryRowsCacheKey();
+      const cacheKey = [
+        token,
+        this.canOperateSkillInventoryManage ? 'manage' : 'view'
+      ].join('::');
+      if (this._skillInventoryVisibleRowsCache?.token === cacheKey && Array.isArray(this._skillInventoryVisibleRowsCache.rows)) {
+        return this._skillInventoryVisibleRowsCache.rows;
+      }
+      const rows = this.skillInventoryRows
         .filter(row => row.displayHidden !== true)
         .filter(row => (row.hidden !== true || this.canOperateSkillInventoryManage) && this.isVisibleSkillInventoryProductRow(row));
+      this._skillInventoryVisibleRowsCache = { token: cacheKey, rows };
+      return rows;
     },
 
     canManageSkillSourceDisplay() {
@@ -2374,6 +2391,23 @@ export default {
       return this.skillInventoryVisibleRows;
     },
 
+    skillInventoryScanCacheSignature() {
+      return this.buildSkillInventoryScanSignature(this.scans);
+    },
+
+    skillInventoryRowsCacheKey() {
+      return [
+        this.skillInventoryScanSignature || this.skillInventoryScanCacheSignature,
+        Object.keys(this.skillOwnerOverrides || {}).length,
+        Object.keys(this.skillDisplayNameOverrides || {}).length,
+        Object.keys(this.skillVersionOverrides || {}).length,
+        Object.keys(this.skillAliasOverrides || {}).length,
+        Object.keys(this.skillAliasHistoryOverrides || {}).length,
+        Object.keys(this.skillInventoryKindOverrides || {}).length,
+        this.skillInventoryRowsCacheToken || ''
+      ].join('::');
+    },
+
     skillInventorySourceOptions() {
       return [...new Set(this.skillInventoryRows.map(row => row.source).filter(Boolean))];
     },
@@ -2381,6 +2415,18 @@ export default {
     filteredSkillInventoryRows() {
       const keyword = String(this.skillInventoryKeyword || '').trim().toLowerCase();
       const kindFilter = String(this.skillInventoryKindFilter || '').trim();
+      const cacheKey = [
+        this.skillInventoryRowsCacheKey(),
+        this.canOperateSkillInventoryManage ? 'manage' : 'view',
+        keyword,
+        kindFilter,
+        this.skillInventoryMemberFilter || '',
+        this.skillInventoryPreferMine ? 'mine' : 'all',
+        this.currentAccountPrimaryPersonName || ''
+      ].join('::');
+      if (this._filteredSkillInventoryRowsCache?.token === cacheKey && Array.isArray(this._filteredSkillInventoryRowsCache.rows)) {
+        return this._filteredSkillInventoryRowsCache.rows;
+      }
       const rows = this.skillInventoryVisibleRows.filter(row => {
         if (this.skillInventoryMemberFilter && !this.skillInventoryRowDirectlyBelongsToMember(row, this.skillInventoryMemberFilter)) return false;
         if (kindFilter === 'skill' && !this.isSkillInventorySkillProduct(row)) return false;
@@ -2403,20 +2449,27 @@ export default {
         return haystack.includes(keyword);
       });
       if (this.skillInventoryMemberFilter) {
-        return [...rows].sort((a, b) => {
+        const sortedRows = [...rows].sort((a, b) => {
           const usageDiff = Number(b.usageCount || 0) - Number(a.usageCount || 0);
           if (usageDiff) return usageDiff;
           return String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')) || a.title.localeCompare(b.title);
         });
+        this._filteredSkillInventoryRowsCache = { token: cacheKey, rows: sortedRows };
+        return sortedRows;
       }
-      if (!this.skillInventoryPreferMine || this.skillInventoryMemberFilter) return rows;
+      if (!this.skillInventoryPreferMine || this.skillInventoryMemberFilter) {
+        this._filteredSkillInventoryRowsCache = { token: cacheKey, rows };
+        return rows;
+      }
       const mine = this.currentAccountPrimaryPersonName || '';
-      return [...rows].sort((a, b) => {
+      const sortedRows = [...rows].sort((a, b) => {
         const aMine = this.skillInventoryRowBelongsToMember(a, mine) ? 1 : 0;
         const bMine = this.skillInventoryRowBelongsToMember(b, mine) ? 1 : 0;
         if (aMine !== bMine) return bMine - aMine;
         return String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')) || a.title.localeCompare(b.title);
       });
+      this._filteredSkillInventoryRowsCache = { token: cacheKey, rows: sortedRows };
+      return sortedRows;
     },
 
     pagedSkillInventoryRows() {
@@ -3061,28 +3114,6 @@ export default {
 
     skillVersionOptions() {
       return ['1.0', '2.0', '3.0'];
-    },
-
-    skillVersionRowKey(row = {}) {
-      return [
-        row.projectId || '',
-        row.skill?.git?.relativePath || row.relativePath || row.path || '',
-        row.id || row.uid || row.title || row.productDisplayName || ''
-      ].map(value => String(value || '').trim()).join('::');
-    },
-
-    isSkillVersionMenuOpen(row = {}) {
-      return Boolean(this.skillVersionMenuKey && this.skillVersionMenuKey === this.skillVersionRowKey(row));
-    },
-
-    toggleSkillVersionMenu(row = {}) {
-      if (!this.canEditSkillInventoryVersion) return;
-      const key = this.skillVersionRowKey(row);
-      this.skillVersionMenuKey = this.skillVersionMenuKey === key ? '' : key;
-    },
-
-    closeSkillVersionMenu() {
-      this.skillVersionMenuKey = '';
     },
 
     canManageSkillValidationOwner() {
@@ -3957,7 +3988,6 @@ export default {
     this.taskArtBriefs = this.loadTaskArtBriefs();
     this.applyTheme(this.theme);
     window.addEventListener('popstate', this.syncRoute);
-    window.addEventListener('click', this.closeSkillVersionMenu);
     this.bootstrapAuth();
     this.runDurationTimer = setInterval(() => {
       if (this.isRunInProgress(this.selectedRun)) this.nowTick = Date.now();
@@ -3972,7 +4002,6 @@ export default {
     this.stopPlatformEventSync();
     if (this.runDurationTimer) clearInterval(this.runDurationTimer);
     window.removeEventListener('popstate', this.syncRoute);
-    window.removeEventListener('click', this.closeSkillVersionMenu);
   },
 
   methods: {
@@ -8080,15 +8109,15 @@ export default {
               ...aliasHistory,
               ...nextAliases
             ]);
-            const nextVersion = version || skill.version || '';
-            const sameVersion = String(skill.version || '') === String(nextVersion || '');
+            const nextVersion = version || skill.displayVersionOverride || '';
+            const sameVersion = String(skill.displayVersionOverride || '') === String(nextVersion || '');
             const sameAliases = nextAliases.join('｜') === this.normalizeSkillAliasList(skill.aliases || []).join('｜');
             const sameHistory = nextAliasHistory.join('｜') === this.normalizeSkillAliasHistoryList(skill.aliasHistory || []).join('｜');
             if (sameVersion && sameAliases && sameHistory && skill.hasAliasOverride === nextAliases.length > 0) return skill;
             changed = true;
             return {
               ...skill,
-              version: nextVersion,
+              displayVersionOverride: nextVersion,
               aliases: nextAliases,
               manualAliases: nextAliases,
               aliasHistory: nextAliasHistory,
@@ -8100,7 +8129,7 @@ export default {
       }
       if (!changed) return false;
       this.scans = scans;
-      this.clearSkillUsageLogCache();
+      this.clearSkillInventoryRowsCache();
       this.syncOpenSkillPreviewAliasesFromOverrides();
       return true;
     },
@@ -8177,6 +8206,8 @@ export default {
       const statusLabel = skill.statusLabel || this.skillStatusLabel(skill);
       const scenes = this.skillScenes(skill);
       const version = String(skill.version || '1.0').trim() || '1.0';
+      const displayVersionOverride = this.skillVersionOverrideFor({ ...skill, projectId: projectRow.id })
+        || String(skill.displayVersionOverride || '').trim();
       const relativePath = skill.git?.relativePath || skill.relativePath || skill.path || '';
       const gitSkillProductName = (source.startsWith('Git:') || skill.git) && /(^|\/)SKILL\.md$/i.test(String(relativePath || '').replace(/\\/g, '/'))
         ? String(relativePath || '').replace(/\\/g, '/').split('/').filter(Boolean).slice(-2, -1)[0] || ''
@@ -8218,6 +8249,7 @@ export default {
         isGitSource: source.startsWith('Git:') || Boolean(skill.git),
         category: skill.category || this.skillCategory(skill),
         version,
+        displayVersionOverride,
         versionClass: this.skillVersionClass(version),
         statusLabel,
         statusType: /通过|已验证|可用/.test(statusLabel) ? 'success' : /失败|退回|不可用/.test(statusLabel) ? 'danger' : /待验证|待补/.test(statusLabel) ? 'warning' : 'info',
@@ -8247,6 +8279,7 @@ export default {
           manualAliases,
           aliasHistory,
           hasAliasOverride: manualAliases.length > 0,
+          displayVersionOverride,
           inventoryKind
         }
       };
@@ -9112,7 +9145,7 @@ export default {
     skillVersionClass(version = '') {
       if (version && typeof version === 'object') {
         if (version.hidden === true) return 'version-hidden';
-        return `version-${this.skillInventoryVersionMajor(version)}`;
+        return `version-${this.skillInventoryVersionDisplayMajor(version)}`;
       }
       const normalized = String(version || '').trim();
       if (/^v?1(?:\.0)?$/i.test(normalized)) return 'version-1';
@@ -9127,6 +9160,16 @@ export default {
       return matched?.[1] || '1';
     },
 
+    skillInventoryVersionDisplayMajor(version = '') {
+      if (version && typeof version === 'object') {
+        if (version.hidden === true) return '1';
+        const override = this.skillVersionOverrideFor(version) || String(version.displayVersionOverride || version.skill?.displayVersionOverride || '').trim();
+        if (override) return this.skillVersionMajor(override);
+        return this.skillInventoryVersionMajor(version);
+      }
+      return this.skillVersionMajor(version);
+    },
+
     canEditSkillInventoryOwnerRow(row = {}) {
       if (!this.canOperateSkillInventoryOwner) return false;
       const sourceType = String(this.projectRows.find(project => project.id === row.projectId)?.sourceType || '').toLowerCase();
@@ -9136,7 +9179,7 @@ export default {
     },
 
     skillVersionDisplayLabel(version = '') {
-      const major = this.skillInventoryVersionMajor(version);
+      const major = this.skillInventoryVersionDisplayMajor(version);
       if (major === '3') return '3.0';
       if (major === '2') return '2.0';
       return '1.0';
@@ -9145,10 +9188,12 @@ export default {
     skillVersionShortLabel(version = '') {
       if (version && typeof version === 'object' && version.hidden === true) return '1.0';
       if (version && typeof version === 'object') {
-        const override = this.skillVersionOverrideFor(version);
-        if (override) return `${this.skillInventoryVersionMajor(override)}.0`;
+        const major = this.skillInventoryVersionDisplayMajor(version);
+        if (major === '3') return '3.0';
+        if (major === '2') return '2.0';
+        return '1.0';
       }
-      return `${this.skillInventoryVersionMajor(version)}.0`;
+      return this.skillVersionDisplayLabel(version);
     },
 
     skillVersionDescription(version = '') {
@@ -11944,9 +11989,30 @@ export default {
       this._skillUsageLogCache.set(key, Array.isArray(rows) ? rows : []);
     },
 
+    buildSkillInventoryScanSignature(scans = {}) {
+      return Object.entries(scans || {})
+        .map(([projectId, scan]) => [
+          projectId,
+          scan?.scannedAt || scan?.cachedAt || '',
+          Array.isArray(scan?.skills) ? scan.skills.length : 0,
+          Array.isArray(scan?.tasks) ? scan.tasks.length : 0
+        ].join(':'))
+        .sort()
+        .join('|');
+    },
+
+    clearSkillInventoryRowsCache() {
+      this._skillInventoryRowsCache = null;
+      this._skillInventoryVisibleRowsCache = null;
+      this._filteredSkillInventoryRowsCache = null;
+      this.skillInventoryScanSignature = this.buildSkillInventoryScanSignature(this.scans);
+      this.skillInventoryRowsCacheToken = String(Date.now());
+    },
+
     clearSkillUsageLogCache() {
       if (this._skillUsageLogCache) this._skillUsageLogCache.clear();
       this.skillInventoryMetricsCache = {};
+      this.clearSkillInventoryRowsCache();
       this.clearAiMemberScoreCache();
     },
 
@@ -12266,12 +12332,7 @@ export default {
       }
       if (this.skillVersionShortLabel(row) === version) return;
       const previousVersion = this.skillVersionShortLabel(row);
-      const aliases = this.normalizeSkillAliasList([
-        ...(Array.isArray(row.aliases) ? row.aliases : []),
-        ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : [])
-      ]);
-      this.skillVersionMenuKey = '';
-      this.patchSkillVersionInScans(row, version, aliases);
+      this.patchSkillVersionDisplayInScans(row, version);
       this.saveWorkbenchDisplayCache('scans', this.scans);
       this.loading.skillVersion = true;
       try {
@@ -12283,28 +12344,25 @@ export default {
             title: row.title || row.productDisplayName,
             path: row.path,
             relativePath: row.skill?.git?.relativePath || row.relativePath || row.path || '',
-            version,
-            aliases
+            version
           })
         });
-        const savedAliases = Array.isArray(result.aliases) ? result.aliases : aliases;
-        this.patchSkillVersionInScans({
+        this.patchSkillVersionDisplayInScans({
           ...row,
           id: result.id || row.id,
           path: result.relativePath || row.path,
           relativePath: result.relativePath || row.relativePath,
           overrideKey: result.key || ''
-        }, result.version || version, savedAliases);
+        }, result.version || version);
         this.saveWorkbenchDisplayCache('scans', this.scans);
         this.refreshSkillUsageDialogForSkill({
           ...row.skill,
           ...row,
-          version: result.version || version,
-          aliases: savedAliases
+          displayVersionOverride: result.version || version
         });
         ElMessage.success(`版本已更新为 ${result.version || version}`);
       } catch (error) {
-        this.patchSkillVersionInScans(row, previousVersion, aliases);
+        this.patchSkillVersionDisplayInScans(row, previousVersion);
         this.saveWorkbenchDisplayCache('scans', this.scans);
         ElMessage.error(this.readApiError(error) || '版本保存失败');
       } finally {
@@ -12876,6 +12934,61 @@ export default {
       this.scans = scans;
       this.clearSkillUsageLogCache();
       this.skillInventoryMetricsCache = {};
+    },
+
+    patchSkillVersionDisplayInScans(skill = {}, version = '') {
+      const targetProjectId = String(skill.projectId || '').trim();
+      const targetPath = String(skill.git?.relativePath || skill.relativePath || skill.path || '');
+      const targetId = String(skill.id || '');
+      const targetKeys = new Set([
+        targetPath,
+        targetId,
+        skill.uid,
+        skill.path,
+        skill.relativePath,
+        skill.overrideKey,
+        skill.key,
+        skill.title,
+        skill.productDisplayName,
+        skill.productFileName
+      ].map(value => String(value || '').trim()).filter(Boolean));
+      const nextVersionOverrides = { ...(this.skillVersionOverrides || {}) };
+      targetKeys.forEach(key => {
+        nextVersionOverrides[key] = version;
+      });
+      this.skillVersionOverrides = nextVersionOverrides;
+      const scans = {};
+      for (const [projectId, scan] of Object.entries(this.scans || {})) {
+        scans[projectId] = {
+          ...scan,
+          skills: Array.isArray(scan.skills)
+            ? scan.skills.map(item => {
+              const itemPath = String(item.git?.relativePath || item.relativePath || item.path || '');
+              const itemKeys = [
+                itemPath,
+                item.id,
+                item.uid,
+                item.path,
+                item.relativePath,
+                item.key,
+                item.title,
+                item.productDisplayName,
+                item.productFileName
+              ].map(value => String(value || '').trim()).filter(Boolean);
+              const projectMatches = !targetProjectId || String(projectId) === targetProjectId;
+              if (projectMatches && itemKeys.some(itemKey => targetKeys.has(itemKey))) {
+                return {
+                  ...item,
+                  displayVersionOverride: version
+                };
+              }
+              return item;
+            })
+            : scan.skills
+        };
+      }
+      this.scans = scans;
+      this.clearSkillInventoryRowsCache();
     },
 
     patchSkillOwnerInScans(row = {}, owner = '') {

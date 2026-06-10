@@ -4060,7 +4060,7 @@ async function applySkillVersionOverridesToScan(scan = {}) {
       );
       return {
         ...skill,
-        version: baseOverride.version || skill.version,
+        displayVersionOverride: baseOverride.version || skill.displayVersionOverride || '',
         inventoryKind: hasInventoryKindOverride ? (inventoryKindOverride?.inventoryKind || baseOverride.inventoryKind || skill.inventoryKind) : skill.inventoryKind,
         aliases,
         manualAliases,

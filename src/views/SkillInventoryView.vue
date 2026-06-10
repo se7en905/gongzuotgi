@@ -308,9 +308,18 @@
       </ElTableColumn>
       <ElTableColumn label="版本" width="82">
         <template #default="{ row }">
-          <ElTooltip :content="app.skillVersionDescription(row)" placement="top" effect="dark">
-            <span :class="['skill-version-pill', app.skillVersionClass(row)]">{{ app.skillVersionShortLabel(row) }}</span>
-          </ElTooltip>
+          <span :class="['skill-version-pill', { 'is-editable': app.canEditSkillInventoryVersion }, app.skillVersionClass(row)]">
+            {{ app.skillVersionShortLabel(row) }}
+            <select
+              v-if="app.canEditSkillInventoryVersion"
+              class="skill-version-native-select"
+              :value="app.skillVersionShortLabel(row)"
+              aria-label="选择展示版本"
+              @change="app.saveSkillInventoryRowVersion(row, $event.target.value)"
+            >
+              <option v-for="version in app.skillVersionOptions" :key="version" :value="version">{{ version }}</option>
+            </select>
+          </span>
         </template>
       </ElTableColumn>
       <ElTableColumn label="贡献人" width="96">
@@ -2188,6 +2197,18 @@ export default {
     font-weight: 780;
     min-width: 46px;
     padding: 5px 8px;
+    position: relative;
+  }
+
+  .skill-version-native-select {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    inset: 0;
+    opacity: 0;
+    position: absolute;
+    width: 100%;
   }
 
   .skill-version-pill.version-1 {
