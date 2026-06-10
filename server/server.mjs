@@ -117,14 +117,14 @@ const zentaoBaseUrl = 'https://cd.baa360.cc:20088/index.php';
 const zentaoArtDeptId = Number(process.env.ZENTAO_ART_DEPT_ID || 27);
 const zentaoArtDeptIds = new Set([zentaoArtDeptId]);
 const defaultArtUsers = [
-  { account: 'zhangqw', realname: '张倩文', role: 'owner' },
-  { account: 'fengshuqi', realname: '冯淑琪' },
-  { account: 'yushengwei', realname: '余盛威' },
-  { account: 'yejunbo', realname: '叶君博' },
-  { account: 'huangjianrong', realname: '黄剑荣' },
-  { account: 'lilh', realname: '李华玲' },
-  { account: 'zhangzb', realname: '张宗斌' },
-  { account: 'lanhj', realname: '兰韩界' }
+  { account: 'zhangqw', realname: '张倩文', role: 'owner', userId: 15, userID: 15 },
+  { account: 'fengshuqi', realname: '冯淑琪', userId: 179, userID: 179 },
+  { account: 'yushengwei', realname: '余盛威', userId: 154, userID: 154 },
+  { account: 'yejunbo', realname: '叶君博', userId: 151, userID: 151 },
+  { account: 'huangjianrong', realname: '黄剑荣', userId: 133, userID: 133 },
+  { account: 'lilh', realname: '李华玲', userId: 22, userID: 22 },
+  { account: 'zhangzb', realname: '张宗斌', userId: 20, userID: 20 },
+  { account: 'lanhj', realname: '兰韩界', userId: 17, userID: 17 }
 ];
 const zentaoBugProductIds = process.env.ZENTAO_BUG_PRODUCT_IDS || 'all';
 const zentaoAutoSyncIntervalMs = Number(process.env.ZENTAO_AUTO_SYNC_INTERVAL_MS || 30 * 60 * 1000);
@@ -5886,13 +5886,22 @@ async function syncZentaoTasks(project, options = {}) {
       preservedExistingTasks: noReliableIncomingTasks,
       syncedAt
     };
-    markZentaoQueueSuccess('tasks', result, result.syncedAt);
+    const unreliableSyncMessage = currentSnapshotReliable
+      ? ''
+      : '禅道任务同步未拿到可靠的当前任务快照，已保留上次任务中心数据，请检查禅道登录、部门成员列表和人员页发现。';
+    if (unreliableSyncMessage) {
+      result.warning = unreliableSyncMessage;
+      markZentaoQueueFailed('tasks', unreliableSyncMessage, result.syncedAt, result);
+    } else {
+      markZentaoQueueSuccess('tasks', result, result.syncedAt);
+    }
     zentaoAutoSyncState = {
       ...zentaoAutoSyncState,
       running: hasRunningZentaoQueue(),
       lastFinishedAt: result.syncedAt,
-      lastSuccessAt: result.syncedAt,
-      lastError: '',
+      lastSuccessAt: unreliableSyncMessage ? zentaoAutoSyncState.lastSuccessAt : result.syncedAt,
+      lastErrorAt: unreliableSyncMessage ? result.syncedAt : zentaoAutoSyncState.lastErrorAt,
+      lastError: unreliableSyncMessage,
       lastSummary: compactZentaoSyncSummary(result)
     };
     broadcastPlatformEvent('tasks.changed', {
@@ -6714,10 +6723,7 @@ async function refreshTrackedZentaoTasks(project, taskNos = new Set(), existingT
           const detailTaskNo = String(detailTask.id || detailTask.taskID || '').trim();
           const existingTask = existingTaskByNo.get(detailTaskNo);
           const isRequestedTaskNo = String(taskNo) === detailTaskNo || ids.includes(detailTaskNo);
-          const isTrackedCurrent = isRequestedTaskNo
-            && existingTask?.isCurrent !== false
-            && isUnfinishedZentaoTask(detailTask);
-          const isCurrent = isCurrentArtZentaoTask(detailTask, artAccounts) || isTrackedCurrent;
+          const isCurrent = isCurrentArtZentaoTask(detailTask, artAccounts);
           if (!isRequestedTaskNo && !isCurrent) continue;
           const executionId = detailTask.execution || existingTask?.zentao?.execution || '';
           const normalized = normalizeZentaoTask(
@@ -7975,6 +7981,8 @@ function normalizeZentaoTask(project, task, execution, userNames = new Map()) {
       deadline: validDate(task.deadline),
       originalStatus: zentaoStatus,
       assignedTo: accountName(task.assignedTo),
+      assignedToName: assignedTo,
+      assignedToRealName: assignedTo,
       finishedBy: accountName(task.finishedBy),
       openedDate: task.openedDate || '',
       assignedDate: task.assignedDate || '',
