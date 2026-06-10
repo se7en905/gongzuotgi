@@ -578,12 +578,15 @@ function parseArtGitProduct(raw, filePath, relativePath = '', productGroupPath =
   const id = slugifySkillId(relativePath || fileBase) || parsed.id;
   const folderName = productDisplayGroupName(productGroupPath || relativePath);
   const displayName = gitProductChineseDisplayName(parsed.title, folderName, fileBase, fileName);
+  const gitProductName = fileName === 'SKILL.md'
+    ? (folderName || parsed.id || fileBase || fileName)
+    : (fileBase || fileName);
   const title = fileName === 'SKILL.md'
-    ? displayName || parsed.id
+    ? gitProductName
     : displayName || [folderName, fileName].filter(Boolean).join(' / ') || parsed.title || fileBase || parsed.id;
   const category = parsed.category || ext || '';
   const description = parsed.description || (ext ? `${ext} 文件` : '');
-  return { ...parsed, id, title, productDisplayName: displayName || title, productFileName: displayName || fileName, category, description, productGroupPath };
+  return { ...parsed, id, title, productDisplayName: title, productFileName: fileName === 'SKILL.md' ? (gitProductName || fileName) : (displayName || fileName), originalTitle: parsed.title, category, description, productGroupPath };
 }
 
 function gitProductChineseDisplayName(...values) {

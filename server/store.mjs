@@ -747,7 +747,8 @@ export async function getCodexConfig() {
 }
 
 export async function getUsageCounters() {
-  return normalizeUsageCounters(await readJson(paths.usageCounters, defaultUsageCounters()));
+  const counters = normalizeUsageCounters(await readJson(paths.usageCounters, defaultUsageCounters()));
+  return await normalizeHistoricalUsageCounterKinds(counters);
 }
 
 export async function recordUsageCountersForExpiredSkillValidations(records = []) {
@@ -2311,6 +2312,49 @@ function normalizeUsageCounterBucket(input = {}, fallbackKey = '') {
   };
 }
 
+let usageCounterKindFixCache = null;
+
+async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCounters()) {
+  if (!counters?.buckets || typeof counters.buckets !== 'object') return counters;
+  const misclassified = await historicalNonUsageEventKeySet();
+  if (!misclassified.size) return counters;
+  const buckets = {};
+  let changed = false;
+  for (const [key, inputBucket] of Object.entries(counters.buckets)) {
+    const bucket = normalizeUsageCounterBucket(inputBucket, key);
+    const eventKeys = Array.isArray(bucket.eventKeys) ? bucket.eventKeys.filter(Boolean) : [];
+    const badCount = eventKeys.filter(eventKey => misclassified.has(eventKey)).length;
+    if (badCount > 0) {
+      const currentUsage = Number(bucket.usageCount || 0);
+      bucket.usageCount = Math.max(0, currentUsage - badCount);
+      bucket.count = Math.max(
+        bucket.usageCount + Number(bucket.validationCount || 0) + Number(bucket.researchSyncCount || 0),
+        Number(bucket.count || 0) - badCount
+      );
+      if (currentUsage !== bucket.usageCount) changed = true;
+    }
+    buckets[bucket.key] = bucket;
+  }
+  if (!changed) return counters;
+  return {
+    ...counters,
+    buckets
+  };
+}
+
+async function historicalNonUsageEventKeySet() {
+  if (usageCounterKindFixCache) return usageCounterKindFixCache;
+  const logs = await readJson(paths.operationLogs, []);
+  const set = new Set();
+  for (const log of Array.isArray(logs) ? logs : []) {
+    if (!isNonUsageOperationLog(log)) continue;
+    const eventKey = usageEventKey('operation-log', log.id || log.targetId || log.targetName, log.createdAt);
+    if (eventKey) set.add(eventKey);
+  }
+  usageCounterKindFixCache = set;
+  return set;
+}
+
 async function accumulateUsageCountersFromExpiredRecords(file, records = []) {
   const targets = records.flatMap(record => usageTargetsFromRecord(file, record));
   if (!targets.length) return;
@@ -2598,6 +2642,10 @@ function isNonUsageOperationLog(log = {}) {
     'UPDATE_ROLE',
     'UPSERT_TASK_CENTER_CONFIG',
     'UPDATE_AGENT_WORKER_ALIAS',
+    'REPORT_ART_PROGRESS',
+    'AUTO_UPSERT_SKILL_VALIDATION',
+    'UPSERT_SKILL_VALIDATION',
+    'UPDATE_SKILL_VALIDATION',
     'TRIGGER_ZENTAO_TASK_SYNC',
     'TRIGGER_ZENTAO_TASK_SYNC_ONLY',
     'SYNC_ZENTAO_TASKS',
@@ -2618,7 +2666,8 @@ function usageTargetCandidates(value = '') {
   const parts = text.split('/').filter(Boolean);
   const last = parts[parts.length - 1] || text;
   const withoutExt = last.replace(/\.(md|markdown)$/i, '');
-  return [text, last, withoutExt]
+  const parentForSkill = /^SKILL\.md$/i.test(last) && parts.length > 1 ? parts[parts.length - 2] : '';
+  return [text, last, withoutExt, parentForSkill]
     .map(item => cleanString(item))
     .filter(item => item && item.length >= 3 && !isGenericUsageTarget(item));
 }
@@ -2767,8 +2816,15 @@ function normalizeWorkerRunStatus(value = '') {
 }
 
 function isGenericUsageTarget(value = '') {
-  const text = cleanString(value).toLowerCase().replace(/\.(md|markdown)$/i, '');
-  return /^(skill|readme|agents|agent|memory|安装说明|安装包|同步器|上报器|执行|试用|文件本体)$/i.test(text);
+  const text = cleanString(value)
+    .toLowerCase()
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .pop()
+    ?.replace(/\.(md|markdown)$/i, '')
+    .replace(/[_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '') || '';
+  return /^(skill|skills|readme|agents|agent|memory|data|artgit|安装说明|安装包|同步器|上报器|执行|试用|文件本体)$/i.test(text);
 }
 
 function normalizeCustomWorkflow(input = {}) {

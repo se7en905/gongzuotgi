@@ -8035,6 +8035,9 @@ export default {
       const scenes = this.skillScenes(skill);
       const version = String(skill.version || '1.0').trim() || '1.0';
       const relativePath = skill.git?.relativePath || skill.relativePath || skill.path || '';
+      const gitSkillProductName = (source.startsWith('Git:') || skill.git) && /(^|\/)SKILL\.md$/i.test(String(relativePath || '').replace(/\\/g, '/'))
+        ? String(relativePath || '').replace(/\\/g, '/').split('/').filter(Boolean).slice(-2, -1)[0] || ''
+        : '';
       const isDirectoryProduct = skill.directoryProduct === true || skill.inventoryKind === 'directory';
       const directoryFileName = isDirectoryProduct
         ? (skill.productFileName || skill.originalProductDisplayName || this.fileNameFromPath(skill.relativePath) || this.fileNameFromPath(skill.path) || skill.productDisplayName)
@@ -8043,8 +8046,8 @@ export default {
       const directoryDisplayName = isDirectoryProduct
         ? (displayNameOverride !== null ? (displayNameOverride || directoryFileName) : (skill.productDisplayName || skill.displayName || directoryFileName))
         : '';
-      const productFileName = directoryFileName || skill.productFileName || skill.displayName || this.fileNameFromPath(relativePath) || this.fileNameFromPath(skill.path) || skill.id;
-      const productDisplayName = directoryDisplayName || skill.productDisplayName || skill.displayName || skill.title || productFileName;
+      const productFileName = directoryFileName || gitSkillProductName || skill.productFileName || skill.displayName || this.fileNameFromPath(relativePath) || this.fileNameFromPath(skill.path) || skill.id;
+      const productDisplayName = directoryDisplayName || gitSkillProductName || skill.productDisplayName || skill.displayName || skill.title || productFileName;
       const aliasOverride = this.skillAliasOverrideFor({ ...skill, projectId: projectRow.id });
       const manualAliases = this.normalizeSkillAliasList(
         Array.isArray(aliasOverride) ? aliasOverride : (Array.isArray(skill.aliases) ? skill.aliases : [])
@@ -8117,7 +8120,7 @@ export default {
       if (cached) return cached;
       const usage = this.skillInventoryUsageStats(row);
       const metrics = {
-        usageCount: usage.count,
+        usageCount: usage.usageCount,
         usageRate: usage.rate,
         usagePeopleCount: usage.peopleCount,
         usageAverage: usage.average,
@@ -8261,16 +8264,19 @@ export default {
       });
       const hasHistorical = this.hasUsageCounterStats(historical);
       const currentLogs = this.skillUsageLogs(row);
-      const supplementalLogs = this.skillUsageSupplementalLogs(row, currentLogs, hasHistorical);
+      const currentUsageLogs = currentLogs.filter(item => this.skillUsageLogCountsAsCall(item));
+      const supplementalLogs = this.skillUsageSupplementalLogs(row, currentUsageLogs, hasHistorical);
       supplementalLogs.forEach(item => {
         if (item.person) people.add(item.person);
       });
-      const count = (hasHistorical ? Number(historical.count || 0) : 0) + supplementalLogs.length;
-      const coverage = this.skillUsageCoverageStats(row, currentLogs, { historicalPeople: people });
+      const usageCount = (hasHistorical ? Number(historical.usageCount || 0) : 0) + supplementalLogs.length;
+      const count = usageCount + Number(hasHistorical ? historical.validationCount || 0 : 0) + Number(hasHistorical ? historical.researchSyncCount || 0 : 0);
+      const coverage = this.skillUsageCoverageStats(row, currentUsageLogs, { historicalPeople: people });
       const rate = coverage.rate;
-      const average = people.size ? Math.round((count / people.size) * 10) / 10 : 0;
+      const average = people.size ? Math.round((usageCount / people.size) * 10) / 10 : 0;
       return {
         count,
+        usageCount,
         rate,
         peopleCount: people.size,
         average,
@@ -8295,7 +8301,7 @@ export default {
         if (!name || name === '-' || this.isExcludedSkillVersionUsagePerson(name)) return;
         people.add(name);
       };
-      this.skillUsageLogs(row).forEach(item => addPerson(item.person));
+      this.skillUsageLogs(row).filter(item => this.skillUsageLogCountsAsCall(item)).forEach(item => addPerson(item.person));
       const historical = this.usageCounterStatsForRow(row);
       Object.keys(historical.people || {}).forEach(addPerson);
       return [...people];
@@ -8318,7 +8324,7 @@ export default {
         const key = this.normalizeAiScorePersonKey(this.canonicalArtDeptPerson(person) || person);
         if (key && ownerKeys.includes(key)) count += Number(value || 0);
       };
-      this.skillUsageLogs(row).forEach(item => addIfOwner(item.person, 1));
+      this.skillUsageLogs(row).filter(item => this.skillUsageLogCountsAsCall(item)).forEach(item => addIfOwner(item.person, 1));
       const historical = this.usageCounterStatsForRow(row);
       Object.entries(historical.people || {}).forEach(([person, personCount]) => addIfOwner(person, personCount));
       return count;
@@ -8343,16 +8349,18 @@ export default {
 
     skillInventoryUsageStatsForDetail(row = {}) {
       const usageLogs = this.skillUsageLogs(row);
-      const people = new Set(usageLogs.map(item => item.person).filter(Boolean));
+      const callLogs = usageLogs.filter(item => this.skillUsageLogCountsAsCall(item));
+      const people = new Set(callLogs.map(item => item.person).filter(Boolean));
       const historical = this.usageCounterStatsForRow(row);
       Object.keys(historical.people || {}).forEach(person => {
         if (person) people.add(person);
       });
-      const validationCoverage = this.skillUsageCoverageStats(row, usageLogs);
-      const count = this.hasUsageCounterStats(historical) ? Number(historical.count || 0) : usageLogs.length;
+      const validationCoverage = this.skillUsageCoverageStats(row, callLogs);
+      const count = this.hasUsageCounterStats(historical) ? Number(historical.count || 0) : callLogs.length;
+      const usageCount = this.hasUsageCounterStats(historical) ? Number(historical.usageCount || 0) : callLogs.length;
       const rate = validationCoverage.rate;
-      const average = people.size ? Math.round((count / people.size) * 10) / 10 : 0;
-      return { count, rate, peopleCount: people.size, average, validationCoverage, validationCount: 0, researchSyncCount: 0 };
+      const average = people.size ? Math.round((usageCount / people.size) * 10) / 10 : 0;
+      return { count, usageCount, rate, peopleCount: people.size, average, validationCoverage, validationCount: 0, researchSyncCount: 0 };
     },
 
     hasUsageCounterStats(stats = {}) {
@@ -8366,6 +8374,8 @@ export default {
       if (!buckets || typeof buckets !== 'object') return { count: 0, people: {}, usageCount: 0, validationCount: 0, researchSyncCount: 0, bucketCount: 0 };
       const keys = this.usageRowExplicitTargetKeys(row);
       if (this.isTaskArtBriefAssetRow(row)) keys.push('zentaoartbriefproduct');
+      const fuzzyKeys = this.usageRowFuzzyTargetKeys(row);
+      const connectedAt = this.skillInventoryRowConnectedAt(row);
       const seen = new Set();
       const seenEventKeys = new Set();
       const people = {};
@@ -8373,10 +8383,9 @@ export default {
       let usageCount = 0;
       let validationCount = 0;
       let researchSyncCount = 0;
-      keys.forEach(key => {
-        const normalizedKey = this.normalizeUsageMatchText(key).replace(/\.(md|markdown)$/i, '');
-        const bucket = buckets[normalizedKey];
+      const applyBucket = (bucket, normalizedKey = '') => {
         if (!bucket || seen.has(normalizedKey)) return;
+        if (!this.usageBucketMatchesRowTime(bucket, row, connectedAt)) return;
         seen.add(normalizedKey);
         const eventKeys = Array.isArray(bucket.eventKeys) ? bucket.eventKeys.filter(Boolean) : [];
         const newEventKeys = eventKeys.filter(eventKey => !seenEventKeys.has(eventKey));
@@ -8384,16 +8393,138 @@ export default {
         if (!eventRatio) return;
         eventKeys.forEach(eventKey => seenEventKeys.add(eventKey));
         const applyCount = value => Math.round(Number(value || 0) * eventRatio);
-        count += applyCount(bucket.count || bucket.usageCount || 0);
-        usageCount += applyCount(bucket.usageCount || 0);
-        validationCount += applyCount(bucket.validationCount || 0);
-        researchSyncCount += applyCount(bucket.researchSyncCount || 0);
+        const bucketValidationCount = applyCount(bucket.validationCount || 0);
+        const bucketResearchSyncCount = applyCount(bucket.researchSyncCount || 0);
+        const bucketUsageCount = Math.max(0, applyCount(bucket.count || bucket.usageCount || 0) - bucketValidationCount - bucketResearchSyncCount);
+        count += bucketUsageCount + bucketValidationCount + bucketResearchSyncCount;
+        usageCount += bucketUsageCount;
+        validationCount += bucketValidationCount;
+        researchSyncCount += bucketResearchSyncCount;
+        const personRatioBase = Number(bucket.count || bucket.usageCount || 0);
+        const personUsageRatio = personRatioBase > 0 ? Math.min(1, bucketUsageCount / Math.max(1, applyCount(personRatioBase))) : 0;
         Object.entries(bucket.people || {}).forEach(([person, personCount]) => {
           if (!person) return;
-          people[person] = Number(people[person] || 0) + applyCount(personCount || 0);
+          const value = applyCount(Number(personCount || 0) * personUsageRatio);
+          if (value > 0) people[person] = Number(people[person] || 0) + value;
         });
+      };
+      keys.forEach(key => {
+        const normalizedKey = this.normalizeUsageMatchText(key).replace(/\.(md|markdown)$/i, '');
+        applyBucket(buckets[normalizedKey], normalizedKey);
       });
+      if (fuzzyKeys.length) {
+        Object.entries(buckets).forEach(([bucketKey, bucket]) => {
+          if (!bucket || seen.has(bucketKey)) return;
+          const compactBucket = this.usageBucketCompactText(bucketKey, bucket);
+          if (!compactBucket) return;
+          const matched = fuzzyKeys.some(key => compactBucket.includes(key));
+          if (!matched) return;
+          applyBucket(bucket, bucketKey);
+        });
+      }
       return { count, people, usageCount, validationCount, researchSyncCount, bucketCount: seen.size };
+    },
+
+    skillInventoryRowConnectedAt(row = {}) {
+      const values = [
+        ...(Array.isArray(row.skill?.git?.history) ? row.skill.git.history.map(item => item?.committedAt) : []),
+        row.uploadedAt,
+        row.skill?.uploadedAt,
+        row.skill?.git?.uploadedAt,
+        row.skill?.git?.committedAt,
+        row.skill?.createdAt,
+        row.skill?.updatedAt
+      ];
+      return values
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+        .sort()[0] || '';
+    },
+
+    usageBucketMatchesRowTime(bucket = {}, row = {}, connectedAt = '') {
+      const start = String(connectedAt || this.skillInventoryRowConnectedAt(row) || '').trim();
+      if (!start) return true;
+      if (this.usageBucketHasStrongRowIdentity(bucket, row)) return true;
+      const firstAt = String(bucket.firstAt || bucket.lastAt || bucket.updatedAt || '').trim();
+      if (!firstAt) return true;
+      return firstAt >= start;
+    },
+
+    usageBucketHasStrongRowIdentity(bucket = {}, row = {}) {
+      const compactBucket = this.usageBucketCompactText(bucket.key || '', bucket);
+      if (!compactBucket) return false;
+      const pathValues = [
+        row.relativePath,
+        row.path,
+        row.skill?.git?.relativePath,
+        row.skill?.path
+      ];
+      return pathValues
+        .map(value => this.usageCompactMatchText(value))
+        .filter(value => value && value.length >= 8 && !this.isGenericUsageNeedle(value) && !this.isWeakUsageFuzzyNeedle(value))
+        .some(value => compactBucket.includes(value));
+    },
+
+    usageRecordMatchesRowTime(record = {}, row = {}, connectedAt = '') {
+      const start = String(connectedAt || this.skillInventoryRowConnectedAt(row) || '').trim();
+      if (!start) return true;
+      const at = String(this.artProgressRecordDisplayTime(record) || record.createdAt || record.updatedAt || '').trim();
+      if (!at) return true;
+      return at >= start;
+    },
+
+    usageBucketCompactText(bucketKey = '', bucket = {}) {
+      return [
+        bucketKey,
+        bucket.key,
+        bucket.target,
+        ...(Array.isArray(bucket.aliases) ? bucket.aliases : [])
+      ]
+        .map(value => this.usageCompactMatchText(value))
+        .filter(Boolean)
+        .join('\n');
+    },
+
+    usageRowFuzzyTargetKeys(row = {}) {
+      const pathValues = [
+        row.relativePath,
+        row.path,
+        row.skill?.git?.relativePath,
+        row.skill?.relativePath,
+        row.skill?.path
+      ];
+      const aliasValues = [
+        ...(Array.isArray(row.aliases) ? row.aliases : []),
+        ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : []),
+        ...(Array.isArray(row.aliasHistory) ? row.aliasHistory : []),
+        ...(Array.isArray(row.skill?.aliasHistory) ? row.skill.aliasHistory : [])
+      ];
+      const values = [
+        row.productFileName,
+        row.productDisplayName,
+        row.displayName,
+        row.commonName,
+        row.title,
+        row.skill?.productDisplayName,
+        row.skill?.displayName,
+        row.skill?.commonName,
+        row.skill?.title,
+        row.skill?.originalTitle,
+        ...pathValues,
+        ...pathValues.flatMap(value => this.usageConcreteNamesFromPath(value)),
+        ...aliasValues
+      ];
+      return values
+        .map(value => this.usageCompactMatchText(value))
+        .filter(value => value && value.length >= 6 && !this.isGenericUsageNeedle(value) && !this.isWeakUsageFuzzyNeedle(value))
+        .filter((value, index, array) => array.indexOf(value) === index);
+    },
+
+    isWeakUsageFuzzyNeedle(value = '') {
+      const text = this.usageCompactMatchText(value);
+      if (!text) return true;
+      return /^(ip|默认|default|生成|生图|同ip|ip生成|默认ip|使用默认|按默认ip生成|使用默认着装)$/i.test(text)
+        || /^[0-9]+$/.test(text);
     },
 
     usageCounterEventKeySetForRow(row = {}) {
@@ -8401,17 +8532,29 @@ export default {
       if (!buckets || typeof buckets !== 'object') return new Set();
       const keys = this.usageRowExplicitTargetKeys(row);
       if (this.isTaskArtBriefAssetRow(row)) keys.push('zentaoartbriefproduct');
+      const fuzzyKeys = this.usageRowFuzzyTargetKeys(row);
       const seen = new Set();
       const eventKeys = new Set();
-      keys.forEach(key => {
-        const normalizedKey = this.normalizeUsageMatchText(key).replace(/\.(md|markdown)$/i, '');
-        const bucket = buckets[normalizedKey];
+      const applyBucket = (bucket, normalizedKey = '') => {
         if (!bucket || seen.has(normalizedKey)) return;
         seen.add(normalizedKey);
         (Array.isArray(bucket.eventKeys) ? bucket.eventKeys : []).forEach(eventKey => {
           if (eventKey) eventKeys.add(String(eventKey));
         });
+      };
+      keys.forEach(key => {
+        const normalizedKey = this.normalizeUsageMatchText(key).replace(/\.(md|markdown)$/i, '');
+        applyBucket(buckets[normalizedKey], normalizedKey);
       });
+      if (fuzzyKeys.length) {
+        Object.entries(buckets).forEach(([bucketKey, bucket]) => {
+          if (!bucket || seen.has(bucketKey)) return;
+          const compactBucket = this.usageBucketCompactText(bucketKey, bucket);
+          if (!compactBucket) return;
+          if (!fuzzyKeys.some(key => compactBucket.includes(key))) return;
+          applyBucket(bucket, bucketKey);
+        });
+      }
       return eventKeys;
     },
 
@@ -8439,6 +8582,29 @@ export default {
         seen.add(key);
         return true;
       });
+    },
+
+    skillUsageLogCountsAsCall(log = {}) {
+      const raw = log.raw && typeof log.raw === 'object' ? log.raw : {};
+      const eventType = String(raw.eventType || '').trim();
+      if (['research_finding', 'research_summary', 'research_artifact', 'reporter_installed', 'reporter_test'].includes(eventType)) return false;
+      const action = String(raw.action || '').trim();
+      if (['REPORT_ART_PROGRESS', 'AUTO_UPSERT_SKILL_VALIDATION', 'UPSERT_SKILL_VALIDATION', 'UPDATE_SKILL_VALIDATION', 'UPDATE_SKILL_ALIAS'].includes(action)) return false;
+      if (['skill_called', 'tool_used', 'task_completed'].includes(eventType)) return true;
+      if (['START_RUN', 'RETRY_RUN', 'CREATE_DIRECT_SKILL_RUN'].includes(action)) return true;
+      const sourceType = String(raw.sourceType || raw.executionMode || '').trim();
+      if (sourceType === 'direct-skill') return true;
+      const text = [
+        log.type,
+        log.summary,
+        log.matchReason,
+        raw.summary,
+        raw.title,
+        raw.metadata?.operationName,
+        raw.metadata?.skillName
+      ].map(value => String(value || '')).join('\n');
+      return /直接执行|启动执行|再次执行|调用|使用|执行/.test(text)
+        && !/同步研究沉淀|自动回填验证|修改产物调用别名|研究沉淀/.test(text);
     },
 
     skillUsageCoveragePeople() {
@@ -10775,7 +10941,7 @@ export default {
         .replace(/\.(md|markdown)$/i, '')
         .replace(/[\\/_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '');
       if (!text) return true;
-      return /^(figma|mcp|codex|markdown|md|skill|skills|git|ai|工具|技能|文档|流程|规范|验证|平台|资源|图片|素材|截图|入口|入口图|悬浮入口|界面|命名|说明|readme|agents|memory)$/i.test(text);
+      return /^(figma|mcp|codex|markdown|md|skill|skills|git|ai|data|artgit|artgitskills|工具|技能|文档|流程|规范|验证|平台|资源|图片|素材|截图|入口|入口图|悬浮入口|界面|命名|说明|readme|agents|memory)$/i.test(text);
     },
 
     isGenericUsageFileTarget(value = '') {
@@ -11439,11 +11605,13 @@ export default {
       if (this.isMemberArtReporterRow(row)) return this.memberArtReporterUsageLogs(row);
       const assetName = row.productDisplayName || row.productFileName || row.title || row.id || '产物';
       const taskArtBriefLogs = this.taskArtBriefUsageEntriesForRow(row, assetName);
+      const connectedAt = this.skillInventoryRowConnectedAt(row);
       const eventRows = [
         ...(this.artProgressEvents || []),
         ...(this.artProgressOperationLogRows || []).map(log => log.after || log.metadata?.after || {}).filter(Boolean)
       ];
       const events = eventRows
+        .filter(item => this.usageRecordMatchesRowTime(item, row, connectedAt))
         .map(item => ({ item, match: this.skillInventoryRecordMatch(row, item, 'art-progress') }))
         .filter(entry => entry.match.matched)
         .map(({ item, match }) => {
@@ -11474,6 +11642,7 @@ export default {
       return [
         row.uid || row.id || row.productDisplayName || row.title,
         row.relativePath || row.path || '',
+        this.skillInventoryRowConnectedAt(row),
         (Array.isArray(row.aliases) ? row.aliases : []).join('|'),
         (Array.isArray(row.skill?.aliases) ? row.skill.aliases : []).join('|'),
         (Array.isArray(row.aliasHistory) ? row.aliasHistory : []).join('|'),
@@ -11555,16 +11724,17 @@ export default {
 
     buildSkillUsageDialogState(row = {}, previous = {}) {
       const logs = this.skillUsageLogs(row);
-      const people = new Set(logs.map(item => item.person).filter(Boolean));
+      const callLogs = logs.filter(item => this.skillUsageLogCountsAsCall(item));
+      const people = new Set(callLogs.map(item => item.person).filter(Boolean));
       const historical = this.usageCounterStatsForRow(row);
       Object.keys(historical.people || {}).forEach(person => {
         if (person) people.add(person);
       });
       const effectivePeople = this.skillEffectiveUsagePeople(row);
-      const validationCoverage = this.skillUsageCoverageStats(row, logs);
+      const validationCoverage = this.skillUsageCoverageStats(row, callLogs);
       const hasHistorical = this.hasUsageCounterStats(historical);
-      const supplementalLogs = this.skillUsageSupplementalLogs(row, logs, hasHistorical);
-      const totalCount = (hasHistorical ? Number(historical.count || 0) : 0) + supplementalLogs.length;
+      const supplementalLogs = this.skillUsageSupplementalLogs(row, callLogs, hasHistorical);
+      const totalCount = (hasHistorical ? Number(historical.usageCount || 0) : 0) + supplementalLogs.length;
       const memberStatsMap = new Map();
       if (!hasHistorical || supplementalLogs.length) {
         for (const item of hasHistorical ? supplementalLogs : logs) {
