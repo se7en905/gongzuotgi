@@ -2289,7 +2289,7 @@ export default {
     },
 
     skillInventoryRows() {
-      const token = this.skillInventoryRowsCacheKey();
+      const token = this.skillInventoryRowsCacheKey;
       if (this._skillInventoryRowsCache?.token === token && Array.isArray(this._skillInventoryRowsCache.rows)) {
         return this._skillInventoryRowsCache.rows;
       }
@@ -2321,7 +2321,7 @@ export default {
     },
 
     skillInventoryVisibleRows() {
-      const token = this.skillInventoryRowsCacheKey();
+      const token = this.skillInventoryRowsCacheKey;
       const cacheKey = [
         token,
         this.canOperateSkillInventoryManage ? 'manage' : 'view'
@@ -2416,7 +2416,7 @@ export default {
       const keyword = String(this.skillInventoryKeyword || '').trim().toLowerCase();
       const kindFilter = String(this.skillInventoryKindFilter || '').trim();
       const cacheKey = [
-        this.skillInventoryRowsCacheKey(),
+        this.skillInventoryRowsCacheKey,
         this.canOperateSkillInventoryManage ? 'manage' : 'view',
         keyword,
         kindFilter,
