@@ -308,9 +308,27 @@
       </ElTableColumn>
       <ElTableColumn label="版本" width="82">
         <template #default="{ row }">
-          <ElTooltip :content="app.skillVersionDescription(row)" placement="top" effect="dark">
-            <span :class="['skill-version-pill', app.skillVersionClass(row)]">{{ app.skillVersionShortLabel(row) }}</span>
-          </ElTooltip>
+          <div v-if="app.canEditSkillInventoryVersion" class="skill-version-picker">
+            <button
+              type="button"
+              :class="['skill-version-pill skill-version-button', app.skillVersionClass(row)]"
+              @click.stop="app.toggleSkillVersionMenu(row)"
+            >
+              {{ app.skillVersionShortLabel(row) }}
+            </button>
+            <div v-if="app.isSkillVersionMenuOpen(row)" class="skill-version-inline-menu" @click.stop>
+              <button
+                v-for="version in app.skillVersionOptions"
+                :key="version"
+                type="button"
+                :class="{ active: app.skillVersionShortLabel(row) === version }"
+                @click="app.saveSkillInventoryRowVersion(row, version)"
+              >
+                {{ version }}
+              </button>
+            </div>
+          </div>
+          <span v-else :class="['skill-version-pill', app.skillVersionClass(row)]">{{ app.skillVersionShortLabel(row) }}</span>
         </template>
       </ElTableColumn>
       <ElTableColumn label="贡献人" width="96">
@@ -2188,6 +2206,22 @@ export default {
     font-weight: 780;
     min-width: 46px;
     padding: 5px 8px;
+  }
+
+  .skill-version-button {
+    appearance: none;
+    border: 0;
+    cursor: pointer;
+    font-family: inherit;
+    margin: 0;
+  }
+
+  .skill-version-button::before,
+  .skill-version-button::after,
+  .skill-version-picker::before,
+  .skill-version-picker::after {
+    content: none !important;
+    display: none !important;
   }
 
   .skill-version-pill.version-1 {

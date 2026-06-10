@@ -682,7 +682,12 @@ async function handleApi(req, res, url) {
       after: result,
       description: `${currentUser.displayName || currentUser.username} ${actionName}`
     });
-    broadcastPlatformEvent('skill-version-overrides.changed', { module: 'skill-inventory' });
+    broadcastPlatformEvent('skill-version-overrides.changed', {
+      module: 'skill-inventory',
+      override: result,
+      projectId: result.projectId || body.projectId || '',
+      relativePath: result.relativePath || body.relativePath || ''
+    });
     if (usagePatch.matched) {
       broadcastPlatformEvent('usage-counters.changed', {
         module: 'skill-inventory',
