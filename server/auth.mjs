@@ -80,6 +80,7 @@ const permissionCatalog = [
   { id: 'api.skillAsset.void', name: '产物作废 API', type: 'api', group: '后端接口', description: '作废或恢复 AI 产物清单产物。' },
   { id: 'api.aiMembers.read', name: 'AI部门看板读取 API', type: 'api', group: '后端接口', description: '读取 AI 部门成员快照和看板 HTML 缓存。' },
   { id: 'api.aiMembers.score.read', name: 'AI评分依赖读取 API', type: 'api', group: '后端接口', description: '读取 AI 评分所需轻量缓存或快照。' },
+  { id: 'api.aiMembers.score.write', name: 'AI评分快照保存 API', type: 'api', group: '后端接口', description: '保存负责人手动刷新后的 AI 评分快照。' },
   { id: 'api.aiMembers.refresh', name: 'AI部门看板刷新 API', type: 'api', group: '后端接口', description: '刷新 AI 部门成员快照或研究同步，不触发库存扫描。' },
   { id: 'api.codex.config.read', name: 'Codex 配置读取 API', type: 'api', group: '后端接口', description: '读取 Codex 脱敏配置。' },
   { id: 'api.codex.config.manage', name: 'Codex 配置保存 API', type: 'api', group: '后端接口', description: '保存 Codex 配置。' },

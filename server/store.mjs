@@ -40,6 +40,7 @@ export const paths = {
   taskCenterConfig: path.join(dataDir, 'task-center-config.json'),
   artProgressEvents: path.join(dataDir, 'art-progress-events.json'),
   usageCounters: path.join(dataDir, 'usage-counters.json'),
+  aiMemberScoreSnapshot: path.join(dataDir, 'ai-member-score-snapshot.json'),
   agentWorkers: path.join(dataDir, 'agent-workers.json')
 };
 
@@ -246,6 +247,23 @@ export async function upsertTaskCenterConfig(input = {}) {
     updatedAt: new Date().toISOString()
   });
   await writeJson(paths.taskCenterConfig, next);
+  return next;
+}
+
+export async function getAiMemberScoreSnapshot() {
+  return normalizeAiMemberScoreSnapshot(await readJson(paths.aiMemberScoreSnapshot, {}));
+}
+
+export async function upsertAiMemberScoreSnapshot(input = {}) {
+  const previous = await getAiMemberScoreSnapshot();
+  const next = normalizeAiMemberScoreSnapshot({
+    ...previous,
+    ...input,
+    savedAt: input.savedAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  });
+  if (!next.rows.length) throw new Error('AI 评分快照不能为空。');
+  await writeJson(paths.aiMemberScoreSnapshot, next);
   return next;
 }
 
@@ -2140,6 +2158,57 @@ function normalizeCodexConfig(input = {}) {
     keyFingerprint: String(input.keyFingerprint || (apiKey ? codexKeyFingerprint(apiKey) : '')).trim(),
     updatedAt: input.updatedAt || ''
   };
+}
+
+function normalizeAiMemberScoreSnapshot(input = {}) {
+  const rows = Array.isArray(input.rows) ? input.rows : [];
+  return {
+    rows: rows
+      .filter(row => row && typeof row === 'object')
+      .map(row => ({
+        name: cleanString(row.name),
+        account: cleanString(row.account),
+        level: cleanString(row.level),
+        status: cleanString(row.status),
+        score: clampNumber(row.score, 0, 100),
+        productScore: clampNumber(row.productScore, 0, 100),
+        usageScore: clampNumber(row.usageScore, 0, 100),
+        runScore: clampNumber(row.runScore, 0, 100),
+        penalty: clampNumber(row.penalty, 0, 100),
+        productCount: clampNumber(row.productCount, 0, 10000),
+        productValueScore: clampNumber(row.productValueScore, 0, 10000),
+        productValueLevel: cleanString(row.productValueLevel),
+        monthUsageCount: clampNumber(row.monthUsageCount, 0, 10000),
+        monthUsageResultCount: clampNumber(row.monthUsageResultCount, 0, 10000),
+        monthUsagePeopleCount: clampNumber(row.monthUsagePeopleCount, 0, 10000),
+        monthUsageCoverageRate: clampNumber(row.monthUsageCoverageRate, 0, 100),
+        monthValidationCount: clampNumber(row.monthValidationCount, 0, 10000),
+        monthRunCount: clampNumber(row.monthRunCount, 0, 10000),
+        monthRunSkillCount: clampNumber(row.monthRunSkillCount, 0, 10000),
+        blockedCount: clampNumber(row.blockedCount, 0, 10000),
+        topProducts: Array.isArray(row.topProducts)
+          ? row.topProducts.map(item => cleanString(item)).filter(Boolean).slice(0, 5)
+          : [],
+        latestActivityAt: cleanString(row.latestActivityAt),
+        reason: cleanString(row.reason)
+      }))
+      .filter(row => row.name || row.account),
+    key: cleanString(input.key),
+    month: cleanString(input.month),
+    savedAt: cleanString(input.savedAt),
+    updatedAt: cleanString(input.updatedAt),
+    savedBy: {
+      id: cleanString(input.savedBy?.id),
+      username: cleanString(input.savedBy?.username),
+      displayName: cleanString(input.savedBy?.displayName)
+    }
+  };
+}
+
+function clampNumber(value, min = 0, max = Number.MAX_SAFE_INTEGER) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return min;
+  return Math.max(min, Math.min(max, number));
 }
 
 function normalizeRunCodexRequest(input = {}) {

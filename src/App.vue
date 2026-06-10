@@ -540,7 +540,7 @@ const roleLevelPermissionPresets = {
     'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.source.delete', 'skill.asset.create', 'skill.asset.void', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
     'aiMembers.score.view', 'aiMembers.score.refresh',
     'codex.config.manage', 'user.manage', 'role.manage',
-    'api.skillSources.manage', 'api.skillSources.delete', 'api.skillScan.run', 'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.tasks.deletePlatform', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.runs.delete', 'api.aiArchive.delete', 'api.reviews.submit', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.skillAsset.void', 'api.aiMembers.read', 'api.aiMembers.score.read', 'api.aiMembers.refresh', 'api.codex.config.read', 'api.codex.config.manage', 'api.users.manage', 'api.roles.manage', 'api.taskCenter.config.manage', 'api.operationLogs.read', 'api.operationLogs.delete'
+    'api.skillSources.manage', 'api.skillSources.delete', 'api.skillScan.run', 'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.tasks.deletePlatform', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.runs.delete', 'api.aiArchive.delete', 'api.reviews.submit', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.skillAsset.void', 'api.aiMembers.read', 'api.aiMembers.score.read', 'api.aiMembers.score.write', 'api.aiMembers.refresh', 'api.codex.config.read', 'api.codex.config.manage', 'api.users.manage', 'api.roles.manage', 'api.taskCenter.config.manage', 'api.operationLogs.read', 'api.operationLogs.delete'
   ],
   3: [
     'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive',
@@ -4654,6 +4654,7 @@ export default {
         if (this.activeView === 'ai-members') {
           this.aiMembersBoardFrameReady = true;
           this.restoreAiMemberScoreSnapshot();
+          await this.refreshAiMemberScoreSnapshotFromServer();
         }
       }
     },
@@ -5110,20 +5111,50 @@ export default {
       }
     },
 
-    saveAiMemberScoreSnapshot(rows = [], key = '') {
+    applyAiMemberScoreSnapshotPayload(payload = {}) {
+      const source = payload?.value && typeof payload.value === 'object' ? payload.value : payload;
+      const rows = Array.isArray(source?.rows) ? source.rows : [];
+      if (!rows.length) return false;
+      this.aiMemberScoreRowsSnapshot = rows;
+      this.aiMemberScoreRowsSnapshotKey = source.key || '';
+      this.aiMemberScoreRowsSnapshotAt = source.savedAt || source.updatedAt || '';
+      this.aiMemberScoreReady = true;
+      try {
+        localStorage.setItem(this.workbenchDisplayCacheKey('aiMemberScoreRowsSnapshot'), JSON.stringify({
+          rows,
+          key: this.aiMemberScoreRowsSnapshotKey,
+          month: source.month || this.aiScoreMonthLabel,
+          savedAt: this.aiMemberScoreRowsSnapshotAt
+        }));
+      } catch {
+      }
+      return true;
+    },
+
+    async refreshAiMemberScoreSnapshotFromServer({ silent = true } = {}) {
+      if (!this.canViewAiMemberScore || !this.can('api.aiMembers.score.read')) return false;
+      try {
+        const snapshot = await this.api('/api/ai-member-score-snapshot');
+        return this.applyAiMemberScoreSnapshotPayload(snapshot);
+      } catch (error) {
+        if (!silent) ElMessage.error(this.readApiError(error) || 'AI 评分快照读取失败');
+        return false;
+      }
+    },
+
+    async saveAiMemberScoreSnapshot(rows = [], key = '') {
       if (!Array.isArray(rows) || !rows.length) return;
       const payload = {
         rows,
         key,
+        month: this.aiScoreMonthLabel,
         savedAt: new Date().toISOString()
       };
-      this.aiMemberScoreRowsSnapshot = rows;
-      this.aiMemberScoreRowsSnapshotKey = key;
-      this.aiMemberScoreRowsSnapshotAt = payload.savedAt;
-      try {
-        localStorage.setItem(this.workbenchDisplayCacheKey('aiMemberScoreRowsSnapshot'), JSON.stringify(payload));
-      } catch {
-      }
+      const saved = await this.api('/api/ai-member-score-snapshot', {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      });
+      this.applyAiMemberScoreSnapshotPayload(saved);
     },
 
     restoreWorkbenchDisplayCacheKeyIfEmpty(key = '') {
@@ -5139,6 +5170,12 @@ export default {
       const path = typeof window !== 'undefined' ? window.location.pathname : '';
       if (['/runs', '/agent-workers', '/ai-archive'].includes(path)) {
         ['runs', 'projects', 'agentWorkers'].forEach(key => this.restoreWorkbenchDisplayCacheKey(key));
+        return;
+      }
+      if (path === '/ai-members') {
+        this.restoreWorkbenchDisplayCacheKey('aiMembersSnapshot');
+        this.restoreAiMembersBoardHtmlSnapshot();
+        this.restoreAiMemberScoreSnapshot();
         return;
       }
       [
@@ -5264,6 +5301,11 @@ export default {
         this.schedulePlatformRefresh('agent-workers', async () => {
           await this.refreshAgentWorkers();
         }, 500);
+      }
+      if (type === 'ai-member-score-snapshot.changed' && this.can('api.aiMembers.score.read')) {
+        this.schedulePlatformRefresh('ai-member-score-snapshot', async () => {
+          await this.refreshAiMemberScoreSnapshotFromServer();
+        }, 300);
       }
     },
 
@@ -6872,6 +6914,7 @@ export default {
         this.restoreAiMemberScoreSnapshot();
         this.aiMemberScoreReady = Array.isArray(this.aiMemberScoreRowsSnapshot) && this.aiMemberScoreRowsSnapshot.length;
       }
+      this.refreshAiMemberScoreSnapshotFromServer();
       if (this.workbenchStateRestoring) return;
       this.aiMembersBoardFrameReadyTimer = setTimeout(() => {
         if (this.activeView !== 'ai-members') return;
@@ -6930,7 +6973,7 @@ export default {
           ElMessage.warning('暂无可计算的 AI 评分数据，已保留上次分值。');
           return;
         }
-        this.saveAiMemberScoreSnapshot(rows, cacheKey);
+        await this.saveAiMemberScoreSnapshot(rows, cacheKey);
         this.aiMemberScoreReady = true;
         ElMessage.success('AI 评分已按最新调用、产物、执行和验证数据刷新。');
       } catch (error) {
@@ -8573,17 +8616,18 @@ export default {
         if (person) people.add(person);
       });
       const validationCoverage = this.skillUsageCoverageStats(row, callLogs);
-      const count = this.hasUsageCounterStats(historical) ? Number(historical.count || 0) : callLogs.length;
-      const usageCount = this.hasUsageCounterStats(historical) ? Number(historical.usageCount || 0) : callLogs.length;
+      const hasHistorical = this.hasUsageCounterStats(historical);
+      const supplementalLogs = this.skillUsageSupplementalLogs(row, callLogs, hasHistorical, historical);
+      const usageCount = (hasHistorical ? Number(historical.usageCount || 0) : 0) + supplementalLogs.length;
+      const count = usageCount;
       const rate = validationCoverage.rate;
       const average = people.size ? Math.round((usageCount / people.size) * 10) / 10 : 0;
       return { count, usageCount, rate, peopleCount: people.size, average, validationCoverage, validationCount: 0, researchSyncCount: 0 };
     },
 
     hasUsageCounterStats(stats = {}) {
-      return Number(stats.bucketCount || 0) > 0
-        || Number(stats.count || 0) > 0
-        || Object.keys(stats.people || {}).length > 0;
+      return Number(stats.usageCount || 0) > 0
+        || Object.keys(stats.usagePeople || {}).length > 0;
     },
 
     usageCounterStatsForRow(row = {}) {
@@ -8611,13 +8655,6 @@ export default {
         if (!eventRatio) return;
         eventKeys.forEach(eventKey => seenEventKeys.add(eventKey));
         const applyCount = value => Math.round(Number(value || 0) * eventRatio);
-        const bucketValidationCount = applyCount(bucket.validationCount || 0);
-        const bucketResearchSyncCount = applyCount(bucket.researchSyncCount || 0);
-        const bucketUsageCount = Math.max(0, applyCount(bucket.usageCount || 0));
-        count += bucketUsageCount + bucketValidationCount + bucketResearchSyncCount;
-        usageCount += bucketUsageCount;
-        validationCount += bucketValidationCount;
-        researchSyncCount += bucketResearchSyncCount;
         Object.entries(bucket.people || {}).forEach(([person, personCount]) => {
           if (!person) return;
           const value = applyCount(Number(personCount || 0));
@@ -8627,12 +8664,21 @@ export default {
         const bucketUsagePeople = bucket.usagePeople && typeof bucket.usagePeople === 'object'
           ? bucket.usagePeople
           : {};
+        let bucketUsagePeopleTotal = 0;
         Object.entries(bucketUsagePeople).forEach(([person, personCount]) => {
           if (!person) return;
           const value = applyCount(Number(personCount || 0));
           if (value <= 0) return;
+          bucketUsagePeopleTotal += value;
           usagePeople[person] = Number(usagePeople[person] || 0) + value;
         });
+        const bucketValidationCount = applyCount(bucket.validationCount || 0);
+        const bucketResearchSyncCount = applyCount(bucket.researchSyncCount || 0);
+        const bucketUsageCount = bucketUsagePeopleTotal > 0 ? bucketUsagePeopleTotal : 0;
+        count += bucketUsageCount + bucketValidationCount + bucketResearchSyncCount;
+        usageCount += bucketUsageCount;
+        validationCount += bucketValidationCount;
+        researchSyncCount += bucketResearchSyncCount;
       };
       keys.forEach(key => {
         const normalizedKey = this.normalizeUsageMatchText(key).replace(/\.(md|markdown)$/i, '');

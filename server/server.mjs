@@ -51,6 +51,7 @@ import {
   enforceRetentionNow,
   getCodexConfig,
   getCustomWorkflow,
+  getAiMemberScoreSnapshot,
   getAiFlowRecord,
   getArtBriefByGroupKey,
   getOperationLog,
@@ -86,6 +87,7 @@ import {
   upsertBugs,
   redactCodexConfig,
   upsertCodexConfig,
+  upsertAiMemberScoreSnapshot,
   upsertTaskCenterConfig,
   upsertCustomWorkflow,
   upsertProject,
@@ -842,6 +844,31 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/ai-members') {
     requireAnyPermission(currentUser, ['api.aiMembers.read', 'menu.aiMembers']);
     sendJson(res, 200, await loadAiMembersSnapshot(currentUser));
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/ai-member-score-snapshot') {
+    requireAnyPermission(currentUser, ['api.aiMembers.score.read', 'aiMembers.score.view']);
+    sendJson(res, 200, await getAiMemberScoreSnapshot());
+    return;
+  }
+
+  if (req.method === 'PUT' && url.pathname === '/api/ai-member-score-snapshot') {
+    requireAnyPermission(currentUser, ['api.aiMembers.score.write', 'aiMembers.score.refresh']);
+    const body = await readBody(req);
+    const snapshot = await upsertAiMemberScoreSnapshot({
+      rows: body.rows,
+      key: body.key,
+      month: body.month,
+      savedAt: body.savedAt,
+      savedBy: {
+        id: currentUser.id || '',
+        username: currentUser.username || '',
+        displayName: currentUser.displayName || currentUser.username || ''
+      }
+    });
+    broadcastPlatformEvent('ai-member-score-snapshot.changed', { module: 'ai-members-score', savedAt: snapshot.savedAt });
+    sendJson(res, 200, snapshot);
     return;
   }
 

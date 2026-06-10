@@ -221,6 +221,7 @@ export default {
         'api.aiArchive.delete': 'AI档案范围删除 API',
         'api.aiMembers.read': 'AI部门看板读取 API',
         'api.aiMembers.score.read': 'AI评分依赖读取 API',
+        'api.aiMembers.score.write': 'AI评分快照保存 API',
         'api.aiMembers.refresh': 'AI部门看板刷新 API'
       };
       return this.app.permissionCatalog.find(item => item.id === id)?.name || fallbackNames[id] || '未知权限';
