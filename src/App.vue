@@ -4255,6 +4255,7 @@ export default {
         this.restoreWorkbenchDisplayCacheKey('scans');
         this.restoreWorkbenchDisplayCacheKey('aiAssetSheetRows');
         this.restoreWorkbenchDisplayCacheKey('usageCounters');
+        this.ensureSkillInventoryUsageCounters();
         if (!this.loading.skillInventoryCache) {
           this.loadSkillInventorySavedSnapshot({ force: !this.skillInventoryRows.length }).catch(() => {});
         }
@@ -4989,7 +4990,7 @@ export default {
           value,
           savedAt: new Date().toISOString()
         });
-        const maxPayloadLength = ['aiMembersSnapshot', 'aiMembersBoardHtmlSnapshot'].includes(key) ? 900 * 1024 : 220 * 1024;
+        const maxPayloadLength = ['aiMembersSnapshot', 'aiMembersBoardHtmlSnapshot', 'usageCounters'].includes(key) ? 1600 * 1024 : 220 * 1024;
         if (payload.length > maxPayloadLength) {
           localStorage.removeItem(this.workbenchDisplayCacheKey(key));
           return;
@@ -7814,12 +7815,29 @@ export default {
         const result = await this.api('/api/usage-counters');
         this.usageCounters = result && typeof result === 'object' ? result : null;
         this.clearSkillUsageStatsCache();
+        this.clearSkillInventoryRowsCache({ keepScanSignature: true });
         this.saveWorkbenchDisplayCache('usageCounters', this.usageCounters);
         return this.usageCounters;
       } catch {
         this.restoreWorkbenchDisplayCacheKey('usageCounters');
         return this.usageCounters;
       }
+    },
+
+    hasUsageCounterBuckets() {
+      const buckets = this.usageCounters?.buckets;
+      return Boolean(buckets && typeof buckets === 'object' && Object.keys(buckets).length);
+    },
+
+    ensureSkillInventoryUsageCounters() {
+      if (!this.canViewSkillUsageLogs && !this.can('menu.skillList')) return null;
+      if (this.hasUsageCounterBuckets()) return this.usageCounters;
+      if (this._usageCountersRefreshPromise) return this._usageCountersRefreshPromise;
+      this._usageCountersRefreshPromise = this.refreshUsageCounters()
+        .finally(() => {
+          this._usageCountersRefreshPromise = null;
+        });
+      return this._usageCountersRefreshPromise;
     },
 
     resetOperationLogFilters() {
