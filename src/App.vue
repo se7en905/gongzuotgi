@@ -8145,6 +8145,7 @@ export default {
         this.usageCounters?.updatedAt || '',
         this.artProgressEvents.length,
         this.artProgressOperationLogRows.length,
+        this.runs.length,
         this.taskArtBriefUsageLogs.length
       ].join('::');
     },
@@ -8265,7 +8266,7 @@ export default {
       const hasHistorical = this.hasUsageCounterStats(historical);
       const currentLogs = this.skillUsageLogs(row);
       const currentUsageLogs = currentLogs.filter(item => this.skillUsageLogCountsAsCall(item));
-      const supplementalLogs = this.skillUsageSupplementalLogs(row, currentUsageLogs, hasHistorical);
+      const supplementalLogs = this.skillUsageSupplementalLogs(row, currentUsageLogs, hasHistorical, historical);
       supplementalLogs.forEach(item => {
         if (item.person) people.add(item.person);
       });
@@ -8447,6 +8448,8 @@ export default {
       if (!start) return true;
       if (this.usageBucketHasStrongRowIdentity(bucket, row)) return true;
       const firstAt = String(bucket.firstAt || bucket.lastAt || bucket.updatedAt || '').trim();
+      const lastAt = String(bucket.lastAt || bucket.updatedAt || bucket.firstAt || '').trim();
+      if (lastAt && lastAt >= start) return true;
       if (!firstAt) return true;
       return firstAt >= start;
     },
@@ -8460,9 +8463,29 @@ export default {
         row.skill?.git?.relativePath,
         row.skill?.path
       ];
-      return pathValues
+      const pathMatched = pathValues
         .map(value => this.usageCompactMatchText(value))
         .filter(value => value && value.length >= 8 && !this.isGenericUsageNeedle(value) && !this.isWeakUsageFuzzyNeedle(value))
+        .some(value => compactBucket.includes(value));
+      if (pathMatched) return true;
+      const identityValues = [
+        row.productFileName,
+        row.productDisplayName,
+        row.displayName,
+        row.commonName,
+        row.title,
+        row.skill?.productDisplayName,
+        row.skill?.displayName,
+        row.skill?.commonName,
+        row.skill?.title,
+        ...(Array.isArray(row.aliases) ? row.aliases : []),
+        ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : []),
+        ...(Array.isArray(row.aliasHistory) ? row.aliasHistory : []),
+        ...(Array.isArray(row.skill?.aliasHistory) ? row.skill.aliasHistory : [])
+      ];
+      return identityValues
+        .map(value => this.usageCompactMatchText(value))
+        .filter(value => value && value.length >= 6 && !this.isGenericUsageNeedle(value) && !this.isWeakUsageFuzzyNeedle(value))
         .some(value => compactBucket.includes(value));
     },
 
@@ -8559,9 +8582,11 @@ export default {
       return eventKeys;
     },
 
-    skillUsageSupplementalLogs(row = {}, logs = [], hasHistorical = false) {
+    skillUsageSupplementalLogs(row = {}, logs = [], hasHistorical = false, historical = null) {
       if (!hasHistorical) return Array.isArray(logs) ? logs : [];
       const buckets = this.usageCounters?.buckets || {};
+      const countedEventKeys = this.usageCounterEventKeySetForRow(row);
+      const allowRunFallback = Number(historical?.usageCount || 0) <= 0;
       const rowKeys = this.usageRowExplicitTargetKeys(row);
       const missingAliasKeys = [
         ...(Array.isArray(row.aliases) ? row.aliases : []),
@@ -8571,12 +8596,16 @@ export default {
       ]
         .map(value => this.usageCounterKeyForProduct(value))
         .filter(value => value && value.length >= 4 && !this.isGenericUsageNeedle(value) && !buckets[value]);
-      if (!missingAliasKeys.length) return [];
       const seen = new Set();
       return (Array.isArray(logs) ? logs : []).filter(item => {
+        const rawId = String(item.raw?.id || item.id || '').replace(/^run-/, '').trim();
+        const eventKey = String(item.raw?.eventKey || item.raw?.metadata?.eventKey || '').trim();
+        if ((eventKey && countedEventKeys.has(eventKey)) || (rawId && countedEventKeys.has(rawId))) return false;
         const target = this.usageCounterKeyForProduct(item.target || item.raw?.skillName || item.raw?.title || item.summary || '');
         const reason = this.usageCounterKeyForProduct(item.matchReason || '');
-        const matched = missingAliasKeys.some(alias => target.includes(alias) || reason.includes(`别名命中${alias}`) || reason.includes(alias));
+        const isRunLog = String(item.id || '').startsWith('run-') || item.matchReason === '工作台执行记录';
+        const matched = (isRunLog && allowRunFallback)
+          || missingAliasKeys.some(alias => target.includes(alias) || reason.includes(`别名命中${alias}`) || reason.includes(alias));
         if (!matched) return false;
         const key = [item.id, item.time, item.person, item.target, item.summary].map(value => String(value || '').trim()).join('::');
         if (!key || seen.has(key)) return false;
@@ -11522,6 +11551,105 @@ export default {
         });
     },
 
+    skillRunUsageEntriesForRow(row = {}, assetName = '') {
+      const connectedAt = this.skillInventoryRowConnectedAt(row);
+      return (this.runs || [])
+        .filter(run => this.isRunUsageLikeSkillInventoryRow(run))
+        .filter(run => this.usageRunMatchesRowTime(run, row, connectedAt))
+        .filter(run => this.runRecordTargetsInventoryRow(run, row))
+        .map(run => {
+          const person = this.canonicalArtDeptPerson(run.assignedToName || run.developer || run.createdBy || run.ownerUserId) || run.assignedToName || run.developer || '-';
+          const target = this.skillUsageLogTargetFromRun(row, run, assetName);
+          return {
+            id: `run-${run.id || `${target}-${run.createdAt || run.startedAt || ''}`}`,
+            type: run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill' ? '直接执行' : '工作台执行',
+            person,
+            time: run.startedAt || run.createdAt || run.updatedAt || '',
+            target,
+            task: run.taskNo || run.zentaoId || run.taskId || '工作台执行',
+            summary: `${person} 执行了 ${target}`,
+            content: run.resultSummary?.summary || run.requirement || run.title || '-',
+            code: run.id || '',
+            matchReason: '工作台执行记录',
+            raw: run
+          };
+        });
+    },
+
+    isRunUsageLikeSkillInventoryRow(run = {}) {
+      if (!run || typeof run !== 'object') return false;
+      const values = [
+        run.primarySkillPath,
+        run.skillPath,
+        run.stage,
+        run.sourceTitle,
+        run.productName,
+        ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
+        ...(Array.isArray(run.materials) ? run.materials.flatMap(item => [item?.path, item?.name, item?.title]) : []),
+        ...(Array.isArray(run.referenceItems) ? run.referenceItems.flatMap(item => [item?.path, item?.name, item?.title]) : [])
+      ].map(value => String(value || '').trim()).filter(Boolean);
+      if (!values.length) return false;
+      if (run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill') return true;
+      if (String(run.workflow || '') === 'art-single-skill' || String(run.executionMode || '') === 'single-skill') return true;
+      return values.some(value => /\.(md|markdown)$/i.test(value.replace(/[#?].*$/, '')) || /(^|\/)SKILL\.md$/i.test(value.replace(/\\/g, '/')));
+    },
+
+    usageRunMatchesRowTime(run = {}, row = {}, connectedAt = '') {
+      const start = String(connectedAt || this.skillInventoryRowConnectedAt(row) || '').trim();
+      if (!start) return true;
+      if (this.runRecordHasStrongRowIdentity(run, row)) return true;
+      const at = String(run.startedAt || run.createdAt || run.updatedAt || '').trim();
+      if (!at) return true;
+      return at >= start;
+    },
+
+    runRecordHasStrongRowIdentity(run = {}, row = {}) {
+      const runText = this.usageCompactMatchText(this.runUsageTargetText(run));
+      if (!runText) return false;
+      return this.usageRowFuzzyTargetKeys(row)
+        .filter(value => value && value.length >= 6 && !this.isWeakUsageFuzzyNeedle(value))
+        .some(value => runText.includes(value) || value.includes(runText));
+    },
+
+    runRecordTargetsInventoryRow(run = {}, row = {}) {
+      const targetText = this.runUsageTargetText(run);
+      const targets = this.usageExplicitTargetsFromText(targetText)
+        .map(value => this.usageCounterKeyForProduct(value))
+        .filter(value => value && value.length >= 4 && !this.isGenericUsageNeedle(value));
+      const rowKeys = this.usageRowExplicitTargetKeys(row);
+      const compactTarget = this.usageCompactMatchText(targetText);
+      if (!targets.length && !compactTarget) return false;
+      if (!rowKeys.length) return true;
+      if (targets.some(target => rowKeys.some(rowKey => target === rowKey))) return true;
+      return rowKeys
+        .filter(rowKey => rowKey.length >= 6 && !this.isWeakUsageFuzzyNeedle(rowKey))
+        .some(rowKey => compactTarget.includes(rowKey));
+    },
+
+    runUsageTargetText(run = {}) {
+      return [
+        run.primarySkillPath,
+        run.skillPath,
+        run.stage,
+        run.sourceTitle,
+        run.productName,
+        run.title,
+        ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
+        ...(Array.isArray(run.materials) ? run.materials.flatMap(item => [item?.path, item?.name, item?.title]) : []),
+        ...(Array.isArray(run.referenceItems) ? run.referenceItems.flatMap(item => [item?.path, item?.name, item?.title]) : [])
+      ].map(value => String(value || '')).filter(Boolean).join('\n');
+    },
+
+    skillUsageLogTargetFromRun(row = {}, run = {}, assetName = '') {
+      const explicit = this.usageExplicitTargetsFromText(this.runUsageTargetText(run))
+        .find(target => target && !this.isGenericUsageFileTarget(target));
+      const cleaned = String(explicit || run.productName || run.sourceTitle || '').trim();
+      if (!cleaned || this.isGenericUsageFileTarget(cleaned)) {
+        return assetName || row.productDisplayName || row.productFileName || row.title || '产物';
+      }
+      return cleaned.replace(/^Skill[：:]\s*/i, '');
+    },
+
     isMemberArtReporterRow(row = {}) {
       const text = this.normalizeUsageMatchText([
         row.id,
@@ -11606,6 +11734,7 @@ export default {
       if (this.isMemberArtReporterRow(row)) return this.memberArtReporterUsageLogs(row);
       const assetName = row.productDisplayName || row.productFileName || row.title || row.id || '产物';
       const taskArtBriefLogs = this.taskArtBriefUsageEntriesForRow(row, assetName);
+      const runLogs = this.skillRunUsageEntriesForRow(row, assetName);
       const connectedAt = this.skillInventoryRowConnectedAt(row);
       const eventRows = [
         ...(this.artProgressEvents || []),
@@ -11633,7 +11762,7 @@ export default {
             raw: item
           };
         });
-      const rows = this.dedupeSkillUsageLogRows([...taskArtBriefLogs, ...events])
+      const rows = this.dedupeSkillUsageLogRows([...taskArtBriefLogs, ...runLogs, ...events])
         .sort((a, b) => String(b.time || '').localeCompare(String(a.time || '')));
       this.skillUsageLogCacheSet(cacheKey, rows);
       return rows;
@@ -11650,6 +11779,7 @@ export default {
         (Array.isArray(row.skill?.aliasHistory) ? row.skill.aliasHistory : []).join('|'),
         this.artProgressEvents.length,
         this.artProgressOperationLogRows.length,
+        this.runs.length,
         this.taskArtBriefUsageLogs.length
       ].join('::');
     },
@@ -11734,7 +11864,7 @@ export default {
       const effectivePeople = this.skillEffectiveUsagePeople(row);
       const validationCoverage = this.skillUsageCoverageStats(row, callLogs);
       const hasHistorical = this.hasUsageCounterStats(historical);
-      const supplementalLogs = this.skillUsageSupplementalLogs(row, callLogs, hasHistorical);
+      const supplementalLogs = this.skillUsageSupplementalLogs(row, callLogs, hasHistorical, historical);
       const totalCount = (hasHistorical ? Number(historical.usageCount || 0) : 0) + supplementalLogs.length;
       const memberStatsMap = new Map();
       if (!hasHistorical || supplementalLogs.length) {
