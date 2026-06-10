@@ -5082,6 +5082,10 @@ export default {
         }
         if (this[key] === null || typeof this[key] === 'object') {
           this[key] = parsed.value;
+          if (key === 'scans') {
+            this.skillInventoryScanSignature = this.buildSkillInventoryScanSignature(this.scans);
+            this.clearSkillInventoryRowsCache({ keepScanSignature: true });
+          }
           return true;
         }
       } catch {
@@ -7760,7 +7764,7 @@ export default {
       try {
         const result = await this.api('/api/usage-counters');
         this.usageCounters = result && typeof result === 'object' ? result : null;
-        this.clearSkillUsageLogCache();
+        this.clearSkillUsageStatsCache();
         this.saveWorkbenchDisplayCache('usageCounters', this.usageCounters);
         return this.usageCounters;
       } catch {
@@ -8003,6 +8007,11 @@ export default {
       return '';
     },
 
+    skillVersionDisplayOverrideForRow(row = {}) {
+      return this.skillVersionOverrideFor(row)
+        || String(row.displayVersionOverride || row.skill?.displayVersionOverride || '').trim();
+    },
+
     applySkillVersionOverrideRecord(record = {}) {
       if (!record || typeof record !== 'object') return false;
       const version = String(record.version || '').trim();
@@ -8206,8 +8215,7 @@ export default {
       const statusLabel = skill.statusLabel || this.skillStatusLabel(skill);
       const scenes = this.skillScenes(skill);
       const version = String(skill.version || '1.0').trim() || '1.0';
-      const displayVersionOverride = this.skillVersionOverrideFor({ ...skill, projectId: projectRow.id })
-        || String(skill.displayVersionOverride || '').trim();
+      const displayVersionOverride = this.skillVersionDisplayOverrideForRow({ ...skill, projectId: projectRow.id });
       const relativePath = skill.git?.relativePath || skill.relativePath || skill.path || '';
       const gitSkillProductName = (source.startsWith('Git:') || skill.git) && /(^|\/)SKILL\.md$/i.test(String(relativePath || '').replace(/\\/g, '/'))
         ? String(relativePath || '').replace(/\\/g, '/').split('/').filter(Boolean).slice(-2, -1)[0] || ''
@@ -8430,7 +8438,7 @@ export default {
 
     skillInventoryUsageCountDisplay(row = {}) {
       if (row.hidden === true) return '-';
-      return Number(row.usageCount || 0);
+      return Number(this.skillInventoryUsageStatsForList(row).usageCount || 0);
     },
 
     skillInventoryUsageStatsForList(row = {}) {
@@ -8865,7 +8873,7 @@ export default {
     skillUsageRateDisplay(row = {}) {
       if (row.hidden === true) return '-';
       if (this.isOwnerYushengwei(row)) return '-';
-      return `${Number(row.usageRate || 0)}%`;
+      return `${Number(this.skillInventoryUsageStatsForList(row).rate || 0)}%`;
     },
 
     skillUsageCoverageStats(row = {}, logs = [], options = {}) {
@@ -9163,7 +9171,7 @@ export default {
     skillInventoryVersionDisplayMajor(version = '') {
       if (version && typeof version === 'object') {
         if (version.hidden === true) return '1';
-        const override = this.skillVersionOverrideFor(version) || String(version.displayVersionOverride || version.skill?.displayVersionOverride || '').trim();
+        const override = this.skillVersionDisplayOverrideForRow(version);
         if (override) return this.skillVersionMajor(override);
         return this.skillInventoryVersionMajor(version);
       }
@@ -10550,9 +10558,7 @@ export default {
       try {
         const scan = await this.api(`/api/projects/${encodeURIComponent(id)}/scan?refresh=1`);
         const nextScan = this.mergeProjectScanResult(id, scan);
-        this.scans = { ...this.scans, [id]: nextScan };
-        this.clearValidationMatchCache();
-        this.clearSkillUsageLogCache();
+        this.mergeScansIntoInventoryState({ [id]: nextScan }, { force: true });
         this.saveWorkbenchDisplayCache('scans', this.scans);
         if (id === this.selectedProjectId) {
           const rows = Array.isArray(nextScan.tasks) ? nextScan.tasks : [];
@@ -10579,8 +10585,7 @@ export default {
             lastError: this.readApiError(error) || error.message || '扫描失败',
             lastFailedAt: new Date().toISOString()
           };
-          this.scans = { ...this.scans, [id]: preserved };
-          this.clearSkillUsageLogCache();
+          this.mergeScansIntoInventoryState({ [id]: preserved }, { force: true });
           this.saveWorkbenchDisplayCache('scans', this.scans);
           this.scanOutput = preserved.lastError;
         } else {
@@ -10604,24 +10609,21 @@ export default {
       try {
         const scan = await this.apiWithTimeout(`/api/projects/${encodeURIComponent(project.id)}/scan?refresh=1`, {}, {}, 45000);
         const nextScan = this.mergeProjectScanResult(project.id, scan);
-        this.scans = { ...this.scans, [project.id]: nextScan };
-        this.clearValidationMatchCache();
-        this.clearSkillUsageLogCache();
+        this.mergeScansIntoInventoryState({ [project.id]: nextScan }, { force: true });
         this.saveWorkbenchDisplayCache('scans', this.scans);
         this.skillInventoryScanCacheLoaded = true;
         this.scanOutput = `已扫描来源「${project.name || project.id}」：${nextScan.skills?.length || 0} 个产物。`;
         return nextScan;
       } catch (error) {
         if (previous) {
-          this.scans = {
-            ...this.scans,
+          this.mergeScansIntoInventoryState({
             [project.id]: {
               ...previous,
               preserved: true,
               lastError: this.readApiError(error) || error.message || '扫描失败',
               lastFailedAt: new Date().toISOString()
             }
-          };
+          }, { force: true });
           this.saveWorkbenchDisplayCache('scans', this.scans);
         }
         this.scanOutput = previous ? '扫描失败，已保留该来源上次库存。' : (this.readApiError(error) || '扫描失败');
@@ -10656,9 +10658,7 @@ export default {
               knownProjectIds.add(projectId);
             }
           }
-          this.scans = { ...this.scans, ...scanMap };
-          this.clearValidationMatchCache();
-          this.clearSkillUsageLogCache();
+          this.mergeScansIntoInventoryState(scanMap);
           this.saveWorkbenchDisplayCache('projects', this.projects);
           this.saveWorkbenchDisplayCache('scans', this.scans);
           const selectedScan = this.scans[this.selectedProjectId];
@@ -10690,9 +10690,7 @@ export default {
       const result = await this.apiWithTimeout('/api/project-scan-cache', {}, {}, 15000);
       const scans = result?.scans && typeof result.scans === 'object' ? result.scans : {};
       if (!scans[id]) return;
-      this.scans = { ...this.scans, [id]: this.mergeProjectScanResult(id, scans[id]) };
-      this.clearValidationMatchCache();
-      this.clearSkillUsageLogCache();
+      this.mergeScansIntoInventoryState({ [id]: this.mergeProjectScanResult(id, scans[id]) });
       this.saveWorkbenchDisplayCache('scans', this.scans);
     },
 
@@ -10724,9 +10722,7 @@ export default {
             knownProjectIds.add(projectId);
           }
         }
-        this.scans = { ...this.scans, ...scanMap };
-        this.clearValidationMatchCache();
-        this.clearSkillUsageLogCache();
+        this.mergeScansIntoInventoryState(scanMap);
         this.saveWorkbenchDisplayCache('projects', this.projects);
         this.saveWorkbenchDisplayCache('scans', this.scans);
         this.skillInventoryScanCacheLoaded = true;
@@ -10809,9 +10805,7 @@ export default {
           ElMessage.warning(this.scanOutput);
           return;
         }
-        this.scans = { ...this.scans, ...scanMap };
-        this.clearValidationMatchCache();
-        this.clearSkillUsageLogCache();
+        this.mergeScansIntoInventoryState(scanMap, { force: true });
         this.saveWorkbenchDisplayCache('scans', this.scans);
         this.skillInventoryScanCacheLoaded = true;
         if (artGitProject && this.selectedProjectId !== artGitProject.id) {
@@ -11991,29 +11985,65 @@ export default {
 
     buildSkillInventoryScanSignature(scans = {}) {
       return Object.entries(scans || {})
-        .map(([projectId, scan]) => [
-          projectId,
-          scan?.scannedAt || scan?.cachedAt || '',
-          Array.isArray(scan?.skills) ? scan.skills.length : 0,
-          Array.isArray(scan?.tasks) ? scan.tasks.length : 0
-        ].join(':'))
+        .map(([projectId, scan]) => {
+          const skillSignature = Array.isArray(scan?.skills)
+            ? scan.skills.map(skill => [
+              skill.id,
+              skill.git?.relativePath || skill.relativePath || skill.path,
+              skill.productDisplayName || skill.displayName || skill.title,
+              skill.displayVersionOverride || '',
+              skill.hidden === true ? 'hidden' : '',
+              skill.displayHidden === true ? 'displayHidden' : ''
+            ].map(value => String(value || '').trim()).join('/')).join(',')
+            : '';
+          return [
+            projectId,
+            scan?.scannedAt || scan?.cachedAt || '',
+            Array.isArray(scan?.skills) ? scan.skills.length : 0,
+            Array.isArray(scan?.tasks) ? scan.tasks.length : 0,
+            skillSignature
+          ].join(':');
+        })
         .sort()
         .join('|');
     },
 
-    clearSkillInventoryRowsCache() {
+    mergeScansIntoInventoryState(scanMap = {}, options = {}) {
+      const nextScanMap = scanMap && typeof scanMap === 'object' ? scanMap : {};
+      if (!Object.keys(nextScanMap).length) return false;
+      const previousSignature = this.buildSkillInventoryScanSignature(this.scans);
+      const nextScans = { ...this.scans, ...nextScanMap };
+      const nextSignature = this.buildSkillInventoryScanSignature(nextScans);
+      const changed = options.force === true || previousSignature !== nextSignature;
+      this.scans = nextScans;
+      this.skillInventoryScanSignature = nextSignature;
+      if (changed) {
+        this.clearValidationMatchCache();
+        this.clearSkillUsageStatsCache();
+        this.clearSkillInventoryRowsCache({ keepScanSignature: true });
+      }
+      return changed;
+    },
+
+    clearSkillInventoryRowsCache(options = {}) {
       this._skillInventoryRowsCache = null;
       this._skillInventoryVisibleRowsCache = null;
       this._filteredSkillInventoryRowsCache = null;
-      this.skillInventoryScanSignature = this.buildSkillInventoryScanSignature(this.scans);
+      if (options.keepScanSignature !== true) {
+        this.skillInventoryScanSignature = this.buildSkillInventoryScanSignature(this.scans);
+      }
       this.skillInventoryRowsCacheToken = String(Date.now());
     },
 
-    clearSkillUsageLogCache() {
+    clearSkillUsageStatsCache() {
       if (this._skillUsageLogCache) this._skillUsageLogCache.clear();
       this.skillInventoryMetricsCache = {};
-      this.clearSkillInventoryRowsCache();
       this.clearAiMemberScoreCache();
+    },
+
+    clearSkillUsageLogCache() {
+      this.clearSkillUsageStatsCache();
+      this.clearSkillInventoryRowsCache();
     },
 
     artProgressRecordDisplayTime(record = {}) {
@@ -12331,7 +12361,7 @@ export default {
         return;
       }
       if (this.skillVersionShortLabel(row) === version) return;
-      const previousVersion = this.skillVersionShortLabel(row);
+      const previousDisplayOverride = this.skillVersionDisplayOverrideForRow(row);
       this.patchSkillVersionDisplayInScans(row, version);
       this.saveWorkbenchDisplayCache('scans', this.scans);
       this.loading.skillVersion = true;
@@ -12362,7 +12392,7 @@ export default {
         });
         ElMessage.success(`版本已更新为 ${result.version || version}`);
       } catch (error) {
-        this.patchSkillVersionDisplayInScans(row, previousVersion);
+        this.patchSkillVersionDisplayInScans(row, previousDisplayOverride);
         this.saveWorkbenchDisplayCache('scans', this.scans);
         ElMessage.error(this.readApiError(error) || '版本保存失败');
       } finally {
@@ -12848,7 +12878,7 @@ export default {
         const nextSkill = { ...skill, aliases: savedAliases, manualAliases: savedAliases, aliasHistory: savedAliasHistory, hasAliasOverride: savedAliases.length > 0 };
         this.skillPreview = { ...this.skillPreview, skill: nextSkill };
         this.skillPreviewAliasesDraft = this.normalizeSkillAliasList(savedAliases).join('、');
-        this.patchSkillVersionInScans(nextSkill, nextSkill.version || skill.version || '', savedAliases);
+        this.patchSkillVersionInScans(nextSkill, '', savedAliases);
         this.selectedSkillId = nextSkill.id || this.selectedSkillId;
         this.refreshSkillUsageDialogForSkill(nextSkill);
         ElMessage.success('调用别名已保存');
@@ -12875,11 +12905,14 @@ export default {
         skill.productDisplayName,
         skill.productFileName
       ].map(value => String(value || '').trim()).filter(Boolean));
-      const nextVersionOverrides = { ...(this.skillVersionOverrides || {}) };
-      targetKeys.forEach(key => {
-        nextVersionOverrides[key] = version;
-      });
-      this.skillVersionOverrides = nextVersionOverrides;
+      const normalizedVersion = String(version || '').trim();
+      if (normalizedVersion) {
+        const nextVersionOverrides = { ...(this.skillVersionOverrides || {}) };
+        targetKeys.forEach(key => {
+          nextVersionOverrides[key] = normalizedVersion;
+        });
+        this.skillVersionOverrides = nextVersionOverrides;
+      }
       const normalizedAliases = this.normalizeSkillAliasList(aliases);
       const normalizedAliasHistory = this.normalizeSkillAliasHistoryList([
         ...(Array.isArray(skill.aliasHistory) ? skill.aliasHistory : []),
@@ -12919,7 +12952,7 @@ export default {
               if (projectMatches && itemKeys.some(itemKey => targetKeys.has(itemKey))) {
                 return {
                   ...item,
-                  version,
+                  ...(normalizedVersion ? { version: normalizedVersion } : {}),
                   aliases: normalizedAliases,
                   manualAliases: normalizedAliases,
                   aliasHistory: normalizedAliasHistory,
@@ -12932,14 +12965,15 @@ export default {
         };
       }
       this.scans = scans;
-      this.clearSkillUsageLogCache();
-      this.skillInventoryMetricsCache = {};
+      this.clearSkillUsageStatsCache();
+      this.clearSkillInventoryRowsCache();
     },
 
     patchSkillVersionDisplayInScans(skill = {}, version = '') {
       const targetProjectId = String(skill.projectId || '').trim();
       const targetPath = String(skill.git?.relativePath || skill.relativePath || skill.path || '');
       const targetId = String(skill.id || '');
+      const normalizedVersion = String(version || '').trim();
       const targetKeys = new Set([
         targetPath,
         targetId,
@@ -12954,7 +12988,8 @@ export default {
       ].map(value => String(value || '').trim()).filter(Boolean));
       const nextVersionOverrides = { ...(this.skillVersionOverrides || {}) };
       targetKeys.forEach(key => {
-        nextVersionOverrides[key] = version;
+        if (normalizedVersion) nextVersionOverrides[key] = normalizedVersion;
+        else delete nextVersionOverrides[key];
       });
       this.skillVersionOverrides = nextVersionOverrides;
       const scans = {};
@@ -12979,7 +13014,7 @@ export default {
               if (projectMatches && itemKeys.some(itemKey => targetKeys.has(itemKey))) {
                 return {
                   ...item,
-                  displayVersionOverride: version
+                  displayVersionOverride: normalizedVersion
                 };
               }
               return item;
