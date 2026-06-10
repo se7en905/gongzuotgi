@@ -5533,6 +5533,11 @@ export default {
         const aliasHistoryOverrides = {};
         const inventoryKindOverrides = {};
         for (const [key, record] of Object.entries(overrides)) {
+          const keyText = String(key || '').trim();
+          const recordKeyText = String(record?.key || '').trim();
+          const isAliasRecord = keyText.startsWith('alias:') || recordKeyText.startsWith('alias:');
+          const isDedicatedOverrideRecord = /^(version|owner|name|kind|display):/.test(keyText)
+            || /^(version|owner|name|kind|display):/.test(recordKeyText);
           const owner = this.displayPersonList(record?.owner || record?.uploader || '');
           const overrideKeys = [
             key,
@@ -5549,14 +5554,15 @@ export default {
           if (Object.prototype.hasOwnProperty.call(record || {}, 'version')) {
             const version = String(record?.version || '').trim();
             if (version) {
-              overrideKeys.forEach(itemKey => {
+              const versionKeys = this.skillVersionOverrideKeys({ ...record, key });
+              versionKeys.forEach(itemKey => {
                 versionOverrides[itemKey] = version;
               });
             }
           }
           if (Object.prototype.hasOwnProperty.call(record || {}, 'displayName') || Object.prototype.hasOwnProperty.call(record || {}, 'commonName')) {
             const displayName = String(record?.displayName ?? record?.commonName ?? '').trim();
-            const displayNameKeys = String(key || '').startsWith('name:') || String(record?.key || '').startsWith('name:')
+            const displayNameKeys = keyText.startsWith('name:') || recordKeyText.startsWith('name:')
               ? [key, record?.key].map(value => String(value || '').trim()).filter(Boolean)
               : overrideKeys;
             displayNameKeys.forEach(itemKey => {
@@ -5564,9 +5570,9 @@ export default {
             });
           }
           if (Array.isArray(record?.aliases)) {
-            const aliasKeys = String(key || '').startsWith('alias:') || String(record?.key || '').startsWith('alias:')
+            const aliasKeys = isAliasRecord
               ? [key, record?.key].map(value => String(value || '').trim()).filter(Boolean)
-              : overrideKeys;
+              : (isDedicatedOverrideRecord ? [] : overrideKeys);
             aliasKeys.forEach(itemKey => {
               aliasOverrides[itemKey] = record.aliases;
             });
@@ -5576,15 +5582,15 @@ export default {
               ...(Array.isArray(record?.aliasHistory) ? record.aliasHistory : []),
               ...(Array.isArray(record?.aliases) ? record.aliases : [])
             ]);
-            const aliasKeys = String(key || '').startsWith('alias:') || String(record?.key || '').startsWith('alias:')
+            const aliasKeys = isAliasRecord
               ? [key, record?.key].map(value => String(value || '').trim()).filter(Boolean)
-              : overrideKeys;
+              : (isDedicatedOverrideRecord ? [] : overrideKeys);
             aliasKeys.forEach(itemKey => {
               aliasHistoryOverrides[itemKey] = history;
             });
           }
           if (Object.prototype.hasOwnProperty.call(record || {}, 'inventoryKind')) {
-            const kindKeys = String(key || '').startsWith('kind:') || String(record?.key || '').startsWith('kind:')
+            const kindKeys = keyText.startsWith('kind:') || recordKeyText.startsWith('kind:')
               ? [key, record?.key].map(value => String(value || '').trim()).filter(Boolean)
               : overrideKeys;
             kindKeys.forEach(itemKey => {
@@ -7978,24 +7984,43 @@ export default {
       return null;
     },
 
-    skillVersionOverrideKeys(input = {}) {
+    isGenericSkillVersionIdentity(value = '') {
+      const text = String(value || '').trim();
+      if (!text) return true;
+      const fileName = this.fileNameFromPath(text) || text;
+      return /^(SKILL|README)\.md$/i.test(fileName) || /^\.md$/i.test(fileName);
+    },
+
+    skillVersionIdentityValues(input = {}) {
       const skill = input.skill || {};
-      return [
+      const pathValues = [
         input.git?.relativePath,
         skill.git?.relativePath,
         skill.relativePath,
         input.relativePath,
-        input.key,
         skill.path,
-        input.path,
-        input.overrideKey,
-        input.uid,
-        skill.id,
-        input.id,
-        input.title,
-        input.productDisplayName,
-        input.productFileName
+        input.path
       ].map(value => String(value || '').trim()).filter(Boolean);
+      const values = pathValues.length
+        ? pathValues
+        : [skill.id, input.id].map(value => String(value || '').trim()).filter(value => value && !this.isGenericSkillVersionIdentity(value));
+      return values.filter((value, index, array) => array.indexOf(value) === index);
+    },
+
+    skillVersionOverrideKeys(input = {}) {
+      const skill = input.skill || {};
+      const projectId = String(input.projectId || skill.projectId || '').trim();
+      const identityValues = this.skillVersionIdentityValues(input);
+      const directVersionKeys = [
+        input.overrideKey,
+        input.key,
+        skill.overrideKey,
+        skill.key
+      ].map(value => String(value || '').trim()).filter(value => value.startsWith('version:'));
+      const scopedKeys = projectId ? identityValues.map(value => `version:${projectId}:${value}`) : [];
+      return [...directVersionKeys, ...scopedKeys, ...identityValues]
+        .filter(Boolean)
+        .filter((value, index, array) => array.indexOf(value) === index);
     },
 
     skillVersionOverrideFor(input = {}) {
@@ -8008,14 +8033,16 @@ export default {
     },
 
     skillVersionDisplayOverrideForRow(row = {}) {
-      return this.skillVersionOverrideFor(row)
-        || String(row.displayVersionOverride || row.skill?.displayVersionOverride || '').trim();
+      return this.skillVersionOverrideFor(row);
     },
 
     applySkillVersionOverrideRecord(record = {}) {
       if (!record || typeof record !== 'object') return false;
-      const version = String(record.version || '').trim();
       const keys = this.skillVersionOverrideKeys(record);
+      const version = String(record.version || '').trim();
+      const recordKeyText = String(record.key || '').trim();
+      const isAliasRecord = recordKeyText.startsWith('alias:');
+      const isDedicatedOverrideRecord = /^(version|owner|name|kind|display):/.test(recordKeyText);
       const changedFlags = {
         version: false,
         alias: false,
@@ -8038,9 +8065,13 @@ export default {
         record.overrideKey,
         record.key
       ].map(value => String(value || '').trim()).filter(Boolean);
-      const aliasKeys = projectId
-        ? aliasBaseKeys.map(key => `alias:${projectId}:${key}`)
-        : aliasBaseKeys.filter(key => !/^(SKILL|README)\.md$/i.test(this.fileNameFromPath(key) || key));
+      const aliasKeys = isAliasRecord
+        ? [record.key].map(value => String(value || '').trim()).filter(Boolean)
+        : (isDedicatedOverrideRecord
+          ? []
+          : (projectId
+            ? aliasBaseKeys.map(key => `alias:${projectId}:${key}`)
+            : aliasBaseKeys.filter(key => !/^(SKILL|README)\.md$/i.test(this.fileNameFromPath(key) || key))));
 
       if (Array.isArray(record.aliases)) {
         const aliases = this.normalizeSkillAliasList(record.aliases);
@@ -8111,14 +8142,15 @@ export default {
             const version = this.skillVersionOverrideFor({ ...skill, projectId });
             const aliases = this.skillAliasOverrideFor({ ...skill, projectId });
             const aliasHistory = this.skillAliasHistoryOverrideFor({ ...skill, projectId });
-            if (!version && !Array.isArray(aliases) && !aliasHistory.length) return skill;
+            const staleDisplayVersion = !version && String(skill.displayVersionOverride || '').trim();
+            if (!version && !Array.isArray(aliases) && !aliasHistory.length && !staleDisplayVersion) return skill;
             const nextAliases = this.normalizeSkillAliasList(Array.isArray(aliases) ? aliases : skill.aliases || []);
             const nextAliasHistory = this.normalizeSkillAliasHistoryList([
               ...(Array.isArray(skill.aliasHistory) ? skill.aliasHistory : []),
               ...aliasHistory,
               ...nextAliases
             ]);
-            const nextVersion = version || skill.displayVersionOverride || '';
+            const nextVersion = version || '';
             const sameVersion = String(skill.displayVersionOverride || '') === String(nextVersion || '');
             const sameAliases = nextAliases.join('｜') === this.normalizeSkillAliasList(skill.aliases || []).join('｜');
             const sameHistory = nextAliasHistory.join('｜') === this.normalizeSkillAliasHistoryList(skill.aliasHistory || []).join('｜');
@@ -12662,7 +12694,7 @@ export default {
           path: result.relativePath || row.path,
           relativePath: result.relativePath || row.relativePath,
           overrideKey: result.key || ''
-        }, row.version || row.skill?.version || '', savedAliases);
+        }, '', savedAliases);
         this.saveWorkbenchDisplayCache('scans', this.scans);
         ElMessage.success(savedAliases.length ? '调用别名已保存' : '调用别名已清空');
       } catch (error) {
@@ -12891,20 +12923,7 @@ export default {
 
     patchSkillVersionInScans(skill = {}, version = '', aliases = []) {
       const targetProjectId = String(skill.projectId || '').trim();
-      const targetPath = String(skill.git?.relativePath || skill.relativePath || skill.path || '');
-      const targetId = String(skill.id || '');
-      const targetKeys = new Set([
-        targetPath,
-        targetId,
-        skill.uid,
-        skill.path,
-        skill.relativePath,
-        skill.overrideKey,
-        skill.key,
-        skill.title,
-        skill.productDisplayName,
-        skill.productFileName
-      ].map(value => String(value || '').trim()).filter(Boolean));
+      const targetKeys = new Set(this.skillVersionOverrideKeys(skill));
       const normalizedVersion = String(version || '').trim();
       if (normalizedVersion) {
         const nextVersionOverrides = { ...(this.skillVersionOverrides || {}) };
@@ -12936,23 +12955,12 @@ export default {
           ...scan,
           skills: Array.isArray(scan.skills)
             ? scan.skills.map(item => {
-              const itemPath = String(item.git?.relativePath || item.relativePath || item.path || '');
-              const itemKeys = [
-                itemPath,
-                item.id,
-                item.uid,
-                item.path,
-                item.relativePath,
-                item.key,
-                item.title,
-                item.productDisplayName,
-                item.productFileName
-              ].map(value => String(value || '').trim()).filter(Boolean);
+              const itemKeys = this.skillVersionOverrideKeys({ ...item, projectId });
               const projectMatches = !targetProjectId || String(projectId) === targetProjectId;
               if (projectMatches && itemKeys.some(itemKey => targetKeys.has(itemKey))) {
                 return {
                   ...item,
-                  ...(normalizedVersion ? { version: normalizedVersion } : {}),
+                  ...(normalizedVersion ? { displayVersionOverride: normalizedVersion } : {}),
                   aliases: normalizedAliases,
                   manualAliases: normalizedAliases,
                   aliasHistory: normalizedAliasHistory,
@@ -12971,21 +12979,8 @@ export default {
 
     patchSkillVersionDisplayInScans(skill = {}, version = '') {
       const targetProjectId = String(skill.projectId || '').trim();
-      const targetPath = String(skill.git?.relativePath || skill.relativePath || skill.path || '');
-      const targetId = String(skill.id || '');
       const normalizedVersion = String(version || '').trim();
-      const targetKeys = new Set([
-        targetPath,
-        targetId,
-        skill.uid,
-        skill.path,
-        skill.relativePath,
-        skill.overrideKey,
-        skill.key,
-        skill.title,
-        skill.productDisplayName,
-        skill.productFileName
-      ].map(value => String(value || '').trim()).filter(Boolean));
+      const targetKeys = new Set(this.skillVersionOverrideKeys(skill));
       const nextVersionOverrides = { ...(this.skillVersionOverrides || {}) };
       targetKeys.forEach(key => {
         if (normalizedVersion) nextVersionOverrides[key] = normalizedVersion;
@@ -12998,18 +12993,7 @@ export default {
           ...scan,
           skills: Array.isArray(scan.skills)
             ? scan.skills.map(item => {
-              const itemPath = String(item.git?.relativePath || item.relativePath || item.path || '');
-              const itemKeys = [
-                itemPath,
-                item.id,
-                item.uid,
-                item.path,
-                item.relativePath,
-                item.key,
-                item.title,
-                item.productDisplayName,
-                item.productFileName
-              ].map(value => String(value || '').trim()).filter(Boolean);
+              const itemKeys = this.skillVersionOverrideKeys({ ...item, projectId });
               const projectMatches = !targetProjectId || String(projectId) === targetProjectId;
               if (projectMatches && itemKeys.some(itemKey => targetKeys.has(itemKey))) {
                 return {

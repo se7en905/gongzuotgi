@@ -3328,6 +3328,7 @@ function normalizeSkillVersionAliasOverrides(overrides = {}) {
   if (!overrides || typeof overrides !== 'object') return {};
   const normalized = { ...overrides };
   for (const [key, record] of Object.entries(overrides)) {
+    if (/^(version|owner|name|kind|display):/.test(String(key || '').trim())) continue;
     if (!record || typeof record !== 'object' || !Array.isArray(record.aliases)) continue;
     const aliasKey = skillAliasOverrideKey({
       projectId: record.projectId || '',
@@ -3557,7 +3558,7 @@ function scopedOverrideTargetKey(key = '', projectId = '') {
   const text = String(key || '').trim();
   const id = String(projectId || '').trim();
   if (!text || !id) return '';
-  for (const prefix of [`display:${id}:`, `owner:${id}:`]) {
+  for (const prefix of [`display:${id}:`, `owner:${id}:`, `version:${id}:`]) {
     if (text.startsWith(prefix)) return text.slice(prefix.length);
   }
   return '';
@@ -3740,6 +3741,30 @@ function skillVersionOverrideKey(input = {}) {
   return String(input.relativePath || input.path || input.uid || input.id || '').trim();
 }
 
+function isGenericSkillVersionIdentity(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return true;
+  const fileName = path.basename(text.replace(/\\/g, '/'));
+  return /^(SKILL|README)\.md$/i.test(fileName) || /^\.md$/i.test(fileName);
+}
+
+function skillVersionIdentityKey(input = {}) {
+  const pathKey = String(input.relativePath || input.path || input.git?.relativePath || '').trim();
+  if (pathKey) return pathKey;
+  const uid = String(input.uid || '').trim();
+  if (uid && !isGenericSkillVersionIdentity(uid)) return uid;
+  const id = String(input.id || '').trim();
+  if (id && !isGenericSkillVersionIdentity(id)) return id;
+  return '';
+}
+
+function scopedSkillVersionOverrideKey(input = {}) {
+  const projectId = String(input.projectId || '').trim();
+  const key = skillVersionIdentityKey(input);
+  if (!projectId || !key) return '';
+  return `version:${projectId}:${key}`;
+}
+
 function scopedSkillOwnerOverrideKey(input = {}) {
   const projectId = String(input.projectId || '').trim();
   const key = skillVersionOverrideKey(input);
@@ -3796,14 +3821,17 @@ async function saveSkillVersionOverride(input = {}) {
   const ownerChange = hasSkillVersionOwnerChange(input);
   const displayNameChange = hasSkillDisplayNameChange(input);
   const inventoryKindChange = hasSkillInventoryKindChange(input);
+  const allowVersion = input.allowVersion !== false;
+  const allowAliases = input.allowAliases === true || input.aliases !== undefined;
   const scopedOwnerKey = ownerChange ? scopedSkillOwnerOverrideKey(input) : '';
   const scopedDisplayNameKey = displayNameChange ? scopedSkillDisplayNameOverrideKey(input) : '';
   const scopedInventoryKindKey = inventoryKindChange ? scopedSkillInventoryKindOverrideKey(input) : '';
-  const allowVersion = input.allowVersion !== false;
-  const allowAliases = input.allowAliases === true || input.aliases !== undefined;
+  const versionChange = allowVersion && Object.prototype.hasOwnProperty.call(input, 'version');
+  const scopedVersionKey = versionChange ? scopedSkillVersionOverrideKey(input) : '';
   const aliasOnlyChange = allowAliases && input.aliases !== undefined && !String(input.version || '').trim() && !ownerChange && !displayNameChange;
   const scopedAliasKey = aliasOnlyChange ? skillAliasOverrideKey(input) : '';
-  const key = scopedOwnerKey || scopedDisplayNameKey || scopedInventoryKindKey || scopedAliasKey || skillVersionOverrideKey(input);
+  const fallbackKey = versionChange ? skillVersionIdentityKey(input) : skillVersionOverrideKey(input);
+  const key = scopedOwnerKey || scopedDisplayNameKey || scopedInventoryKindKey || scopedAliasKey || scopedVersionKey || fallbackKey;
   const version = String(input.version || '').trim();
   if (!key) throw statusError(400, '缺少产物路径，无法保存版本。');
   const owner = normalizePersonListText(input.owner || input.uploader || '');
@@ -3815,6 +3843,7 @@ async function saveSkillVersionOverride(input = {}) {
   if (!allowVersion && aliases === null) throw statusError(400, '请填写调用别名。');
   const overrides = await loadSkillVersionOverrides();
   const previous = overrides[key] || {};
+  const isVersionRecord = key.startsWith('version:');
   const aliasHistory = aliases === null
     ? mergeSkillAliasHistory(previous.aliasHistory, previous.aliases)
     : mergeSkillAliasHistory(previous.aliasHistory, previous.aliases, aliases);
@@ -3826,8 +3855,8 @@ async function saveSkillVersionOverride(input = {}) {
     title: String(input.title || '').trim(),
     relativePath: String(input.relativePath || input.path || '').trim(),
     version: allowVersion ? (version || previous.version || '') : (previous.version || ''),
-    aliases: aliases === null ? (previous.aliases || []) : aliases,
-    aliasHistory,
+    aliases: isVersionRecord ? (previous.aliases || []) : (aliases === null ? (previous.aliases || []) : aliases),
+    aliasHistory: isVersionRecord ? (previous.aliasHistory || []) : aliasHistory,
     owner: allowVersion ? (owner || previous.owner || '') : (previous.owner || ''),
     updatedAt: new Date().toISOString()
   };
@@ -3984,6 +4013,12 @@ async function applySkillVersionOverridesToScan(scan = {}) {
         path: skill.path || '',
         id: skill.id || ''
       });
+      const versionKey = scopedSkillVersionOverrideKey({
+        projectId: scan.projectId || '',
+        relativePath: skill.git?.relativePath || skill.relativePath || '',
+        path: skill.path || '',
+        id: skill.id || ''
+      });
       const displayKey = skillDisplayVisibilityOverrideKey({
         projectId: scan.projectId || '',
         relativePath: skill.git?.relativePath || skill.relativePath || '',
@@ -4020,6 +4055,7 @@ async function applySkillVersionOverridesToScan(scan = {}) {
         || overrides[skill.path]
         || overrides[skill.id];
       const baseOverride = rawBaseOverride || {};
+      const versionOverride = overrides[versionKey]?.version ? overrides[versionKey] : (baseOverride?.version ? baseOverride : null);
       const aliasOverride = overrides[aliasKey] || null;
       const inventoryKindOverride = overrides[inventoryKindKey] || null;
       const ownerOverride = overrides[ownerKey]?.owner ? overrides[ownerKey] : null;
@@ -4038,7 +4074,8 @@ async function applySkillVersionOverridesToScan(scan = {}) {
       const hasAliasHistoryOverride = Array.isArray(aliasOverride?.aliasHistory)
         || Array.isArray(legacyAliasOverride?.aliasHistory)
         || Array.isArray(baseOverride?.aliasHistory);
-      if (!baseOverride?.version && !Array.isArray(legacyAliasOverride?.aliases) && !Array.isArray(aliasOverride?.aliases) && !hasAliasHistoryOverride && !baseOverride?.owner && !ownerOverride?.owner && !hasVisibilityOverride && !hasDisplayVisibilityOverride && !hasDisplayNameOverride && !hasInventoryKindOverride) return skill;
+      const staleDisplayVersion = !versionOverride?.version && String(skill.displayVersionOverride || '').trim();
+      if (!versionOverride?.version && !staleDisplayVersion && !Array.isArray(legacyAliasOverride?.aliases) && !Array.isArray(aliasOverride?.aliases) && !hasAliasHistoryOverride && !baseOverride?.owner && !ownerOverride?.owner && !hasVisibilityOverride && !hasDisplayVisibilityOverride && !hasDisplayNameOverride && !hasInventoryKindOverride) return skill;
       const hidden = hasVisibilityOverride ? baseOverride.hidden === true : skill.hidden === true;
       const displaySource = displayOverride || baseOverride || {};
       const displayHidden = hasDisplayVisibilityOverride ? displaySource.displayHidden === true : skill.displayHidden === true;
@@ -4060,7 +4097,7 @@ async function applySkillVersionOverridesToScan(scan = {}) {
       );
       return {
         ...skill,
-        displayVersionOverride: baseOverride.version || skill.displayVersionOverride || '',
+        displayVersionOverride: versionOverride?.version || '',
         inventoryKind: hasInventoryKindOverride ? (inventoryKindOverride?.inventoryKind || baseOverride.inventoryKind || skill.inventoryKind) : skill.inventoryKind,
         aliases,
         manualAliases,
