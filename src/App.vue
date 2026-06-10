@@ -7329,7 +7329,7 @@ export default {
       let count = 0;
       for (const row of productRows) {
         const historical = this.usageCounterStatsForRow(row);
-        Object.entries(historical.people || {}).forEach(([person, personCount]) => {
+        Object.entries(historical.usagePeople || {}).forEach(([person, personCount]) => {
           if (this.normalizeAiScorePersonKey(person) === personKey) {
             count += Number(personCount || 0);
           }
@@ -8810,8 +8810,6 @@ export default {
       if (!hasHistorical) return Array.isArray(logs) ? logs : [];
       const buckets = this.usageCounters?.buckets || {};
       const countedEventKeys = this.usageCounterEventKeySetForRow(row);
-      const allowRunFallback = Number(historical?.usageCount || 0) <= 0;
-      const rowKeys = this.usageRowExplicitTargetKeys(row);
       const missingAliasKeys = [
         ...(Array.isArray(row.aliases) ? row.aliases : []),
         ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : []),
@@ -8828,7 +8826,7 @@ export default {
         const target = this.usageCounterKeyForProduct(item.target || item.raw?.skillName || item.raw?.title || item.summary || '');
         const reason = this.usageCounterKeyForProduct(item.matchReason || '');
         const isRunLog = String(item.id || '').startsWith('run-') || item.matchReason === '工作台执行记录';
-        const matched = (isRunLog && allowRunFallback)
+        const matched = isRunLog
           || missingAliasKeys.some(alias => target.includes(alias) || reason.includes(`别名命中${alias}`) || reason.includes(alias));
         if (!matched) return false;
         const key = [item.id, item.time, item.person, item.target, item.summary].map(value => String(value || '').trim()).join('::');
@@ -8973,8 +8971,8 @@ export default {
       const usageRow = this.aiAssetAsSkillUsageRow(row);
       const historical = this.usageCounterStatsForRow(usageRow);
       return {
-        count: Number(historical.count || 0),
-        peopleCount: Object.keys(historical.people || {}).length
+        count: Number(historical.usageCount || 0),
+        peopleCount: Object.keys(historical.usagePeople || {}).length
       };
     },
 
@@ -11197,7 +11195,7 @@ export default {
         .replace(/\.(md|markdown)$/i, '')
         .replace(/[\\/_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '');
       if (!text) return true;
-      return /^(figma|mcp|codex|markdown|md|skill|skills|git|ai|data|artgit|artgitskills|工具|技能|文档|流程|规范|验证|平台|资源|图片|素材|截图|入口|入口图|悬浮入口|界面|命名|说明|readme|agents|memory)$/i.test(text);
+      return /^(figma|mcp|codex|markdown|md|skill|skills|git|ai|data|artgit|artgitskills|工具|技能|文档|流程|规范|验证|平台|资源|图片|素材|截图|入口|入口图|悬浮入口|界面|命名|说明|readme|agents|memory|ip|默认|default)$/i.test(text);
     },
 
     isGenericUsageFileTarget(value = '') {
@@ -11804,6 +11802,8 @@ export default {
 
     isRunUsageLikeSkillInventoryRow(run = {}) {
       if (!run || typeof run !== 'object') return false;
+      const status = String(run.status || run.workerStatus || run.platformStatus || '').trim().toLowerCase();
+      if (/cancel|canceled|cancelled|pending|queued|draft|deleted|void/.test(status)) return false;
       const values = [
         run.primarySkillPath,
         run.skillPath,

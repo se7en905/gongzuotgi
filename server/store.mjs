@@ -2309,13 +2309,6 @@ function normalizeUsageCounterBucket(input = {}, fallbackKey = '') {
       if (!personKey) continue;
       normalizedUsagePeople[personKey] = Math.max(0, Number(personCount || 0));
     }
-  } else if (usageCount > 0) {
-    const ratioBase = Math.max(1, Number(input.count ?? usageCount));
-    const ratio = Math.min(1, usageCount / ratioBase);
-    for (const [person, personCount] of Object.entries(normalizedPeople)) {
-      const value = Math.round(Number(personCount || 0) * ratio);
-      if (value > 0) normalizedUsagePeople[person] = value;
-    }
   }
   return {
     key,
@@ -2344,13 +2337,15 @@ let usageCounterKindFixCache = null;
 
 async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCounters()) {
   if (!counters?.buckets || typeof counters.buckets !== 'object') return counters;
-  const misclassified = await historicalNonUsageEventKeySet();
+  const nonUsageLogs = await historicalNonUsageOperationLogs();
+  const usageSources = await historicalUsageEventSources();
   const ownerMap = await historicalUsageEventOwnerMap();
   const buckets = {};
   let changed = false;
   for (const [key, inputBucket] of Object.entries(counters.buckets)) {
     const bucket = normalizeUsageCounterBucket(inputBucket, key);
     const eventKeys = Array.isArray(bucket.eventKeys) ? bucket.eventKeys.filter(Boolean) : [];
+    const misclassified = historicalNonUsageEventKeySetForBucket(bucket, nonUsageLogs);
     const badCount = misclassified.size ? eventKeys.filter(eventKey => misclassified.has(eventKey)).length : 0;
     if (badCount > 0) {
       const currentUsage = Number(bucket.usageCount || 0);
@@ -2361,7 +2356,9 @@ async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCount
       );
       if (currentUsage !== bucket.usageCount) changed = true;
     }
+    if (rebuildHistoricalUsagePeople(bucket, usageSources)) changed = true;
     if (remapProxyUsagePeople(bucket, ownerMap)) changed = true;
+    if (normalizeUsageBucketTotals(bucket)) changed = true;
     buckets[bucket.key] = bucket;
   }
   if (!changed) return counters;
@@ -2371,12 +2368,145 @@ async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCount
   };
 }
 
+let usageCounterSourceCache = null;
+
+async function historicalUsageEventSources() {
+  if (usageCounterSourceCache) return usageCounterSourceCache;
+  const [artProgressEvents, operationLogs, runs] = await Promise.all([
+    readJson(paths.artProgressEvents, []),
+    readJson(paths.operationLogs, []),
+    readJson(paths.runs, [])
+  ]);
+  usageCounterSourceCache = {
+    artProgressEvents: (Array.isArray(artProgressEvents) ? artProgressEvents : []).filter(isUsageCountableArtProgressEvent),
+    operationLogs: (Array.isArray(operationLogs) ? operationLogs : []).filter(isHistoricalUsageOperationLog),
+    runs: (Array.isArray(runs) ? runs : []).filter(isUsageLikeRun)
+  };
+  return usageCounterSourceCache;
+}
+
+function isUsageCountableArtProgressEvent(event = {}) {
+  const type = cleanString(event.eventType);
+  return ['skill_called', 'tool_used', 'task_completed'].includes(type);
+}
+
+function isHistoricalUsageOperationLog(log = {}) {
+  const action = cleanString(log.action);
+  if ([
+    'START_RUN',
+    'RETRY_RUN',
+    'CREATE_DIRECT_SKILL_RUN',
+    'GENERATE_ZENTAO_ART_BRIEF',
+    'REUSE_ZENTAO_ART_BRIEF',
+    'REGENERATE_ZENTAO_ART_BRIEF'
+  ].includes(action)) return true;
+  const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
+  return metadata.countAsSkillUsage === true || metadata.countAsProductUsage === true;
+}
+
+function bucketUsageTargetValues(bucket = {}) {
+  return normalizeLineList([
+    bucket.target,
+    ...(Array.isArray(bucket.aliases) ? bucket.aliases : [])
+  ])
+    .filter(value => usageCounterKey(value))
+    .filter((value, index, array) => array.findIndex(item => usageCounterKey(item) === usageCounterKey(value)) === index)
+    .slice(0, 80);
+}
+
+function rebuildHistoricalUsagePeople(bucket = {}, sources = {}) {
+  if (!bucket || typeof bucket !== 'object') return false;
+  const existingUsagePeople = bucket.usagePeople && typeof bucket.usagePeople === 'object' ? bucket.usagePeople : {};
+  if (Object.keys(existingUsagePeople).some(person => person && !isUsageProxyPerson(person))) return false;
+  const eventKeys = new Set(Array.isArray(bucket.eventKeys) ? bucket.eventKeys.filter(Boolean) : []);
+  if (!eventKeys.size || Number(bucket.usageCount || 0) <= 0) return false;
+  const targetValues = bucketUsageTargetValues(bucket);
+  const usagePeople = {};
+  const seen = new Set();
+  const addHit = (hitKey = '', owners = []) => {
+    if (!hitKey || !eventKeys.has(hitKey) || seen.has(hitKey)) return;
+    const ownerList = (Array.isArray(owners) ? owners : [owners])
+      .flatMap(value => normalizeLineList(value))
+      .map(cleanString)
+      .filter(owner => owner && !isUsageProxyPerson(owner));
+    if (!ownerList.length) return;
+    seen.add(hitKey);
+    ownerList
+      .filter((owner, index, array) => array.findIndex(item => samePersonName(item, owner)) === index)
+      .forEach(owner => {
+        usagePeople[owner] = Number(usagePeople[owner] || 0) + 1;
+      });
+  };
+
+  for (const event of sources.artProgressEvents || []) {
+    const owners = [event.memberName, event.memberAccount];
+    const baseId = event.id || event.skillName || event.title;
+    const at = event.createdAt || event.updatedAt || event.reportedAt || '';
+    addHit(usageEventKey('art-progress', baseId, at), owners);
+    for (const target of targetValues) {
+      addHit(usageEventKey('alias-art-progress', [baseId, target].filter(Boolean).join(':'), at), owners);
+    }
+    for (let index = 0; index < 8; index += 1) {
+      addHit(usageEventKey('art-progress-artifact', `${baseId}:${index}`, at), owners);
+    }
+  }
+
+  for (const log of sources.operationLogs || []) {
+    const owners = usageOwnersFromOperationLog(log);
+    const baseId = log.id || log.targetId || log.targetName;
+    const at = log.createdAt || log.updatedAt || '';
+    addHit(usageEventKey('operation-log', baseId, at), owners);
+    for (const target of targetValues) {
+      addHit(usageEventKey('alias-operation-log', [baseId, target].filter(Boolean).join(':'), at), owners);
+    }
+  }
+
+  for (const run of sources.runs || []) {
+    const owners = usageOwnersFromRun(run);
+    const baseId = run.id || run.primarySkillPath || run.stage || run.title;
+    const at = run.startedAt || run.createdAt || '';
+    ['run-start', 'run-restart', 'run-resume', 'direct-skill-run'].forEach(source => {
+      addHit(usageEventKey(source, baseId, at), owners);
+    });
+  }
+
+  if (!Object.keys(usagePeople).length) return false;
+  bucket.usagePeople = usagePeople;
+  bucket.usagePeopleCount = Object.keys(usagePeople).length;
+  bucket.usageCount = Object.values(usagePeople).reduce((sum, value) => sum + Number(value || 0), 0);
+  return true;
+}
+
+let usageCounterNonUsageLogCache = null;
+
+async function historicalNonUsageOperationLogs() {
+  if (usageCounterNonUsageLogCache) return usageCounterNonUsageLogCache;
+  const logs = await readJson(paths.operationLogs, []);
+  usageCounterNonUsageLogCache = (Array.isArray(logs) ? logs : []).filter(isNonUsageOperationLog);
+  return usageCounterNonUsageLogCache;
+}
+
+function historicalNonUsageEventKeySetForBucket(bucket = {}, logs = []) {
+  const set = new Set();
+  const targetValues = bucketUsageTargetValues(bucket);
+  for (const log of Array.isArray(logs) ? logs : []) {
+    const baseId = log.id || log.targetId || log.targetName;
+    const eventKey = usageEventKey('operation-log', baseId, log.createdAt);
+    if (eventKey) set.add(eventKey);
+    const at = log.createdAt || log.updatedAt || '';
+    for (const target of targetValues) {
+      const aliasEventKey = usageEventKey('alias-operation-log', [baseId, target].filter(Boolean).join(':'), at);
+      if (aliasEventKey) set.add(aliasEventKey);
+    }
+  }
+  return set;
+}
+
 async function historicalNonUsageEventKeySet() {
   if (usageCounterKindFixCache) return usageCounterKindFixCache;
-  const logs = await readJson(paths.operationLogs, []);
+  const logs = await historicalNonUsageOperationLogs();
   const set = new Set();
   for (const log of Array.isArray(logs) ? logs : []) {
-    if (!isNonUsageOperationLog(log)) continue;
     const eventKey = usageEventKey('operation-log', log.id || log.targetId || log.targetName, log.createdAt);
     if (eventKey) set.add(eventKey);
   }
@@ -2406,6 +2536,9 @@ async function historicalUsageEventOwnerMap() {
     const baseId = event.id || event.skillName || event.title;
     const at = event.createdAt || event.updatedAt || event.reportedAt || '';
     add(usageEventKey('art-progress', baseId, at), owners);
+    for (const target of usageTargetsFromArtProgressEvent(event)) {
+      add(usageEventKey('alias-art-progress', [baseId, target.target].filter(Boolean).join(':'), at), owners);
+    }
     for (let index = 0; index < 8; index += 1) {
       add(usageEventKey('art-progress-artifact', `${baseId}:${index}`, at), owners);
     }
@@ -2427,8 +2560,14 @@ async function historicalUsageEventOwnerMap() {
   const logs = await readJson(paths.operationLogs, []);
   for (const log of Array.isArray(logs) ? logs : []) {
     const ownerFromDescription = extractOwnerFromResearchSyncDescription(log.description || log.targetName || '');
-    const owners = [ownerFromDescription, log.memberName, log.displayName, log.username].filter(owner => !isUsageProxyPerson(owner));
-    add(usageEventKey('operation-log', log.id || log.targetId || log.targetName, log.createdAt), owners);
+    const owners = [ownerFromDescription, ...usageOwnersFromOperationLog(log)].filter(owner => !isUsageProxyPerson(owner));
+    const baseId = log.id || log.targetId || log.targetName;
+    add(usageEventKey('operation-log', baseId, log.createdAt), owners);
+    if (isUsageLikeOperationLog(log)) {
+      for (const target of usageTargetsFromOperationLog(log)) {
+        add(usageEventKey('alias-operation-log', [baseId, target.target].filter(Boolean).join(':'), log.createdAt || log.updatedAt), owners);
+      }
+    }
   }
   usageCounterOwnerMapCache = map;
   return map;
@@ -2437,7 +2576,8 @@ async function historicalUsageEventOwnerMap() {
 function remapProxyUsagePeople(bucket = {}, ownerMap = new Map()) {
   if (!bucket.people || typeof bucket.people !== 'object') return false;
   const proxyEntries = Object.entries(bucket.people).filter(([person]) => isUsageProxyPerson(person));
-  if (!proxyEntries.length) return false;
+  const usageProxyEntries = Object.entries(bucket.usagePeople || {}).filter(([person]) => isUsageProxyPerson(person));
+  if (!proxyEntries.length && !usageProxyEntries.length) return false;
   const eventKeys = Array.isArray(bucket.eventKeys) ? bucket.eventKeys.filter(Boolean) : [];
   const ownerHits = new Map();
   for (const eventKey of eventKeys) {
@@ -2448,9 +2588,9 @@ function remapProxyUsagePeople(bucket = {}, ownerMap = new Map()) {
     }
   }
   const nextPeople = { ...bucket.people };
-  for (const [proxyPerson, proxyCount] of proxyEntries) {
-    delete nextPeople[proxyPerson];
-    if (!ownerHits.size) continue;
+  const nextUsagePeople = { ...(bucket.usagePeople && typeof bucket.usagePeople === 'object' ? bucket.usagePeople : {}) };
+  const distributeProxyCount = (target, proxyCount) => {
+    if (!ownerHits.size) return;
     const totalHits = [...ownerHits.values()].reduce((sum, value) => sum + Number(value || 0), 0) || 1;
     let remaining = Math.max(0, Number(proxyCount || 0));
     const entries = [...ownerHits.entries()].sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0));
@@ -2461,19 +2601,60 @@ function remapProxyUsagePeople(bucket = {}, ownerMap = new Map()) {
         ? remaining
         : Math.max(0, Math.min(remaining, Math.round(Number(proxyCount || 0) * (Number(hitCount || 0) / totalHits))));
       if (value <= 0) continue;
-      nextPeople[owner] = Number(nextPeople[owner] || 0) + value;
+      target[owner] = Number(target[owner] || 0) + value;
       remaining -= value;
     }
+  };
+  for (const [proxyPerson, proxyCount] of proxyEntries) {
+    delete nextPeople[proxyPerson];
+    distributeProxyCount(nextPeople, proxyCount);
+  }
+  for (const [proxyPerson, proxyCount] of usageProxyEntries) {
+    delete nextUsagePeople[proxyPerson];
+    distributeProxyCount(nextUsagePeople, proxyCount);
   }
   bucket.people = nextPeople;
-  if (bucket.usagePeople && typeof bucket.usagePeople === 'object') {
-    bucket.usagePeople = Object.fromEntries(
-      Object.entries(bucket.usagePeople).filter(([person]) => !isUsageProxyPerson(person))
-    );
-  }
+  bucket.usagePeople = nextUsagePeople;
   bucket.peopleCount = Object.keys(nextPeople).length;
   bucket.usagePeopleCount = Object.keys(bucket.usagePeople || {}).length;
   return true;
+}
+
+function normalizeUsageBucketTotals(bucket = {}) {
+  if (!bucket || typeof bucket !== 'object') return false;
+  let changed = false;
+  const usagePeople = {};
+  for (const [person, personCount] of Object.entries(bucket.usagePeople || {})) {
+    if (!person || isUsageProxyPerson(person)) {
+      changed = true;
+      continue;
+    }
+    const count = Math.max(0, Number(personCount || 0));
+    if (count <= 0) {
+      changed = true;
+      continue;
+    }
+    usagePeople[person] = Number(usagePeople[person] || 0) + count;
+  }
+  const usageTotal = Object.values(usagePeople).reduce((sum, value) => sum + Number(value || 0), 0);
+  let usageCount = Math.max(0, Math.round(Number(bucket.usageCount || 0)));
+  if (usageCount <= 0 || usageTotal <= 0) {
+    if (usageCount !== 0 || usageTotal !== 0 || Object.keys(bucket.usagePeople || {}).length) changed = true;
+    bucket.usageCount = 0;
+    bucket.usagePeople = {};
+  } else if (usageTotal !== usageCount) {
+    changed = true;
+    bucket.usageCount = usageTotal;
+    bucket.usagePeople = usagePeople;
+  } else {
+    bucket.usagePeople = usagePeople;
+  }
+  const usagePeopleCount = Object.keys(bucket.usagePeople || {}).length;
+  if (Number(bucket.usagePeopleCount || 0) !== usagePeopleCount) {
+    bucket.usagePeopleCount = usagePeopleCount;
+    changed = true;
+  }
+  return changed;
 }
 
 function isUsageProxyPerson(person = '') {
@@ -2482,6 +2663,48 @@ function isUsageProxyPerson(person = '') {
     || samePersonName(text, '同步助手')
     || samePersonName(text, '系统同步助手')
     || text === 'art-progress-sync';
+}
+
+function usageOwnersFromOperationLog(log = {}) {
+  const action = cleanString(log.action);
+  const before = log.before && typeof log.before === 'object' ? log.before : {};
+  const after = log.after && typeof log.after === 'object' ? log.after : {};
+  const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
+  const runOwners = normalizeLineList([
+    before.assignedToName,
+    before.developer,
+    before.createdByName,
+    after.assignedToName,
+    after.developer,
+    after.createdByName,
+    metadata.assignedToName,
+    metadata.developer,
+    metadata.createdByName
+  ]).filter(owner => owner && !isUsageProxyPerson(owner));
+  if (['START_RUN', 'RETRY_RUN', 'CREATE_DIRECT_SKILL_RUN'].includes(action) && runOwners.length) {
+    return runOwners;
+  }
+  return normalizeLineList([
+    log.memberName,
+    log.displayName,
+    log.username
+  ]).filter(owner => owner && !isUsageProxyPerson(owner));
+}
+
+function usageOwnersFromRun(run = {}) {
+  const owners = normalizeLineList([
+    run.assignedToName,
+    run.developer,
+    run.createdByName,
+    run.ownerName
+  ]).filter(owner => owner && !isUsageProxyPerson(owner));
+  if (owners.length) return owners;
+  return normalizeLineList([run.createdBy, run.ownerUserId])
+    .filter(owner => owner && !isUsageProxyPerson(owner) && !looksLikeUuid(owner));
+}
+
+function looksLikeUuid(value = '') {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanString(value));
 }
 
 function extractOwnerFromResearchSyncDescription(value = '') {
@@ -2627,7 +2850,7 @@ function usageTargetsFromOperationLog(log = {}) {
     ...(Array.isArray(metadata.artifactPaths) ? metadata.artifactPaths : [])
   ];
   return buildUsageTargets(values, {
-    person: cleanString(log.displayName || log.username),
+    person: cleanString(usageOwnersFromOperationLog(log)[0] || ''),
     at: cleanString(log.createdAt),
     source: 'operation-log',
     kind: 'usage',
@@ -2651,7 +2874,7 @@ function usageTargetsFromRun(run = {}, options = {}) {
     ...(Array.isArray(run.referenceItems) ? run.referenceItems.flatMap(item => [item?.path, item?.name, item?.title]) : [])
   ];
   return buildUsageTargets(values, {
-    person: cleanString(run.assignedToName || run.developer || run.createdBy || run.ownerUserId),
+    person: cleanString(usageOwnersFromRun(run)[0] || ''),
     at,
     source,
     kind: 'usage',
@@ -2661,6 +2884,8 @@ function usageTargetsFromRun(run = {}, options = {}) {
 
 function isUsageLikeRun(run = {}) {
   if (!run || typeof run !== 'object') return false;
+  const status = cleanString(run.status || run.workerStatus || run.platformStatus).toLowerCase();
+  if (/cancel|canceled|cancelled|pending|queued|draft|deleted|void/.test(status)) return false;
   if (run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill') return true;
   if (normalizeWorkflowId(run.workflow || '') === 'art-single-skill') return true;
   if (cleanString(run.executionMode) === 'single-skill') return true;
@@ -2773,6 +2998,11 @@ function isNonUsageOperationLog(log = {}) {
     'LOGIN',
     'LOGOUT',
     'SESSION_EXPIRED',
+    'CREATE_RUN',
+    'CANCEL_RUN',
+    'DELETE_RUN',
+    'CLAIM_DIRECT_SKILL_RUN',
+    'UPDATE_DIRECT_SKILL_RUN',
     'UPDATE_SKILL_ALIAS',
     'UPDATE_SKILL_VERSION',
     'HIDE_SKILL_ASSET',
@@ -2964,7 +3194,7 @@ function isGenericUsageTarget(value = '') {
     .pop()
     ?.replace(/\.(md|markdown)$/i, '')
     .replace(/[_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '') || '';
-  return /^(skill|skills|readme|agents|agent|memory|data|artgit|安装说明|安装包|同步器|上报器|执行|试用|文件本体)$/i.test(text);
+  return /^(skill|skills|readme|agents|agent|memory|data|artgit|安装说明|安装包|同步器|上报器|执行|试用|文件本体|ip|默认|default)$/i.test(text);
 }
 
 function normalizeCustomWorkflow(input = {}) {
