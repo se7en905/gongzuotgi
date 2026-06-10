@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -10,13 +11,59 @@ let modules;
 export async function getZentaoApi() {
   if (!api) {
     const loaded = await loadZentaoModules();
-    api = loaded.createClientFromCli({ argv: [], env: process.env });
+    api = loaded.createClientFromCli({ argv: [], env: zentaoEnv() });
   }
   return api;
 }
 
+export function resetZentaoApi() {
+  api = null;
+}
+
 export async function getZentaoModules() {
   return loadZentaoModules();
+}
+
+function zentaoEnv() {
+  return {
+    ...loadStoredZentaoEnv(),
+    ...process.env
+  };
+}
+
+function loadStoredZentaoEnv() {
+  const config = readZentaoCliConfig();
+  const env = {};
+  if (config.zentaoUrl) env.ZENTAO_URL = config.zentaoUrl;
+  if (config.zentaoAccount) env.ZENTAO_ACCOUNT = config.zentaoAccount;
+  if (config.zentaoPassword) env.ZENTAO_PASSWORD = config.zentaoPassword;
+  return env;
+}
+
+function readZentaoCliConfig() {
+  const candidates = [
+    process.env.ZENTAO_CONFIG_FILE,
+    path.join(os.homedir(), '.config', 'zentao', 'config.toml'),
+    path.join(os.homedir(), '.zentao-config', '.config', 'zentao', 'config.toml')
+  ].filter(Boolean);
+  for (const file of candidates) {
+    try {
+      const text = readFileSyncUtf8(file);
+      const config = {};
+      for (const key of ['zentaoUrl', 'zentaoAccount', 'zentaoPassword']) {
+        const match = text.match(new RegExp(`^\\s*${key}\\s*=\\s*["']?([^"'\\n]+)["']?`, 'm'));
+        if (match) config[key] = match[1].trim();
+      }
+      if (config.zentaoUrl || config.zentaoAccount || config.zentaoPassword) return config;
+    } catch {
+      // CLI 配置不存在时继续使用环境变量或 zentao-mcp 自身读取逻辑。
+    }
+  }
+  return {};
+}
+
+function readFileSyncUtf8(file) {
+  return readFileSync(file, 'utf8');
 }
 
 async function loadZentaoModules() {

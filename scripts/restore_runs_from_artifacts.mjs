@@ -157,8 +157,12 @@ function mergeStages(run = {}, reportStages = [], runStatus = '') {
   const terminal = isTerminal(runStatus);
   return source.map((stage, index) => {
     const matched = matchReportStage(stage, reportStages) || reportStages[index];
-    const nextStatus = matched?.status
-      || (terminal ? fallbackStageStatus(runStatus) : normalizeStageStatus(stage.status));
+    const currentStatus = normalizeStageStatus(stage.status);
+    const reportStatus = matched?.status || '';
+    const reportIsTemplatePending = reportStatus === 'pending' && currentStatus !== 'pending';
+    const nextStatus = reportIsTemplatePending
+      ? currentStatus
+      : reportStatus || (terminal ? fallbackStageStatus(runStatus) : currentStatus);
     const next = {
       ...stage,
       no: stage.no || matched?.no || index + 1,

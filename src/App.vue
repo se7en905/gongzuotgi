@@ -8649,6 +8649,21 @@ export default {
         || Object.keys(stats.usagePeople || {}).length > 0;
     },
 
+    usageCounterBucketCountableTotal(bucket = {}) {
+      const explicitTotal = Math.max(0, Math.round(Number(bucket.count || 0)));
+      const typedTotal = Math.max(
+        0,
+        Math.round(Number(bucket.usageCount || 0))
+          + Math.round(Number(bucket.validationCount || 0))
+          + Math.round(Number(bucket.researchSyncCount || 0))
+      );
+      return Math.max(explicitTotal, typedTotal);
+    },
+
+    isUsageCounterBucketCountable(bucket = {}) {
+      return this.usageCounterBucketCountableTotal(bucket) > 0;
+    },
+
     skillInventoryHistoricalUsageMemberCounts(stats = {}) {
       const memberCounts = new Map();
       const source = Object.keys(stats.people || {}).length ? stats.people : (stats.usagePeople || {});
@@ -8695,8 +8710,29 @@ export default {
       let usageCount = 0;
       let validationCount = 0;
       let researchSyncCount = 0;
+      const applyPersonCounts = (target, source, eventRatio, maxTotal = Infinity) => {
+        const entries = Object.entries(source || {})
+          .map(([person, personCount]) => ({
+            person,
+            value: Math.max(0, Math.round(Number(personCount || 0) * eventRatio))
+          }))
+          .filter(item => item.person && item.value > 0)
+          .sort((left, right) => right.value - left.value || String(left.person || '').localeCompare(String(right.person || '')));
+        let remaining = Number.isFinite(maxTotal) ? Math.max(0, Math.round(maxTotal)) : Infinity;
+        let total = 0;
+        for (const item of entries) {
+          if (remaining <= 0) break;
+          const value = Number.isFinite(remaining) ? Math.min(item.value, remaining) : item.value;
+          if (value <= 0) continue;
+          target[item.person] = Number(target[item.person] || 0) + value;
+          total += value;
+          if (Number.isFinite(remaining)) remaining -= value;
+        }
+        return total;
+      };
       const applyBucket = (bucket, normalizedKey = '') => {
         if (!bucket || seen.has(normalizedKey)) return;
+        if (!this.isUsageCounterBucketCountable(bucket)) return;
         if (!this.usageBucketMatchesRowTime(bucket, row, connectedAt)) return;
         seen.add(normalizedKey);
         const eventKeys = Array.isArray(bucket.eventKeys) ? bucket.eventKeys.filter(Boolean) : [];
@@ -8705,25 +8741,16 @@ export default {
         if (!eventRatio) return;
         eventKeys.forEach(eventKey => seenEventKeys.add(eventKey));
         const applyCount = value => Math.round(Number(value || 0) * eventRatio);
-        Object.entries(bucket.people || {}).forEach(([person, personCount]) => {
-          if (!person) return;
-          const value = applyCount(Number(personCount || 0));
-          if (value <= 0) return;
-          people[person] = Number(people[person] || 0) + value;
-        });
         const bucketUsagePeople = bucket.usagePeople && typeof bucket.usagePeople === 'object'
           ? bucket.usagePeople
           : {};
-        let bucketUsagePeopleTotal = 0;
-        Object.entries(bucketUsagePeople).forEach(([person, personCount]) => {
-          if (!person) return;
-          const value = applyCount(Number(personCount || 0));
-          if (value <= 0) return;
-          bucketUsagePeopleTotal += value;
-          usagePeople[person] = Number(usagePeople[person] || 0) + value;
-        });
         const bucketValidationCount = applyCount(bucket.validationCount || 0);
         const bucketResearchSyncCount = applyCount(bucket.researchSyncCount || 0);
+        const bucketTotalLimit = applyCount(this.usageCounterBucketCountableTotal(bucket));
+        const bucketUsageLimit = applyCount(bucket.usageCount || 0);
+        const peopleLimit = bucketTotalLimit;
+        const bucketUsagePeopleTotal = applyPersonCounts(usagePeople, bucketUsagePeople, eventRatio, bucketUsageLimit || Infinity);
+        applyPersonCounts(people, bucket.people || {}, eventRatio, peopleLimit || Infinity);
         const bucketUsageCount = bucketUsagePeopleTotal > 0 ? bucketUsagePeopleTotal : 0;
         count += bucketUsageCount + bucketValidationCount + bucketResearchSyncCount;
         usageCount += bucketUsageCount;
@@ -8739,8 +8766,7 @@ export default {
           if (!bucket || seen.has(bucketKey)) return;
           const compactBucket = this.usageBucketCompactText(bucketKey, bucket);
           if (!compactBucket) return;
-          const matched = fuzzyKeys.some(key => compactBucket.includes(key));
-          if (!matched) return;
+          if (!this.usageBucketHasStrongRowIdentity(bucket, row)) return;
           applyBucket(bucket, bucketKey);
         });
       }
@@ -8777,36 +8803,14 @@ export default {
     usageBucketHasStrongRowIdentity(bucket = {}, row = {}) {
       const compactBucket = this.usageBucketCompactText(bucket.key || '', bucket);
       if (!compactBucket) return false;
-      const pathValues = [
-        row.relativePath,
-        row.path,
-        row.skill?.git?.relativePath,
-        row.skill?.path
-      ];
-      const pathMatched = pathValues
-        .map(value => this.usageCompactMatchText(value))
-        .filter(value => value && value.length >= 8 && !this.isGenericUsageNeedle(value) && !this.isWeakUsageFuzzyNeedle(value))
-        .some(value => compactBucket.includes(value));
-      if (pathMatched) return true;
-      const identityValues = [
-        row.productFileName,
-        row.productDisplayName,
-        row.displayName,
-        row.commonName,
-        row.title,
-        row.skill?.productDisplayName,
-        row.skill?.displayName,
-        row.skill?.commonName,
-        row.skill?.title,
-        ...(Array.isArray(row.aliases) ? row.aliases : []),
-        ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : []),
-        ...(Array.isArray(row.aliasHistory) ? row.aliasHistory : []),
-        ...(Array.isArray(row.skill?.aliasHistory) ? row.skill.aliasHistory : [])
-      ];
-      return identityValues
+      return this.usageRowStrongIdentityKeys(row).some(value => compactBucket.includes(value));
+    },
+
+    usageRowStrongIdentityKeys(row = {}) {
+      return this.usageRowIdentityValues(row, { includeAliases: true })
         .map(value => this.usageCompactMatchText(value))
         .filter(value => value && value.length >= 6 && !this.isGenericUsageNeedle(value) && !this.isWeakUsageFuzzyNeedle(value))
-        .some(value => compactBucket.includes(value));
+        .filter((value, index, array) => array.indexOf(value) === index);
     },
 
     usageRecordMatchesRowTime(record = {}, row = {}, connectedAt = '') {
@@ -8829,6 +8833,47 @@ export default {
         .join('\n');
     },
 
+    usageRowManualAliasValues(row = {}) {
+      const skill = row.skill || {};
+      const values = [
+        ...(Array.isArray(skill.manualAliases) ? skill.manualAliases : []),
+        ...(skill.hasAliasOverride === true && Array.isArray(row.aliases) ? row.aliases : []),
+        ...(skill.hasAliasOverride === true && Array.isArray(skill.aliases) ? skill.aliases : [])
+      ];
+      return values
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+        .filter((value, index, array) => array.findIndex(item => this.normalizeUsageMatchText(item) === this.normalizeUsageMatchText(value)) === index);
+    },
+
+    usageRowIdentityValues(row = {}, options = {}) {
+      const includeAliases = options.includeAliases === true;
+      const aliasValues = includeAliases ? this.usageRowManualAliasValues(row) : [];
+      const pathValues = [
+        row.relativePath,
+        row.path,
+        row.skill?.git?.relativePath,
+        row.skill?.relativePath,
+        row.skill?.path
+      ].flatMap(value => this.usageConcreteNamesFromPath(value));
+      return [
+        row.productFileName,
+        row.productDisplayName,
+        row.displayName,
+        row.commonName,
+        row.title,
+        row.skill?.productDisplayName,
+        row.skill?.displayName,
+        row.skill?.commonName,
+        row.skill?.title,
+        ...aliasValues,
+        ...pathValues
+      ]
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+        .filter((value, index, array) => array.findIndex(item => this.normalizeUsageMatchText(item) === this.normalizeUsageMatchText(value)) === index);
+    },
+
     usageRowFuzzyTargetKeys(row = {}) {
       const pathValues = [
         row.relativePath,
@@ -8844,17 +8889,8 @@ export default {
         ...(Array.isArray(row.skill?.aliasHistory) ? row.skill.aliasHistory : [])
       ];
       const values = [
-        row.productFileName,
-        row.productDisplayName,
-        row.displayName,
-        row.commonName,
-        row.title,
-        row.skill?.productDisplayName,
-        row.skill?.displayName,
-        row.skill?.commonName,
-        row.skill?.title,
         row.skill?.originalTitle,
-        ...pathValues,
+        ...this.usageRowIdentityValues(row, { includeAliases: true }),
         ...pathValues.flatMap(value => this.usageConcreteNamesFromPath(value)),
         ...aliasValues
       ];
@@ -8881,6 +8917,7 @@ export default {
       const eventKeys = new Set();
       const applyBucket = (bucket, normalizedKey = '') => {
         if (!bucket || seen.has(normalizedKey)) return;
+        if (!this.isUsageCounterBucketCountable(bucket)) return;
         seen.add(normalizedKey);
         (Array.isArray(bucket.eventKeys) ? bucket.eventKeys : []).forEach(eventKey => {
           if (eventKey) eventKeys.add(String(eventKey));
@@ -8895,7 +8932,7 @@ export default {
           if (!bucket || seen.has(bucketKey)) return;
           const compactBucket = this.usageBucketCompactText(bucketKey, bucket);
           if (!compactBucket) return;
-          if (!fuzzyKeys.some(key => compactBucket.includes(key))) return;
+          if (!this.usageBucketHasStrongRowIdentity(bucket, row)) return;
           applyBucket(bucket, bucketKey);
         });
       }
@@ -11291,7 +11328,7 @@ export default {
         .replace(/\.(md|markdown)$/i, '')
         .replace(/[\\/_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '');
       if (!text) return true;
-      return /^(figma|mcp|codex|markdown|md|skill|skills|git|ai|data|artgit|artgitskills|工具|技能|文档|流程|规范|验证|平台|资源|图片|素材|截图|入口|入口图|悬浮入口|界面|命名|说明|readme|agents|memory|ip|默认|default)$/i.test(text);
+      return /^(figma|mcp|codex|markdown|md|skill|skills|git|ai|data|design|artgit|artgitskills|users|user|se7en|artproject|platform|project|projects|volumes|volume|private|tmp|temp|outputs|output|downloads|download|desktop|documents|0group|000插件共享|美术项目资源|工作台可放产物区域的内容|工具|技能|文档|流程|规范|验证|平台|资源|图片|素材|截图|入口|入口图|悬浮入口|界面|命名|说明|readme|agents|memory|ip|默认|default)$/i.test(text);
     },
 
     isGenericUsageFileTarget(value = '') {
@@ -11315,15 +11352,15 @@ export default {
         .split('/')
         .map(part => part.trim())
         .filter(Boolean);
+      if (!parts.length) return [];
       const names = [];
-      for (let index = parts.length - 1; index >= 0; index -= 1) {
-        const part = parts[index].replace(/^[#\[]+|[\]]+$/g, '').trim();
-        const cleaned = part.replace(/\.(md|markdown)$/i, '').trim();
-        if (cleaned && !this.isGenericUsageFileTarget(cleaned)) names.push(cleaned);
-        if (/^(skill|md|markdown)$/i.test(cleaned) && index > 0) {
-          const parent = parts[index - 1].replace(/\.(md|markdown)$/i, '').trim();
-          if (parent && !this.isGenericUsageFileTarget(parent)) names.push(parent);
-        }
+      const lastRaw = parts[parts.length - 1].replace(/^[#\[]+|[\]]+$/g, '').trim();
+      const lastCleaned = lastRaw.replace(/\.(md|markdown)$/i, '').trim();
+      const parentRaw = parts.length > 1 ? parts[parts.length - 2].replace(/^[#\[]+|[\]]+$/g, '').trim() : '';
+      const parentCleaned = parentRaw.replace(/\.(md|markdown)$/i, '').trim();
+      if (lastCleaned && !this.isGenericUsageFileTarget(lastCleaned)) names.push(lastCleaned);
+      if (/^SKILL\.md$/i.test(lastRaw) || /^(skill|md|markdown)$/i.test(lastCleaned)) {
+        if (parentCleaned && !this.isGenericUsageFileTarget(parentCleaned)) names.push(parentCleaned);
       }
       return names
         .map(name => name.replace(/^[#\[]+|[\]]+$/g, '').trim())
@@ -11391,27 +11428,7 @@ export default {
     },
 
     usageRowExplicitTargetKeys(row = {}) {
-      return [
-        row.productFileName,
-        row.productDisplayName,
-        row.displayName,
-        row.commonName,
-        row.title,
-        ...(Array.isArray(row.aliases) ? row.aliases : []),
-        ...(Array.isArray(row.skill?.aliases) ? row.skill.aliases : []),
-        ...(Array.isArray(row.aliasHistory) ? row.aliasHistory : []),
-        ...(Array.isArray(row.skill?.aliasHistory) ? row.skill.aliasHistory : []),
-        row.skill?.productDisplayName,
-        row.skill?.displayName,
-        row.skill?.commonName,
-        this.fileNameFromPath(row.relativePath),
-        this.fileNameFromPath(row.path),
-        this.fileNameFromPath(row.skill?.git?.relativePath),
-        ...this.usageConcreteNamesFromPath(row.relativePath),
-        ...this.usageConcreteNamesFromPath(row.path),
-        ...this.usageConcreteNamesFromPath(row.skill?.git?.relativePath),
-        ...this.usageConcreteNamesFromPath(row.skill?.path)
-      ]
+      return this.usageRowIdentityValues(row, { includeAliases: true })
         .map(value => this.usageCounterKeyForProduct(value))
         .filter(value => value && value.length >= 4 && !this.isGenericUsageNeedle(value))
         .filter((value, index, array) => array.indexOf(value) === index);

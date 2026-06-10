@@ -2723,6 +2723,40 @@ function normalizeUsageBucketTotals(bucket = {}) {
     bucket.usagePeopleCount = usagePeopleCount;
     changed = true;
   }
+  if (normalizeUsageBucketPeopleTotals(bucket)) changed = true;
+  return changed;
+}
+
+function normalizeUsageBucketPeopleTotals(bucket = {}) {
+  if (!bucket || typeof bucket !== 'object') return false;
+  const rawPeople = bucket.people && typeof bucket.people === 'object' ? bucket.people : {};
+  const people = {};
+  for (const [person, personCount] of Object.entries(rawPeople)) {
+    if (!person || isUsageProxyPerson(person)) continue;
+    const count = Math.max(0, Math.round(Number(personCount || 0)));
+    if (count > 0) people[person] = Number(people[person] || 0) + count;
+  }
+  const peopleEntries = Object.entries(people).sort((left, right) => Number(right[1] || 0) - Number(left[1] || 0) || cleanString(left[0]).localeCompare(cleanString(right[0])));
+  const evidenceTotal = Math.max(
+    0,
+    Math.round(Number(bucket.usageCount || 0))
+      + Math.round(Number(bucket.validationCount || 0))
+      + Math.round(Number(bucket.researchSyncCount || 0))
+  );
+  const totalLimit = Math.max(0, Math.round(Number(bucket.count || 0)), evidenceTotal);
+  let remaining = totalLimit;
+  const nextPeople = {};
+  for (const [person, personCount] of peopleEntries) {
+    if (remaining <= 0) break;
+    const value = Math.min(Math.max(0, Math.round(Number(personCount || 0))), remaining);
+    if (value <= 0) continue;
+    nextPeople[person] = value;
+    remaining -= value;
+  }
+  const changed = JSON.stringify(rawPeople) !== JSON.stringify(nextPeople)
+    || Number(bucket.peopleCount || 0) !== Object.keys(nextPeople).length;
+  bucket.people = nextPeople;
+  bucket.peopleCount = Object.keys(nextPeople).length;
   return changed;
 }
 
@@ -3263,7 +3297,7 @@ function isGenericUsageTarget(value = '') {
     .pop()
     ?.replace(/\.(md|markdown)$/i, '')
     .replace(/[_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '') || '';
-  return /^(skill|skills|readme|agents|agent|memory|data|artgit|安装说明|安装包|同步器|上报器|执行|试用|文件本体|ip|默认|default)$/i.test(text);
+  return /^(skill|skills|readme|agents|agent|memory|data|design|git|ai|artgit|users|user|se7en|artproject|platform|project|projects|volumes|volume|private|tmp|temp|outputs|output|downloads|download|desktop|documents|runs|agentworkers|美术执行台|本机执行状态|安装说明|安装包|同步器|上报器|执行|试用|文件本体|ip|默认|default)$/i.test(text);
 }
 
 function normalizeCustomWorkflow(input = {}) {

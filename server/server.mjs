@@ -105,7 +105,7 @@ import {
 import { collectRunArtifacts, scanProject } from './scanner.mjs';
 import { cancelRun, startRun, subscribe } from './runner.mjs';
 import { buildWorkflowPlan, workflowLevels } from './workflow.mjs';
-import { getZentaoApi, getZentaoModules } from './zentao-adapter.mjs';
+import { getZentaoApi, getZentaoModules, resetZentaoApi } from './zentao-adapter.mjs';
 import { syncZentaoBugsForProject } from './zentao-bug-sync.mjs';
 import { applyZentaoSplitPlan, assignZentaoTask, buildZentaoSplitPlan } from './zentao-task-actions.mjs';
 
@@ -5834,8 +5834,7 @@ async function syncZentaoTasks(project, options = {}) {
       let matched = 0;
       try {
         while (page <= maxPages) {
-          const { api: zentaoApi, modules: zentao } = await zentaoContext();
-          const payload = await zentao.listTasks(zentaoApi, { execution, page, limit });
+          const payload = await callZentaoRead(({ api: zentaoApi, modules: zentao }) => zentao.listTasks(zentaoApi, { execution, page, limit }));
           const result = payload.result || payload.data || payload;
           const tasks = Array.isArray(result.tasks) ? result.tasks : Array.isArray(result) ? result : [];
           const flatTasks = tasks.flatMap(flattenZentaoTask);
@@ -6389,8 +6388,7 @@ async function hydrateTaskForArtBrief(task = {}) {
   const taskNo = String(task.taskNo || task.zentao?.id || '').trim();
   if (!taskNo) return task;
   try {
-    const { api: zentaoApi, modules: zentao } = await zentaoContext();
-    const payload = await zentao.getTask(zentaoApi, { id: taskNo });
+    const payload = await callZentaoRead(({ api: zentaoApi, modules: zentao }) => zentao.getTask(zentaoApi, { id: taskNo }));
     const result = payload.result || payload.data || payload;
     const detail = result.task || result;
     if (!detail || typeof detail !== 'object') return task;
@@ -6777,15 +6775,13 @@ async function refreshTrackedZentaoTasks(project, taskNos = new Set(), existingT
   const ids = [...taskNos].filter(Boolean);
   const refreshedTasks = [];
   const failed = [];
-  const { api: zentaoApi, modules: zentao } = await zentaoContext();
-
   let cursor = 0;
   async function worker() {
     while (cursor < ids.length) {
       const taskNo = ids[cursor];
       cursor += 1;
       try {
-        const payload = await zentao.getTask(zentaoApi, { id: taskNo });
+        const payload = await callZentaoRead(({ api: zentaoApi, modules: zentao }) => zentao.getTask(zentaoApi, { id: taskNo }));
         const task = unwrapZentaoTaskPayload(payload);
         if (!task || !(task.id || task.taskID)) throw new Error(`ZenTao 未返回任务详情：${describeZentaoPayloadShape(payload)}`);
         for (const detailTask of expandZentaoDetailTasks(task)) {
@@ -7181,8 +7177,7 @@ async function resolveZentaoExecutionIds(options = {}) {
   let page = 1;
   let total = 0;
   while (page <= maxPages) {
-    const { api: zentaoApi, modules: zentao } = await zentaoContext();
-    const payload = await zentao.listExecutions(zentaoApi, { page, limit });
+    const payload = await callZentaoRead(({ api: zentaoApi, modules: zentao }) => zentao.listExecutions(zentaoApi, { page, limit }));
     const result = payload.result || payload.data || payload;
     const pageExecutions = Array.isArray(result.executions) ? result.executions : Array.isArray(result) ? result : [];
     total = Number(result.total || pageExecutions.length || total);
@@ -7252,6 +7247,28 @@ function normalizeZentaoArtDeptIds(value = '') {
 async function zentaoContext() {
   const [api, modules] = await Promise.all([getZentaoApi(), getZentaoModules()]);
   return { api, modules };
+}
+
+function isZentaoUnauthorizedPayload(payload = {}) {
+  if (!payload || typeof payload !== 'object') return false;
+  const text = [
+    payload.status,
+    payload.msg,
+    payload.error,
+    payload.result?.error,
+    payload.data?.error
+  ].map(value => String(value || '')).join('\n');
+  return /unauthorized|无权|未授权|未登录|token/i.test(text);
+}
+
+async function callZentaoRead(operation) {
+  const first = await operation(await zentaoContext());
+  if (!isZentaoUnauthorizedPayload(first)) return first;
+  resetZentaoApi();
+  zentaoClassicCookieJar = null;
+  zentaoClassicCookiePromise = null;
+  const retry = await operation(await zentaoContext());
+  return retry;
 }
 
 async function getZentaoArtUserList() {
@@ -7445,19 +7462,30 @@ async function artDepartmentUsers(options = {}) {
 async function fallbackArtDepartmentUsers() {
   const snapshot = await latestArtSnapshot();
   const report = snapshot?.report || {};
+  const defaultsByAccount = new Map(defaultArtUsers.map(user => [user.account, user]));
+  const defaultOwner = defaultsByAccount.get(report.owner_account || 'zhangqw') || defaultsByAccount.get('zhangqw') || {};
   const owner = {
+    ...defaultOwner,
     account: report.owner_account || 'zhangqw',
-    realname: report.owner_summary?.name || '张倩文',
+    realname: report.owner_summary?.name || defaultOwner.realname || '张倩文',
     role: 'owner'
   };
   const members = (report.managed_members || report.art_members || defaultArtUsers)
     .filter(user => user?.account && user.account !== owner.account)
-    .map(user => ({
-      account: user.account,
-      realname: user.realname || user.name || user.account,
-      role: 'member'
-    }));
-  const byAccount = new Map(defaultArtUsers.map(user => [user.account, user]));
+    .map(user => {
+      const fallback = defaultsByAccount.get(user.account) || {};
+      return {
+        ...fallback,
+        ...user,
+        account: user.account,
+        realname: user.realname || user.name || fallback.realname || user.account,
+        role: user.role || fallback.role || 'member',
+        userId: zentaoUserNumericId(user) || zentaoUserNumericId(fallback),
+        userID: zentaoUserNumericId(user) || zentaoUserNumericId(fallback),
+        dept: zentaoUserDeptId(user) || zentaoUserDeptId(fallback) || zentaoArtDeptId
+      };
+    });
+  const byAccount = new Map(defaultArtUsers.map(user => [user.account, { ...user, dept: zentaoArtDeptId }]));
   byAccount.set(owner.account, owner);
   for (const member of members) byAccount.set(member.account, member);
   return sortArtDepartmentUsers([...byAccount.values()]);
@@ -7471,8 +7499,7 @@ async function fetchZentaoDepartmentUsers(deptId = null) {
     let page = 1;
     let total = 0;
     while (page <= 20) {
-      const { api: zentaoApi, modules: zentao } = await zentaoContext();
-      const payload = await zentao.listUsers(zentaoApi, { page, limit });
+      const payload = await callZentaoRead(({ api: zentaoApi, modules: zentao }) => zentao.listUsers(zentaoApi, { page, limit }));
       const result = payload.result || payload.data || payload;
       const pageUsers = Array.isArray(result.users) ? result.users : Array.isArray(result) ? result : [];
       total = Number(result.total || pageUsers.length || total);
