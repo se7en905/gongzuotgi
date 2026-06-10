@@ -70,7 +70,6 @@ const retentionDays = Math.max(1, Number(process.env.AWP_DATA_RETENTION_DAYS || 
 const retentionEnabled = process.env.AWP_DATA_RETENTION_ENABLED !== '0';
 const retentionPaths = new Set([
   paths.aiFlowRecords,
-  paths.runs,
   paths.operationLogs,
   paths.artProgressEvents
 ]);
@@ -1034,6 +1033,7 @@ export async function claimNextAgentRun(input = {}) {
     ...runs[candidateIndex],
     status: 'claimed',
     workerStatus: 'claimed',
+    assignedToUserId: runs[candidateIndex].assignedToUserId || userId,
     claimedByDeviceId: deviceId,
     claimedAt: now,
     startedBy: userId,

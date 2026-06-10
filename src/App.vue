@@ -15957,6 +15957,29 @@ export default {
       return this.agentWorkerDisplayRows.find(worker => worker.userId === userId) || null;
     },
 
+    directSkillRunUserIds(run = null) {
+      if (!run) return [];
+      const ids = [
+        run.assignedToUserId,
+        run.ownerUserId,
+        run.startedBy,
+        run.createdBy
+      ]
+        .map(value => String(value || '').trim())
+        .filter(Boolean);
+      const claimedDevice = String(run.claimedByDeviceId || '').trim();
+      if (claimedDevice) {
+        const worker = this.agentWorkers.find(item => String(item.deviceId || '').trim() === claimedDevice);
+        if (worker?.userId) ids.push(String(worker.userId).trim());
+      }
+      return [...new Set(ids)];
+    },
+
+    directSkillRunBelongsToUser(run = null, user = null) {
+      const userId = String(user?.id || '').trim();
+      return Boolean(userId && this.directSkillRunUserIds(run).includes(userId));
+    },
+
     directSkillWorkerDisplayName(worker = null) {
       if (!worker) return '未启动 Worker';
       return worker.deviceAlias || worker.deviceName || worker.deviceId || '未命名设备';
@@ -16019,19 +16042,19 @@ export default {
     directSkillPendingRunsForUser(user = null) {
       const userId = String(user?.id || '').trim();
       if (!userId) return [];
-      return this.directSkillPendingRuns.filter(run => String(run.assignedToUserId || run.ownerUserId || '') === userId);
+      return this.directSkillPendingRuns.filter(run => this.directSkillRunBelongsToUser(run, user));
     },
 
     directSkillActiveRunsForUser(user = null) {
       const userId = String(user?.id || '').trim();
       if (!userId) return [];
-      return this.directSkillActiveRuns.filter(run => String(run.assignedToUserId || run.ownerUserId || '') === userId);
+      return this.directSkillActiveRuns.filter(run => this.directSkillRunBelongsToUser(run, user));
     },
 
     directSkillCompletedRunsForUser(user = null) {
       const userId = String(user?.id || '').trim();
       if (!userId) return [];
-      return this.directSkillCompletedRuns.filter(run => String(run.assignedToUserId || run.ownerUserId || '') === userId);
+      return this.directSkillCompletedRuns.filter(run => this.directSkillRunBelongsToUser(run, user));
     },
 
     directSkillMemberReadyLabel(row = {}) {
