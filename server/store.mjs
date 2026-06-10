@@ -1883,6 +1883,16 @@ function cleanString(value = '') {
   return String(value ?? '').trim();
 }
 
+function samePersonName(left = '', right = '') {
+  const a = normalizePersonLoose(left);
+  const b = normalizePersonLoose(right);
+  return Boolean(a && b && (a === b || a.includes(b) || b.includes(a)));
+}
+
+function normalizePersonLoose(value = '') {
+  return String(value || '').toLowerCase().replace(/[\s._@-]+/g, '').replace(/[^a-z0-9\u4e00-\u9fa5]/g, '');
+}
+
 function statusForArtEventType(eventType = '') {
   if (eventType === 'task_started' || eventType === 'task_progress' || eventType === 'skill_called') return 'running';
   if (eventType === 'task_blocked') return 'blocked';
@@ -2317,13 +2327,13 @@ let usageCounterKindFixCache = null;
 async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCounters()) {
   if (!counters?.buckets || typeof counters.buckets !== 'object') return counters;
   const misclassified = await historicalNonUsageEventKeySet();
-  if (!misclassified.size) return counters;
+  const ownerMap = await historicalUsageEventOwnerMap();
   const buckets = {};
   let changed = false;
   for (const [key, inputBucket] of Object.entries(counters.buckets)) {
     const bucket = normalizeUsageCounterBucket(inputBucket, key);
     const eventKeys = Array.isArray(bucket.eventKeys) ? bucket.eventKeys.filter(Boolean) : [];
-    const badCount = eventKeys.filter(eventKey => misclassified.has(eventKey)).length;
+    const badCount = misclassified.size ? eventKeys.filter(eventKey => misclassified.has(eventKey)).length : 0;
     if (badCount > 0) {
       const currentUsage = Number(bucket.usageCount || 0);
       bucket.usageCount = Math.max(0, currentUsage - badCount);
@@ -2333,6 +2343,7 @@ async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCount
       );
       if (currentUsage !== bucket.usageCount) changed = true;
     }
+    if (remapProxyUsagePeople(bucket, ownerMap)) changed = true;
     buckets[bucket.key] = bucket;
   }
   if (!changed) return counters;
@@ -2353,6 +2364,105 @@ async function historicalNonUsageEventKeySet() {
   }
   usageCounterKindFixCache = set;
   return set;
+}
+
+let usageCounterOwnerMapCache = null;
+
+async function historicalUsageEventOwnerMap() {
+  if (usageCounterOwnerMapCache) return usageCounterOwnerMapCache;
+  const map = new Map();
+  const add = (eventKey = '', owners = []) => {
+    const key = cleanString(eventKey);
+    if (!key) return;
+    const list = (Array.isArray(owners) ? owners : [owners])
+      .flatMap(value => normalizeLineList(value))
+      .map(cleanString)
+      .filter(owner => owner && !isUsageProxyPerson(owner));
+    if (!list.length) return;
+    const existing = map.get(key) || [];
+    map.set(key, [...existing, ...list].filter((item, index, array) => array.findIndex(other => samePersonName(other, item)) === index));
+  };
+  const artProgressEvents = await readJson(paths.artProgressEvents, []);
+  for (const event of Array.isArray(artProgressEvents) ? artProgressEvents : []) {
+    const owners = [event.memberName, event.memberAccount, event.validator, event.walkthroughOwner];
+    const baseId = event.id || event.skillName || event.title;
+    const at = event.createdAt || event.updatedAt || event.reportedAt || '';
+    add(usageEventKey('art-progress', baseId, at), owners);
+    for (let index = 0; index < 8; index += 1) {
+      add(usageEventKey('art-progress-artifact', `${baseId}:${index}`, at), owners);
+    }
+  }
+  const validations = await readJson(paths.skillValidations, {});
+  const validationRows = [
+    ...(Array.isArray(validations.records) ? validations.records : []),
+    ...(Array.isArray(validations.googleRecords) ? validations.googleRecords : []),
+    ...(Array.isArray(validations.manualRecords) ? validations.manualRecords : [])
+  ];
+  for (const record of validationRows) {
+    const owners = [record.validator, record.walkthroughOwner, record.owner, record.updatedBy];
+    const ids = [record.id, record.sourceRef, record.artifactName, record.researchName, record.artifactLocation, record.workflowScene].filter(Boolean);
+    const times = [record.createdAt, record.submittedAt, record.importedAt, record.updatedAt].filter(Boolean);
+    for (const id of ids) {
+      for (const at of times) add(usageEventKey('validation', id, at), owners);
+    }
+  }
+  const logs = await readJson(paths.operationLogs, []);
+  for (const log of Array.isArray(logs) ? logs : []) {
+    const ownerFromDescription = extractOwnerFromResearchSyncDescription(log.description || log.targetName || '');
+    const owners = [ownerFromDescription, log.memberName, log.displayName, log.username].filter(owner => !isUsageProxyPerson(owner));
+    add(usageEventKey('operation-log', log.id || log.targetId || log.targetName, log.createdAt), owners);
+  }
+  usageCounterOwnerMapCache = map;
+  return map;
+}
+
+function remapProxyUsagePeople(bucket = {}, ownerMap = new Map()) {
+  if (!bucket.people || typeof bucket.people !== 'object') return false;
+  const proxyEntries = Object.entries(bucket.people).filter(([person]) => isUsageProxyPerson(person));
+  if (!proxyEntries.length) return false;
+  const eventKeys = Array.isArray(bucket.eventKeys) ? bucket.eventKeys.filter(Boolean) : [];
+  const ownerHits = new Map();
+  for (const eventKey of eventKeys) {
+    const owners = ownerMap.get(eventKey) || [];
+    for (const owner of owners) {
+      if (!owner || isUsageProxyPerson(owner)) continue;
+      ownerHits.set(owner, Number(ownerHits.get(owner) || 0) + 1);
+    }
+  }
+  const nextPeople = { ...bucket.people };
+  for (const [proxyPerson, proxyCount] of proxyEntries) {
+    delete nextPeople[proxyPerson];
+    if (!ownerHits.size) continue;
+    const totalHits = [...ownerHits.values()].reduce((sum, value) => sum + Number(value || 0), 0) || 1;
+    let remaining = Math.max(0, Number(proxyCount || 0));
+    const entries = [...ownerHits.entries()].sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0));
+    for (const [owner, hitCount] of entries) {
+      if (remaining <= 0) break;
+      const isLast = owner === entries[entries.length - 1]?.[0];
+      const value = isLast
+        ? remaining
+        : Math.max(0, Math.min(remaining, Math.round(Number(proxyCount || 0) * (Number(hitCount || 0) / totalHits))));
+      if (value <= 0) continue;
+      nextPeople[owner] = Number(nextPeople[owner] || 0) + value;
+      remaining -= value;
+    }
+  }
+  bucket.people = nextPeople;
+  bucket.peopleCount = Object.keys(nextPeople).length;
+  return true;
+}
+
+function isUsageProxyPerson(person = '') {
+  const text = cleanString(person).toLowerCase();
+  return samePersonName(text, '研究同步助手')
+    || samePersonName(text, '同步助手')
+    || samePersonName(text, '系统同步助手')
+    || text === 'art-progress-sync';
+}
+
+function extractOwnerFromResearchSyncDescription(value = '') {
+  const match = cleanString(value).match(/([\u4e00-\u9fa5A-Za-z0-9_.-]{2,20})\s+同步\s+research/i);
+  return cleanString(match?.[1] || '');
 }
 
 async function accumulateUsageCountersFromExpiredRecords(file, records = []) {

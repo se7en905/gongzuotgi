@@ -8405,7 +8405,8 @@ export default {
         Object.entries(bucket.people || {}).forEach(([person, personCount]) => {
           if (!person) return;
           const value = applyCount(Number(personCount || 0) * personUsageRatio);
-          if (value > 0) people[person] = Number(people[person] || 0) + value;
+          if (value <= 0) return;
+          people[person] = Number(people[person] || 0) + value;
         });
       };
       keys.forEach(key => {
