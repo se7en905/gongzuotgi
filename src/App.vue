@@ -8518,19 +8518,17 @@ export default {
 
     skillInventoryUsageStatsForList(row = {}) {
       const historical = this.usageCounterStatsForRow(row);
-      const people = new Set();
-      Object.keys(historical.usagePeople || {}).forEach(person => {
-        if (person) people.add(person);
-      });
+      const memberCounts = this.skillInventoryHistoricalUsageMemberCounts(historical);
       const hasHistorical = this.hasUsageCounterStats(historical);
       const currentLogs = this.skillUsageLogs(row);
       const currentUsageLogs = currentLogs.filter(item => this.skillUsageLogCountsAsCall(item));
       const supplementalLogs = this.skillUsageSupplementalLogs(row, currentUsageLogs, hasHistorical, historical);
       supplementalLogs.forEach(item => {
-        if (item.person) people.add(item.person);
+        this.addSkillInventoryUsageMemberCount(memberCounts, item.person, 1);
       });
-      const usageCount = (hasHistorical ? Number(historical.usageCount || 0) : 0) + supplementalLogs.length;
-      const count = usageCount + Number(hasHistorical ? historical.validationCount || 0 : 0) + Number(hasHistorical ? historical.researchSyncCount || 0 : 0);
+      const people = new Set([...memberCounts.keys()]);
+      const usageCount = this.skillInventoryUsageMemberCountTotal(memberCounts);
+      const count = usageCount;
       const coverage = this.skillUsageCoverageStats(row, currentUsageLogs, { historicalPeople: people });
       const rate = coverage.rate;
       const average = people.size ? Math.round((usageCount / people.size) * 10) / 10 : 0;
@@ -8610,15 +8608,16 @@ export default {
     skillInventoryUsageStatsForDetail(row = {}) {
       const usageLogs = this.skillUsageLogs(row);
       const callLogs = usageLogs.filter(item => this.skillUsageLogCountsAsCall(item));
-      const people = new Set(callLogs.map(item => item.person).filter(Boolean));
       const historical = this.usageCounterStatsForRow(row);
-      Object.keys(historical.usagePeople || {}).forEach(person => {
-        if (person) people.add(person);
-      });
-      const validationCoverage = this.skillUsageCoverageStats(row, callLogs);
+      const memberCounts = this.skillInventoryHistoricalUsageMemberCounts(historical);
       const hasHistorical = this.hasUsageCounterStats(historical);
       const supplementalLogs = this.skillUsageSupplementalLogs(row, callLogs, hasHistorical, historical);
-      const usageCount = (hasHistorical ? Number(historical.usageCount || 0) : 0) + supplementalLogs.length;
+      supplementalLogs.forEach(item => {
+        this.addSkillInventoryUsageMemberCount(memberCounts, item.person, 1);
+      });
+      const people = new Set([...memberCounts.keys()]);
+      const validationCoverage = this.skillUsageCoverageStats(row, callLogs, { historicalPeople: people });
+      const usageCount = this.skillInventoryUsageMemberCountTotal(memberCounts);
       const count = usageCount;
       const rate = validationCoverage.rate;
       const average = people.size ? Math.round((usageCount / people.size) * 10) / 10 : 0;
@@ -8626,8 +8625,41 @@ export default {
     },
 
     hasUsageCounterStats(stats = {}) {
-      return Number(stats.usageCount || 0) > 0
+      return Number(stats.count || 0) > 0
+        || Number(stats.usageCount || 0) > 0
+        || Object.keys(stats.people || {}).length > 0
         || Object.keys(stats.usagePeople || {}).length > 0;
+    },
+
+    skillInventoryHistoricalUsageMemberCounts(stats = {}) {
+      const memberCounts = new Map();
+      const source = Object.keys(stats.people || {}).length ? stats.people : (stats.usagePeople || {});
+      Object.entries(source || {}).forEach(([person, count]) => {
+        this.addSkillInventoryUsageMemberCount(memberCounts, person, count);
+      });
+      return memberCounts;
+    },
+
+    addSkillInventoryUsageMemberCount(memberCounts, person = '', count = 1) {
+      if (!(memberCounts instanceof Map)) return;
+      const name = this.canonicalArtDeptPerson(person) || String(person || '').trim();
+      if (!name || name === '-' || this.isUsageProxyDisplayPerson(name)) return;
+      const value = Math.max(0, Math.round(Number(count || 0)));
+      if (value <= 0) return;
+      memberCounts.set(name, Number(memberCounts.get(name) || 0) + value);
+    },
+
+    skillInventoryUsageMemberCountTotal(memberCounts) {
+      if (!(memberCounts instanceof Map)) return 0;
+      return [...memberCounts.values()].reduce((sum, value) => sum + Number(value || 0), 0);
+    },
+
+    isUsageProxyDisplayPerson(person = '') {
+      const text = String(person || '').trim();
+      return samePerson(text, '研究同步助手')
+        || samePerson(text, '同步助手')
+        || samePerson(text, '系统同步助手')
+        || /^art-progress-sync$/i.test(text);
     },
 
     usageCounterStatsForRow(row = {}) {
@@ -12185,53 +12217,26 @@ export default {
     buildSkillUsageDialogState(row = {}, previous = {}) {
       const logs = this.skillUsageLogs(row);
       const callLogs = logs.filter(item => this.skillUsageLogCountsAsCall(item));
-      const people = new Set(callLogs.map(item => item.person).filter(Boolean));
       const historical = this.usageCounterStatsForRow(row);
-      Object.keys(historical.usagePeople || {}).forEach(person => {
-        if (person) people.add(person);
-      });
-      const effectivePeople = this.skillEffectiveUsagePeople(row);
-      const validationCoverage = this.skillUsageCoverageStats(row, callLogs);
       const hasHistorical = this.hasUsageCounterStats(historical);
       const supplementalLogs = this.skillUsageSupplementalLogs(row, callLogs, hasHistorical, historical);
-      const totalCount = (hasHistorical ? Number(historical.usageCount || 0) : 0) + supplementalLogs.length;
-      const memberStatsMap = new Map();
-      if (!hasHistorical || supplementalLogs.length) {
-        for (const item of hasHistorical ? supplementalLogs : callLogs) {
-          const person = this.canonicalArtDeptPerson(item.person) || item.person || '';
-          if (!person || person === '-') continue;
-          const existing = memberStatsMap.get(person) || {
-            name: person,
-            count: 0,
-            latestTime: '',
-            types: new Set()
-          };
-          existing.count += 1;
-          if (item.type) existing.types.add(item.type);
-          if (!existing.latestTime || String(item.time || '').localeCompare(String(existing.latestTime || '')) > 0) {
-            existing.latestTime = item.time || existing.latestTime;
-          }
-          memberStatsMap.set(person, existing);
-        }
-      }
-      Object.entries(historical.usagePeople || {}).forEach(([personName, count]) => {
-        const person = this.canonicalArtDeptPerson(personName) || personName;
-        if (!person) return;
-        const existing = memberStatsMap.get(person) || {
-          name: person,
-          count: 0,
-          latestTime: '',
-          types: new Set()
-        };
-        existing.count += Number(count || 0);
-        memberStatsMap.set(person, existing);
+      const memberCounts = this.skillInventoryHistoricalUsageMemberCounts(historical);
+      supplementalLogs.forEach(item => {
+        this.addSkillInventoryUsageMemberCount(memberCounts, item.person, 1);
       });
-      const memberStats = [...memberStatsMap.values()]
-        .map(item => ({
-          ...item,
-          types: [...item.types].filter(Boolean).join('、') || '使用记录'
+      const people = new Set([...memberCounts.keys()]);
+      const effectivePeople = this.skillEffectiveUsagePeople(row);
+      const validationCoverage = this.skillUsageCoverageStats(row, callLogs, { historicalPeople: people });
+      const totalCount = this.skillInventoryUsageMemberCountTotal(memberCounts);
+      const memberStats = [...memberCounts.entries()]
+        .map(([name, count]) => ({
+          name,
+          count: Number(count || 0),
+          latestTime: '',
+          types: '使用记录'
         }))
-        .sort((a, b) => b.count - a.count || String(b.latestTime || '').localeCompare(String(a.latestTime || '')));
+        .filter(item => item.count > 0)
+        .sort((a, b) => b.count - a.count || String(a.name || '').localeCompare(String(b.name || '')));
       const versionEntries = (Array.isArray(row.skill?.git?.history) ? row.skill.git.history : []).map(item => ({
         title: item.subject || row.skill?.commitSubject || '未填写提交说明',
         author: this.canonicalArtDeptPerson(item.authorName || item.authorEmail) || item.authorName || '-',
