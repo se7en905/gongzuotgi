@@ -2301,6 +2301,22 @@ function normalizeUsageCounterBucket(input = {}, fallbackKey = '') {
   const researchSyncCount = Math.max(0, Number(input.researchSyncCount || input.researchCount || 0));
   const validationCount = Math.max(0, Number(input.validationCount || 0));
   const usageCount = Math.max(0, Number(input.usageOnlyCount ?? input.directUsageCount ?? input.usageCount ?? input.count ?? 0));
+  const usagePeopleSource = input.usagePeople && typeof input.usagePeople === 'object' ? input.usagePeople : null;
+  const normalizedUsagePeople = {};
+  if (usagePeopleSource) {
+    for (const [person, personCount] of Object.entries(usagePeopleSource)) {
+      const personKey = cleanString(person);
+      if (!personKey) continue;
+      normalizedUsagePeople[personKey] = Math.max(0, Number(personCount || 0));
+    }
+  } else if (usageCount > 0) {
+    const ratioBase = Math.max(1, Number(input.count ?? usageCount));
+    const ratio = Math.min(1, usageCount / ratioBase);
+    for (const [person, personCount] of Object.entries(normalizedPeople)) {
+      const value = Math.round(Number(personCount || 0) * ratio);
+      if (value > 0) normalizedUsagePeople[person] = value;
+    }
+  }
   return {
     key,
     target: cleanString(input.target || input.targetName || fallbackKey),
@@ -2315,7 +2331,9 @@ function normalizeUsageCounterBucket(input = {}, fallbackKey = '') {
       ...(Array.isArray(input.historicalAliases) ? input.historicalAliases : normalizeLineList(input.historicalAliases || []))
     ]),
     people: normalizedPeople,
+    usagePeople: normalizedUsagePeople,
     peopleCount: Number(input.peopleCount || Object.keys(normalizedPeople).length),
+    usagePeopleCount: Number(input.usagePeopleCount || Object.keys(normalizedUsagePeople).length),
     firstAt: cleanString(input.firstAt),
     lastAt: cleanString(input.lastAt),
     updatedAt: cleanString(input.updatedAt)
@@ -2448,7 +2466,13 @@ function remapProxyUsagePeople(bucket = {}, ownerMap = new Map()) {
     }
   }
   bucket.people = nextPeople;
+  if (bucket.usagePeople && typeof bucket.usagePeople === 'object') {
+    bucket.usagePeople = Object.fromEntries(
+      Object.entries(bucket.usagePeople).filter(([person]) => !isUsageProxyPerson(person))
+    );
+  }
   bucket.peopleCount = Object.keys(nextPeople).length;
+  bucket.usagePeopleCount = Object.keys(bucket.usagePeople || {}).length;
   return true;
 }
 
@@ -2501,9 +2525,15 @@ async function updateUsageCounters(targets = []) {
     } else {
       bucket.usageCount = Number(bucket.usageCount || 0) + Number(target.count || 1);
     }
-    if (target.person) bucket.people[target.person] = Number(bucket.people[target.person] || 0) + Number(target.count || 1);
+    if (target.person) {
+      bucket.people[target.person] = Number(bucket.people[target.person] || 0) + Number(target.count || 1);
+      if (kind !== 'validation' && kind !== 'skill-validation' && kind !== 'research-sync' && kind !== 'art-progress') {
+        bucket.usagePeople[target.person] = Number(bucket.usagePeople[target.person] || 0) + Number(target.count || 1);
+      }
+    }
     if (eventKey) bucket.eventKeys = [...bucket.eventKeys, eventKey].slice(-500);
     bucket.peopleCount = Object.keys(bucket.people).length;
+    bucket.usagePeopleCount = Object.keys(bucket.usagePeople || {}).length;
     const at = target.at || '';
     bucket.firstAt = bucket.firstAt && at ? (String(bucket.firstAt).localeCompare(String(at)) <= 0 ? bucket.firstAt : at) : (bucket.firstAt || at);
     bucket.lastAt = bucket.lastAt && at ? (String(bucket.lastAt).localeCompare(String(at)) >= 0 ? bucket.lastAt : at) : (bucket.lastAt || at);

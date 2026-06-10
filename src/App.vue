@@ -8476,7 +8476,7 @@ export default {
     skillInventoryUsageStatsForList(row = {}) {
       const historical = this.usageCounterStatsForRow(row);
       const people = new Set();
-      Object.keys(historical.people || {}).forEach(person => {
+      Object.keys(historical.usagePeople || {}).forEach(person => {
         if (person) people.add(person);
       });
       const hasHistorical = this.hasUsageCounterStats(historical);
@@ -8520,7 +8520,7 @@ export default {
       };
       this.skillUsageLogs(row).filter(item => this.skillUsageLogCountsAsCall(item)).forEach(item => addPerson(item.person));
       const historical = this.usageCounterStatsForRow(row);
-      Object.keys(historical.people || {}).forEach(addPerson);
+      Object.keys(historical.usagePeople || {}).forEach(addPerson);
       return [...people];
     },
 
@@ -8543,7 +8543,7 @@ export default {
       };
       this.skillUsageLogs(row).filter(item => this.skillUsageLogCountsAsCall(item)).forEach(item => addIfOwner(item.person, 1));
       const historical = this.usageCounterStatsForRow(row);
-      Object.entries(historical.people || {}).forEach(([person, personCount]) => addIfOwner(person, personCount));
+      Object.entries(historical.usagePeople || {}).forEach(([person, personCount]) => addIfOwner(person, personCount));
       return count;
     },
 
@@ -8569,7 +8569,7 @@ export default {
       const callLogs = usageLogs.filter(item => this.skillUsageLogCountsAsCall(item));
       const people = new Set(callLogs.map(item => item.person).filter(Boolean));
       const historical = this.usageCounterStatsForRow(row);
-      Object.keys(historical.people || {}).forEach(person => {
+      Object.keys(historical.usagePeople || {}).forEach(person => {
         if (person) people.add(person);
       });
       const validationCoverage = this.skillUsageCoverageStats(row, callLogs);
@@ -8588,7 +8588,7 @@ export default {
 
     usageCounterStatsForRow(row = {}) {
       const buckets = this.usageCounters?.buckets || {};
-      if (!buckets || typeof buckets !== 'object') return { count: 0, people: {}, usageCount: 0, validationCount: 0, researchSyncCount: 0, bucketCount: 0 };
+      if (!buckets || typeof buckets !== 'object') return { count: 0, people: {}, usagePeople: {}, usageCount: 0, validationCount: 0, researchSyncCount: 0, bucketCount: 0 };
       const keys = this.usageRowExplicitTargetKeys(row);
       if (this.isTaskArtBriefAssetRow(row)) keys.push('zentaoartbriefproduct');
       const fuzzyKeys = this.usageRowFuzzyTargetKeys(row);
@@ -8596,6 +8596,7 @@ export default {
       const seen = new Set();
       const seenEventKeys = new Set();
       const people = {};
+      const usagePeople = {};
       let count = 0;
       let usageCount = 0;
       let validationCount = 0;
@@ -8612,18 +8613,25 @@ export default {
         const applyCount = value => Math.round(Number(value || 0) * eventRatio);
         const bucketValidationCount = applyCount(bucket.validationCount || 0);
         const bucketResearchSyncCount = applyCount(bucket.researchSyncCount || 0);
-        const bucketUsageCount = Math.max(0, applyCount(bucket.count || bucket.usageCount || 0) - bucketValidationCount - bucketResearchSyncCount);
+        const bucketUsageCount = Math.max(0, applyCount(bucket.usageCount || 0));
         count += bucketUsageCount + bucketValidationCount + bucketResearchSyncCount;
         usageCount += bucketUsageCount;
         validationCount += bucketValidationCount;
         researchSyncCount += bucketResearchSyncCount;
-        const personRatioBase = Number(bucket.count || bucket.usageCount || 0);
-        const personUsageRatio = personRatioBase > 0 ? Math.min(1, bucketUsageCount / Math.max(1, applyCount(personRatioBase))) : 0;
         Object.entries(bucket.people || {}).forEach(([person, personCount]) => {
           if (!person) return;
-          const value = applyCount(Number(personCount || 0) * personUsageRatio);
+          const value = applyCount(Number(personCount || 0));
           if (value <= 0) return;
           people[person] = Number(people[person] || 0) + value;
+        });
+        const bucketUsagePeople = bucket.usagePeople && typeof bucket.usagePeople === 'object'
+          ? bucket.usagePeople
+          : {};
+        Object.entries(bucketUsagePeople).forEach(([person, personCount]) => {
+          if (!person) return;
+          const value = applyCount(Number(personCount || 0));
+          if (value <= 0) return;
+          usagePeople[person] = Number(usagePeople[person] || 0) + value;
         });
       };
       keys.forEach(key => {
@@ -8640,7 +8648,7 @@ export default {
           applyBucket(bucket, bucketKey);
         });
       }
-      return { count, people, usageCount, validationCount, researchSyncCount, bucketCount: seen.size };
+      return { count, people, usagePeople, usageCount, validationCount, researchSyncCount, bucketCount: seen.size };
     },
 
     skillInventoryRowConnectedAt(row = {}) {
@@ -12133,7 +12141,7 @@ export default {
       const callLogs = logs.filter(item => this.skillUsageLogCountsAsCall(item));
       const people = new Set(callLogs.map(item => item.person).filter(Boolean));
       const historical = this.usageCounterStatsForRow(row);
-      Object.keys(historical.people || {}).forEach(person => {
+      Object.keys(historical.usagePeople || {}).forEach(person => {
         if (person) people.add(person);
       });
       const effectivePeople = this.skillEffectiveUsagePeople(row);
@@ -12143,7 +12151,7 @@ export default {
       const totalCount = (hasHistorical ? Number(historical.usageCount || 0) : 0) + supplementalLogs.length;
       const memberStatsMap = new Map();
       if (!hasHistorical || supplementalLogs.length) {
-        for (const item of hasHistorical ? supplementalLogs : logs) {
+        for (const item of hasHistorical ? supplementalLogs : callLogs) {
           const person = this.canonicalArtDeptPerson(item.person) || item.person || '';
           if (!person || person === '-') continue;
           const existing = memberStatsMap.get(person) || {
@@ -12160,7 +12168,7 @@ export default {
           memberStatsMap.set(person, existing);
         }
       }
-      Object.entries(historical.people || {}).forEach(([personName, count]) => {
+      Object.entries(historical.usagePeople || {}).forEach(([personName, count]) => {
         const person = this.canonicalArtDeptPerson(personName) || personName;
         if (!person) return;
         const existing = memberStatsMap.get(person) || {
