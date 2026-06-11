@@ -291,7 +291,7 @@ async function createChildTaskClassic(api, detail = {}, task = {}, row = {}) {
     body,
     createOnlyBodyPath
   );
-  const created = await findCreatedChildTask(api, {
+  let created = await findCreatedChildTask(api, {
     executionId,
     beforeIds,
     name: row.name,
@@ -304,11 +304,19 @@ async function createChildTaskClassic(api, detail = {}, task = {}, row = {}) {
     throw new Error(`子单「${row.name || ''}」提交后未在禅道执行 ${executionId} 中查到新任务，已停止标记成功`);
   }
   const expectedParent = String(parentId || '');
-  const actualParent = String(created.parent || '');
+  if (expectedParent && !taskParentId(created)) {
+    created = await linkCreatedChildToParentClassic(api, created, expectedParent, row);
+  }
+  const actualParent = taskParentId(created);
   const allowedParents = new Set([
     expectedParent,
-    String(detail.parent || task.parent || task.zentao?.parent || '')
+    taskParentId(detail),
+    taskParentId(task),
+    String(task.zentao?.parent || '')
   ].filter(Boolean));
+  if (expectedParent && !actualParent) {
+    throw new Error(`子单「${row.name || ''}」已创建为 ${created.id}，但父任务为空，不是原任务 ${expectedParent}`);
+  }
   if (allowedParents.size && actualParent && !allowedParents.has(actualParent)) {
     throw new Error(`子单「${row.name || ''}」已创建为 ${created.id}，但父任务为 ${actualParent}，不是 ${[...allowedParents].join(' 或 ')}`);
   }
@@ -320,6 +328,30 @@ async function createChildTaskClassic(api, detail = {}, task = {}, row = {}) {
     story: String(created.story || ''),
     execution: String(created.execution || executionId)
   };
+}
+
+async function linkCreatedChildToParentClassic(api, created = {}, parentId = '', row = {}) {
+  const childId = String(created.id || created.taskID || '').trim();
+  const targetParent = String(parentId || '').trim();
+  if (!childId || !targetParent) return created;
+  const editPath = `index.php?m=task&f=edit&taskID=${encodeURIComponent(childId)}`;
+  const editOnlyBodyPath = `${editPath}&onlybody=yes`;
+  const html = await classicGet(api, editOnlyBodyPath, `index.php?m=task&f=view&taskID=${encodeURIComponent(childId)}&onlybody=yes`);
+  const formHtml = formHtmlWithFields(html, ['execution', 'module', 'story', 'name'])
+    || formHtmlWithFields(html, ['name'])
+    || firstFormHtml(html);
+  if (!formHtml) {
+    throw new Error(`子单「${row.name || created.name || childId}」父任务为空，且未读取到禅道编辑表单，无法补挂父任务 ${targetParent}`);
+  }
+  const body = formBodyFromHtml(formHtml);
+  setChildTaskParentFormValue(body, formHtml, targetParent);
+  stripChildTaskRemarkFields(body);
+  await classicPost(api, editPath, body, editOnlyBodyPath);
+  const fresh = unwrapTask(await api.request({ method: 'GET', path: `/api.php/v1/tasks/${encodeURIComponent(childId)}` }));
+  if (!taskParentId(fresh)) {
+    throw new Error(`子单「${row.name || created.name || childId}」已创建为 ${childId}，但补挂父任务后仍为空，不是原任务 ${targetParent}`);
+  }
+  return fresh;
 }
 
 function taskCreateBodyFromForm(html = '', detail = {}, task = {}, row = {}) {
@@ -337,7 +369,7 @@ function taskCreateBodyFromForm(html = '', detail = {}, task = {}, row = {}) {
   setFormValue(body, 'execution', executionId);
   setFormValue(body, 'module', moduleId);
   setFormValue(body, 'story', storyId);
-  if (body.has('parent')) setFormValue(body, 'parent', parentId);
+  setChildTaskParentFormValue(body, formHtml, parentId);
   setFormValue(body, 'name', row.name || '未命名子任务');
   stripChildTaskTagFields(body);
   stripChildTaskRemarkFields(body);
@@ -380,6 +412,33 @@ function stripChildTaskRemarkFields(body) {
     'history',
     'historyComment'
   ].forEach(name => body.delete(name));
+}
+
+function setChildTaskParentFormValue(body, formHtml = '', parentId = '') {
+  const value = String(parentId || '').trim();
+  if (!value) return;
+  const parentFields = ['parent', 'parentID', 'parentTask', 'parentTaskID'];
+  const existingField = parentFields.find(name => body.has(name) || htmlFormHasField(formHtml, name));
+  setFormValue(body, existingField || 'parent', value);
+}
+
+function htmlFormHasField(html = '', name = '') {
+  const escaped = String(name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!escaped) return false;
+  return new RegExp(`\\bname\\s*=\\s*(['"])${escaped}\\1`, 'i').test(String(html || ''));
+}
+
+function taskParentId(task = {}) {
+  return String(
+    idValue(firstValue(
+      task.parent,
+      task.parentID,
+      task.parentTask,
+      task.parentTaskID,
+      task.parent_task?.id,
+      task.parentTask?.id
+    )) || ''
+  ).trim();
 }
 
 function keepExistingFormValueOnly(body, name) {
