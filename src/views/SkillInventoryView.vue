@@ -288,7 +288,7 @@
     <ElTable
       v-else
       class="skill-clean-table skill-product-table"
-      :data="app.pagedSkillInventoryRows"
+      :data="app.displayPagedSkillInventoryRows"
       :row-key="app.skillInventoryTableRowKey"
       table-layout="fixed"
       :scrollbar-always-on="true"
@@ -301,19 +301,19 @@
               <strong>
                 {{ row.productDisplayName || row.productFileName || row.title || row.id }}
               </strong>
-              <span v-if="!app.isPathScanFolderProductRow(row)">{{ app.skillSceneText(row, '待补充适用场景') }}</span>
+              <span v-if="!row.displayIsPathScanFolderProduct">{{ row.displaySceneText }}</span>
             </button>
           </div>
         </template>
       </ElTableColumn>
       <ElTableColumn label="版本" width="82">
         <template #default="{ row }">
-          <span :class="['skill-version-pill', { 'is-editable': app.canEditSkillInventoryVersion }, app.skillVersionClass(row)]">
-            {{ app.skillVersionShortLabel(row) }}
+          <span :class="['skill-version-pill', { 'is-editable': app.canEditSkillInventoryVersion }, row.displayVersionClass]">
+            {{ row.displayVersionLabel }}
             <select
               v-if="app.canEditSkillInventoryVersion"
               class="skill-version-native-select"
-              :value="app.skillVersionShortLabel(row)"
+              :value="row.displayVersionLabel"
               aria-label="选择展示版本"
               @change="app.saveSkillInventoryRowVersion(row, $event.target.value)"
             >
@@ -324,23 +324,23 @@
       </ElTableColumn>
       <ElTableColumn label="贡献人" width="96">
         <template #default="{ row }">
-          <span class="skill-table-text">{{ app.displayChinesePersonList(row.uploader) }}</span>
+          <span class="skill-table-text">{{ row.displayOwnerText }}</span>
         </template>
       </ElTableColumn>
       <ElTableColumn label="调用次数" width="88">
         <template #default="{ row }">
-          <span class="skill-table-number">{{ app.skillInventoryUsageCountDisplay(row) }}</span>
+          <span class="skill-table-number">{{ row.displayUsageCount }}</span>
         </template>
       </ElTableColumn>
       <ElTableColumn label="有效占比" width="88">
         <template #default="{ row }">
-          <span class="skill-table-number">{{ app.skillUsageRateDisplay(row) }}</span>
+          <span class="skill-table-number">{{ row.displayUsageRate }}</span>
         </template>
       </ElTableColumn>
       <ElTableColumn label="质量分" width="88">
         <template #default="{ row }">
-          <ElTooltip v-if="app.isSkillInventorySkillProduct(row)" :content="app.skillQualityScoreText(row)" placement="top" effect="dark">
-            <span :class="['skill-quality-pill', app.skillQualityScoreClass(app.skillQualityScore(row))]">{{ app.skillQualityScore(row) }}</span>
+          <ElTooltip v-if="row.displayIsSkillProduct" :content="row.displayQualityText" placement="top" effect="dark">
+            <span :class="['skill-quality-pill', row.displayQualityClass]">{{ row.displayQualityScore }}</span>
           </ElTooltip>
           <span v-else class="skill-table-muted">-</span>
         </template>

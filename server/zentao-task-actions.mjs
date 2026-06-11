@@ -339,7 +339,7 @@ function taskCreateBodyFromForm(html = '', detail = {}, task = {}, row = {}) {
   setFormValue(body, 'story', storyId);
   if (body.has('parent')) setFormValue(body, 'parent', parentId);
   setFormValue(body, 'name', row.name || '未命名子任务');
-  setFormValue(body, 'pri', String(row.pri || body.get('pri') || 2));
+  stripChildTaskTagFields(body);
   setFormValue(body, 'estimate', String(row.estimate ?? body.get('estimate') ?? 0));
   setFormValue(body, 'deadline', validDate(row.deadline || detail.deadline || task.deadline || task.zentao?.deadline));
   setFormValue(body, 'desc', row.desc || inheritedChildTaskDesc(detail, task) || body.get('desc') || '');
@@ -355,6 +355,20 @@ function taskCreateBodyFromForm(html = '', detail = {}, task = {}, row = {}) {
   body.append('assignedTo[]', row.assignedTo);
   if (!body.has('mailto[]')) body.append('mailto[]', '');
   return body;
+}
+
+function stripChildTaskTagFields(body) {
+  [
+    'pri',
+    'color',
+    'keywords',
+    'tags',
+    'labels',
+    'label',
+    'tag',
+    'mailto',
+    'mailto[]'
+  ].forEach(name => body.delete(name));
 }
 
 async function listExecutionTaskIds(api, executionId) {

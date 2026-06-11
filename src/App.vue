@@ -137,7 +137,7 @@
 
       <main
         :class="['el-main', 'main-stage', { 'is-task-result-stage': activeView === 'task-result' }]">
-        <SkillInventoryView v-if="isSkillInventoryViewActive" :app="appBridge" />
+        <SkillInventoryView v-if="skillInventoryMounted" v-show="isSkillInventoryViewActive" :app="appBridge" />
 
         <TaskCenterView v-if="activeView === 'tasks'" :app="appBridge" :revision="taskCenterRevision" />
 
@@ -626,6 +626,7 @@ export default {
       skillInventoryPage: 1,
       skillInventoryPageSize: 10,
       skillInventoryShowHidden: false,
+      skillInventoryViewEverMounted: false,
       skillSourceDisplayDialog: {
         visible: false,
         keyword: ''
@@ -1003,6 +1004,10 @@ export default {
 
     isSkillInventoryViewActive() {
       return ['skill-inventory', 'skill-assets'].includes(this.activeView);
+    },
+
+    skillInventoryMounted() {
+      return this.isSkillInventoryViewActive || this.skillInventoryViewEverMounted;
     },
 
     aiFlowStageFields() {
@@ -2474,6 +2479,32 @@ export default {
 
     pagedSkillInventoryRows() {
       return paginate(this.filteredSkillInventoryRows, this.skillInventoryPage, this.skillInventoryPageSize);
+    },
+
+    displayPagedSkillInventoryRows() {
+      const cacheKey = [
+        this.skillInventoryRowsCacheKey,
+        this.canOperateSkillInventoryManage ? 'manage' : 'view',
+        this.canEditSkillInventoryVersion ? 'version-edit' : 'version-view',
+        this.skillInventoryKeyword || '',
+        this.skillInventoryKindFilter || '',
+        this.skillInventoryMemberFilter || '',
+        this.skillInventoryPreferMine ? 'mine' : 'all',
+        this.currentAccountPrimaryPersonName || '',
+        this.skillInventoryPage,
+        this.skillInventoryPageSize,
+        this.usageCounters?.updatedAt || '',
+        Object.keys(this.usageCounters?.buckets || {}).length,
+        this.artProgressEvents.length,
+        this.artProgressOperationLogRows.length,
+        this.runs.length,
+        this.taskArtBriefUsageLogs.length
+      ].join('::');
+      const cached = this._skillInventoryDisplayRowsCache;
+      if (cached?.token === cacheKey && Array.isArray(cached.rows)) return cached.rows;
+      const rows = this.pagedSkillInventoryRows.map(row => this.decorateSkillInventoryDisplayRow(row));
+      this._skillInventoryDisplayRowsCache = { token: cacheKey, rows };
+      return rows;
     },
 
 
@@ -3960,6 +3991,7 @@ export default {
 
     activeView(value) {
       document.title = `${this.pageMeta.title} · 美术部工作台`;
+      if (['skill-inventory', 'skill-assets'].includes(value)) this.skillInventoryViewEverMounted = true;
       if (value === 'ai-members') this.prepareAiMembersView();
       else this.cancelAiMembersDeferredWork();
       this.ensureActiveViewData(value);
@@ -4788,6 +4820,7 @@ export default {
           return;
         }
         this.skillInventoryTab = tab;
+        this.skillInventoryViewEverMounted = true;
         this.activeView = 'skill-inventory';
         this.ensureActiveViewData('skill-inventory');
         this.$nextTick(() => this.ensureSkillInventoryTabData(tab));
@@ -5647,6 +5680,7 @@ export default {
         this.skillAliasOverrides = aliasOverrides;
         this.skillAliasHistoryOverrides = aliasHistoryOverrides;
         this.skillInventoryKindOverrides = inventoryKindOverrides;
+        this.clearSkillInventoryRowsCache({ keepScanSignature: true });
         return true;
       } catch {
         this.skillOwnerOverrides = this.skillOwnerOverrides || {};
@@ -8532,6 +8566,28 @@ export default {
     skillInventoryUsageCountDisplay(row = {}) {
       if (row.hidden === true) return '-';
       return Number(this.skillInventoryUsageStatsForList(row).usageCount || 0);
+    },
+
+    decorateSkillInventoryDisplayRow(row = {}) {
+      const versionLabel = this.skillVersionShortLabel(row);
+      const isSkillProduct = this.isSkillInventorySkillProduct(row);
+      const qualityScore = isSkillProduct ? this.skillQualityScore(row) : null;
+      return {
+        ...row,
+        displayVersionLabel: versionLabel,
+        displayVersionClass: this.skillVersionClass(row),
+        displayUsageCount: this.skillInventoryUsageCountDisplay(row),
+        displayUsageRate: this.skillUsageRateDisplay(row),
+        displayQualityScore: qualityScore,
+        displayQualityClass: qualityScore === null ? '' : this.skillQualityScoreClass(qualityScore),
+        displayQualityText: qualityScore === null
+          ? ''
+          : `质量分 ${qualityScore}：按 skill-auditor 9 维口径估算，包含触发清晰度、目标产物、工作流、工具资源、可执行性、失败模式、人工卡口、验证机制和风险黑名单。`,
+        displayIsSkillProduct: isSkillProduct,
+        displaySceneText: this.skillSceneText(row, '待补充适用场景'),
+        displayOwnerText: this.displayChinesePersonList(row.uploader),
+        displayIsPathScanFolderProduct: this.isPathScanFolderProductRow(row)
+      };
     },
 
     skillInventoryUsageStatsForList(row = {}) {
@@ -12182,6 +12238,7 @@ export default {
       this._skillInventoryRowsCache = null;
       this._skillInventoryVisibleRowsCache = null;
       this._filteredSkillInventoryRowsCache = null;
+      this._skillInventoryDisplayRowsCache = null;
       if (options.keepScanSignature !== true) {
         this.skillInventoryScanSignature = this.buildSkillInventoryScanSignature(this.scans);
       }
@@ -12191,6 +12248,7 @@ export default {
     clearSkillUsageStatsCache() {
       if (this._skillUsageLogCache) this._skillUsageLogCache.clear();
       this.skillInventoryMetricsCache = {};
+      this._skillInventoryDisplayRowsCache = null;
       this.clearAiMemberScoreCache();
     },
 
