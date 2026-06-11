@@ -49,12 +49,12 @@ export async function buildZentaoSplitPlan(task = {}) {
   const cocosTemplate = findCocosProductionTemplate(detail, task, siblingTasks);
   const deadline = validDate(artTemplate?.deadline || detail.deadline || task.deadline || task.zentao?.deadline);
   const executionId = executionIdOf(artTemplate || detail, task);
-  const parentTaskId = taskParentId(artTemplate || detail) || taskParentId(detail) || String(task.zentao?.parent || '') || taskId;
+  const parentTaskId = taskParentId(artTemplate || detail) || taskParentId(detail) || nonZeroIdValue(task.zentao?.parent) || taskId;
   const main = recommendedMainAssignee(text);
   const children = [];
 
   if (/入口图标|入口图|入口icon|新增子游戏|新增小游戏|新增游戏/i.test(text)) {
-    children.push(childRow(`【制作单】${baseName || title}`, 'yushengwei', deadline, executionId, parentTaskId, 0, artTemplate));
+    children.push(childRow(withTaskSuffix(`【制作单】${baseName || title}`, '-2'), 'yushengwei', deadline, executionId, parentTaskId, 0, artTemplate));
   } else if (/走查/i.test(text) || /【\s*(?:美术)?验收单\s*】|美术验收/i.test(text)) {
     [
       ['【验收单】', '-白', 'lanhj'],
@@ -78,7 +78,7 @@ export async function buildZentaoSplitPlan(task = {}) {
       children.push(childRow(`【制作单】${baseName || title}-15`, 'yejunbo', cocosDeadline, cocosExecutionId, parentTaskId, 2, cocosTemplate || artTemplate));
     }
   } else {
-    children.push(childRow(`【制作单】${baseName || title}`, main.account, deadline, executionId, parentTaskId, 0, artTemplate));
+    children.push(childRow(withTaskSuffix(`【制作单】${baseName || title}`, '-2'), main.account, deadline, executionId, parentTaskId, 0, artTemplate));
   }
 
   return {
@@ -308,7 +308,7 @@ async function createChildTaskClassic(api, detail = {}, task = {}, row = {}) {
   const moduleId = String(idValue(firstValue(sourceDetail.module, task.zentao?.module, 0)) || '0');
   const estimate = String(row.estimate ?? firstValue(sourceDetail.estimate, sourceDetail.left, 0));
   if (zentaoTaskId(task) && !parentId) throw new Error(`子单「${row.name || ''}」缺少父任务，已停止创建以避免取消关联`);
-  if (idValue(firstValue(sourceDetail.story, sourceDetail.storyID, task.zentao?.story)) && (!storyId || storyId === '0')) {
+  if (nonZeroIdValue(firstValue(sourceDetail.story, sourceDetail.storyID, task.zentao?.story)) && (!storyId || storyId === '0')) {
     throw new Error(`子单「${row.name || ''}」缺少关联需求，已停止创建以避免取消关联`);
   }
   const createPath = `index.php?m=task&f=create&executionID=${executionId}&storyID=${storyId}&moduleID=${moduleId}&taskID=${parentId}`;
@@ -347,7 +347,10 @@ async function createChildTaskClassic(api, detail = {}, task = {}, row = {}) {
     throw new Error(`子单「${row.name || ''}」提交后未在禅道执行 ${executionId} 中查到新任务，已停止标记成功`);
   }
   const expectedParent = String(parentId || '');
-  if (expectedParent && !taskParentId(created)) {
+  if (isDeletedZentaoTask(created)) {
+    throw new Error(`子单「${row.name || ''}」已创建为 ${created.id}，但禅道返回已删除状态，已停止标记成功`);
+  }
+  if (expectedParent && taskParentId(created) !== expectedParent) {
     created = await linkCreatedChildToParentClassic(api, created, expectedParent, row);
   }
   const actualParent = taskParentId(created);
@@ -394,8 +397,9 @@ async function linkCreatedChildToParentClassic(api, created = {}, parentId = '',
   stripChildTaskRemarkFields(body);
   await classicPost(api, editPath, body, editOnlyBodyPath);
   const fresh = unwrapTask(await api.request({ method: 'GET', path: `/api.php/v1/tasks/${encodeURIComponent(childId)}` }));
-  if (!taskParentId(fresh)) {
-    throw new Error(`子单「${row.name || created.name || childId}」已创建为 ${childId}，但补挂父任务后仍为空，不是原任务 ${targetParent}`);
+  const actualParent = taskParentId(fresh);
+  if (actualParent !== targetParent) {
+    throw new Error(`子单「${row.name || created.name || childId}」已创建为 ${childId}，但补挂父任务后为 ${actualParent || '空'}，不是原任务 ${targetParent}`);
   }
   return fresh;
 }
@@ -495,16 +499,19 @@ function htmlFormHasField(html = '', name = '') {
 }
 
 function taskParentId(task = {}) {
-  return String(
-    idValue(firstValue(
-      task.parent,
-      task.parentID,
-      task.parentTask,
-      task.parentTaskID,
-      task.parent_task?.id,
-      task.parentTask?.id
-    )) || ''
-  ).trim();
+  return nonZeroIdValue(firstValue(
+    task.parent,
+    task.parentID,
+    task.parentTask,
+    task.parentTaskID,
+    task.parent_task?.id,
+    task.parentTask?.id
+  ));
+}
+
+function isDeletedZentaoTask(task = {}) {
+  const value = task.deleted;
+  return value === true || value === 1 || value === '1' || String(value || '').toLowerCase() === 'true';
 }
 
 function keepExistingFormValueOnly(body, name) {
@@ -891,6 +898,11 @@ function idValue(value) {
   return String(value ?? '').trim();
 }
 
+function nonZeroIdValue(value) {
+  const id = idValue(value);
+  return id && id !== '0' && id !== '-1' ? id : '';
+}
+
 function accountName(value) {
   if (!value) return '';
   if (typeof value === 'object') return String(value.account || value.realname || value.id || '').trim();
@@ -921,7 +933,7 @@ function childRow(name, assignedTo, deadline, executionId, parent, index, templa
   return {
     id: `child-${index + 1}`,
     enabled: true,
-    name,
+    name: normalizeTaskCreateTitle(name),
     assignedTo,
     deadline,
     estimate: firstValue(templateTask?.estimate, templateTask?.left, 0),
@@ -972,6 +984,18 @@ function getBaseName(title) {
     .replace(/\s*[-—_]*\s*美术$/, '')
     .replace(/\s*[-—_]*(?:2|cocos|cos|15)\s*$/i, '')
     .trim();
+}
+
+function normalizeTaskCreateTitle(value = '') {
+  const text = String(value || '').replace(/^(?:【\s*制作单\s*】\s*)+/g, '').trim();
+  return `【制作单】${text}`;
+}
+
+function withTaskSuffix(value = '', suffix = '') {
+  const normalizedSuffix = String(suffix || '').trim();
+  const text = String(value || '').trim();
+  if (!normalizedSuffix) return text;
+  return new RegExp(`${escapeRegExp(normalizedSuffix)}\\s*$`, 'i').test(text) ? text : `${text}${normalizedSuffix}`;
 }
 
 function recommendedMainAssignee(text = '') {
