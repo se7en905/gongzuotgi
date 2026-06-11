@@ -1491,14 +1491,17 @@ async function hydrateRunStages(run) {
   const updatedStages = stages.map(stage => {
     const matched = matchReportStage(stage, reportStages);
     if (matched) {
+      const reportStatus = normalizeStageStatus(matched.status);
+      const shouldKeepStageStatus = hasStageDurationEvidence(stage) && isPendingStage(reportStatus) && !isPendingStage(stage.status);
+      const nextStatus = shouldKeepStageStatus ? stage.status : reportStatus;
       return {
         ...stage,
         name: stage.name || matched.name,
-        status: normalizeStageStatus(matched.status),
+        status: reconcileStageStatusWithDuration({ ...stage, status: nextStatus }, run),
         output: stage.output || matched.output || ''
       };
     }
-    return { ...stage, status: fallbackFinishedStageStatus(run.status, run) };
+    return { ...stage, status: reconcileStageStatusWithDuration({ ...stage, status: fallbackFinishedStageStatus(run.status, run) }, run) };
   });
   return {
     ...run,
@@ -1512,7 +1515,20 @@ function isFinishedRun(status = '') {
 }
 
 function isPendingStage(status = '') {
-  return !status || /pending|created|queued|wait/i.test(String(status || ''));
+  return !status || /pending|created|queued|wait|未执行|待执行/i.test(String(status || ''));
+}
+
+function hasStageDurationEvidence(stage = {}) {
+  return Number(stage.durationMs || 0) > 0
+    || Boolean(stage.startedAt && stage.finishedAt)
+    || Boolean(stage.durationEstimated);
+}
+
+function reconcileStageStatusWithDuration(stage = {}, run = {}) {
+  if (!hasStageDurationEvidence(stage) || !isPendingStage(stage.status)) return stage.status;
+  if (/cancelled|canceled/i.test(String(run.status || '')) && !stage.finishedAt) return 'cancelled';
+  if (/failed|blocked/i.test(String(run.status || '')) && !stage.finishedAt) return 'skipped';
+  return 'conditional_pass';
 }
 
 async function readStageReportStages(artifactRoot = '') {
@@ -1568,6 +1584,8 @@ function normalizeStageName(value = '') {
 
 function normalizeStageStatus(status = '') {
   const value = String(status || '');
+  if (/未执行|待执行|pending|created|queued|wait/i.test(value)) return 'pending';
+  if (/取消|中断|cancelled|canceled/i.test(value)) return 'cancelled';
   if (/阻塞|失败|❌|failed|error/i.test(value)) return 'failed';
   if (/有条件|⚠️|conditional/i.test(value)) return 'conditional_pass';
   if (/跳过|未触发|⏭️|skipped|skip/i.test(value)) return 'skipped';
