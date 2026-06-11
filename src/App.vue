@@ -14827,6 +14827,25 @@ export default {
       ].find(record => this.artBriefRecordMatchesTask(task, record)) || null;
     },
 
+    taskAiWorkBriefUrl(task = this.selectedBusinessTask) {
+      const record = this.taskArtBriefForTask(task);
+      if (!record) return '';
+      if (record.aiWorkUrl) return record.aiWorkUrl;
+      const taskNo = String(task?.taskNo || record.taskNo || '').trim();
+      const reportUrl = String(record.reportUrl || '').trim();
+      if (taskNo && reportUrl.includes('/api/artifact?')) {
+        try {
+          const url = new URL(reportUrl, window.location.origin);
+          const reportPath = url.searchParams.get('path') || '';
+          if (reportPath && /-美术需求摘要\.html$/i.test(reportPath)) {
+            const aiWorkPath = reportPath.replace(/[^/\\]+-美术需求摘要\.html$/i, `${taskNo}-AI工作说明.md`);
+            return `/api/artifact?path=${encodeURIComponent(aiWorkPath)}&download=${encodeURIComponent(`${taskNo}-AI工作说明.md`)}`;
+          }
+        } catch {}
+      }
+      return '';
+    },
+
     artBriefRecordMatchesTask(task, record) {
       if (!task?.id || !record) return false;
       const taskGroup = task.artBriefGroup?.groupKey || task.artBrief?.groupKey || '';
@@ -14870,7 +14889,7 @@ export default {
         localStorage.setItem('art-task-briefs', JSON.stringify(this.taskArtBriefs));
         this.refreshTasks().catch(() => {});
         if (!options.silent) {
-          ElMessage.success(options.force ? '美术摘要已重新生成' : (result.reused ? '已复用同主单美术摘要' : '美术摘要已生成'));
+          ElMessage.success(options.force ? '美术摘要和 AI 工作说明已重新生成' : (result.reused ? '已复用同主单美术摘要和 AI 工作说明' : '美术摘要和 AI 工作说明已生成'));
         }
         return record;
       } catch (error) {
@@ -14922,6 +14941,25 @@ export default {
         if (!record?.reportUrl) return;
       }
       window.open(record.reportUrl, '_blank', 'noopener,noreferrer');
+    },
+
+    async downloadTaskAiWorkBrief(task = this.selectedBusinessTask) {
+      let record = this.taskArtBriefForTask(task);
+      let aiWorkUrl = this.taskAiWorkBriefUrl(task);
+      if (!aiWorkUrl) {
+        ElMessage.warning('请先生成美术摘要和 AI 工作说明');
+        return;
+      }
+      if (!(await this.isArtifactUrlAvailable(aiWorkUrl))) {
+        ElMessage.warning('原 AI 工作说明文件已失效，正在重新生成');
+        record = await this.generateArtBriefForTask(task, { silent: true });
+        aiWorkUrl = record?.aiWorkUrl || this.taskAiWorkBriefUrl(task);
+        if (!aiWorkUrl) return;
+      }
+      const link = document.createElement('a');
+      link.href = aiWorkUrl;
+      link.download = `${task.taskNo || task.id || '任务'}-AI工作说明.md`;
+      link.click();
     },
 
     async isArtifactUrlAvailable(url = '') {

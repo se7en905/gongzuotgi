@@ -176,9 +176,10 @@
       <ElTableColumn label="创建时间" min-width="150">
         <template #default="{ row }">{{ app.formatDateTime(row.zentaoCreatedAt || row.zentao?.openedDate || row.createdAt) }}</template>
       </ElTableColumn>
-      <ElTableColumn label="操作" width="260" fixed="right" align="center">
+      <ElTableColumn label="操作" width="320" fixed="right" align="center">
         <template #default="{ row }">
           <div class="table-action-row">
+            <ElButton v-if="app.can('task.artBrief.generate')" size="small" plain @click.stop="openTaskSummary(row)">摘要</ElButton>
             <ElButton v-if="app.shouldShowTaskSplitButton(row)" size="small" type="primary" plain class="task-split-button" @click.stop="app.openTaskSplitDialog(row)">拆单</ElButton>
             <ElButton v-if="app.can('run.create')" type="primary" plain size="small" @click.stop="startRun(row)">发起执行</ElButton>
             <ElButton v-if="app.canDeletePlatformTask(row)" type="danger" plain size="small" @click.stop="deleteTask(row)">删除</ElButton>
@@ -271,9 +272,10 @@
           <div class="task-processing-block-head">
             <strong>美术摘要</strong>
             <div>
-              <ElButton v-if="app.taskArtBriefForTask(app.selectedBusinessTask)" size="small" plain @click="app.openTaskArtBrief(app.selectedBusinessTask)">查看</ElButton>
+              <ElButton v-if="app.taskArtBriefForTask(app.selectedBusinessTask)" size="small" plain @click="app.openTaskArtBrief(app.selectedBusinessTask)">查看摘要</ElButton>
+              <ElButton size="small" plain :disabled="!app.taskAiWorkBriefUrl(app.selectedBusinessTask)" @click="app.downloadTaskAiWorkBrief(app.selectedBusinessTask)">AI工作说明</ElButton>
               <ElButton v-if="app.can('task.artBrief.generate')" size="small" type="primary" plain :loading="app.isTaskArtBriefLoading(app.selectedBusinessTask)" @click="app.generateArtBriefForTask(app.selectedBusinessTask, { force: Boolean(app.taskArtBriefForTask(app.selectedBusinessTask)) })">
-                {{ app.taskArtBriefForTask(app.selectedBusinessTask) ? '重生成' : '生成' }}
+                {{ app.taskArtBriefForTask(app.selectedBusinessTask) ? '重生成摘要' : '生成摘要' }}
               </ElButton>
             </div>
           </div>
@@ -336,6 +338,9 @@ export default {
       this.app.createRunFromTask(row);
       this.app.activeView = 'runs';
       this.app.pushRoute('/runs');
+    },
+    openTaskSummary(row) {
+      this.app.selectBusinessTask(row);
     },
     deleteTask(row) {
       this.app.deletePlatformTask(row);

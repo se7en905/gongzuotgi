@@ -136,8 +136,9 @@ const defaultRunLogTailBytes = Number(process.env.RUN_LOG_TAIL_BYTES || 128 * 10
 const artProjectId = process.env.ART_PLATFORM_PROJECT_ID || zentaoAutoSyncProjectId;
 const zentaoAutoSyncScript = path.join(paths.root, 'scripts', 'sync-zentao-art-tasks.mjs');
 const zentaoBugSyncScript = path.join(paths.root, 'scripts', 'sync-zentao-art-bugs.mjs');
-const zentaoArtBriefScript = path.join(paths.root, 'scripts', 'zentao-art-brief.mjs');
-const zentaoArtBriefOutDir = path.join(paths.artifactDir, 'zentao-art-brief');
+const demandSummaryRoot = process.env.DEMAND_SUMMARY_ROOT || '/Users/se7en/ArtProject/DemandSummary';
+const zentaoArtBriefScript = path.join(demandSummaryRoot, 'scripts', 'generate_art_summary.py');
+const zentaoArtBriefOutDir = path.join(demandSummaryRoot, 'outputs');
 const defaultAiFlowSheetId = '1tP9XTqxIMUQ6E6rq47fq0A0T7kxvJvnVEPKBpnoIpiw';
 const defaultAiFlowSheetGid = '1127778149';
 const defaultArtProjectSheetId = '18MyY-8UudwHjUcjt0dFgXUHhrqNqhoc1MOrn_b6gsmg';
@@ -2329,7 +2330,10 @@ async function handleApi(req, res, url) {
 
   const artifact = url.pathname.match(/^\/api\/artifact$/);
   if ((req.method === 'GET' || req.method === 'HEAD') && artifact) {
-    await serveArtifact(res, url.searchParams.get('path'), currentUser, { head: req.method === 'HEAD' });
+    await serveArtifact(res, url.searchParams.get('path'), currentUser, {
+      head: req.method === 'HEAD',
+      download: url.searchParams.get('download') || ''
+    });
     return;
   }
 
@@ -5219,7 +5223,7 @@ async function serveArtifact(res, file, currentUser, options = {}) {
     return;
   }
   const abs = path.resolve(file);
-  const allowedRoots = [paths.artifactDir, paths.workspaceDir].map(item => path.resolve(item));
+  const allowedRoots = [paths.artifactDir, paths.workspaceDir, zentaoArtBriefOutDir].map(item => path.resolve(item));
   if (!allowedRoots.some(root => abs === root || abs.startsWith(`${root}${path.sep}`))) {
     sendJson(res, 403, { error: 'artifact path is outside platform workspace' });
     return;
@@ -5247,8 +5251,19 @@ async function serveArtifact(res, file, currentUser, options = {}) {
     return;
   }
   const content = await fs.readFile(abs);
-  res.writeHead(200, { 'Content-Type': mimeType(abs) });
+  const headers = { 'Content-Type': mimeType(abs) };
+  if (options.download) {
+    headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(safeDownloadFilename(options.download))}`;
+  }
+  res.writeHead(200, headers);
   res.end(content);
+}
+
+function safeDownloadFilename(value = '') {
+  return String(value || '')
+    .replace(/[\\/\r\n]/g, '-')
+    .trim()
+    .slice(0, 180) || 'download';
 }
 
 async function serveRunLog(res, file, currentUser, options = {}) {
@@ -6323,21 +6338,27 @@ async function generateZentaoArtBrief(task = {}) {
   const completeTask = await hydrateTaskForArtBrief(task);
   await fs.mkdir(zentaoArtBriefOutDir, { recursive: true });
   const taskJsonPath = path.join(zentaoArtBriefOutDir, `${safeFileSegment(task.id || taskNo)}-task.json`);
-  await fs.writeFile(taskJsonPath, `${JSON.stringify(completeTask, null, 2)}\n`, 'utf8');
-  const { stdout, stderr } = await execFileAsync(process.execPath, [
+  const demandSummaryPayload = {
+    result: {
+      ...completeTask,
+      id: taskNo,
+      taskID: taskNo,
+      name: completeTask.name || completeTask.title || completeTask.displayTitle || '',
+      title: completeTask.title || completeTask.name || completeTask.displayTitle || ''
+    }
+  };
+  await fs.writeFile(taskJsonPath, `${JSON.stringify(demandSummaryPayload, null, 2)}\n`, 'utf8');
+  const { stdout, stderr } = await execFileAsync('python3', [
     zentaoArtBriefScript,
     taskNo,
-    '--json',
-    '--task-json',
+    '--from-json',
     taskJsonPath,
     '--out-dir',
     zentaoArtBriefOutDir
   ], {
-    cwd: paths.root,
+    cwd: demandSummaryRoot,
     env: {
       ...process.env,
-      ART_BRIEF_ASSET_URL: 'artifact',
-      ART_BRIEF_ZENTAO_URL: normalizeZentaoSiteBaseUrl((await getZentaoApi()).baseUrl || zentaoBaseUrl),
       PATH: [
         path.join(os.homedir(), '.npm-global', 'bin'),
         '/opt/homebrew/bin',
@@ -6356,25 +6377,78 @@ async function generateZentaoArtBrief(task = {}) {
     const detail = String(error.stderr || error.stdout || error.message || '').trim();
     throw new HttpError(502, `禅道美术摘要生成失败：${detail || '脚本执行失败'}`);
   });
-  const summary = parseCommandJson(stdout, 'zentao-art-brief');
-  const reportFile = summary.reportFile ? path.resolve(summary.reportFile) : '';
+  const summary = await parseDemandSummaryOutput(stdout, taskNo);
+  const reportFile = summary.htmlPath ? path.resolve(summary.htmlPath) : '';
+  const aiWorkFile = summary.aiWorkPath ? path.resolve(summary.aiWorkPath) : '';
+  const manifestFile = summary.manifestPath ? path.resolve(summary.manifestPath) : '';
   const message = [
     '需要美术做：',
-    ...(summary.needs?.length ? summary.needs.map(item => `- ${item}`) : ['- 暂无']),
+    `- ${summary.scope || '按 AI 工作说明里的设计范围处理'}`,
+    `- ${summary.workType || '生成美术需求摘要'}：${summary.workMethod || '查看摘要和 AI 工作说明确认具体处理点'}`,
+    summary.pointsCount ? `- 已整理 ${summary.pointsCount} 条设计处理点。` : '- 处理点请查看 AI 工作说明。',
     '',
     '不需要美术做：',
-    ...(summary.avoid?.length ? summary.avoid.map(item => `- ${item}`) : ['- 暂无']),
+    '- 不写入禅道备注，不修改任务字段。',
     '',
     '需要确认：',
-    ...(summary.confirm?.length ? summary.confirm.map(item => `- ${item}`) : ['- 暂无'])
+    summary.confirmationsCount ? `- 已整理 ${summary.confirmationsCount} 条设计前确认点。` : '- 如需求范围不清晰，需要负责人确认后再设计。'
   ].join('\n');
   return {
     ...summary,
     stderr: String(stderr || '').trim(),
     reportFile,
+    aiWorkFile,
+    manifestFile,
     reportUrl: reportFile ? `/api/artifact?path=${encodeURIComponent(reportFile)}` : '',
+    aiWorkUrl: aiWorkFile ? `/api/artifact?path=${encodeURIComponent(aiWorkFile)}&download=${encodeURIComponent(`${taskNo}-AI工作说明.md`)}` : '',
+    needs: [
+      summary.scope,
+      summary.workType,
+      summary.workMethod,
+      summary.pointsCount ? `${summary.pointsCount} 条设计处理点` : ''
+    ].filter(Boolean),
+    avoid: ['不写入禅道备注', '不修改任务字段'],
+    confirm: [summary.confirmationsCount ? `${summary.confirmationsCount} 条设计前确认点` : '需要负责人确认设计范围'].filter(Boolean),
     summaryText: message,
     generatedAt: new Date().toISOString()
+  };
+}
+
+async function parseDemandSummaryOutput(stdout = '', taskNo = '') {
+  const lines = String(stdout || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  const manifestLine = [...lines].reverse().find(line => line.endsWith('summary-manifest.json'));
+  const manifestPath = manifestLine ? path.resolve(manifestLine) : '';
+  if (manifestPath) {
+    try {
+      const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+      return {
+        ...manifest,
+        manifestPath
+      };
+    } catch (error) {
+      throw new HttpError(502, `禅道美术摘要生成失败：manifest 读取失败：${error.message}`);
+    }
+  }
+  const htmlPath = lines.find(line => line.endsWith(`${taskNo}-美术需求摘要.html`) || line.endsWith('-美术需求摘要.html')) || '';
+  const aiWorkPath = lines.find(line => line.endsWith(`${taskNo}-AI工作说明.md`) || line.endsWith('-AI工作说明.md')) || '';
+  if (!htmlPath && !aiWorkPath) throw new HttpError(502, '禅道美术摘要生成失败：DemandSummary 未返回摘要文件路径。');
+  return {
+    version: 1,
+    taskId: taskNo,
+    title: '',
+    generatedAt: new Date().toISOString(),
+    htmlPath,
+    aiWorkPath,
+    manifestPath: '',
+    scope: '',
+    workType: '',
+    workMethod: '',
+    pointsCount: 0,
+    confirmationsCount: 0,
+    quality: { status: 'unknown', issues: [], warnings: [] }
   };
 }
 
@@ -6439,9 +6513,9 @@ async function getOrGenerateZentaoArtBrief(task = {}, currentUser = {}, options 
   const group = artBriefGroupForTask(task);
   const existing = await getArtBriefByGroupKey(task.projectId || artProjectId, group.groupKey);
   if (!options.force && existing?.reportFile && await statIfExists(existing.reportFile) && !isEmptyArtBrief(existing) && artBriefRecordMatchesSourceTask(existing, task)) {
+    const existingWithAiWork = enrichArtBriefDownloadUrls(existing);
     return {
-      ...existing,
-      reportUrl: existing.reportUrl || `/api/artifact?path=${encodeURIComponent(existing.reportFile)}`,
+      ...existingWithAiWork,
       reused: true,
       reusedAt: new Date().toISOString(),
       reusedFromTaskId: task.id || '',
@@ -6471,8 +6545,7 @@ async function getOrGenerateZentaoArtBrief(task = {}, currentUser = {}, options 
     }
   });
   return {
-    ...record,
-    reportUrl: record.reportUrl || generated.reportUrl,
+    ...enrichArtBriefDownloadUrls({ ...record, reportUrl: record.reportUrl || generated.reportUrl }),
     reused: false,
     regenerated: options.force === true,
     sourceTaskId: sourceTask.id || '',
@@ -6481,6 +6554,29 @@ async function getOrGenerateZentaoArtBrief(task = {}, currentUser = {}, options 
     currentTaskId: task.id || '',
     currentTaskNo: task.taskNo || ''
   };
+}
+
+function enrichArtBriefDownloadUrls(record = {}) {
+  const taskNo = String(record.taskNo || record.taskId || '').trim();
+  const reportFile = record.reportFile || record.htmlPath || record.raw?.htmlPath || '';
+  const aiWorkFile = record.aiWorkFile
+    || record.raw?.aiWorkFile
+    || record.raw?.aiWorkPath
+    || inferAiWorkFileFromReport(reportFile, taskNo);
+  const manifestFile = record.manifestFile || record.raw?.manifestFile || record.raw?.manifestPath || '';
+  return {
+    ...record,
+    reportFile,
+    aiWorkFile,
+    manifestFile,
+    reportUrl: record.reportUrl || (reportFile ? `/api/artifact?path=${encodeURIComponent(reportFile)}` : ''),
+    aiWorkUrl: record.aiWorkUrl || (aiWorkFile ? `/api/artifact?path=${encodeURIComponent(aiWorkFile)}&download=${encodeURIComponent(`${taskNo || '任务'}-AI工作说明.md`)}` : '')
+  };
+}
+
+function inferAiWorkFileFromReport(reportFile = '', taskNo = '') {
+  if (!reportFile || !taskNo) return '';
+  return path.join(path.dirname(reportFile), `${taskNo}-AI工作说明.md`);
 }
 
 function isEmptyArtBrief(record = {}) {
@@ -6664,10 +6760,7 @@ async function attachArtBriefsToTasks(tasks = []) {
     if (!brief.reportFile || !(await statIfExists(brief.reportFile))) continue;
     if (!artBriefRecordMatchesSourceTask(brief, taskByNo.get(String(brief.taskNo || '').trim()))) continue;
     const key = `${brief.projectId}:${brief.groupKey}`;
-    const record = {
-      ...brief,
-      reportUrl: brief.reportUrl || `/api/artifact?path=${encodeURIComponent(brief.reportFile)}`
-    };
+    const record = enrichArtBriefDownloadUrls(brief);
     if (!briefByGroup.has(key)) briefByGroup.set(key, record);
     const relatedTask = taskByNo.get(String(brief.taskNo || '').trim());
     if (relatedTask) {
