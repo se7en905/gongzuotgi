@@ -14947,19 +14947,34 @@ export default {
       let record = this.taskArtBriefForTask(task);
       let aiWorkUrl = this.taskAiWorkBriefUrl(task);
       if (!aiWorkUrl) {
-        ElMessage.warning('请先生成美术摘要和 AI 工作说明');
-        return;
+        if (!this.can('task.artBrief.generate')) {
+          ElMessage.warning('请先让负责人生成美术摘要和 AI 工作说明');
+          return;
+        }
+        ElMessage.info('正在生成美术摘要和 AI 工作说明');
+        record = await this.generateArtBriefForTask(task, { silent: true, force: true });
+        aiWorkUrl = record?.aiWorkUrl || this.taskAiWorkBriefUrl(task);
+        if (!aiWorkUrl) {
+          ElMessage.error('AI 工作说明生成失败，未拿到下载地址');
+          return;
+        }
       }
       if (!(await this.isArtifactUrlAvailable(aiWorkUrl))) {
         ElMessage.warning('原 AI 工作说明文件已失效，正在重新生成');
-        record = await this.generateArtBriefForTask(task, { silent: true });
+        record = await this.generateArtBriefForTask(task, { silent: true, force: true });
         aiWorkUrl = record?.aiWorkUrl || this.taskAiWorkBriefUrl(task);
-        if (!aiWorkUrl) return;
+        if (!aiWorkUrl) {
+          ElMessage.error('AI 工作说明重新生成失败，未拿到下载地址');
+          return;
+        }
       }
       const link = document.createElement('a');
       link.href = aiWorkUrl;
       link.download = `${task.taskNo || task.id || '任务'}-AI工作说明.md`;
+      link.style.display = 'none';
+      document.body.appendChild(link);
       link.click();
+      link.remove();
     },
 
     async isArtifactUrlAvailable(url = '') {

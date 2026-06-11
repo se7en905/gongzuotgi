@@ -273,7 +273,7 @@
             <strong>美术摘要</strong>
             <div>
               <ElButton v-if="app.taskArtBriefForTask(app.selectedBusinessTask)" size="small" plain @click="app.openTaskArtBrief(app.selectedBusinessTask)">查看摘要</ElButton>
-              <ElButton size="small" plain :disabled="!app.taskAiWorkBriefUrl(app.selectedBusinessTask)" @click="app.downloadTaskAiWorkBrief(app.selectedBusinessTask)">AI工作说明</ElButton>
+              <ElButton size="small" plain :loading="app.isTaskArtBriefLoading(app.selectedBusinessTask)" @click="app.downloadTaskAiWorkBrief(app.selectedBusinessTask)">AI工作说明</ElButton>
               <ElButton v-if="app.can('task.artBrief.generate')" size="small" type="primary" plain :loading="app.isTaskArtBriefLoading(app.selectedBusinessTask)" @click="app.generateArtBriefForTask(app.selectedBusinessTask, { force: Boolean(app.taskArtBriefForTask(app.selectedBusinessTask)) })">
                 {{ app.taskArtBriefForTask(app.selectedBusinessTask) ? '重生成摘要' : '生成摘要' }}
               </ElButton>

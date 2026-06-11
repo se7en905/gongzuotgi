@@ -6514,14 +6514,16 @@ async function getOrGenerateZentaoArtBrief(task = {}, currentUser = {}, options 
   const existing = await getArtBriefByGroupKey(task.projectId || artProjectId, group.groupKey);
   if (!options.force && existing?.reportFile && await statIfExists(existing.reportFile) && !isEmptyArtBrief(existing) && artBriefRecordMatchesSourceTask(existing, task)) {
     const existingWithAiWork = enrichArtBriefDownloadUrls(existing);
-    return {
-      ...existingWithAiWork,
-      reused: true,
-      reusedAt: new Date().toISOString(),
-      reusedFromTaskId: task.id || '',
-      currentTaskId: task.id || '',
-      currentTaskNo: task.taskNo || ''
-    };
+    if (existingWithAiWork.aiWorkFile && await statIfExists(existingWithAiWork.aiWorkFile)) {
+      return {
+        ...existingWithAiWork,
+        reused: true,
+        reusedAt: new Date().toISOString(),
+        reusedFromTaskId: task.id || '',
+        currentTaskId: task.id || '',
+        currentTaskNo: task.taskNo || ''
+      };
+    }
   }
   const sourceTask = await resolveArtBriefSourceTask(task, group);
   const generated = await generateZentaoArtBrief(sourceTask);
