@@ -340,20 +340,19 @@ function taskCreateBodyFromForm(html = '', detail = {}, task = {}, row = {}) {
   if (body.has('parent')) setFormValue(body, 'parent', parentId);
   setFormValue(body, 'name', row.name || '未命名子任务');
   stripChildTaskTagFields(body);
+  stripChildTaskRemarkFields(body);
   setFormValue(body, 'estimate', String(row.estimate ?? body.get('estimate') ?? 0));
   setFormValue(body, 'deadline', validDate(row.deadline || detail.deadline || task.deadline || task.zentao?.deadline));
   setFormValue(body, 'desc', row.desc || inheritedChildTaskDesc(detail, task) || body.get('desc') || '');
-  setFormValue(body, 'status', body.get('status') || 'wait');
-  setFormValue(body, 'type', row.type || body.get('type') || detail.type || task.zentao?.type || 'study');
-  ensureFormValue(body, 'category', body.get('category') || 'feature');
-  ensureFormValue(body, 'source', body.get('source') || detail.source || 'customer');
-  ensureFormValue(body, 'ordertype', body.get('ordertype') || detail.ordertype || task.zentao?.ordertype || '');
-  ensureFormValue(body, 'after', body.get('after') || 'toTaskList');
-  body.delete('comment');
+  keepExistingFormValueOnly(body, 'status');
+  keepExistingFormValueOnly(body, 'type');
+  keepExistingFormValueOnly(body, 'category');
+  keepExistingFormValueOnly(body, 'source');
+  keepExistingFormValueOnly(body, 'ordertype');
+  keepExistingFormValueOnly(body, 'after');
   body.delete('assignedTo');
   body.delete('assignedTo[]');
   body.append('assignedTo[]', row.assignedTo);
-  if (!body.has('mailto[]')) body.append('mailto[]', '');
   return body;
 }
 
@@ -369,6 +368,25 @@ function stripChildTaskTagFields(body) {
     'mailto',
     'mailto[]'
   ].forEach(name => body.delete(name));
+}
+
+function stripChildTaskRemarkFields(body) {
+  [
+    'comment',
+    'comment[]',
+    'remark',
+    'remarks',
+    'remark[]',
+    'history',
+    'historyComment'
+  ].forEach(name => body.delete(name));
+}
+
+function keepExistingFormValueOnly(body, name) {
+  if (!body.has(name)) return;
+  const values = body.getAll(name).filter(value => String(value ?? '').trim() !== '');
+  body.delete(name);
+  values.forEach(value => body.append(name, value));
 }
 
 async function listExecutionTaskIds(api, executionId) {
