@@ -44,13 +44,17 @@ export async function buildZentaoSplitPlan(task = {}) {
   const title = String(firstValue(detail.name, detail.title, task.title, task.displayTitle)).replace(/\s+/g, ' ').trim();
   const baseName = getBaseName(title);
   const text = `${title}\n${detail.desc || ''}\n${task.requirement || ''}\n${task.zentao?.storyTitle || ''}`;
-  const deadline = validDate(detail.deadline || task.deadline || task.zentao?.deadline);
-  const executionId = executionIdOf(detail, task);
+  const siblingTasks = relatedTaskList(detail);
+  const artTemplate = findArtProductionTemplate(detail, task, siblingTasks);
+  const cocosTemplate = findCocosProductionTemplate(detail, task, siblingTasks);
+  const deadline = validDate(artTemplate?.deadline || detail.deadline || task.deadline || task.zentao?.deadline);
+  const executionId = executionIdOf(artTemplate || detail, task);
+  const parentTaskId = taskParentId(artTemplate || detail) || taskParentId(detail) || String(task.zentao?.parent || '') || taskId;
   const main = recommendedMainAssignee(text);
   const children = [];
 
   if (/入口图标|入口图|入口icon|新增子游戏|新增小游戏|新增游戏/i.test(text)) {
-    children.push(childRow(`【制作单】${baseName || title}`, 'yushengwei', deadline, executionId, taskId, 0));
+    children.push(childRow(`【制作单】${baseName || title}`, 'yushengwei', deadline, executionId, parentTaskId, 0, artTemplate));
   } else if (/走查/i.test(text) || /【\s*(?:美术)?验收单\s*】|美术验收/i.test(text)) {
     [
       ['【验收单】', '-白', 'lanhj'],
@@ -59,18 +63,22 @@ export async function buildZentaoSplitPlan(task = {}) {
       ['【验收单】', '-10', 'lilh'],
       ['【验收单】', '-2主套', 'huangjianrong']
     ].forEach(([prefix, suffix, account], index) => {
-      children.push(childRow(`${prefix}${baseName || title}${suffix}`, account, deadline, executionId, taskId, index));
+      children.push(childRow(`${prefix}${baseName || title}${suffix}`, account, deadline, executionId, parentTaskId, index, artTemplate));
     });
   } else if (/web5?|web/i.test(text)) {
-    children.push(childRow(`【制作单】${baseName || title}-2`, /皮肤/i.test(text) ? 'fengshuqi' : 'huangjianrong', deadline, executionId, taskId, 0));
-    if (/cocos|(?:^|[^A-Za-z])cos\s*端|cos\s*15/i.test(text)) {
-      children.push(childRow(`【制作单】${baseName || title}-cocos`, /15/.test(text) ? 'zhangzb' : 'lilh', deadline, executionId, taskId, 1));
+    children.push(childRow(`【制作单】${baseName || title}-2`, /皮肤/i.test(text) ? 'fengshuqi' : 'huangjianrong', deadline, executionId, parentTaskId, 0, artTemplate));
+    if (cocosTemplate || /cocos|(?:^|[^A-Za-z])cos\s*端|cos\s*15/i.test(text)) {
+      const cocosDeadline = validDate(cocosTemplate?.deadline || deadline);
+      const cocosExecutionId = executionIdOf(cocosTemplate || artTemplate || detail, task);
+      children.push(childRow(`【制作单】${baseName || title}-cocos`, /15/.test(text) ? 'zhangzb' : 'lilh', cocosDeadline, cocosExecutionId, parentTaskId, 1, cocosTemplate || artTemplate));
     }
     if (/cocos\s*15|cos\s*15/i.test(text)) {
-      children.push(childRow(`【制作单】${baseName || title}-15`, 'yejunbo', deadline, executionId, taskId, 2));
+      const cocosDeadline = validDate(cocosTemplate?.deadline || deadline);
+      const cocosExecutionId = executionIdOf(cocosTemplate || artTemplate || detail, task);
+      children.push(childRow(`【制作单】${baseName || title}-15`, 'yejunbo', cocosDeadline, cocosExecutionId, parentTaskId, 2, cocosTemplate || artTemplate));
     }
   } else {
-    children.push(childRow(`【制作单】${baseName || title}`, main.account, deadline, executionId, taskId, 0));
+    children.push(childRow(`【制作单】${baseName || title}`, main.account, deadline, executionId, parentTaskId, 0, artTemplate));
   }
 
   return {
@@ -78,7 +86,7 @@ export async function buildZentaoSplitPlan(task = {}) {
     title,
     deadline,
     executionId,
-    parent: taskId,
+    parent: parentTaskId,
     mainAssignee: main.account,
     assignees: artAssigneeOptions,
     children
@@ -92,17 +100,6 @@ export async function applyZentaoSplitPlan(task = {}, plan = {}, options = {}) {
   const detail = unwrapTask(await api.request({ method: 'GET', path: `/api.php/v1/tasks/${taskId}` }));
   const results = [];
   const mainAssignee = String(plan.mainAssignee || '').trim();
-  if (mainAssignee) {
-    try {
-      const fresh = await assignZentaoTask({ ...task, ...detail, taskNo: taskId, zentao: { ...(task.zentao || {}), id: taskId } }, { account: mainAssignee }, {
-        comment: explicitZentaoComment(options),
-        allowZentaoComment: options.allowZentaoComment === true
-      });
-      results.push({ type: 'main', ok: true, taskId, assignedTo: describeTaskAssignee(fresh) || mainAssignee });
-    } catch (error) {
-      results.push({ type: 'main', ok: false, taskId, assignedTo: mainAssignee, error: error.message || String(error) });
-    }
-  }
 
   const children = Array.isArray(plan.children) ? plan.children : [];
   for (const row of children) {
@@ -132,6 +129,28 @@ export async function applyZentaoSplitPlan(task = {}, plan = {}, options = {}) {
       results.push({ type: 'child', ok: false, taskId: '', name, assignedTo, error: error.message || String(error) });
     }
   }
+
+  const childFailed = results.some(item => item.type === 'child' && item.ok === false);
+  if (mainAssignee && !childFailed) {
+    try {
+      const fresh = await assignZentaoTask({ ...task, ...detail, taskNo: taskId, zentao: { ...(task.zentao || {}), id: taskId } }, { account: mainAssignee }, {
+        comment: explicitZentaoComment(options),
+        allowZentaoComment: options.allowZentaoComment === true
+      });
+      results.unshift({ type: 'main', ok: true, taskId, assignedTo: describeTaskAssignee(fresh) || mainAssignee });
+    } catch (error) {
+      results.unshift({ type: 'main', ok: false, taskId, assignedTo: mainAssignee, error: error.message || String(error) });
+    }
+  } else if (mainAssignee && childFailed) {
+    results.unshift({
+      type: 'main',
+      ok: false,
+      taskId,
+      assignedTo: mainAssignee,
+      skipped: true,
+      error: '子单创建失败，已跳过主单指派，避免出现主单已转派但子单未创建的部分成功状态'
+    });
+  }
   const failed = results.filter(item => item.ok === false);
   return { taskId, results, ok: failed.length === 0, failedCount: failed.length, successCount: results.length - failed.length };
 }
@@ -143,7 +162,10 @@ async function classicAssignTask(api, detail = {}, task = {}, updates = {}) {
   if (!executionId) throw new Error('所属版本为空，无法提交禅道指派');
 
   const path = `index.php?m=task&f=assignTo&executionID=${encodeURIComponent(executionId)}&taskID=${encodeURIComponent(taskId)}&onlybody=yes`;
-  const html = await classicGet(api, path, `index.php?m=task&f=view&taskID=${taskId}&onlybody=yes`);
+  const html = await classicGet(api, path, `index.php?m=task&f=view&taskID=${taskId}&onlybody=yes`, {
+    requireFields: ['assignedTo', 'left'],
+    label: '指派表单'
+  });
   const body = taskAssignBodyFromForm(html, detail, task, updates);
   await classicPost(api, path, body, path);
 }
@@ -220,61 +242,82 @@ function taskAssignBodyFromForm(html = '', detail = {}, task = {}, updates = {})
   return body;
 }
 
-async function classicGet(api, pathname, refererPath) {
-  const cookies = await getClassicCookies(api);
+async function classicGet(api, pathname, refererPath, options = {}) {
   const baseUrl = String(api.baseUrl || '').replace(/\/$/, '');
-  const res = await fetch(`${baseUrl}/${pathname.replace(/^\/+/, '')}`, {
-    headers: {
-      Cookie: cookies,
-      Referer: `${baseUrl}/${String(refererPath || pathname).replace(/^\/+/, '')}`
-    },
-    redirect: 'manual'
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`禅道 HTTP ${res.status}`);
-  if (/用户登录|user-login|m=user&f=login/i.test(text) && !/name=['"]assignedTo['"]/i.test(text)) {
-    classicCookieJar = null;
-    throw new Error('禅道经典页面登录失效，无法打开指派表单');
+  let lastText = '';
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const cookies = await getClassicCookies(api, { force: attempt > 0 });
+    const res = await fetch(`${baseUrl}/${pathname.replace(/^\/+/, '')}`, {
+      headers: {
+        Cookie: cookies,
+        Referer: `${baseUrl}/${String(refererPath || pathname).replace(/^\/+/, '')}`
+      },
+      redirect: 'manual'
+    });
+    const text = await res.text();
+    lastText = text;
+    if (!res.ok) throw new Error(`禅道 HTTP ${res.status}`);
+    if (isClassicLoginPage(text, options.requireFields)) {
+      classicCookieJar = null;
+      continue;
+    }
+    assertClassicFormReady(text, options);
+    return text;
   }
-  return text;
+  const label = options.label || '禅道经典页面';
+  throw new Error(`${label}登录失效，重登后仍无法打开${classicLoginHint(lastText)}`);
 }
 
 async function classicPost(api, pathname, body, refererPath) {
-  const cookies = await getClassicCookies(api);
   const baseUrl = String(api.baseUrl || '').replace(/\/$/, '');
-  const res = await fetch(`${baseUrl}/${pathname.replace(/^\/+/, '')}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Cookie: cookies,
-      Referer: `${baseUrl}/${refererPath.replace(/^\/+/, '')}`
-    },
-    body: body.toString(),
-    redirect: 'manual'
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`禅道 HTTP ${res.status}`);
-  if (/alert\('([^']+)'\)/.test(text) && !/保存成功|parent\.location|self\.location/.test(text)) {
-    throw new Error(text.match(/alert\('([^']+)'\)/)?.[1] || '禅道返回错误弹窗');
+  let lastText = '';
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const cookies = await getClassicCookies(api, { force: attempt > 0 });
+    const res = await fetch(`${baseUrl}/${pathname.replace(/^\/+/, '')}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Cookie: cookies,
+        Referer: `${baseUrl}/${refererPath.replace(/^\/+/, '')}`
+      },
+      body: body.toString(),
+      redirect: 'manual'
+    });
+    const text = await res.text();
+    lastText = text;
+    if (!res.ok) throw new Error(`禅道 HTTP ${res.status}`);
+    if (isClassicLoginPage(text)) {
+      classicCookieJar = null;
+      continue;
+    }
+    if (/alert\('([^']+)'\)/.test(text) && !/保存成功|parent\.location|self\.location/.test(text)) {
+      throw new Error(text.match(/alert\('([^']+)'\)/)?.[1] || '禅道返回错误弹窗');
+    }
+    return text;
   }
-  return text;
+  throw new Error(`禅道经典页面提交登录失效，重登后仍无法提交${classicLoginHint(lastText)}`);
 }
 
 async function createChildTaskClassic(api, detail = {}, task = {}, row = {}) {
-  const executionId = String(row.executionId || executionIdOf(detail, task));
+  const templateDetail = await loadChildTaskTemplate(api, row, detail);
+  const sourceDetail = templateDetail || detail;
+  const executionId = String(row.executionId || executionIdOf(sourceDetail, task));
   if (!executionId) throw new Error(`子单「${row.name || ''}」缺少所属版本，无法创建`);
   const parentId = String(row.parent || zentaoTaskId(task));
-  const storyId = String(idValue(firstValue(detail.story, detail.storyID, task.zentao?.story, 0)) || '0');
-  const moduleId = String(idValue(firstValue(detail.module, task.zentao?.module, 0)) || '0');
-  const estimate = String(row.estimate ?? 0);
+  const storyId = String(idValue(firstValue(sourceDetail.story, sourceDetail.storyID, task.zentao?.story, 0)) || '0');
+  const moduleId = String(idValue(firstValue(sourceDetail.module, task.zentao?.module, 0)) || '0');
+  const estimate = String(row.estimate ?? firstValue(sourceDetail.estimate, sourceDetail.left, 0));
   if (zentaoTaskId(task) && !parentId) throw new Error(`子单「${row.name || ''}」缺少父任务，已停止创建以避免取消关联`);
-  if (idValue(firstValue(detail.story, detail.storyID, task.zentao?.story)) && (!storyId || storyId === '0')) {
+  if (idValue(firstValue(sourceDetail.story, sourceDetail.storyID, task.zentao?.story)) && (!storyId || storyId === '0')) {
     throw new Error(`子单「${row.name || ''}」缺少关联需求，已停止创建以避免取消关联`);
   }
   const createPath = `index.php?m=task&f=create&executionID=${executionId}&storyID=${storyId}&moduleID=${moduleId}&taskID=${parentId}`;
   const createOnlyBodyPath = `${createPath}&onlybody=yes`;
-  const html = await classicGet(api, createOnlyBodyPath, createOnlyBodyPath);
-  const body = taskCreateBodyFromForm(html, detail, task, {
+  const html = await classicGet(api, createOnlyBodyPath, createOnlyBodyPath, {
+    requireFields: ['execution', 'module', 'story', 'name'],
+    label: '子单创建表单'
+  });
+  const body = taskCreateBodyFromForm(html, sourceDetail, task, {
     ...row,
     name: stripAutoTaskTypePrefix(row.name),
     assignedTo: row.assignedTo,
@@ -336,7 +379,10 @@ async function linkCreatedChildToParentClassic(api, created = {}, parentId = '',
   if (!childId || !targetParent) return created;
   const editPath = `index.php?m=task&f=edit&taskID=${encodeURIComponent(childId)}`;
   const editOnlyBodyPath = `${editPath}&onlybody=yes`;
-  const html = await classicGet(api, editOnlyBodyPath, `index.php?m=task&f=view&taskID=${encodeURIComponent(childId)}&onlybody=yes`);
+  const html = await classicGet(api, editOnlyBodyPath, `index.php?m=task&f=view&taskID=${encodeURIComponent(childId)}&onlybody=yes`, {
+    requireFields: ['name'],
+    label: '子单编辑表单'
+  });
   const formHtml = formHtmlWithFields(html, ['execution', 'module', 'story', 'name'])
     || formHtmlWithFields(html, ['name'])
     || firstFormHtml(html);
@@ -354,9 +400,18 @@ async function linkCreatedChildToParentClassic(api, created = {}, parentId = '',
   return fresh;
 }
 
+async function loadChildTaskTemplate(api, row = {}, fallback = {}) {
+  const templateTaskId = String(row.templateTaskId || '').trim();
+  if (!templateTaskId || templateTaskId === String(zentaoTaskId(fallback) || '')) return fallback;
+  try {
+    return unwrapTask(await api.request({ method: 'GET', path: `/api.php/v1/tasks/${encodeURIComponent(templateTaskId)}` }));
+  } catch {
+    return fallback;
+  }
+}
+
 function taskCreateBodyFromForm(html = '', detail = {}, task = {}, row = {}) {
-  const formHtml = formHtmlWithFields(html, ['execution', 'module', 'story', 'assignedTo[]', 'name'])
-    || formHtmlWithFields(html, ['execution', 'module', 'story', 'assignedTo[]'])
+  const formHtml = formHtmlWithFields(html, ['execution', 'module', 'story', 'name'])
     || firstFormHtml(html);
   if (!formHtml) throw new Error(`子单「${row.name || ''}」未读取到禅道创建表单，已停止创建以避免取消关联`);
   const body = formBodyFromHtml(formHtml || html);
@@ -374,17 +429,19 @@ function taskCreateBodyFromForm(html = '', detail = {}, task = {}, row = {}) {
   stripChildTaskTagFields(body);
   stripChildTaskRemarkFields(body);
   setFormValue(body, 'estimate', String(row.estimate ?? body.get('estimate') ?? 0));
-  setFormValue(body, 'deadline', validDate(row.deadline || detail.deadline || task.deadline || task.zentao?.deadline));
+  setFormValue(body, 'deadline', validDate(row.deadline || detail.deadline || task.deadline || task.zentao?.deadline || body.get('deadline')));
   setFormValue(body, 'desc', row.desc || inheritedChildTaskDesc(detail, task) || body.get('desc') || '');
-  keepExistingFormValueOnly(body, 'status');
-  keepExistingFormValueOnly(body, 'type');
-  keepExistingFormValueOnly(body, 'category');
-  keepExistingFormValueOnly(body, 'source');
-  keepExistingFormValueOnly(body, 'ordertype');
-  keepExistingFormValueOnly(body, 'after');
-  body.delete('assignedTo');
-  body.delete('assignedTo[]');
-  body.append('assignedTo[]', row.assignedTo);
+  keepTemplateOrExistingFormValue(body, 'status', detail.status);
+  keepTemplateOrExistingFormValue(body, 'type', detail.type);
+  keepTemplateOrExistingFormValue(body, 'category', detail.category);
+  keepTemplateOrExistingFormValue(body, 'source', detail.source);
+  keepTemplateOrExistingFormValue(body, 'ordertype', detail.ordertype);
+  keepTemplateOrExistingFormValue(body, 'after', '');
+  keepTemplateOrExistingFormValue(body, 'env', detail.env);
+  keepTemplateOrExistingFormValue(body, 'estStarted', validDate(detail.estStarted));
+  keepTemplateOrExistingFormValue(body, 'left', firstValue(detail.left, row.estimate, body.get('left')));
+  keepTemplateOrExistingFormValue(body, 'consumed', detail.consumed);
+  setChildTaskAssigneeFormValue(body, formHtml, row.assignedTo);
   return body;
 }
 
@@ -422,6 +479,15 @@ function setChildTaskParentFormValue(body, formHtml = '', parentId = '') {
   setFormValue(body, existingField || 'parent', value);
 }
 
+function setChildTaskAssigneeFormValue(body, formHtml = '', assignedTo = '') {
+  const value = String(assignedTo || '').trim();
+  if (!value) return;
+  const assigneeFields = ['assignedTo[]', 'assignedTo', 'owner', 'assignedToList[]'];
+  const existingField = assigneeFields.find(name => body.has(name) || htmlFormHasField(formHtml, name));
+  for (const name of assigneeFields) body.delete(name);
+  body.append(existingField || 'assignedTo[]', value);
+}
+
 function htmlFormHasField(html = '', name = '') {
   const escaped = String(name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   if (!escaped) return false;
@@ -446,6 +512,15 @@ function keepExistingFormValueOnly(body, name) {
   const values = body.getAll(name).filter(value => String(value ?? '').trim() !== '');
   body.delete(name);
   values.forEach(value => body.append(name, value));
+}
+
+function keepTemplateOrExistingFormValue(body, name, templateValue) {
+  const value = String(templateValue ?? '').trim();
+  if (value && !value.startsWith('0000-00-00')) {
+    setFormValue(body, name, value);
+    return;
+  }
+  keepExistingFormValueOnly(body, name);
 }
 
 async function listExecutionTaskIds(api, executionId) {
@@ -584,8 +659,32 @@ function hasExplicitText(value) {
   return String(value || '').trim().length > 0;
 }
 
+function assertClassicFormReady(html = '', options = {}) {
+  const fields = Array.isArray(options.requireFields) ? options.requireFields : [];
+  if (!fields.length) return;
+  const formHtml = formHtmlWithFields(html, fields);
+  if (formHtml) return;
+  const label = options.label || '禅道表单';
+  throw new Error(`${label}缺少必要字段 ${fields.join(', ')}，已停止提交以避免误写禅道`);
+}
+
+function isClassicLoginPage(html = '', expectedFields = []) {
+  const text = String(html || '');
+  const hasExpectedField = Array.isArray(expectedFields) && expectedFields.some(field => htmlFormHasField(text, field));
+  if (hasExpectedField) return false;
+  if (/name\s*=\s*['"]account['"]/i.test(text) && /name\s*=\s*['"]password['"]/i.test(text)) return true;
+  return /用户登录|user-login|m=user&f=login|loginPanel|login-form/i.test(text);
+}
+
+function classicLoginHint(html = '') {
+  const text = stripHtml(String(html || '')).replace(/\s+/g, ' ').trim();
+  const brief = text.slice(0, 80);
+  return brief ? `（返回内容：${brief}）` : '';
+}
+
 let classicCookieJar = null;
-async function getClassicCookies(api) {
+async function getClassicCookies(api, options = {}) {
+  if (options.force) classicCookieJar = null;
   if (classicCookieJar) return formatCookies(classicCookieJar);
   const baseUrl = String(api.baseUrl || '').replace(/\/$/, '');
   classicCookieJar = {};
@@ -607,7 +706,32 @@ async function getClassicCookies(api) {
     redirect: 'manual'
   });
   Object.assign(classicCookieJar, parseSetCookie(getSetCookieHeaders(res.headers)));
+  if (!res.ok) {
+    classicCookieJar = null;
+    throw new Error(`禅道经典页面登录失败：HTTP ${res.status}`);
+  }
+  if (!(await verifyClassicLogin(api, classicCookieJar))) {
+    classicCookieJar = null;
+    throw new Error('禅道经典页面登录失败：账号密码未建立有效经典页会话');
+  }
   return formatCookies(classicCookieJar);
+}
+
+async function verifyClassicLogin(api, jar = {}) {
+  const baseUrl = String(api.baseUrl || '').replace(/\/$/, '');
+  try {
+    const res = await fetch(`${baseUrl}/index.php?m=my&f=index&onlybody=yes`, {
+      headers: {
+        Cookie: formatCookies(jar),
+        Referer: `${baseUrl}/index.php?m=user&f=login`
+      },
+      redirect: 'manual'
+    });
+    const text = await res.text();
+    return res.ok && !isClassicLoginPage(text);
+  } catch {
+    return false;
+  }
 }
 
 function getSetCookieHeaders(headers) {
@@ -793,23 +917,60 @@ function executionIdOf(detail = {}, task = {}) {
   );
 }
 
-function childRow(name, assignedTo, deadline, executionId, parent, index) {
+function childRow(name, assignedTo, deadline, executionId, parent, index, templateTask = {}) {
   return {
     id: `child-${index + 1}`,
     enabled: true,
     name,
     assignedTo,
     deadline,
-    estimate: 0,
+    estimate: firstValue(templateTask?.estimate, templateTask?.left, 0),
     executionId,
-    parent
+    parent,
+    templateTaskId: String(templateTask?.id || templateTask?.taskID || '').trim()
   };
+}
+
+function relatedTaskList(detail = {}) {
+  return extractRelatedTasks(detail)
+    .filter(item => item && typeof item === 'object' && (item.id || item.taskID));
+}
+
+function findArtProductionTemplate(detail = {}, task = {}, related = []) {
+  const currentId = String(zentaoTaskId(task) || zentaoTaskId(detail) || '').trim();
+  const candidates = [detail, ...related].filter(item => {
+    const id = String(item.id || item.taskID || '').trim();
+    const name = String(item.name || item.title || '');
+    if (!id) return false;
+    if (currentId && id === currentId) return true;
+    if (!/制作单|美术/i.test(name)) return false;
+    if (/cocos|(?:^|[^A-Za-z])cos\s*\d*|客户端/i.test(name)) return false;
+    return true;
+  });
+  return candidates.find(item => String(item.id || item.taskID || '') === currentId)
+    || candidates.find(item => isArtAssigneeAccount(accountName(item.assignedTo)))
+    || candidates[0]
+    || detail;
+}
+
+function findCocosProductionTemplate(detail = {}, task = {}, related = []) {
+  return [detail, ...related].find(item => {
+    const name = String(item?.name || item?.title || '');
+    if (!/制作单|美术/i.test(name)) return false;
+    return /cocos|(?:^|[^A-Za-z])cos\s*\d*|客户端/i.test(name);
+  }) || null;
+}
+
+function isArtAssigneeAccount(account = '') {
+  const value = String(account || '').trim();
+  return artAssigneeOptions.some(item => item.account === value);
 }
 
 function getBaseName(title) {
   return String(title || '')
     .replace(/^【.*?】\s*/, '')
     .replace(/\s*[-—_]*\s*美术$/, '')
+    .replace(/\s*[-—_]*(?:2|cocos|cos|15)\s*$/i, '')
     .trim();
 }
 
