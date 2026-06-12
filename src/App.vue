@@ -626,7 +626,6 @@ export default {
       skillInventoryTab: 'list',
       skillInventoryPage: 1,
       skillInventoryPageSize: 10,
-      skillInventoryShowHidden: false,
       skillInventoryViewEverMounted: false,
       skillInventoryKeepFiltersOnRouteOnce: false,
       skillSourceDisplayDialog: {
@@ -2327,7 +2326,6 @@ export default {
         console.error('AI 产物清单筛选行计算失败，已回退到库存行', error);
         return this.safeSkillInventoryRows
           .filter(row => row.displayHidden !== true)
-          .filter(row => row.hidden !== true || (this.canOperateSkillInventoryManage && this.skillInventoryShowHidden))
           .filter(row => this.safeIsVisibleSkillInventoryProductRow(row));
       }
     },
@@ -2384,11 +2382,9 @@ export default {
     },
 
     safeSkillInventoryFallbackProducts() {
-      const includeHidden = this.canOperateSkillInventoryManage && this.skillInventoryShowHidden === true;
       const map = new Map();
       for (const row of this.safeSkillInventoryRows) {
         if (!row || row.displayHidden === true) continue;
-        if (row.hidden === true && !includeHidden) continue;
         const key = this.safeCallDisplayValue(() => this.skillInventoryProductNameKey(row), '')
           || String(row.uid || row.id || row.productDisplayName || row.title || '').trim();
         if (!key || map.has(key)) continue;
@@ -2464,8 +2460,7 @@ export default {
       const token = this.skillInventoryRowsCacheKey;
       const cacheKey = [
         token,
-        this.canOperateSkillInventoryManage ? 'manage' : 'view',
-        this.skillInventoryShowHidden ? 'show-hidden' : 'hide-hidden'
+        this.canOperateSkillInventoryManage ? 'manage' : 'view'
       ].join('::');
       if (this._skillInventoryVisibleRowsCache?.token === cacheKey && Array.isArray(this._skillInventoryVisibleRowsCache.rows)) {
         return this._skillInventoryVisibleRowsCache.rows;
@@ -2473,7 +2468,6 @@ export default {
       const rows = [];
       for (const row of this.skillInventoryRows) {
         if (!row || row.displayHidden === true) continue;
-        if (row.hidden === true && (!this.canOperateSkillInventoryManage || !this.skillInventoryShowHidden)) continue;
         if (!this.safeIsVisibleSkillInventoryProductRow(row)) continue;
         rows.push(row);
       }
@@ -2543,14 +2537,21 @@ export default {
     skillInventoryRowsCacheKey() {
       return [
         this.skillInventoryScanSignature || this.skillInventoryScanCacheSignature,
-        Object.keys(this.skillOwnerOverrides || {}).length,
-        Object.keys(this.skillDisplayNameOverrides || {}).length,
-        Object.keys(this.skillVersionOverrides || {}).length,
-        Object.keys(this.skillAliasOverrides || {}).length,
-        Object.keys(this.skillAliasHistoryOverrides || {}).length,
-        Object.keys(this.skillInventoryKindOverrides || {}).length,
+        this.skillInventoryOverrideSignature(this.skillOwnerOverrides),
+        this.skillInventoryOverrideSignature(this.skillDisplayNameOverrides),
+        this.skillInventoryOverrideSignature(this.skillVersionOverrides),
+        this.skillInventoryOverrideSignature(this.skillAliasOverrides),
+        this.skillInventoryOverrideSignature(this.skillAliasHistoryOverrides),
+        this.skillInventoryOverrideSignature(this.skillInventoryKindOverrides),
         this.skillInventoryRowsCacheToken || ''
       ].join('::');
+    },
+
+    skillInventoryStatsSnapshotReady() {
+      const snapshot = this.skillInventoryProductStatsSnapshot;
+      return snapshot
+        && Number(snapshot.total || 0) >= 0
+        && ['total', 'skill', 'standard'].some(key => Object.prototype.hasOwnProperty.call(snapshot, key));
     },
 
     skillInventorySourceOptions() {
@@ -2558,67 +2559,61 @@ export default {
     },
 
     filteredSkillInventoryRows() {
-      const keyword = String(this.skillInventoryKeyword || '').trim().toLowerCase();
       const kindFilter = String(this.skillInventoryKindFilter || '').trim();
+      const groupedRows = this.skillInventoryFilteredRowsByKind;
+      if (kindFilter === 'skill') return groupedRows.skill;
+      if (kindFilter === 'standard') return groupedRows.standard;
+      return groupedRows.total;
+    },
+
+    skillInventoryFilteredRowsByKind() {
+      const rows = this.skillInventoryFilteredBaseRows;
+      const groups = {
+        total: rows,
+        skill: [],
+        standard: []
+      };
+      for (const row of rows) {
+        const kind = this.skillInventoryProductKind(row);
+        if (kind === 'skill') groups.skill.push(row);
+        else if (kind === 'standard') groups.standard.push(row);
+      }
+      return groups;
+    },
+
+    skillInventoryFilteredBaseRows() {
+      const keyword = String(this.skillInventoryKeyword || '').trim().toLowerCase();
       const cacheKey = [
         this.skillInventoryRowsCacheKey,
         this.canOperateSkillInventoryManage ? 'manage' : 'view',
         keyword,
-        kindFilter,
         this.skillInventoryMemberFilter || '',
         this.skillInventoryPreferMine ? 'mine' : 'all',
-        this.currentAccountPrimaryPersonName || '',
-        this.skillInventoryShowHidden ? 'show-hidden' : 'hide-hidden'
+        this.currentAccountPrimaryPersonName || ''
       ].join('::');
-      if (this._filteredSkillInventoryRowsCache?.token === cacheKey && Array.isArray(this._filteredSkillInventoryRowsCache.rows)) {
-        return this._filteredSkillInventoryRowsCache.rows;
-      }
-      const rows = this.skillInventoryVisibleRows.filter(row => {
+      const cached = this.skillInventoryFilterCacheGet(cacheKey);
+      if (cached) return cached;
+      let rows = this.skillInventoryVisibleRows.filter(row => {
         if (this.skillInventoryMemberFilter && !this.skillInventoryRowDirectlyBelongsToMember(row, this.skillInventoryMemberFilter)) return false;
-        if (kindFilter === 'skill' && !this.isSkillInventorySkillProduct(row)) return false;
-        if (kindFilter === 'standard' && !this.isSkillInventoryStandardProduct(row)) return false;
-        if (!keyword) return true;
-        const haystack = [
-          row.id,
-          row.title,
-          row.uploader,
-          row.source,
-          row.category,
-          row.version,
-          row.projectName,
-          row.relativePath,
-          row.skill?.productGroupPath,
-          row.productFileName,
-          row.productDisplayName,
-          this.skillSceneText(row)
-        ].join('\n').toLowerCase();
-        return haystack.includes(keyword);
+        return this.skillInventoryKeywordMatchesRow(row, keyword);
       });
       if (this.skillInventoryMemberFilter) {
-        const sortedRows = [...rows].sort((a, b) => {
+        rows = [...rows].sort((a, b) => {
           const usageDiff = Number(b.usageCount || 0) - Number(a.usageCount || 0);
           if (usageDiff) return usageDiff;
           return String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')) || String(a.title || '').localeCompare(String(b.title || ''));
         });
-        this._filteredSkillInventoryRowsCache = { token: cacheKey, rows: sortedRows };
-        this.$nextTick(() => this.ensureSkillInventoryPageInRange(sortedRows.length));
-        return sortedRows;
+      } else if (this.skillInventoryPreferMine) {
+        const mine = this.currentAccountPrimaryPersonName || '';
+        rows = [...rows].sort((a, b) => {
+          const aMine = this.skillInventoryRowBelongsToMember(a, mine) ? 1 : 0;
+          const bMine = this.skillInventoryRowBelongsToMember(b, mine) ? 1 : 0;
+          if (aMine !== bMine) return bMine - aMine;
+          return String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')) || String(a.title || '').localeCompare(String(b.title || ''));
+        });
       }
-      if (!this.skillInventoryPreferMine || this.skillInventoryMemberFilter) {
-        this._filteredSkillInventoryRowsCache = { token: cacheKey, rows };
-        this.$nextTick(() => this.ensureSkillInventoryPageInRange(rows.length));
-        return rows;
-      }
-      const mine = this.currentAccountPrimaryPersonName || '';
-      const sortedRows = [...rows].sort((a, b) => {
-        const aMine = this.skillInventoryRowBelongsToMember(a, mine) ? 1 : 0;
-        const bMine = this.skillInventoryRowBelongsToMember(b, mine) ? 1 : 0;
-        if (aMine !== bMine) return bMine - aMine;
-        return String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')) || String(a.title || '').localeCompare(String(b.title || ''));
-      });
-      this._filteredSkillInventoryRowsCache = { token: cacheKey, rows: sortedRows };
-      this.$nextTick(() => this.ensureSkillInventoryPageInRange(sortedRows.length));
-      return sortedRows;
+      this.skillInventoryFilterCacheSet(cacheKey, rows);
+      return rows;
     },
 
     pagedSkillInventoryRows() {
@@ -2639,7 +2634,6 @@ export default {
         this.skillInventoryMemberFilter || '',
         this.skillInventoryPreferMine ? 'mine' : 'all',
         this.currentAccountPrimaryPersonName || '',
-        this.skillInventoryShowHidden ? 'show-hidden' : 'hide-hidden',
         this.skillInventoryPage,
         this.skillInventoryPageSize,
         this.usageCounters?.updatedAt || '',
@@ -2649,10 +2643,10 @@ export default {
         this.runs.length,
         this.taskArtBriefUsageLogs.length
       ].join('::');
-      const cached = this._skillInventoryDisplayRowsCache;
-      if (cached?.token === cacheKey && Array.isArray(cached.rows)) return cached.rows;
+      const cached = this.skillInventoryDisplayRowsCacheGet(cacheKey);
+      if (cached) return cached;
       const rows = this.pagedSkillInventoryRows.map(row => this.decorateSkillInventoryDisplayRow(row));
-      this._skillInventoryDisplayRowsCache = { token: cacheKey, rows };
+      this.skillInventoryDisplayRowsCacheSet(cacheKey, rows);
       return rows;
     },
 
@@ -2851,6 +2845,49 @@ export default {
     },
 
     skillInventoryProductStats() {
+      const cacheKey = [
+        this.skillInventoryRowsCacheKey,
+        String(this.skillInventoryKeyword || '').trim().toLowerCase(),
+        this.skillInventoryMemberFilter || ''
+      ].join('::');
+      const cached = this.skillInventoryProductStatsCacheGet(cacheKey);
+      if (cached) return cached;
+      const groupedRows = this.skillInventoryFilteredRowsByKind;
+      if (groupedRows.total.length || this.skillInventoryKeyword || this.skillInventoryMemberFilter) {
+        const stats = [
+          { key: 'total', label: '产物总计', value: groupedRows.total.length },
+          { key: 'skill', label: '技能总数', value: groupedRows.skill.length },
+          { key: 'standard', label: '规范总数', value: groupedRows.standard.length }
+        ];
+        if (!this.skillInventoryKeyword && !this.skillInventoryMemberFilter && groupedRows.total.length) {
+          const snapshot = {
+            total: groupedRows.total.length,
+            skill: groupedRows.skill.length,
+            standard: groupedRows.standard.length,
+            updatedAt: new Date().toISOString()
+          };
+          const cachedSnapshot = this.skillInventoryProductStatsSnapshot;
+          if (
+            !cachedSnapshot
+            || Number(cachedSnapshot.total || 0) !== snapshot.total
+            || Number(cachedSnapshot.skill || 0) !== snapshot.skill
+            || Number(cachedSnapshot.standard || 0) !== snapshot.standard
+          ) {
+            this.skillInventoryProductStatsSnapshot = snapshot;
+            this.saveWorkbenchDisplayCache('skillInventoryProductStatsSnapshot', this.skillInventoryProductStatsSnapshot);
+          }
+        }
+        this.skillInventoryProductStatsCacheSet(cacheKey, stats);
+        return stats;
+      }
+      if (!this.skillInventoryKeyword && !this.skillInventoryMemberFilter && this.skillInventoryStatsSnapshotReady) {
+        const snapshot = this.skillInventoryProductStatsSnapshot;
+        return [
+          { key: 'total', label: '产物总计', value: Number(snapshot.total || 0) },
+          { key: 'skill', label: '技能总数', value: Number(snapshot.skill || 0) },
+          { key: 'standard', label: '规范总数', value: Number(snapshot.standard || 0) }
+        ];
+      }
       if (!this.skillInventoryKeyword && !this.skillInventoryMemberFilter) {
         const products = this.skillInventoryUniqueProductsByName(this.skillInventoryRowsForProductStats || []);
         if (products.length) {
@@ -2870,11 +2907,13 @@ export default {
             this.skillInventoryProductStatsSnapshot = snapshot;
             this.saveWorkbenchDisplayCache('skillInventoryProductStatsSnapshot', this.skillInventoryProductStatsSnapshot);
           }
-          return [
+          const stats = [
             { key: 'total', label: '产物总计', value: snapshot.total },
             { key: 'skill', label: '技能总数', value: snapshot.skill },
             { key: 'standard', label: '规范总数', value: snapshot.standard }
           ];
+          this.skillInventoryProductStatsCacheSet(cacheKey, stats);
+          return stats;
         }
         if (this.hasProjectScanProducts(this.scans)) {
           const scanSnapshot = this.buildSkillInventoryProductStatsSnapshotFromScans(this.scans);
@@ -2899,17 +2938,18 @@ export default {
       const products = this.skillInventoryUniqueProductsByName(this.skillInventoryRowsForProductStats || []);
       const skillRows = products.filter(row => this.isSkillInventorySkillProduct(row));
       const standardRows = products.filter(row => this.isSkillInventoryStandardProduct(row));
-      return [
+      const stats = [
         { key: 'total', label: '产物总计', value: products.length },
         { key: 'skill', label: '技能总数', value: skillRows.length },
         { key: 'standard', label: '规范总数', value: standardRows.length }
       ];
+      this.skillInventoryProductStatsCacheSet(cacheKey, stats);
+      return stats;
     },
 
     skillInventoryRowsForProductStats() {
       const keyword = String(this.skillInventoryKeyword || '').trim().toLowerCase();
       return this.skillInventoryVisibleRows.filter(row => {
-        if (row.hidden === true) return false;
         if (this.skillInventoryMemberFilter && !this.skillInventoryRowDirectlyBelongsToMember(row, this.skillInventoryMemberFilter)) return false;
         if (!keyword) return true;
         const haystack = [
@@ -3071,6 +3111,9 @@ export default {
         if (overrideKind === 'skill') return 'skill';
         if (overrideKind === 'document') return 'standard';
         if (overrideKind === 'directory') return 'directory';
+        const cachedKind = String(row.productKind || row.skill?.productKind || '').trim();
+        if (cachedKind === 'document') return 'standard';
+        if (['skill', 'standard', 'directory'].includes(cachedKind)) return cachedKind;
         const directKind = String(row.skillInventoryKind || row.skill?.inventoryKind || '').trim();
         if (directKind === 'skill') return 'skill';
         if (directKind === 'document') return 'standard';
@@ -4313,6 +4356,84 @@ export default {
   },
 
   methods: {
+    skillInventoryOverrideSignature(overrides = {}) {
+      if (!overrides || typeof overrides !== 'object') return '';
+      return Object.entries(overrides)
+        .sort(([left], [right]) => String(left || '').localeCompare(String(right || '')))
+        .map(([key, value]) => {
+          const normalized = Array.isArray(value)
+            ? value.join('|')
+            : value && typeof value === 'object'
+              ? JSON.stringify(value)
+              : value;
+          return `${String(key || '').trim()}=${String(normalized ?? '').trim()}`;
+        })
+        .join(';;');
+    },
+
+    skillInventoryKeywordMatchesRow(row = {}, keyword = '') {
+      const text = String(keyword || '').trim().toLowerCase();
+      if (!text) return true;
+      const haystack = [
+        row.id,
+        row.title,
+        row.uploader,
+        row.source,
+        row.category,
+        row.version,
+        row.projectName,
+        row.relativePath,
+        row.skill?.productGroupPath,
+        row.productFileName,
+        row.productDisplayName,
+        this.skillSceneText(row),
+        Array.isArray(row.scenes) ? row.scenes.join(' ') : row.scenes
+      ].join('\n').toLowerCase();
+      return haystack.includes(text);
+    },
+
+    skillInventoryCacheMapGet(cacheName = '', key = '') {
+      const cache = this[cacheName];
+      if (!(cache instanceof Map) || !key) return null;
+      const value = cache.get(key);
+      return Array.isArray(value) ? value : null;
+    },
+
+    skillInventoryCacheMapSet(cacheName = '', key = '', rows = [], maxSize = 18) {
+      if (!key) return;
+      if (!(this[cacheName] instanceof Map)) this[cacheName] = new Map();
+      const cache = this[cacheName];
+      if (cache.size >= maxSize && !cache.has(key)) {
+        const firstKey = cache.keys().next().value;
+        if (firstKey) cache.delete(firstKey);
+      }
+      cache.set(key, Array.isArray(rows) ? rows : []);
+    },
+
+    skillInventoryFilterCacheGet(key = '') {
+      return this.skillInventoryCacheMapGet('_filteredSkillInventoryRowsCache', key);
+    },
+
+    skillInventoryFilterCacheSet(key = '', rows = []) {
+      this.skillInventoryCacheMapSet('_filteredSkillInventoryRowsCache', key, rows, 12);
+    },
+
+    skillInventoryDisplayRowsCacheGet(key = '') {
+      return this.skillInventoryCacheMapGet('_skillInventoryDisplayRowsCache', key);
+    },
+
+    skillInventoryDisplayRowsCacheSet(key = '', rows = []) {
+      this.skillInventoryCacheMapSet('_skillInventoryDisplayRowsCache', key, rows, 24);
+    },
+
+    skillInventoryProductStatsCacheGet(key = '') {
+      return this.skillInventoryCacheMapGet('_skillInventoryProductStatsCache', key);
+    },
+
+    skillInventoryProductStatsCacheSet(key = '', rows = []) {
+      this.skillInventoryCacheMapSet('_skillInventoryProductStatsCache', key, rows, 12);
+    },
+
     resetSkillInventoryDefaultEntryState() {
       this.skillInventoryTab = 'assets';
       this.skillInventoryKeyword = '';
@@ -4364,8 +4485,11 @@ export default {
 
     selectSkillInventoryKindFilter(key = '') {
       const next = key === 'skill' || key === 'standard' ? key : '';
-      this.skillInventoryKindFilter = this.skillInventoryKindFilter === next ? '' : next;
-      this.skillInventoryPage = 1;
+      if (this.skillInventoryKindFilter === next) {
+        this.skillInventoryKindFilter = '';
+        return;
+      }
+      this.skillInventoryKindFilter = next;
     },
 
     isSkillInventoryProductStatActive(key = '') {
@@ -8805,6 +8929,11 @@ export default {
         ...this.generateSkillAliases({ ...skill, relativePath })
       ]);
       const inventoryKind = this.skillInventoryKind({ ...skill, projectId: projectRow.id });
+      const productKind = this.skillInventoryProductKind({
+        ...skill,
+        projectId: projectRow.id,
+        skillInventoryKind: inventoryKind
+      });
       const baseRow = {
         uid: `${projectRow.id}:${skill.id}:${skill.path || ''}`,
         id: skill.id,
@@ -8840,6 +8969,7 @@ export default {
         displayRestoredAt: skill.displayRestoredAt || '',
         displayRestoredBy: skill.displayRestoredBy || '',
         skillInventoryKind: inventoryKind,
+        productKind,
         auditScore: skill.auditScore,
         auditScore90: skill.auditScore90,
         audit: skill.audit,
@@ -8853,7 +8983,8 @@ export default {
           aliasHistory,
           hasAliasOverride: manualAliases.length > 0,
           displayVersionOverride,
-          inventoryKind
+          inventoryKind,
+          productKind
         }
       };
       const metrics = this.safeSkillInventoryRowMetrics(baseRow);
@@ -9027,19 +9158,47 @@ export default {
       return Number(this.skillInventoryUsageStatsForList(row).usageCount || 0);
     },
 
+    skillInventoryDisplayRowCacheKey(row = {}) {
+      return [
+        row.uid || row.id || '',
+        row.projectId || '',
+        row.relativePath || row.path || row.skill?.git?.relativePath || '',
+        row.productDisplayName || row.productFileName || row.title || '',
+        row.productKind || row.skill?.productKind || '',
+        row.skillInventoryKind || row.skill?.inventoryKind || '',
+        row.hidden === true ? 'hidden' : 'visible',
+        row.displayVersionOverride || row.skill?.displayVersionOverride || '',
+        row.version || row.skill?.version || '',
+        row.auditScore ?? row.skill?.auditScore ?? row.audit?.score ?? row.skill?.audit?.score ?? '',
+        this.usageCounters?.updatedAt || '',
+        Object.keys(this.usageCounters?.buckets || {}).length,
+        this.runs.length,
+        this.artProgressEvents.length,
+        this.artProgressOperationLogRows.length,
+        this.taskArtBriefUsageLogs.length
+      ].map(value => String(value ?? '').trim()).join('::');
+    },
+
     decorateSkillInventoryDisplayRow(row = {}) {
+      const cacheKey = this.skillInventoryDisplayRowCacheKey(row);
+      if (cacheKey && this._skillInventoryDecoratedRowCache?.has(cacheKey)) {
+        return this._skillInventoryDecoratedRowCache.get(cacheKey);
+      }
       const versionLabel = this.skillVersionShortLabel(row);
       const isSkillProduct = this.isSkillInventorySkillProduct(row);
-      const qualityScore = isSkillProduct ? this.skillQualityScore(row) : null;
-      return {
+      const hidden = row.hidden === true;
+      const qualityScore = !hidden && isSkillProduct ? this.skillQualityScore(row) : null;
+      const decorated = {
         ...row,
         displayVersionLabel: versionLabel,
         displayVersionClass: this.skillVersionClass(row),
-        displayUsageCount: this.skillInventoryUsageCountDisplay(row),
-        displayUsageRate: this.skillUsageRateDisplay(row),
+        displayUsageCount: hidden ? '-' : this.skillInventoryUsageCountDisplay(row),
+        displayUsageRate: hidden ? '-' : this.skillUsageRateDisplay(row),
         displayQualityScore: qualityScore,
         displayQualityClass: qualityScore === null ? '' : this.skillQualityScoreClass(qualityScore),
-        displayQualityText: qualityScore === null
+        displayQualityText: hidden
+          ? '该产物已作废，恢复后继续展示缓存中的累计调用、有效占比和质量分。'
+          : qualityScore === null
           ? '暂无 skill-auditor 评分，请点击刷新库存后重新计算。'
           : `质量分 ${qualityScore}：按 skill-auditor 9 维评分标准计算，包含触发清晰度、目标产物、工作流、工具资源、可执行性、失败模式、人工卡口、验证机制和高风险动作黑名单。`,
         displayIsSkillProduct: isSkillProduct,
@@ -9047,6 +9206,11 @@ export default {
         displayOwnerText: this.displayChinesePersonList(row.uploader),
         displayIsPathScanFolderProduct: this.isPathScanFolderProductRow(row)
       };
+      if (cacheKey) {
+        if (!this._skillInventoryDecoratedRowCache) this._skillInventoryDecoratedRowCache = new Map();
+        this._skillInventoryDecoratedRowCache.set(cacheKey, decorated);
+      }
+      return decorated;
     },
 
     skillInventoryUsageStatsForList(row = {}) {
@@ -11198,11 +11362,6 @@ export default {
       this.pushRoute('/skills/events');
     },
 
-    toggleSkillInventoryHiddenView() {
-      this.skillInventoryShowHidden = !this.skillInventoryShowHidden;
-      this.skillInventoryPage = 1;
-    },
-
     async scanProject(id) {
       if (!this.canRefreshSkillInventoryScan) {
         ElMessage.warning('当前角色没有刷新库存扫描的权限');
@@ -11391,10 +11550,10 @@ export default {
           || this.projectFromCachedScan(projectId, rawScan);
         for (const skill of Array.isArray(scan?.skills) ? scan.skills : []) {
           try {
-            if (!skill || skill.hidden === true || skill.displayHidden === true) continue;
+            if (!skill || skill.displayHidden === true) continue;
             if (!this.isMemberArtReporterRow(skill) && this.isFigmaUseConnectorArtifact(skill)) continue;
             const row = this.buildSkillInventoryRow(projectRow, skill);
-            if (!row || row.displayHidden === true || row.hidden === true) continue;
+            if (!row || row.displayHidden === true) continue;
             if (!this.safeIsVisibleSkillInventoryProductRow(row)) continue;
             rows.push(row);
           } catch (error) {
@@ -12786,8 +12945,10 @@ export default {
     clearSkillInventoryRowsCache(options = {}) {
       this._skillInventoryRowsCache = null;
       this._skillInventoryVisibleRowsCache = null;
-      this._filteredSkillInventoryRowsCache = null;
-      this._skillInventoryDisplayRowsCache = null;
+      this._filteredSkillInventoryRowsCache = new Map();
+      this._skillInventoryDisplayRowsCache = new Map();
+      this._skillInventoryProductStatsCache = new Map();
+      this._skillInventoryDecoratedRowCache = new Map();
       if (options.keepScanSignature !== true) {
         this.skillInventoryScanSignature = this.buildSkillInventoryScanSignature(this.scans);
       }
@@ -12797,7 +12958,8 @@ export default {
     clearSkillUsageStatsCache() {
       if (this._skillUsageLogCache) this._skillUsageLogCache.clear();
       this.skillInventoryMetricsCache = {};
-      this._skillInventoryDisplayRowsCache = null;
+      this._skillInventoryDisplayRowsCache = new Map();
+      this._skillInventoryDecoratedRowCache = new Map();
       this.clearAiMemberScoreCache();
     },
 
@@ -13848,6 +14010,7 @@ export default {
       }
       this.scans = scans;
       this.clearSkillUsageLogCache();
+      this.clearSkillInventoryRowsCache();
       if (this.skillUsageDialog.visible && this.skillUsageDialog.row && updatedDialogRow) {
         const dialogRow = this.skillUsageDialog.row;
         const dialogPath = String(dialogRow.skill?.git?.relativePath || dialogRow.relativePath || dialogRow.path || '');
