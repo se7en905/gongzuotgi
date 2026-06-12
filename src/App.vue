@@ -4647,8 +4647,10 @@ export default {
       }
       if (['assets', 'list'].includes(tab)) {
         this.restoreWorkbenchDisplayCacheKey('projects');
-        this.restoreWorkbenchDisplayCacheKey('scans');
-        this.restoreWorkbenchDisplayCacheKey('skillInventoryProductStatsSnapshot');
+        if (this.skillInventoryScanCacheLoaded !== true) {
+          this.restoreWorkbenchDisplayCacheKey('scans');
+          this.restoreWorkbenchDisplayCacheKey('skillInventoryProductStatsSnapshot');
+        }
         this.restoreWorkbenchDisplayCacheKey('aiAssetSheetRows');
         this.restoreWorkbenchDisplayCacheKey('usageCounters');
         this.ensureSkillInventoryUsageCounters();
@@ -4659,9 +4661,6 @@ export default {
         const needsServerScanCacheRefresh = this.skillInventoryScanCacheLoaded !== true;
         if (!this.loading.skillInventoryCache && (needsServerScanCacheRefresh || !hasRows || needsInventoryRowRecovery)) {
           this.loadProjectScanCacheForInventory({ force: true, silent: true }).catch(() => {});
-        }
-        if (hasVisibleRows) {
-          this.skillInventoryScanCacheLoaded = true;
         }
         this.ensureSkillInventoryVisibleListState();
       }
@@ -5026,7 +5025,7 @@ export default {
             jobs.push(['账号列表', () => this.refreshUsers()]);
           }
         } else if (!aiMembersView && this.can('menu.skillList')) {
-          jobs.push(['库存缓存', () => this.loadSkillInventorySavedSnapshot()]);
+          jobs.push(['库存缓存', () => this.loadSkillInventorySavedSnapshot({ force: true, silent: true })]);
           jobs.push(['人工研究清单', () => this.refreshAiAssetSheet()]);
           jobs.push(['验证回填', () => this.refreshSkillValidations({ force: true, silent: true })]);
           jobs.push(['调用次数', () => this.refreshUsageCounters()]);
@@ -8822,11 +8821,32 @@ export default {
           inventoryKind
         }
       };
-      const metrics = this.skillInventoryRowMetrics(baseRow);
+      const metrics = this.safeSkillInventoryRowMetrics(baseRow);
       return {
         ...baseRow,
         ...metrics
       };
+    },
+
+    safeSkillInventoryRowMetrics(row = {}) {
+      try {
+        return this.skillInventoryRowMetrics(row);
+      } catch (error) {
+        console.warn('AI 产物清单指标计算失败，已保留基础产物行', {
+          projectId: row.projectId,
+          title: row.productDisplayName || row.title || row.id || '',
+          path: row.relativePath || row.path || '',
+          error
+        });
+        return {
+          usageCount: 0,
+          usageRate: 0,
+          usagePeopleCount: 0,
+          usageAverage: 0,
+          validationCount: 0,
+          researchSyncCount: 0
+        };
+      }
     },
 
     skillInventoryRowMetrics(row = {}) {
@@ -11288,14 +11308,14 @@ export default {
         const scan = rawScan.scan && typeof rawScan.scan === 'object'
           ? { ...rawScan.scan, cachedAt: rawScan.cachedAt || rawScan.scan.cachedAt || '' }
           : rawScan;
-        scanMap[projectId] = this.mergeProjectScanResult(projectId, scan);
+        scanMap[projectId] = scan;
         if (!knownProjectIds.has(String(projectId || ''))) {
           this.projects.push(this.projectFromCachedScan(projectId, rawScan));
           knownProjectIds.add(String(projectId || ''));
         }
       }
       if (!Object.keys(scanMap).length) return false;
-      this.mergeScansIntoInventoryState(scanMap, { force: options.force === true });
+      this.replaceScansForSkillInventory(scanMap, { force: options.force === true });
       this.skillInventoryProductStatsSnapshot = options.productStats && typeof options.productStats === 'object'
         ? options.productStats
         : this.buildSkillInventoryProductStatsSnapshotFromScans(this.scans);
@@ -11305,6 +11325,26 @@ export default {
       else this.clearWorkbenchDisplayCacheKey('scans');
       this.ensureSkillInventoryVisibleListState();
       return true;
+    },
+
+    replaceScansForSkillInventory(scanMap = {}, options = {}) {
+      const nextScanMap = scanMap && typeof scanMap === 'object' ? scanMap : {};
+      if (!Object.keys(nextScanMap).length) return false;
+      const previousSignature = this.buildSkillInventoryScanSignature(this.scans);
+      const nextSignature = this.buildSkillInventoryScanSignature(nextScanMap);
+      const changed = options.force === true || previousSignature !== nextSignature;
+      this.scans = nextScanMap;
+      this.projects = this.projects.map(project => {
+        const scan = nextScanMap[project.id] || null;
+        if (scan) return { ...project, scan };
+        const { scan: _oldScan, ...rest } = project;
+        return rest;
+      });
+      this.skillInventoryScanSignature = nextSignature;
+      this.clearValidationMatchCache();
+      this.clearSkillUsageStatsCache();
+      this.clearSkillInventoryRowsCache({ keepScanSignature: true });
+      return changed;
     },
 
     buildSkillInventoryProductStatsSnapshotFromScans(scans = {}) {
@@ -11374,7 +11414,7 @@ export default {
         if (!this.skillInventoryRows.length && !silent) this.scanOutput = '暂无库存缓存，请点击刷新库存后读取。';
         return false;
       } catch (error) {
-        this.skillInventoryScanCacheLoaded = true;
+        this.skillInventoryScanCacheLoaded = false;
         const hasCachedRows = this.skillInventoryRows.length > 0;
         if (!silent) {
           this.scanOutput = hasCachedRows
@@ -11409,22 +11449,22 @@ export default {
       const force = options.force === true;
       const silent = options.silent === true;
       if (this.skillInventoryRows.length) {
-        this.skillInventoryScanCacheLoaded = true;
-        if (!force && this.skillInventoryProductStatsSnapshot) return;
+        if (!force && this.skillInventoryScanCacheLoaded === true && this.skillInventoryProductStatsSnapshot) return;
       }
       if (!silent) this.scanOutput = '正在读取上次库存数据...';
       try {
         const restored = await this.loadProjectScanCacheForInventory({ force: true, silent: true });
+        const serverCacheLoaded = this.skillInventoryScanCacheLoaded === true;
         if (!restored) {
           this.restoreWorkbenchDisplayCacheKey('projects');
           this.restoreWorkbenchDisplayCacheKey('scans');
         }
-        this.skillInventoryScanCacheLoaded = true;
+        this.skillInventoryScanCacheLoaded = restored || serverCacheLoaded;
         if (!silent) this.scanOutput = restored
           ? '已读取上次库存数据。'
           : (this.skillInventoryRows.length ? '库存缓存暂未返回新内容，已保留上次扫描清单。' : '暂无上次库存数据，请由有权限账号点击刷新库存。');
       } catch (error) {
-        this.skillInventoryScanCacheLoaded = true;
+        this.skillInventoryScanCacheLoaded = false;
         this.restoreWorkbenchDisplayCacheKey('projects');
         this.restoreWorkbenchDisplayCacheKey('scans');
         if (!silent) this.scanOutput = this.skillInventoryRows.length
