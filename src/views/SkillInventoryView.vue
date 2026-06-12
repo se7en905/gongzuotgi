@@ -339,7 +339,7 @@
       </ElTableColumn>
       <ElTableColumn label="质量分" width="88">
         <template #default="{ row }">
-          <ElTooltip v-if="row.displayIsSkillProduct && row.displayQualityScore !== null" :content="row.displayQualityText" placement="top" effect="dark">
+          <ElTooltip v-if="row.displayQualityScore !== null" :content="row.displayQualityText" placement="top" effect="dark">
             <span :class="['skill-quality-pill', row.displayQualityClass]">{{ row.displayQualityScore }}</span>
           </ElTooltip>
           <span v-else class="skill-table-muted">-</span>

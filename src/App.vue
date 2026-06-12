@@ -531,6 +531,7 @@ const RUN_LOG_BUFFER_MAX_CHARS = 160 * 1024;
 const RUN_LOG_RENDER_MAX_CHARS = 80 * 1024;
 const RUN_LOG_RENDER_MAX_LINES = 400;
 const RUN_LOG_LINE_MAX_CHARS = 2400;
+const SKILL_AUDIT_RULE_VERSION = '9-dimension-v2-fulltext';
 
 const roleLevelPermissionPresets = {
   4: [
@@ -4289,7 +4290,7 @@ export default {
         this.restoreWorkbenchDisplayCacheKey('usageCounters');
         this.ensureSkillInventoryUsageCounters();
         if (!this.loading.skillInventoryCache) {
-          this.loadSkillInventorySavedSnapshot({ force: !this.skillInventoryRows.length }).catch(() => {});
+          this.loadSkillInventorySavedSnapshot({ force: !this.skillInventoryRows.length || this.hasStaleSkillAuditScores() }).catch(() => {});
         }
         if (this.skillInventoryRows.length) {
           this.skillInventoryScanCacheLoaded = true;
@@ -7984,12 +7985,13 @@ export default {
     skillInventoryKind(skill = {}) {
       const override = this.skillInventoryKindOverrideFor(skill);
       if (override) return override;
-      if (['skill', 'document', 'directory'].includes(skill.inventoryKind)) return skill.inventoryKind;
       const relativePath = String(skill.git?.relativePath || skill.path || '').replace(/\\/g, '/');
       const fileName = relativePath.split('/').pop() || '';
       const inSkillDir = relativePath.startsWith('skills/') || relativePath.startsWith('入口图/');
       const isReference = /(^|\/)(references|Design|skins|规范类|\.claude)(\/|$)/i.test(relativePath);
-      return fileName === 'SKILL.md' && inSkillDir && !isReference ? 'skill' : 'document';
+      if (fileName === 'SKILL.md' && inSkillDir && !isReference) return 'skill';
+      if (['skill', 'document', 'directory'].includes(skill.inventoryKind)) return skill.inventoryKind;
+      return 'document';
     },
 
     skillInventoryKindOverrideKeys(input = {}) {
@@ -8575,7 +8577,7 @@ export default {
     decorateSkillInventoryDisplayRow(row = {}) {
       const versionLabel = this.skillVersionShortLabel(row);
       const isSkillProduct = this.isSkillInventorySkillProduct(row);
-      const qualityScore = isSkillProduct ? this.skillQualityScore(row) : null;
+      const qualityScore = this.skillQualityScore(row);
       return {
         ...row,
         displayVersionLabel: versionLabel,
@@ -9461,12 +9463,28 @@ export default {
         skill.auditScore,
         row.auditScore,
         skill.audit?.score,
-        row.audit?.score,
-        skill.markdownQuality?.score,
-        row.markdownQuality?.score
+        row.audit?.score
       ].map(value => Number(value)).find(value => Number.isFinite(value) && value >= 0);
       if (explicit !== undefined) return Math.max(0, Math.min(100, Math.round(explicit)));
       return null;
+    },
+
+    hasStaleSkillAuditScores() {
+      return this.skillInventoryRows.some(row => {
+        const auditTargetText = [
+          row.relativePath,
+          row.path,
+          row.skill?.git?.relativePath,
+          row.skill?.relativePath,
+          row.skill?.path,
+          row.productFileName,
+          row.title
+        ].map(value => String(value || '').replace(/\\/g, '/')).join('\n');
+        if (!this.isSkillInventorySkillProduct(row) && !/\.md$/i.test(auditTargetText)) return false;
+        const skill = row.skill || row;
+        const hasScore = Number.isFinite(Number(skill.auditScore ?? row.auditScore ?? skill.audit?.score ?? row.audit?.score));
+        return !hasScore || String(skill.audit?.version || row.audit?.version || '') !== SKILL_AUDIT_RULE_VERSION;
+      });
     },
 
     skillQualityScoreClass(score = 0) {
@@ -12163,7 +12181,7 @@ export default {
               skill.id,
               skill.git?.relativePath || skill.relativePath || skill.path,
               skill.productDisplayName || skill.displayName || skill.title,
-              skill.auditScore ?? skill.audit?.score ?? skill.markdownQuality?.score ?? '',
+              skill.auditScore ?? skill.audit?.score ?? '',
               skill.displayVersionOverride || '',
               skill.hidden === true ? 'hidden' : '',
               skill.displayHidden === true ? 'displayHidden' : ''

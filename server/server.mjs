@@ -102,7 +102,7 @@ import {
   upsertArtBrief,
   upsertAiFlowRecords
 } from './store.mjs';
-import { collectRunArtifacts, scanProject, skillAuditFields } from './scanner.mjs';
+import { collectRunArtifacts, scanProject, skillAuditFields, skillAuditRuleVersion } from './scanner.mjs';
 import { cancelRun, startRun, subscribe } from './runner.mjs';
 import { buildWorkflowPlan, workflowLevels } from './workflow.mjs';
 import { getZentaoApi, getZentaoModules, resetZentaoApi } from './zentao-adapter.mjs';
@@ -720,7 +720,7 @@ async function handleApi(req, res, url) {
       if (!visibleProjectIds.has(projectId)) continue;
       const scan = entry?.scan;
       if (!scan || typeof scan !== 'object') continue;
-      const scanWithAudit = hydrateCachedSkillAuditScores(scan);
+      const scanWithAudit = await hydrateCachedSkillAuditScores(scan);
       if (scanWithAudit !== scan) {
         cache[projectId] = {
           ...entry,
@@ -3419,7 +3419,7 @@ async function readProjectScanFromCache(project = {}) {
   const cached = cache[project.id]?.scan;
   if (cached && typeof cached === 'object') {
     return await applySkillVersionOverridesToScan({
-      ...hydrateCachedSkillAuditScores(cached),
+      ...await hydrateCachedSkillAuditScores(cached),
       cacheOnly: true,
       cachedAt: cache[project.id]?.cachedAt || cached.cachedAt || ''
     });
@@ -3430,7 +3430,7 @@ async function readProjectScanFromCache(project = {}) {
 async function scanProjectWithStableCache(project = {}, options = {}) {
   let cache = await loadProjectScanCache();
   try {
-    const scan = await applySkillVersionOverridesToScan(hydrateCachedSkillAuditScores(await scanProject(project, options)));
+    const scan = await applySkillVersionOverridesToScan(await hydrateCachedSkillAuditScores(await scanProject(project, options)));
     const previousScan = cache[project.id]?.scan || null;
     const stableScan = mergeStableProjectScan(project, previousScan, scan);
     const nextEntry = {
@@ -3493,16 +3493,55 @@ function emptyPreservedProjectScan(project = {}, error = null) {
   };
 }
 
-function hydrateCachedSkillAuditScores(scan = {}) {
+async function hydrateCachedSkillAuditScores(scan = {}) {
   if (!scan || typeof scan !== 'object') return scan;
   const skills = Array.isArray(scan.skills)
-    ? scan.skills.map(skill => {
-      if (!skill || typeof skill !== 'object' || Number.isFinite(Number(skill.auditScore ?? skill.audit?.score))) return skill;
-      const auditFields = skillAuditFields(skill);
-      return Object.keys(auditFields).length ? { ...skill, ...auditFields } : skill;
-    })
+    ? await Promise.all(scan.skills.map(async skill => {
+      if (!skill || typeof skill !== 'object') return skill;
+      if (!shouldHydrateSkillAuditScore(skill)) return skill;
+      const sourceText = await readSkillAuditSourceText(scan, skill);
+      const auditFields = skillAuditFields(sourceText ? { ...skill, content: sourceText } : skill);
+      if (!Object.keys(auditFields).length) return skill;
+      const next = { ...skill, ...auditFields };
+      return isSameSkillAuditScore(skill, auditFields) ? skill : next;
+    }))
     : scan.skills;
+  if (skills === scan.skills || (Array.isArray(scan.skills) && skills.every((skill, index) => skill === scan.skills[index]))) return scan;
   return { ...scan, skills };
+}
+
+function shouldHydrateSkillAuditScore(skill = {}) {
+  if (!Number.isFinite(Number(skill.auditScore ?? skill.audit?.score))) return true;
+  return String(skill.audit?.standard || '') !== 'skill-auditor'
+    || String(skill.audit?.version || '') !== skillAuditRuleVersion;
+}
+
+async function readSkillAuditSourceText(scan = {}, skill = {}) {
+  const candidates = [
+    skill.path,
+    skill.skillPath,
+    skill.git?.relativePath && path.isAbsolute(String(skill.git?.relativePath)) ? skill.git.relativePath : '',
+    skill.relativePath && path.isAbsolute(String(skill.relativePath)) ? skill.relativePath : '',
+    scan.rootPath && skill.path && !path.isAbsolute(String(skill.path)) ? path.join(scan.rootPath, skill.path) : '',
+    scan.rootPath && skill.relativePath && !path.isAbsolute(String(skill.relativePath)) ? path.join(scan.rootPath, skill.relativePath) : '',
+    scan.rootPath && skill.git?.relativePath ? path.join(scan.rootPath, skill.git.relativePath) : ''
+  ]
+    .map(item => String(item || '').trim())
+    .filter(Boolean);
+  for (const candidate of [...new Set(candidates)]) {
+    if (!/\.md$/i.test(candidate)) continue;
+    try {
+      return await fs.readFile(candidate, 'utf8');
+    } catch {}
+  }
+  return '';
+}
+
+function isSameSkillAuditScore(skill = {}, auditFields = {}) {
+  return Number(skill.auditScore) === Number(auditFields.auditScore)
+    && Number(skill.auditScore90) === Number(auditFields.auditScore90)
+    && JSON.stringify(skill.audit || null) === JSON.stringify(auditFields.audit || null)
+    && Number(skill.score) === Number(auditFields.score);
 }
 
 function mergeStableProjectScan(project = {}, previousScan = null, nextScan = {}) {

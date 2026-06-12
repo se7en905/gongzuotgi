@@ -13,6 +13,8 @@ const artGitSkillRepoDir = process.env.ART_GIT_SKILL_REPO_DIR || path.join(paths
 let artGitLastSyncAt = 0;
 let artGitLastSyncResult = null;
 
+export const skillAuditRuleVersion = '9-dimension-v2-fulltext';
+
 export async function scanProject(project, options = {}) {
   const root = project.rootPath;
   const shouldSyncGit = project.git?.remoteUrl && (
@@ -394,9 +396,14 @@ export function skillAuditFields(skill = {}) {
 
 function isSkillAuditTarget(skill = {}) {
   const kind = String(skill.inventoryKind || '').toLowerCase();
-  if (kind === 'document' || kind === 'directory') return false;
-  const text = [skill.path, skill.relativePath, skill.skillRelativePath, skill.productFileName, skill.title].join('\n');
-  return kind === 'skill' || /(^|\/)SKILL\.md$/i.test(text) || /(^|\/)skills?\//i.test(text);
+  if (kind === 'directory') return false;
+  const values = [skill.path, skill.relativePath, skill.git?.relativePath, skill.skillRelativePath, skill.productFileName, skill.title]
+    .map(value => String(value || '').replace(/\\/g, '/').trim())
+    .filter(Boolean);
+  return kind === 'skill'
+    || values.some(value => /(^|\/)SKILL\.md$/i.test(value))
+    || values.some(value => /(^|\/)skills?\//i.test(value))
+    || values.some(value => /\.md$/i.test(value));
 }
 
 function auditSkillBySkillAuditor(skill = {}) {
@@ -495,7 +502,7 @@ function auditSkillBySkillAuditor(skill = {}) {
   const score = Math.max(0, Math.min(100, Math.round((score90 / 90) * 100)));
   return {
     standard: 'skill-auditor',
-    version: '9-dimension-v1',
+    version: skillAuditRuleVersion,
     score,
     score90: Math.round(score90 * 10) / 10,
     dimensions,
@@ -781,14 +788,10 @@ function productDisplayGroupName(groupPath = '') {
 function classifyArtGitMarkdown(filePath, raw, parsed = {}) {
   const relativePath = path.relative(artGitSkillRepoDir, filePath).replace(/\\/g, '/');
   const basename = path.basename(filePath);
-  const dirname = path.basename(path.dirname(filePath));
-  const hasFrontmatterName = /^---\n[\s\S]*?\nname:\s*.+\n[\s\S]*?\n---/m.test(raw);
-  const hasSkillWorkflow = /按以下方式使用本\s*skill|##\s*.*执行原则|##\s*.*工作流|##\s*.*工作流程|##\s*.*适用场景|触发(?:意图|场景|关键词)[：:]/i.test(raw);
   const inSkillDir = relativePath.startsWith('skills/') || relativePath.startsWith('入口图/');
   const isReferenceFile = /(^|\/)(references|Design|skins|规范类|\.claude)(\/|$)/i.test(relativePath);
-  const title = String(parsed.title || '').toLowerCase();
-  const looksLikeSkill = basename === 'SKILL.md' && inSkillDir && !isReferenceFile && (hasFrontmatterName || hasSkillWorkflow || /skill|技能/.test(title));
-  return looksLikeSkill ? 'skill' : 'document';
+  if (basename === 'SKILL.md' && inSkillDir && !isReferenceFile) return 'skill';
+  return 'document';
 }
 
 function slugifySkillId(value = '') {
