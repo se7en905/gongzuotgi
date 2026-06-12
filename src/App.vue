@@ -4586,6 +4586,7 @@ export default {
 
     ensureSkillInventoryVisibleListState(options = {}) {
       if (!this.isSkillInventoryViewActive && options.force !== true) return;
+      if (!this.skillInventoryContentReady && options.force !== true) return;
       const visibleCount = this.skillInventoryVisibleRows.length;
       if (!visibleCount) {
         if (this.skillInventoryRows.length && options.preserveFilters !== true) {
