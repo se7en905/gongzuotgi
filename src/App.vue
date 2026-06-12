@@ -2359,11 +2359,26 @@ export default {
       } catch (error) {
         console.error('AI 产物清单统计计算失败，已回退到库存总数', error);
       }
+      const products = this.safeSkillInventoryFallbackProducts();
+      const skillRows = products.filter(row => this.safeCallDisplayValue(() => this.isSkillInventorySkillProduct(row), false));
+      const standardRows = products.filter(row => this.safeCallDisplayValue(() => this.isSkillInventoryStandardProduct(row), false));
       return [
-        { key: 'total', label: '产物总计', value: this.safeSkillInventoryRows.length },
-        { key: 'skill', label: '技能总数', value: 0 },
-        { key: 'standard', label: '规范总数', value: 0 }
+        { key: 'total', label: '产物总计', value: products.length },
+        { key: 'skill', label: '技能总数', value: skillRows.length },
+        { key: 'standard', label: '规范总数', value: standardRows.length }
       ];
+    },
+
+    safeSkillInventoryFallbackProducts() {
+      const map = new Map();
+      for (const row of this.safeSkillInventoryRows) {
+        if (!row || row.hidden === true || row.displayHidden === true) continue;
+        const key = this.safeCallDisplayValue(() => this.skillInventoryProductNameKey(row), '')
+          || String(row.uid || row.id || row.productDisplayName || row.title || '').trim();
+        if (!key || map.has(key)) continue;
+        map.set(key, row);
+      }
+      return [...map.values()];
     },
 
     skillInventoryRows() {
@@ -2824,7 +2839,8 @@ export default {
           row.skill?.productGroupPath,
           row.productFileName,
           row.productDisplayName,
-          this.skillSceneText(row)
+          this.skillSceneText(row),
+          Array.isArray(row.scenes) ? row.scenes.join(' ') : row.scenes
         ].join('\n').toLowerCase();
         return haystack.includes(keyword);
       });
@@ -2903,8 +2919,7 @@ export default {
         const overrideKind = this.skillInventoryKindOverrideFor(row);
         if (overrideKind === 'skill') return true;
         if (['document', 'directory'].includes(overrideKind)) return false;
-        if ((row.inventoryKindOverride === true || row.skill?.inventoryKindOverride === true)
-          && (row.skillInventoryKind === 'document' || row.skill?.inventoryKind === 'document')) return false;
+        if (row.skillInventoryKind === 'document' || row.skill?.inventoryKind === 'document') return false;
         if (row.skillInventoryKind === 'directory' || row.skill?.inventoryKind === 'directory') return false;
         if (row.skillInventoryKind === 'skill' || row.skill?.inventoryKind === 'skill') return true;
         if (this.isSkillLikeMarkdownProduct(row)) return true;
@@ -2950,12 +2965,22 @@ export default {
 
     isSkillInventoryStandardProduct() {
       return (row = {}) => {
+        const overrideKind = this.skillInventoryKindOverrideFor(row);
+        if (overrideKind === 'document') return true;
+        if (['skill', 'directory'].includes(overrideKind)) return false;
         if (row.skillInventoryKind === 'directory' || row.skill?.inventoryKind === 'directory') return false;
+        if (row.skillInventoryKind === 'document' || row.skill?.inventoryKind === 'document') return true;
         if (this.isSkillInventorySkillProduct(row)) return false;
-        const text = [row.relativePath, row.path, row.productFileName, row.productDisplayName, row.title, row.category, row.scenes?.join(' ')].join('\n');
-        return row.skillInventoryKind === 'document'
-          || row.skill?.inventoryKind === 'document'
-          || /规范|规则|模板|说明|指南|标准|交付|命名|清单|流程|design|handoff|template|guide|standard/i.test(text);
+        const text = [
+          row.relativePath,
+          row.path,
+          row.productFileName,
+          row.productDisplayName,
+          row.title,
+          row.category,
+          Array.isArray(row.scenes) ? row.scenes.join(' ') : row.scenes
+        ].join('\n');
+        return /规范|规则|模板|说明|指南|标准|交付|命名|清单|流程|design|handoff|template|guide|standard/i.test(text);
       };
     },
 
