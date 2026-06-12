@@ -2391,8 +2391,13 @@ export default {
         return this._skillInventoryRowsCache.rows;
       }
       const rows = [];
-      for (const projectRow of this.projectRows) {
-        const skills = Array.isArray(projectRow.scan?.skills) ? projectRow.scan.skills : [];
+      const appendedProjectIds = new Set();
+      const appendScanRows = (projectRow = {}, rawScan = null) => {
+        const scan = rawScan?.scan && typeof rawScan.scan === 'object'
+          ? { ...rawScan.scan, cachedAt: rawScan.cachedAt || rawScan.scan.cachedAt || '' }
+          : rawScan;
+        const skills = Array.isArray(scan?.skills) ? scan.skills : [];
+        if (projectRow?.id) appendedProjectIds.add(String(projectRow.id));
         for (const skill of skills) {
           try {
             if (!this.isMemberArtReporterRow(skill) && this.isFigmaUseConnectorArtifact(skill)) continue;
@@ -2405,13 +2410,25 @@ export default {
             });
           }
         }
+      };
+      for (const [projectId, rawScan] of Object.entries(this.scans || {})) {
+        if (!rawScan || typeof rawScan !== 'object') continue;
+        const projectRow = this.projectRows.find(project => String(project.id || '') === String(projectId || ''))
+          || this.projects.find(project => String(project.id || '') === String(projectId || ''))
+          || this.projectFromCachedScan(projectId, rawScan);
+        appendScanRows(projectRow, rawScan);
+      }
+      for (const projectRow of this.projectRows) {
+        if (!projectRow?.id || appendedProjectIds.has(String(projectRow.id))) continue;
+        appendScanRows(projectRow, projectRow.scan);
       }
       const nextRows = this.dedupeSkillInventoryRows(rows).sort((a, b) => {
         const timeDiff = String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || ''));
         return timeDiff || String(a.title || '').localeCompare(String(b.title || ''));
       });
-      this._skillInventoryRowsCache = { token, rows: nextRows };
-      return nextRows;
+      const productRows = this.skillInventoryUniqueProductsByName(nextRows);
+      this._skillInventoryRowsCache = { token, rows: productRows };
+      return productRows;
     },
 
     skillInventoryValidationCandidateRows() {
@@ -4592,10 +4609,12 @@ export default {
         this.restoreWorkbenchDisplayCacheKey('aiAssetSheetRows');
         this.restoreWorkbenchDisplayCacheKey('usageCounters');
         this.ensureSkillInventoryUsageCounters();
-        if (!this.loading.skillInventoryCache) {
+        const hasRows = this.skillInventoryRows.length > 0;
+        const hasStatsSnapshot = Number(this.skillInventoryProductStatsSnapshot?.total || 0) > 0;
+        if (!this.loading.skillInventoryCache && (!hasRows || hasStatsSnapshot)) {
           this.loadProjectScanCacheForInventory({ force: true, silent: true }).catch(() => {});
         }
-        if (this.skillInventoryRows.length) {
+        if (hasRows) {
           this.skillInventoryScanCacheLoaded = true;
         }
         this.ensureSkillInventoryVisibleListState();
