@@ -2371,12 +2371,22 @@ export default {
       if (this._skillInventoryRowsCache?.token === token && Array.isArray(this._skillInventoryRowsCache.rows)) {
         return this._skillInventoryRowsCache.rows;
       }
-      const rows = this.projectRows.flatMap(projectRow => {
+      const rows = [];
+      for (const projectRow of this.projectRows) {
         const skills = Array.isArray(projectRow.scan?.skills) ? projectRow.scan.skills : [];
-        return skills
-          .filter(skill => this.isMemberArtReporterRow(skill) || !this.isFigmaUseConnectorArtifact(skill))
-          .map(skill => this.buildSkillInventoryRow(projectRow, skill));
-      });
+        for (const skill of skills) {
+          try {
+            if (!this.isMemberArtReporterRow(skill) && this.isFigmaUseConnectorArtifact(skill)) continue;
+            rows.push(this.buildSkillInventoryRow(projectRow, skill));
+          } catch (error) {
+            console.error('AI 产物清单单条产物构建失败，已跳过该条', {
+              projectId: projectRow.id,
+              title: skill?.title || skill?.id || skill?.path || '',
+              error
+            });
+          }
+        }
+      }
       const nextRows = this.dedupeSkillInventoryRows(rows).sort((a, b) => {
         const timeDiff = String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || ''));
         return timeDiff || String(a.title || '').localeCompare(String(b.title || ''));
@@ -2407,9 +2417,13 @@ export default {
       if (this._skillInventoryVisibleRowsCache?.token === cacheKey && Array.isArray(this._skillInventoryVisibleRowsCache.rows)) {
         return this._skillInventoryVisibleRowsCache.rows;
       }
-      const rows = this.skillInventoryRows
-        .filter(row => row.displayHidden !== true)
-        .filter(row => (row.hidden !== true || this.canOperateSkillInventoryManage) && this.isVisibleSkillInventoryProductRow(row));
+      const rows = [];
+      for (const row of this.skillInventoryRows) {
+        if (!row || row.displayHidden === true) continue;
+        if (row.hidden === true && !this.canOperateSkillInventoryManage) continue;
+        if (!this.safeIsVisibleSkillInventoryProductRow(row)) continue;
+        rows.push(row);
+      }
       this._skillInventoryVisibleRowsCache = { token: cacheKey, rows };
       return rows;
     },
@@ -4186,6 +4200,13 @@ export default {
       if (!this.isSkillInventoryViewActive && options.force !== true) return;
       const visibleCount = this.skillInventoryVisibleRows.length;
       if (!visibleCount) {
+        if (this.skillInventoryRows.length && options.preserveFilters !== true) {
+          this.skillInventoryKeyword = '';
+          this.skillInventoryMemberFilter = '';
+          this.skillInventoryKindFilter = '';
+          this.skillInventoryPreferMine = false;
+          this.skillInventoryPage = 1;
+        }
         this.ensureSkillInventoryPageInRange();
         return;
       }
@@ -11250,16 +11271,14 @@ export default {
       }
       await this.loadSkillInventorySavedSnapshot({ force: true, silent: true });
       this.loading.scan = true;
-      this.scanOutput = '正在同步美术资料库 Git 仓库并索引库存...';
+      this.scanOutput = '正在刷新已接入来源库存...';
       try {
         const previousInventoryRows = this.skillInventoryRows.map(row => ({ ...row, skill: { ...(row.skill || {}) } }));
         const previousRowCount = previousInventoryRows.length;
-        const artGitProject = this.projects.find(project => {
-          const rootPath = String(project.rootPath || '');
-          const remoteUrl = String(project.git?.remoteUrl || '');
-          return rootPath.endsWith('/data/art-git') || /art-project\/Art\.git/i.test(remoteUrl);
+        const scanProjects = this.projects.filter(project => {
+          const sourceType = String(project.sourceType || '').toLowerCase();
+          return ['git', 'research', 'local', 'shared'].includes(sourceType) || project.git?.remoteUrl || project.rootPath;
         });
-        const scanProjects = artGitProject ? [artGitProject] : this.projects;
         const entries = await Promise.all(scanProjects.map(async project => {
           try {
             const scan = await this.apiWithTimeout(`/api/projects/${encodeURIComponent(project.id)}/scan?refresh=1`, {}, {}, 45000);
@@ -11289,10 +11308,9 @@ export default {
         this.mergeScansIntoInventoryState(scanMap, { force: true });
         this.saveWorkbenchDisplayCache('scans', this.scans);
         this.skillInventoryScanCacheLoaded = true;
-        if (artGitProject && this.selectedProjectId !== artGitProject.id) {
-          this.selectedProjectId = artGitProject.id;
-        }
-        const activeProjectId = artGitProject?.id || this.selectedProjectId;
+        const activeProjectId = this.selectedProjectId && this.scans[this.selectedProjectId]
+          ? this.selectedProjectId
+          : Object.keys(scanMap)[0] || this.selectedProjectId;
         const rows = Array.isArray(scanMap[activeProjectId]?.tasks) ? scanMap[activeProjectId].tasks : [];
         this.detailProjectTasks = rows;
         this.detailPagedProjectTasks = rows.slice(0, this.taskPageSize);

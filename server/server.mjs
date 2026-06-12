@@ -716,6 +716,7 @@ async function handleApi(req, res, url) {
     requireAnyPermission(currentUser, ['menu.skillList']);
     const projects = await listProjects();
     const projectIds = new Set(projects.map(project => project.id));
+    const projectById = new Map(projects.map(project => [project.id, project]));
     const cache = await loadProjectScanCache();
     let shouldPersistAuditHydration = false;
     const scans = {};
@@ -738,9 +739,16 @@ async function handleApi(req, res, url) {
         shouldPersistAuditHydration = true;
       }
       const scanWithOverrides = await applySkillVersionOverridesToScan(scanWithAudit);
+      const project = projectById.get(projectId) || {};
       scans[projectId] = {
         ...scan,
         ...scanWithOverrides,
+        projectId,
+        projectName: scanWithOverrides.projectName || scan.projectName || project.name || projectId,
+        name: scanWithOverrides.name || scan.name || project.name || projectId,
+        rootPath: scanWithOverrides.rootPath || scan.rootPath || project.rootPath || '',
+        sourceType: scanWithOverrides.sourceType || scan.sourceType || project.sourceType || '',
+        framework: scanWithOverrides.framework || scan.framework || project.framework || '',
         cacheOnly: true,
         cachedAt: cachedAt || scanWithOverrides.cachedAt || ''
       };
@@ -3569,7 +3577,7 @@ function isSameSkillAuditScore(skill = {}, auditFields = {}) {
 function mergeStableProjectScan(project = {}, previousScan = null, nextScan = {}) {
   const previousSkills = Array.isArray(previousScan?.skills) ? previousScan.skills : [];
   const nextSkills = Array.isArray(nextScan?.skills) ? nextScan.skills : [];
-  if (previousSkills.length && !nextSkills.length && !shouldReplaceProjectScan(project)) {
+  if (previousSkills.length && !nextSkills.length && isPreservedOrFailedScan(nextScan)) {
     return {
       ...previousScan,
       ...nextScan,
@@ -3580,7 +3588,7 @@ function mergeStableProjectScan(project = {}, previousScan = null, nextScan = {}
       lastFailedAt: new Date().toISOString()
     };
   }
-  if (!previousScan || shouldReplaceProjectScan(project)) return nextScan;
+  if (!previousScan) return nextScan;
   return {
     ...previousScan,
     ...nextScan,
@@ -3589,9 +3597,8 @@ function mergeStableProjectScan(project = {}, previousScan = null, nextScan = {}
   };
 }
 
-function shouldReplaceProjectScan(project = {}) {
-  const sourceType = String(project.sourceType || '').toLowerCase();
-  return project.id === artProjectId || sourceType === 'git' || sourceType === 'research' || sourceType === 'local' || sourceType === 'shared' || Boolean(project.git?.remoteUrl);
+function isPreservedOrFailedScan(scan = {}) {
+  return scan?.preserved === true || Boolean(scan?.error || scan?.lastError);
 }
 
 function isLocalOrSharedScanSource(project = {}) {
@@ -3599,14 +3606,26 @@ function isLocalOrSharedScanSource(project = {}) {
 }
 
 function mergeStableScanSkills(previousSkills = [], nextSkills = []) {
-  const byKey = new Map();
+  const previousByKey = new Map();
   for (const skill of Array.isArray(previousSkills) ? previousSkills : []) {
-    byKey.set(stableScanSkillKey(skill), { ...skill, stale: true });
+    const key = stableScanSkillKey(skill);
+    if (key) previousByKey.set(key, skill);
   }
+  const merged = [];
   for (const skill of Array.isArray(nextSkills) ? nextSkills : []) {
-    byKey.set(stableScanSkillKey(skill), { ...skill, stale: false });
+    const key = stableScanSkillKey(skill);
+    if (!key) {
+      merged.push({ ...skill, stale: false });
+      continue;
+    }
+    const previous = previousByKey.get(key);
+    if (previous && stableScanSkillFingerprint(previous) === stableScanSkillFingerprint(skill)) {
+      merged.push({ ...previous, stale: false });
+    } else {
+      merged.push({ ...skill, stale: false });
+    }
   }
-  return [...byKey.values()].sort((a, b) => String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')) || String(a.title || '').localeCompare(String(b.title || '')));
+  return merged.sort((a, b) => String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')) || String(a.title || '').localeCompare(String(b.title || '')));
 }
 
 function stableScanSkillKey(skill = {}) {
@@ -3616,6 +3635,25 @@ function stableScanSkillKey(skill = {}) {
       .toLowerCase();
   }
   return String(skill.git?.relativePath || skill.relativePath || skill.path || skill.id || skill.title || '').trim();
+}
+
+function stableScanSkillFingerprint(skill = {}) {
+  return [
+    skill.git?.commit || '',
+    skill.git?.uploadedAt || '',
+    skill.commitSubject || '',
+    skill.uploadedAt || '',
+    skill.version || '',
+    skill.hidden === true ? 'hidden' : 'visible',
+    skill.displayHidden === true ? 'displayHidden' : 'displayVisible',
+    skill.title || '',
+    skill.productDisplayName || '',
+    skill.productFileName || '',
+    skill.description || '',
+    String(skill.preview || '').slice(0, 2400),
+    skill.auditScore ?? '',
+    skill.audit?.score ?? ''
+  ].join('\n');
 }
 
 async function cleanupRemovedScanSourceProductData(project = {}, previousScan = null, nextScan = {}, nextCache = {}) {
