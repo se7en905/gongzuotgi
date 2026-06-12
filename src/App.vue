@@ -627,6 +627,7 @@ export default {
       skillInventoryPage: 1,
       skillInventoryPageSize: 10,
       skillInventoryViewEverMounted: false,
+      skillInventoryFirstPaintReady: false,
       skillInventoryKeepFiltersOnRouteOnce: false,
       skillSourceDisplayDialog: {
         visible: false,
@@ -1015,6 +1016,10 @@ export default {
       return this.isSkillInventoryViewActive || this.skillInventoryViewEverMounted;
     },
 
+    skillInventoryContentReady() {
+      return !this.isSkillInventoryViewActive || this.skillInventoryFirstPaintReady === true;
+    },
+
     aiFlowStageFields() {
       return AI_FLOW_STAGE_FIELDS;
     },
@@ -1086,8 +1091,10 @@ export default {
       };
       for (const run of this.runs || []) {
         if (!this.isTaskCenterLinkedRun(run)) continue;
-        push(`id:${String(run.taskId || '').trim()}`, run);
-        push(`zentao:${String(run.zentaoId || '').trim()}`, run);
+        const taskId = String(run.taskId || '').trim();
+        const zentaoId = String(run.zentaoId || '').trim();
+        if (taskId) push(`id:${taskId}`, run);
+        if (zentaoId) push(`zentao:${zentaoId}`, run);
       }
       for (const rows of map.values()) {
         rows.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
@@ -1104,10 +1111,13 @@ export default {
       };
       for (const run of this.runs || []) {
         if (this.isTaskCenterLinkedRun(run)) {
-          push(`id:${String(run.taskId || '').trim()}`, run);
-          push(`zentao:${String(run.zentaoId || '').trim()}`, run);
+          const taskId = String(run.taskId || '').trim();
+          const zentaoId = String(run.zentaoId || '').trim();
+          if (taskId) push(`id:${taskId}`, run);
+          if (zentaoId) push(`zentao:${zentaoId}`, run);
         } else {
-          push(`title:${String(run.title || '').trim()}`, run);
+          const title = String(run.title || '').trim();
+          if (title) push(`title:${title}`, run);
         }
       }
       for (const rows of map.values()) {
@@ -1124,8 +1134,10 @@ export default {
         map.get(key).push(review);
       };
       for (const review of this.taskReviews || []) {
-        push(`id:${String(review.taskId || '').trim()}`, review);
-        push(`zentao:${String(review.taskNo || '').trim()}`, review);
+        const taskId = String(review.taskId || '').trim();
+        const taskNo = String(review.taskNo || '').trim();
+        if (taskId) push(`id:${taskId}`, review);
+        if (taskNo) push(`zentao:${taskNo}`, review);
       }
       for (const rows of map.values()) {
         rows.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
@@ -2432,6 +2444,7 @@ export default {
     },
 
     safeFilteredSkillInventoryRows() {
+      if (!this.skillInventoryContentReady) return [];
       try {
         const rows = this.filteredSkillInventoryRows;
         return Array.isArray(rows) ? rows : [];
@@ -2449,10 +2462,11 @@ export default {
     },
 
     skillInventoryRecoveringRows() {
-      return this.loading.skillInventoryCache || this.skillInventoryHasStatsButNoRows;
+      return !this.skillInventoryContentReady || this.loading.skillInventoryCache || this.skillInventoryHasStatsButNoRows;
     },
 
     safeDisplayPagedSkillInventoryRows() {
+      if (!this.skillInventoryContentReady) return [];
       try {
         const rows = this.displayPagedSkillInventoryRows;
         return Array.isArray(rows) ? rows : [];
@@ -2478,6 +2492,21 @@ export default {
     },
 
     safeSkillInventoryProductStats() {
+      if (!this.skillInventoryContentReady && this.skillInventoryStatsSnapshotReady) {
+        const snapshot = this.skillInventoryProductStatsSnapshot;
+        return [
+          { key: 'total', label: '产物总计', value: Number(snapshot.total || 0) },
+          { key: 'skill', label: '技能总数', value: Number(snapshot.skill || 0) },
+          { key: 'standard', label: '规范总数', value: Number(snapshot.standard || 0) }
+        ];
+      }
+      if (!this.skillInventoryContentReady) {
+        return [
+          { key: 'total', label: '产物总计', value: 0 },
+          { key: 'skill', label: '技能总数', value: 0 },
+          { key: 'standard', label: '规范总数', value: 0 }
+        ];
+      }
       try {
         const stats = this.skillInventoryProductStats;
         if (Array.isArray(stats) && stats.length) return stats;
@@ -4399,7 +4428,13 @@ export default {
 
     activeView(value) {
       document.title = `${this.pageMeta.title} · 美术部工作台`;
-      if (['skill-inventory', 'skill-assets'].includes(value)) this.skillInventoryViewEverMounted = true;
+      if (['skill-inventory', 'skill-assets'].includes(value)) {
+        this.skillInventoryViewEverMounted = true;
+        if (this.skillInventoryFirstPaintReady !== true) this.scheduleSkillInventoryFirstPaint(this.skillInventoryTab || 'assets', { ensure: false });
+      } else if (this._skillInventoryFirstPaintTimer && typeof window !== 'undefined') {
+        cancelAnimationFrame(this._skillInventoryFirstPaintTimer);
+        this._skillInventoryFirstPaintTimer = 0;
+      }
       if (value === 'ai-members') this.prepareAiMembersView();
       else this.cancelAiMembersDeferredWork();
       this.scheduleActiveViewData(value);
@@ -4852,6 +4887,7 @@ export default {
     },
 
     ensureSkillInventoryTabData(tab = 'assets') {
+      if (!this.skillInventoryContentReady) return;
       if (tab === 'validations') {
         this.restoreWorkbenchDisplayCacheKeyIfEmpty('skillValidationRows');
         return;
@@ -4897,10 +4933,33 @@ export default {
       else this.$nextTick(run);
     },
 
+    scheduleSkillInventoryFirstPaint(tab = this.skillInventoryTab || 'assets', options = {}) {
+      if (!this.isSkillInventoryViewActive) return;
+      if (this.skillInventoryFirstPaintReady === true) {
+        if (options.ensure !== false) this.ensureSkillInventoryTabData(tab);
+        return;
+      }
+      if (this._skillInventoryFirstPaintTimer) cancelAnimationFrame(this._skillInventoryFirstPaintTimer);
+      const run = () => {
+        this._skillInventoryFirstPaintTimer = 0;
+        if (!this.isSkillInventoryViewActive) return;
+        this.skillInventoryFirstPaintReady = true;
+        this.ensureSkillInventoryTabData(tab);
+      };
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+        this._skillInventoryFirstPaintTimer = window.requestAnimationFrame(() => {
+          this._skillInventoryFirstPaintTimer = window.requestAnimationFrame(run);
+        });
+      } else {
+        this.$nextTick(run);
+      }
+    },
+
     ensureActiveViewData(view = this.activeView) {
+      const dirty = this.consumeViewDataDirty(view);
       if (view === 'tasks') {
-        if (!this.loading.tasks) this.refreshTasks().catch(() => {});
-        if (!this.loading.config) this.refreshConfig().catch(() => {});
+        if (!this.loading.tasks) this.refreshTasks({ background: !dirty }).catch(() => {});
+        if (!this.loading.config) this.refreshConfig({ background: !dirty }).catch(() => {});
       }
       if (['skill-inventory', 'skill-assets'].includes(view)) {
         if (view === 'skill-assets' || view === 'skill-inventory') this.skillInventoryTab = 'assets';
@@ -4911,7 +4970,8 @@ export default {
         this.restoreAiMembersBoardHtmlSnapshot();
         if (!this.loading.aiMembers && this.can('api.aiMembers.read')) {
           this.refreshAiMembers({
-            silent: this.hasAiMembersBoardHtml(this.aiMembersSnapshot)
+            silent: this.hasAiMembersBoardHtml(this.aiMembersSnapshot),
+            background: !dirty
           }).catch(() => {});
         }
       }
@@ -4927,17 +4987,17 @@ export default {
       }
       if (view === 'runs') {
         this.restoreWorkbenchDisplayCacheKey('artProgressEvents');
-        if (!this.loading.runs) this.refreshRuns().catch(() => {});
-        if (!this.agentWorkers.length && !this.loading.agentWorkers) this.refreshAgentWorkers().catch(() => {});
+        if (!this.loading.runs) this.refreshRuns({ background: !dirty }).catch(() => {});
+        if ((!this.agentWorkers.length || dirty) && !this.loading.agentWorkers) this.refreshAgentWorkers({ background: !dirty }).catch(() => {});
         if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
       }
       if (view === 'agent-workers') {
-        if (!this.loading.runs) this.refreshRuns().catch(() => {});
-        if (!this.agentWorkers.length && !this.loading.agentWorkers) this.refreshAgentWorkers().catch(() => {});
+        if (!this.loading.runs) this.refreshRuns({ background: !dirty }).catch(() => {});
+        if ((!this.agentWorkers.length || dirty) && !this.loading.agentWorkers) this.refreshAgentWorkers({ background: !dirty }).catch(() => {});
         if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
       }
       if (view === 'ai-archive') {
-        if (!this.loading.runs) this.refreshRuns().catch(() => {});
+        if (!this.loading.runs) this.refreshRuns({ background: !dirty }).catch(() => {});
         if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
       }
       if (view === 'operation-logs') {
@@ -5342,10 +5402,6 @@ export default {
         });
     },
 
-    refreshSkippedValue(currentValue, fallback = null) {
-      return currentValue === undefined ? fallback : currentValue;
-    },
-
     markViewDataDirty(view = '', key = '') {
       if (!view) return;
       this.viewDataDirty = {
@@ -5512,8 +5568,8 @@ export default {
         if (!preserveSkillFilters) this.resetSkillInventoryDefaultEntryState();
         this.skillInventoryTab = tab;
         this.skillInventoryViewEverMounted = true;
-        const viewChanged = this.activateRouteView('skill-inventory');
-        if (!viewChanged) this.ensureSkillInventoryTabData(tab);
+        this.activateRouteView('skill-inventory');
+        this.scheduleSkillInventoryFirstPaint(tab);
         this.$nextTick(() => {
           this.ensureSkillInventoryVisibleListState({ preserveFilters: preserveSkillFilters });
         });
@@ -6005,45 +6061,75 @@ export default {
         });
       }
       if (type === 'usage-counters.changed' && this.can('menu.skillList')) {
+        if (!this.isSkillInventoryViewActive) {
+          this.markViewDataDirty('skill-inventory', 'usage-counters');
+          return;
+        }
         this.schedulePlatformRefresh('usage-counters', async () => {
           await this.refreshUsageCounters();
         }, 300);
       }
       if (type === 'project-scan-cache.changed' && this.can('menu.skillList')) {
+        if (!this.isSkillInventoryViewActive) {
+          this.markViewDataDirty('skill-inventory', 'project-scan-cache');
+          return;
+        }
         this.schedulePlatformRefresh('project-scan-cache', async () => {
           await this.loadProjectScanCacheForInventory();
         }, 400);
       }
       if (type === 'runs.changed' && this.can('menu.runs')) {
+        if (!['runs', 'agent-workers', 'ai-archive'].includes(this.activeView)) {
+          this.markViewDataDirty('runs', 'runs');
+          this.markViewDataDirty('agent-workers', 'runs');
+          this.markViewDataDirty('ai-archive', 'runs');
+          return;
+        }
         this.schedulePlatformRefresh('runs', async () => {
-          await this.refreshRuns();
+          await this.refreshRuns({ background: true, minInterval: 1500 });
         }, 300);
       }
       if (type === 'tasks.changed' && this.can('menu.tasks')) {
         if (event.payload?.deleted) this.removeDeletedTaskFromLocalState(event.payload);
+        if (this.activeView !== 'tasks') {
+          this.markViewDataDirty('tasks', 'tasks');
+          return;
+        }
         this.schedulePlatformRefresh('tasks', async () => {
           await Promise.all([
-            this.refreshTasks(),
+            this.refreshTasks({ background: true, minInterval: 1500 }),
             this.refreshTaskProcessingNotes(),
-            this.refreshConfig()
+            this.refreshConfig({ background: true, minInterval: 1500 })
           ]);
         }, 300);
       }
       if (type === 'agent-workers.changed' && this.can('menu.agentWorkers')) {
         if (document.visibilityState === 'hidden') return;
-        if (!['agent-workers', 'runs'].includes(this.activeView)) return;
+        if (!['agent-workers', 'runs'].includes(this.activeView)) {
+          this.markViewDataDirty('agent-workers', 'agent-workers');
+          this.markViewDataDirty('runs', 'agent-workers');
+          return;
+        }
         this.schedulePlatformRefresh('agent-workers', async () => {
-          await this.refreshAgentWorkers();
+          await this.refreshAgentWorkers({ background: true, minInterval: 1500 });
         }, 500);
       }
       if (type === 'ai-member-score-snapshot.changed' && this.can('api.aiMembers.score.read')) {
+        if (this.activeView !== 'ai-members') {
+          this.markViewDataDirty('ai-members', 'score');
+          return;
+        }
         this.schedulePlatformRefresh('ai-member-score-snapshot', async () => {
-          await this.refreshAiMemberScoreSnapshotFromServer();
+          await this.refreshAiMemberScoreSnapshotFromServer({ background: true, minInterval: 1500 });
         }, 300);
       }
       if (type === 'ai-members-board.changed' && this.can('api.aiMembers.read')) {
+        if (this.activeView !== 'ai-members') {
+          this.markViewDataDirty('ai-members', 'board');
+          return;
+        }
         this.schedulePlatformRefresh('ai-members-board', async () => {
-          await this.refreshAiMembers({ silent: true });
+          await this.refreshAiMembers({ silent: true, background: true, minInterval: 1500 });
         }, 800);
       }
     },
@@ -7679,7 +7765,7 @@ export default {
         this.restoreAiMemberScoreSnapshot();
         this.aiMemberScoreReady = Array.isArray(this.aiMemberScoreRowsSnapshot) && this.aiMemberScoreRowsSnapshot.length;
       }
-      this.refreshAiMemberScoreSnapshotFromServer();
+      this.refreshAiMemberScoreSnapshotFromServer({ background: true }).catch(() => {});
       if (this.workbenchStateRestoring) return;
       this.aiMembersBoardFrameReadyTimer = setTimeout(() => {
         if (this.activeView !== 'ai-members') return;
@@ -16890,22 +16976,36 @@ export default {
 
     runsForTask(task) {
       if (!task?.id) return [];
-      return this.runs
-        .filter(run => this.isTaskCenterLinkedRun(run))
-        .filter(run => run.taskId === task.id || (task.taskNo && run.zentaoId === task.taskNo))
-        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      const taskId = String(task.id || '').trim();
+      const taskNo = String(task.taskNo || '').trim();
+      const rows = [
+        ...(taskId ? this.runsByTaskKey.get(`id:${taskId}`) || [] : []),
+        ...(taskNo ? this.runsByTaskKey.get(`zentao:${taskNo}`) || [] : [])
+      ];
+      const seen = new Set();
+      return rows
+        .filter(run => {
+          const id = String(run.id || '');
+          if (seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        })
+        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
     },
 
     runAttemptNumber(run = {}) {
       if (Number(run.attemptNo) > 0) return Number(run.attemptNo);
-      const related = this.runs
-        .filter(item => {
-          if (this.isTaskCenterLinkedRun(run)) {
-            return item.taskId === run.taskId || (run.zentaoId && item.zentaoId === run.zentaoId);
-          }
-          return !this.isTaskCenterLinkedRun(item) && item.title === run.title;
-        })
-        .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+      const keys = this.isTaskCenterLinkedRun(run)
+        ? [`id:${String(run.taskId || '').trim()}`, `zentao:${String(run.zentaoId || '').trim()}`]
+        : [`title:${String(run.title || '').trim()}`];
+      const rows = keys.flatMap(key => key.replace(/^(id|zentao|title):$/, '') ? (this.runAttemptGroups.get(key) || []) : []);
+      const seen = new Set();
+      const related = rows.filter(item => {
+        const id = String(item.id || '');
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      }).sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
       const index = related.findIndex(item => item.id === run.id);
       return index >= 0 ? index + 1 : 1;
     },
@@ -17060,15 +17160,15 @@ export default {
       if (!run) return null;
       const claimedDevice = String(run.claimedByDeviceId || '').trim();
       const assignee = String(run.assignedToUserId || run.ownerUserId || '').trim();
-      return this.agentWorkers.find(worker => claimedDevice && worker.deviceId === claimedDevice)
-        || this.agentWorkers.find(worker => assignee && worker.userId === assignee)
+      return (claimedDevice ? this.agentWorkersByDeviceId.get(claimedDevice) : null)
+        || (assignee ? this.agentWorkersByUserId.get(assignee) : null)
         || null;
     },
 
     directSkillWorkerForUser(user = null) {
       const userId = String(user?.id || '').trim();
       if (!userId) return null;
-      return this.agentWorkerDisplayRows.find(worker => worker.userId === userId) || null;
+      return this.agentWorkersByUserId.get(userId) || null;
     },
 
     directSkillRunUserIds(run = null) {
@@ -17083,7 +17183,7 @@ export default {
         .filter(Boolean);
       const claimedDevice = String(run.claimedByDeviceId || '').trim();
       if (claimedDevice) {
-        const worker = this.agentWorkers.find(item => String(item.deviceId || '').trim() === claimedDevice);
+        const worker = this.agentWorkersByDeviceId.get(claimedDevice);
         if (worker?.userId) ids.push(String(worker.userId).trim());
       }
       return [...new Set(ids)];
@@ -17154,21 +17254,21 @@ export default {
     },
 
     directSkillPendingRunsForUser(user = null) {
-      const userId = String(user?.id || '').trim();
-      if (!userId) return [];
-      return this.directSkillPendingRuns.filter(run => this.directSkillRunBelongsToUser(run, user));
+      return this.directSkillRunsForUser(user).pending;
     },
 
     directSkillActiveRunsForUser(user = null) {
-      const userId = String(user?.id || '').trim();
-      if (!userId) return [];
-      return this.directSkillActiveRuns.filter(run => this.directSkillRunBelongsToUser(run, user));
+      return this.directSkillRunsForUser(user).active;
     },
 
     directSkillCompletedRunsForUser(user = null) {
+      return this.directSkillRunsForUser(user).completed;
+    },
+
+    directSkillRunsForUser(user = null) {
       const userId = String(user?.id || '').trim();
-      if (!userId) return [];
-      return this.directSkillCompletedRuns.filter(run => this.directSkillRunBelongsToUser(run, user));
+      if (!userId) return { pending: [], active: [], completed: [] };
+      return this.directSkillRunsByUserId.get(userId) || { pending: [], active: [], completed: [] };
     },
 
     directSkillMemberReadyLabel(row = {}) {
@@ -18225,7 +18325,11 @@ export default {
     businessTaskForRun(run) {
       if (!run) return null;
       if (!this.isTaskCenterLinkedRun(run)) return null;
-      return (this.businessTasks || []).find(task => task.id === run.taskId || (task.taskNo && task.taskNo === run.zentaoId)) || null;
+      const taskId = String(run.taskId || '').trim();
+      const zentaoId = String(run.zentaoId || '').trim();
+      return (taskId ? this.businessTasksByRunKey.get(`id:${taskId}`) : null)
+        || (zentaoId ? this.businessTasksByRunKey.get(`zentao:${zentaoId}`) : null)
+        || null;
     },
 
     openRunArchive(run = this.selectedRun) {
@@ -19109,9 +19213,19 @@ export default {
     },
 
     reviewsForTask(task) {
-      return this.taskReviews
-        .filter(review => review.taskId === task.id || (task.taskNo && review.taskNo === task.taskNo))
-        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      const taskId = String(task?.id || '').trim();
+      const taskNo = String(task?.taskNo || '').trim();
+      const rows = [
+        ...(taskId ? this.taskReviewsByTaskKey.get(`id:${taskId}`) || [] : []),
+        ...(taskNo ? this.taskReviewsByTaskKey.get(`zentao:${taskNo}`) || [] : [])
+      ];
+      const seen = new Set();
+      return rows.filter(review => {
+        const id = String(review.id || `${review.taskId || ''}:${review.taskNo || ''}:${review.createdAt || ''}`);
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      }).sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
     },
 
     bugsForTask(task) {
