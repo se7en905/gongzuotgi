@@ -2807,12 +2807,52 @@ export default {
 
     isSkillInventorySkillProduct() {
       return (row = {}) => {
+        const overrideKind = this.skillInventoryKindOverrideFor(row);
+        if (overrideKind === 'skill') return true;
+        if (['document', 'directory'].includes(overrideKind)) return false;
+        if ((row.inventoryKindOverride === true || row.skill?.inventoryKindOverride === true)
+          && (row.skillInventoryKind === 'document' || row.skill?.inventoryKind === 'document')) return false;
         if (row.skillInventoryKind === 'directory' || row.skill?.inventoryKind === 'directory') return false;
         if (row.skillInventoryKind === 'skill' || row.skill?.inventoryKind === 'skill') return true;
+        if (this.isSkillLikeMarkdownProduct(row)) return true;
         const text = [row.skillInventoryKind, row.relativePath, row.path, row.productFileName, row.productDisplayName, row.title].join('\n');
-        return /(^|\/)SKILL\.md$/i.test(text)
-          || /(^|\/)skills?\//i.test(text);
+        return /(^|\/)SKILL\.md$/i.test(text);
       };
+    },
+
+    isSkillLikeMarkdownProduct(row = {}) {
+      const skill = row.skill || {};
+      const pathText = [
+        row.relativePath,
+        row.path,
+        skill.git?.relativePath,
+        skill.relativePath,
+        skill.path,
+        skill.skillPath
+      ].map(value => String(value || '').replace(/\\/g, '/').trim()).filter(Boolean).join('\n');
+      if (!/\.md$/i.test(pathText)) return false;
+      if (!/(^|\/)(skills|入口图)(\/|$)/i.test(pathText)) return false;
+      if (/(^|\/)(references|Design|skins|规范类|\.claude)(\/|$)/i.test(pathText)) return false;
+      const content = [
+        skill.preview,
+        row.preview,
+        skill.description,
+        row.description,
+        skill.title,
+        row.title,
+        skill.productDisplayName,
+        row.productDisplayName,
+        skill.productFileName,
+        row.productFileName,
+        pathText
+      ].join('\n');
+      const hasFrontmatterIdentity = /^---[\s\S]*?\nname:\s*\S+[\s\S]*?\ndescription:\s*\S+/im.test(content);
+      const hasExplicitSkillIdentity = /use this skill|this skill|使用(?:这个|此|本)?\s*Skill|本技能|这个\s*Skill|此\s*Skill/i.test(content);
+      const hasTriggerSignal = /use when|用于|当用户|当.*时使用|使用.*(?:场景|时机)|适用场景|触发(?:意图|场景|关键词)/i.test(content);
+      const hasWorkflowSignal = /工作流|工作流程|执行流程|执行步骤|workflow|step|步骤|##\s*(?:输入|输出|工作流程|异常处理|验证|执行|约束)/i.test(content);
+      const hasExecutionSignal = /输入|输出|产出|交付|验证|检查|失败|异常|阻塞|工具|Figma|执行|运行|读取|写入/i.test(content);
+      return (hasFrontmatterIdentity && (hasTriggerSignal || hasWorkflowSignal))
+        || (hasExplicitSkillIdentity && hasTriggerSignal && hasWorkflowSignal && hasExecutionSignal);
     },
 
     isSkillInventoryStandardProduct() {
@@ -7181,13 +7221,13 @@ export default {
 
     aiScoreProductRowValue(row = {}) {
       const usage = this.skillInventoryUsageStatsForList(row);
-      const quality = Number(this.skillQualityScore(row) ?? 0);
       const usageCount = Number(usage.count || row.usageCount || 0);
       const peopleCount = Number(usage.peopleCount || row.usagePeopleCount || 0);
       const usageRate = Number(usage.rate || row.usageRate || 0);
       const versionMajor = Number(this.skillInventoryVersionMajor(row));
       const isSkill = this.isSkillInventorySkillProduct(row);
       const isStandard = this.isSkillInventoryStandardProduct(row);
+      const quality = isSkill ? Number(this.skillQualityScore(row) ?? 0) : 0;
       const sceneText = this.skillSceneText(row, '');
       const fullTeamIntent = /全员|部门|通用|公共|统一|规范|标准|流程|复用|多人|批量|自动|工作流/i.test([
         row.productDisplayName,
@@ -7989,8 +8029,12 @@ export default {
       const fileName = relativePath.split('/').pop() || '';
       const inSkillDir = relativePath.startsWith('skills/') || relativePath.startsWith('入口图/');
       const isReference = /(^|\/)(references|Design|skins|规范类|\.claude)(\/|$)/i.test(relativePath);
+      if (skill.inventoryKind === 'directory') return 'directory';
       if (fileName === 'SKILL.md' && inSkillDir && !isReference) return 'skill';
-      if (['skill', 'document', 'directory'].includes(skill.inventoryKind)) return skill.inventoryKind;
+      if (skill.inventoryKind === 'skill') return 'skill';
+      if (skill.inventoryKindOverride === true && ['document', 'directory'].includes(skill.inventoryKind)) return skill.inventoryKind;
+      if (this.isSkillLikeMarkdownProduct(skill)) return 'skill';
+      if (['document', 'directory'].includes(skill.inventoryKind)) return skill.inventoryKind;
       return 'document';
     },
 
@@ -8577,7 +8621,7 @@ export default {
     decorateSkillInventoryDisplayRow(row = {}) {
       const versionLabel = this.skillVersionShortLabel(row);
       const isSkillProduct = this.isSkillInventorySkillProduct(row);
-      const qualityScore = this.skillQualityScore(row);
+      const qualityScore = isSkillProduct ? this.skillQualityScore(row) : null;
       return {
         ...row,
         displayVersionLabel: versionLabel,
@@ -9471,16 +9515,7 @@ export default {
 
     hasStaleSkillAuditScores() {
       return this.skillInventoryRows.some(row => {
-        const auditTargetText = [
-          row.relativePath,
-          row.path,
-          row.skill?.git?.relativePath,
-          row.skill?.relativePath,
-          row.skill?.path,
-          row.productFileName,
-          row.title
-        ].map(value => String(value || '').replace(/\\/g, '/')).join('\n');
-        if (!this.isSkillInventorySkillProduct(row) && !/\.md$/i.test(auditTargetText)) return false;
+        if (!this.isSkillInventorySkillProduct(row)) return false;
         const skill = row.skill || row;
         const hasScore = Number.isFinite(Number(skill.auditScore ?? row.auditScore ?? skill.audit?.score ?? row.audit?.score));
         return !hasScore || String(skill.audit?.version || row.audit?.version || '') !== SKILL_AUDIT_RULE_VERSION;

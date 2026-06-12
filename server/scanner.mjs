@@ -348,6 +348,7 @@ async function scanArtGitSkills(options = {}) {
     const git = await gitFileMeta(filePath);
     const uploader = normalizeGitUploader(git);
     const uploadedAt = git?.uploadedAt || stat?.mtime?.toISOString() || '';
+    const inventoryKind = classifyArtGitMarkdown(filePath, raw, parsed);
     skills.push({
       id: parsed.id,
       path: filePath,
@@ -359,7 +360,7 @@ async function scanArtGitSkills(options = {}) {
       category: parsed.category,
       preview: raw.slice(0, 2400),
       source: `Git:${uploader || '未知'}`,
-      inventoryKind: classifyArtGitMarkdown(filePath, raw, parsed),
+      inventoryKind,
       git,
       uploaderName: uploader || git?.uploaderName || '',
       uploaderEmail: git?.uploaderEmail || '',
@@ -376,7 +377,7 @@ async function scanArtGitSkills(options = {}) {
         triggers: extractTriggers(raw),
         content: raw,
         preview: raw.slice(0, 2400),
-        inventoryKind: classifyArtGitMarkdown(filePath, raw, parsed)
+        inventoryKind
       })
     });
   }
@@ -394,7 +395,7 @@ export function skillAuditFields(skill = {}) {
   };
 }
 
-function isSkillAuditTarget(skill = {}) {
+export function isSkillAuditTarget(skill = {}) {
   const kind = String(skill.inventoryKind || '').toLowerCase();
   if (kind === 'directory') return false;
   const values = [skill.path, skill.relativePath, skill.git?.relativePath, skill.skillRelativePath, skill.productFileName, skill.title]
@@ -402,8 +403,25 @@ function isSkillAuditTarget(skill = {}) {
     .filter(Boolean);
   return kind === 'skill'
     || values.some(value => /(^|\/)SKILL\.md$/i.test(value))
-    || values.some(value => /(^|\/)skills?\//i.test(value))
-    || values.some(value => /\.md$/i.test(value));
+    || isSkillLikeMarkdown(skill);
+}
+
+function isSkillLikeMarkdown(skill = {}) {
+  const raw = String(skill.content || skill.raw || skill.preview || '').trim();
+  const pathText = String(skill.relativePath || skill.path || skill.git?.relativePath || skill.skillPath || '').replace(/\\/g, '/');
+  if (!/\.md$/i.test(pathText)) return false;
+  const inSkillArea = /(^|\/)(skills|入口图)(\/|$)/i.test(pathText);
+  if (!inSkillArea) return false;
+  if (/(^|\/)(references|Design|skins|规范类|\.claude)(\/|$)/i.test(pathText)) return false;
+  const frontmatter = parseSkillFrontmatter(raw);
+  const text = [raw, skill.description, skill.title, skill.productDisplayName, skill.productFileName, pathText, Object.values(frontmatter).join('\n')].join('\n');
+  const hasFrontmatterIdentity = Boolean(frontmatter.name && (frontmatter.description || skill.description));
+  const hasExplicitSkillIdentity = /use this skill|this skill|使用(?:这个|此|本)?\s*Skill|本技能|这个\s*Skill|此\s*Skill/i.test(text);
+  const hasTriggerSignal = /use when|用于|当用户|当.*时使用|使用.*(?:场景|时机)|适用场景|触发(?:意图|场景|关键词)/i.test(text);
+  const hasWorkflowSignal = /工作流|工作流程|执行流程|执行步骤|workflow|step|步骤|##\s*(?:输入|输出|工作流程|异常处理|验证|执行|约束)/i.test(text);
+  const hasExecutionSignal = /输入|输出|产出|交付|验证|检查|失败|异常|阻塞|工具|Figma|执行|运行|读取|写入/i.test(text);
+  return (hasFrontmatterIdentity && (hasTriggerSignal || hasWorkflowSignal))
+    || (hasExplicitSkillIdentity && hasTriggerSignal && hasWorkflowSignal && hasExecutionSignal);
 }
 
 function auditSkillBySkillAuditor(skill = {}) {
@@ -791,6 +809,7 @@ function classifyArtGitMarkdown(filePath, raw, parsed = {}) {
   const inSkillDir = relativePath.startsWith('skills/') || relativePath.startsWith('入口图/');
   const isReferenceFile = /(^|\/)(references|Design|skins|规范类|\.claude)(\/|$)/i.test(relativePath);
   if (basename === 'SKILL.md' && inSkillDir && !isReferenceFile) return 'skill';
+  if (!isReferenceFile && isSkillLikeMarkdown({ ...parsed, content: raw, relativePath })) return 'skill';
   return 'document';
 }
 

@@ -102,7 +102,7 @@ import {
   upsertArtBrief,
   upsertAiFlowRecords
 } from './store.mjs';
-import { collectRunArtifacts, scanProject, skillAuditFields, skillAuditRuleVersion } from './scanner.mjs';
+import { collectRunArtifacts, isSkillAuditTarget, scanProject, skillAuditFields, skillAuditRuleVersion } from './scanner.mjs';
 import { cancelRun, startRun, subscribe } from './runner.mjs';
 import { buildWorkflowPlan, workflowLevels } from './workflow.mjs';
 import { getZentaoApi, getZentaoModules, resetZentaoApi } from './zentao-adapter.mjs';
@@ -3498,10 +3498,13 @@ async function hydrateCachedSkillAuditScores(scan = {}) {
   const skills = Array.isArray(scan.skills)
     ? await Promise.all(scan.skills.map(async skill => {
       if (!skill || typeof skill !== 'object') return skill;
+      if (!isSkillAuditTarget(skill)) {
+        return stripSkillAuditFields(skill);
+      }
       if (!shouldHydrateSkillAuditScore(skill)) return skill;
       const sourceText = await readSkillAuditSourceText(scan, skill);
       const auditFields = skillAuditFields(sourceText ? { ...skill, content: sourceText } : skill);
-      if (!Object.keys(auditFields).length) return skill;
+      if (!Object.keys(auditFields).length) return stripSkillAuditFields(skill);
       const next = { ...skill, ...auditFields };
       return isSameSkillAuditScore(skill, auditFields) ? skill : next;
     }))
@@ -3514,6 +3517,16 @@ function shouldHydrateSkillAuditScore(skill = {}) {
   if (!Number.isFinite(Number(skill.auditScore ?? skill.audit?.score))) return true;
   return String(skill.audit?.standard || '') !== 'skill-auditor'
     || String(skill.audit?.version || '') !== skillAuditRuleVersion;
+}
+
+function stripSkillAuditFields(skill = {}) {
+  if (!Number.isFinite(Number(skill.auditScore ?? skill.audit?.score ?? skill.auditScore90 ?? skill.score))) return skill;
+  const next = { ...skill };
+  delete next.auditScore;
+  delete next.auditScore90;
+  delete next.audit;
+  delete next.score;
+  return next;
 }
 
 async function readSkillAuditSourceText(scan = {}, skill = {}) {
@@ -4191,6 +4204,7 @@ async function applySkillVersionOverridesToScan(scan = {}) {
         ...skill,
         displayVersionOverride: versionOverride?.version || '',
         inventoryKind: hasInventoryKindOverride ? (inventoryKindOverride?.inventoryKind || baseOverride.inventoryKind || skill.inventoryKind) : skill.inventoryKind,
+        inventoryKindOverride: hasInventoryKindOverride,
         aliases,
         manualAliases,
         aliasHistory,
