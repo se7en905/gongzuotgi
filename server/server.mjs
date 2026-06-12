@@ -113,7 +113,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, '..', process.env.STATIC_DIR || 'dist');
 const port = Number(process.env.API_PORT || process.env.PORT || 4288);
 const host = process.env.API_HOST || process.env.HOST || '0.0.0.0';
-const aiWeekDir = process.env.AI_WEEK_DIR || '/Users/se7en/ArtProject/Week';
+const aiWeekDir = process.env.AI_WEEK_DIR || path.join(paths.dataDir, 'ai-week');
 const artDashboardDataDir = process.env.ART_DASHBOARD_DATA_DIR || path.join(paths.dataDir, 'art-dashboard');
 const zentaoBaseUrl = 'https://cd.baa360.cc:20088/index.php';
 const zentaoArtDeptId = Number(process.env.ZENTAO_ART_DEPT_ID || 27);
@@ -223,6 +223,7 @@ server.listen(port, host, () => {
   console.log(`Data: ${paths.dataDir}`);
   scheduleDataRetentionCleanup();
   scheduleZentaoAutoSync();
+  watchAiMembersBoardFiles();
 });
 
 async function handleApi(req, res, url) {
@@ -2547,6 +2548,37 @@ function broadcastUsageCountersChanged(result = null, payload = {}) {
     ...payload,
     matched: Number(result.matched || 0)
   });
+}
+
+function watchAiMembersBoardFiles() {
+  const boardFiles = [
+    '美术部 AI 可视化看板.html',
+    '美术部AI看板.html'
+  ];
+  let timer = null;
+  const emitChanged = fileName => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      broadcastPlatformEvent('ai-members-board.changed', {
+        module: 'ai-members-board',
+        root: aiWeekDir,
+        fileName: fileName || '',
+        changedAt: new Date().toISOString()
+      });
+    }, 800);
+  };
+  try {
+    fs.watch(aiWeekDir, (eventType, fileName) => {
+      const name = String(fileName || '');
+      if (!boardFiles.includes(name)) return;
+      emitChanged(name);
+    }).on('error', error => {
+      console.warn(`AI部门看板目录监听失败：${error.message}`);
+    });
+  } catch (error) {
+    console.warn(`AI部门看板目录监听未启用：${error.message}`);
+  }
 }
 
 function runUsageLogMetadata(run = {}) {

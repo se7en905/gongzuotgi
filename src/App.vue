@@ -4796,8 +4796,10 @@ export default {
       if (view === 'ai-members') {
         this.ensureAiMemberScoreData();
         this.restoreAiMembersBoardHtmlSnapshot();
-        if (!this.loading.aiMembers && !this.hasAiMembersBoardHtml(this.aiMembersSnapshot)) {
-          this.refreshAiMembers().catch(() => {});
+        if (!this.loading.aiMembers && this.can('api.aiMembers.read')) {
+          this.refreshAiMembers({
+            silent: this.hasAiMembersBoardHtml(this.aiMembersSnapshot)
+          }).catch(() => {});
         }
       }
       if (view === 'codex-config') {
@@ -5154,9 +5156,7 @@ export default {
         }
         if (aiMembersView && this.can('api.aiMembers.read')) {
           this.restoreAiMembersBoardHtmlSnapshot();
-          if (!this.hasAiMembersBoardHtml(this.aiMembersSnapshot)) {
-            jobs.push(['成员快照', () => this.refreshAiMembers({ silent: true })]);
-          }
+          jobs.push(['成员快照', () => this.refreshAiMembers({ silent: true })]);
         } else if (!lightRunViews.includes(this.activeView) && this.can('menu.aiMembers')) {
           jobs.push(['成员快照', () => this.refreshAiMembers()]);
         }
@@ -5861,6 +5861,11 @@ export default {
         this.schedulePlatformRefresh('ai-member-score-snapshot', async () => {
           await this.refreshAiMemberScoreSnapshotFromServer();
         }, 300);
+      }
+      if (type === 'ai-members-board.changed' && this.can('api.aiMembers.read')) {
+        this.schedulePlatformRefresh('ai-members-board', async () => {
+          await this.refreshAiMembers({ silent: true });
+        }, 800);
       }
     },
 
