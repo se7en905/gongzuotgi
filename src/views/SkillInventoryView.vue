@@ -279,7 +279,7 @@
     </ElDialog>
 
     <div v-show="app.skillInventoryTab === 'list' || app.skillInventoryTab === 'assets'" class="skill-list-section">
-    <div v-if="!app.safeFilteredSkillInventoryRows.length" class="skill-inventory-empty-state">
+    <div v-if="!app.skillInventoryDisplayHasRows" class="skill-inventory-empty-state">
       <strong>{{ app.skillInventoryRecoveringRows ? '正在恢复库存明细' : '暂无扫描源产物' }}</strong>
       <span>{{ app.skillInventoryRecoveringRows ? '已检测到上次库存统计，正在重新读取明细列表；如果长期没有恢复，请点击刷新库存重建缓存。' : '页面默认展示上次库存缓存；请先接入 Git 仓库、本地目录或共享盘路径，再由有权限账号点击刷新库存抓取新增和修改。' }}</span>
       <div>
@@ -299,7 +299,7 @@
       <ElTableColumn label="产物名称" min-width="300" class-name="skill-product-name-column">
         <template #default="{ row }">
           <div class="skill-product-name-stack">
-            <button type="button" class="skill-title-cell skill-title-button" @click="app.openSkillInventoryDetail(row)">
+            <button type="button" class="skill-title-cell skill-title-button" :disabled="!app.skillInventoryContentReady || row.displaySnapshotOnly" @click="app.openSkillInventoryDetail(row)">
               <strong>
                 {{ row.productDisplayName || row.productFileName || row.title || row.id }}
               </strong>
@@ -310,10 +310,10 @@
       </ElTableColumn>
       <ElTableColumn label="版本" width="82">
         <template #default="{ row }">
-          <span :class="['skill-version-pill', { 'is-editable': app.canEditSkillInventoryVersion }, row.displayVersionClass]">
+          <span :class="['skill-version-pill', { 'is-editable': app.canEditSkillInventoryVersion && app.skillInventoryContentReady && !row.displaySnapshotOnly }, row.displayVersionClass]">
             {{ row.displayVersionLabel }}
             <select
-              v-if="app.canEditSkillInventoryVersion"
+              v-if="app.canEditSkillInventoryVersion && app.skillInventoryContentReady && !row.displaySnapshotOnly"
               class="skill-version-native-select"
               :value="row.displayVersionLabel"
               aria-label="选择展示版本"
@@ -350,12 +350,13 @@
       <ElTableColumn label="操作" width="132" fixed="right" align="center" class-name="skill-actions-column">
         <template #default="{ row }">
           <div class="table-action-row skill-action-links">
-            <ElButton size="small" type="primary" plain @click.stop="app.openSkillUsageDetail(row)">明细</ElButton>
+            <ElButton size="small" type="primary" plain :disabled="!app.skillInventoryContentReady || row.displaySnapshotOnly" @click.stop="app.openSkillUsageDetail(row)">明细</ElButton>
             <ElButton
               v-if="app.canOperateSkillInventoryManage && row.hidden !== true"
               size="small"
               type="danger"
               plain
+              :disabled="!app.skillInventoryContentReady || row.displaySnapshotOnly"
               @click.stop="app.deleteSkillInventoryRow(row)"
             >
               作废
@@ -365,6 +366,7 @@
               size="small"
               type="primary"
               plain
+              :disabled="!app.skillInventoryContentReady || row.displaySnapshotOnly"
               @click.stop="app.restoreSkillInventoryRow(row)"
             >
               恢复
@@ -374,12 +376,12 @@
       </ElTableColumn>
     </ElTable>
     <div class="pagination-bar">
-      <span>共 {{ app.safeFilteredSkillInventoryRows.length }} 条</span>
+      <span>共 {{ app.skillInventoryDisplayTotal }} 条</span>
       <ElPagination
         :current-page="app.skillInventoryPage" @update:current-page="value => app.skillInventoryPage = value"
         :page-size="app.skillInventoryPageSize" @update:page-size="value => app.setWorkbenchPageSize(value, 'skillInventoryPage')"
         :page-sizes="[10, 50, 100]"
-        :total="app.safeFilteredSkillInventoryRows.length"
+        :total="app.skillInventoryDisplayTotal"
         page-size-label="条/页"
         layout="sizes, prev, pager, next"
       />
@@ -1671,6 +1673,16 @@ export default {
     &:focus-visible strong {
       color: var(--primary);
       text-decoration: underline;
+    }
+
+    &:disabled {
+      cursor: default;
+    }
+
+    &:disabled:hover strong,
+    &:disabled:focus-visible strong {
+      color: var(--heading);
+      text-decoration: none;
     }
   }
 

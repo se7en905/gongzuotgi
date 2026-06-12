@@ -532,6 +532,38 @@ const RUN_LOG_RENDER_MAX_CHARS = 80 * 1024;
 const RUN_LOG_RENDER_MAX_LINES = 400;
 const RUN_LOG_LINE_MAX_CHARS = 2400;
 const SKILL_AUDIT_RULE_VERSION = '9-dimension-v2-fulltext';
+const LARGE_WORKBENCH_DISPLAY_CACHE_KEYS = new Set([
+  'aiMembersSnapshot',
+  'aiMembersBoardHtmlSnapshot',
+  'usageCounters',
+  'scans',
+  'businessTasks',
+  'bugs',
+  'taskReviews',
+  'skillInventoryFirstPageSnapshot'
+]);
+
+function workbenchDisplayCacheStorageKey(key = '') {
+  return `awp-display-cache:${key}`;
+}
+
+function readWorkbenchDisplayCacheValue(key = '', fallback = null) {
+  if (!key || typeof window === 'undefined') return fallback;
+  try {
+    const raw = window.localStorage.getItem(workbenchDisplayCacheStorageKey(key));
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Object.prototype.hasOwnProperty.call(parsed, 'value')) return fallback;
+    return parsed.value ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function readWorkbenchDisplayCacheArray(key = '') {
+  const value = readWorkbenchDisplayCacheValue(key, []);
+  return Array.isArray(value) ? value : [];
+}
 
 const roleLevelPermissionPresets = {
   4: [
@@ -634,7 +666,9 @@ export default {
         keyword: ''
       },
       skillInventoryScanCacheLoaded: false,
-      skillInventoryProductStatsSnapshot: null,
+      skillInventoryProductStatsSnapshot: readWorkbenchDisplayCacheValue('skillInventoryProductStatsSnapshot', null),
+      skillInventoryFirstPageSnapshot: readWorkbenchDisplayCacheValue('skillInventoryFirstPageSnapshot', null),
+      skillInventoryFirstPageSnapshotSaveTimer: 0,
       skillInventoryCachePromise: null,
       aiAssetKeyword: '',
       aiAssetStatusFilter: '',
@@ -685,10 +719,10 @@ export default {
       ],
       projects: [],
       customWorkflows: [],
-      businessTasks: [],
-      bugs: [],
+      businessTasks: readWorkbenchDisplayCacheArray('businessTasks'),
+      bugs: readWorkbenchDisplayCacheArray('bugs'),
       aiFlowRecords: [],
-      taskReviews: [],
+      taskReviews: readWorkbenchDisplayCacheArray('taskReviews'),
       aiMembersSnapshot: null,
       aiMembersViewMounted: false,
       aiMemberScoreReady: false,
@@ -1018,6 +1052,34 @@ export default {
 
     skillInventoryContentReady() {
       return !this.isSkillInventoryViewActive || this.skillInventoryFirstPaintReady === true;
+    },
+
+    skillInventoryFirstPageSnapshotRows() {
+      const snapshot = this.skillInventoryFirstPageSnapshot;
+      return Array.isArray(snapshot?.rows) ? snapshot.rows : [];
+    },
+
+    skillInventoryFirstPageSnapshotTotal() {
+      const snapshotTotal = Number(this.skillInventoryFirstPageSnapshot?.total || 0) || 0;
+      const statsTotal = Number(this.skillInventoryProductStatsSnapshot?.total || 0) || 0;
+      return Math.max(snapshotTotal, statsTotal);
+    },
+
+    skillInventoryUsingFirstPageSnapshot() {
+      if (!this.skillInventoryFirstPageSnapshotRows.length) return false;
+      if (!this.skillInventoryContentReady) return true;
+      return !this.safeFilteredSkillInventoryRows.length
+        && !this.skillInventoryVisibleRows.length
+        && this.skillInventoryFirstPageSnapshotTotal > 0;
+    },
+
+    skillInventoryDisplayTotal() {
+      if (this.skillInventoryUsingFirstPageSnapshot) return this.skillInventoryFirstPageSnapshotTotal;
+      return this.safeFilteredSkillInventoryRows.length;
+    },
+
+    skillInventoryDisplayHasRows() {
+      return this.safeDisplayPagedSkillInventoryRows.length > 0;
     },
 
     aiFlowStageFields() {
@@ -2458,7 +2520,8 @@ export default {
 
     skillInventoryHasStatsButNoRows() {
       const snapshotTotal = Number(this.skillInventoryProductStatsSnapshot?.total || 0) || 0;
-      return snapshotTotal > 0 && !this.skillInventoryVisibleRows.length;
+      const firstPageTotal = Number(this.skillInventoryFirstPageSnapshot?.total || 0) || 0;
+      return Math.max(snapshotTotal, firstPageTotal) > 0 && !this.skillInventoryVisibleRows.length;
     },
 
     skillInventoryRecoveringRows() {
@@ -2466,7 +2529,7 @@ export default {
     },
 
     safeDisplayPagedSkillInventoryRows() {
-      if (!this.skillInventoryContentReady) return [];
+      if (this.skillInventoryUsingFirstPageSnapshot) return this.skillInventoryFirstPageSnapshotRows;
       try {
         const rows = this.displayPagedSkillInventoryRows;
         return Array.isArray(rows) ? rows : [];
@@ -2789,6 +2852,7 @@ export default {
       if (cached) return cached;
       const rows = this.pagedSkillInventoryRows.map(row => this.decorateSkillInventoryDisplayRow(row));
       this.skillInventoryDisplayRowsCacheSet(cacheKey, rows);
+      this.scheduleSkillInventoryFirstPageSnapshotSave();
       return rows;
     },
 
@@ -4473,6 +4537,7 @@ export default {
     if (this.zentaoSyncTimer) clearTimeout(this.zentaoSyncTimer);
     if (this.aiMembersBoardFrameReadyTimer) clearTimeout(this.aiMembersBoardFrameReadyTimer);
     if (this._activeViewDataTimer) clearTimeout(this._activeViewDataTimer);
+    if (this.skillInventoryFirstPageSnapshotSaveTimer) clearTimeout(this.skillInventoryFirstPageSnapshotSaveTimer);
     this.stopZentaoAutoSyncPolling();
     this.stopTaskBriefRealtimeSync();
     this.stopPlatformEventSync();
@@ -4653,6 +4718,73 @@ export default {
           displayIsPathScanFolderProduct: this.safeCallDisplayValue(() => this.isPathScanFolderProductRow(row), false)
         };
       }
+    },
+
+    skillInventorySnapshotDisplayRow(row = {}) {
+      const uid = row.uid || row.id || [
+        row.projectId || '',
+        row.relativePath || row.path || '',
+        row.productDisplayName || row.productFileName || row.title || ''
+      ].join('::');
+      return {
+        uid,
+        id: row.id || uid,
+        projectId: row.projectId || '',
+        relativePath: row.relativePath || row.skill?.git?.relativePath || row.path || '',
+        path: row.path || row.relativePath || row.skill?.git?.relativePath || '',
+        title: row.title || row.productDisplayName || row.productFileName || '',
+        productDisplayName: row.productDisplayName || row.productFileName || row.title || row.id || '',
+        productFileName: row.productFileName || row.productDisplayName || row.title || row.id || '',
+        productKind: row.productKind || row.skill?.productKind || '',
+        hidden: row.hidden === true,
+        displayVersionLabel: row.displayVersionLabel || '1.0',
+        displayVersionClass: row.displayVersionClass || '',
+        displayUsageCount: row.displayUsageCount ?? '-',
+        displayUsageRate: row.displayUsageRate ?? '-',
+        displayQualityScore: row.displayQualityScore ?? null,
+        displayQualityClass: row.displayQualityClass || '',
+        displayQualityText: row.displayQualityText || '',
+        displayIsSkillProduct: row.displayIsSkillProduct === true,
+        displaySceneText: row.displaySceneText || '',
+        displayOwnerText: row.displayOwnerText || '-',
+        displayIsPathScanFolderProduct: row.displayIsPathScanFolderProduct === true,
+        displaySnapshotOnly: true
+      };
+    },
+
+    saveSkillInventoryFirstPageSnapshot() {
+      if (!this.skillInventoryContentReady) return false;
+      if (this.skillInventoryKeyword || this.skillInventoryMemberFilter || this.skillInventoryKindFilter || this.skillInventoryPreferMine) return false;
+      if (Number(this.skillInventoryPage || 1) !== 1) return false;
+      const rows = this.safeDisplayPagedSkillInventoryRows;
+      const total = this.safeFilteredSkillInventoryRows.length;
+      if (!Array.isArray(rows) || !rows.length || !total) return false;
+      const snapshot = {
+        rows: rows.slice(0, Math.max(1, Number(this.skillInventoryPageSize || 10) || 10)).map(row => this.skillInventorySnapshotDisplayRow(row)),
+        total,
+        page: Number(this.skillInventoryPage || 1) || 1,
+        pageSize: Number(this.skillInventoryPageSize || 10) || 10,
+        stats: this.skillInventoryProductStatsSnapshot || null,
+        savedAt: new Date().toISOString()
+      };
+      this.skillInventoryFirstPageSnapshot = snapshot;
+      this.saveWorkbenchDisplayCache('skillInventoryFirstPageSnapshot', snapshot);
+      return true;
+    },
+
+    scheduleSkillInventoryFirstPageSnapshotSave(delay = 120) {
+      if (!this.skillInventoryContentReady) return;
+      if (typeof window === 'undefined') {
+        this.saveSkillInventoryFirstPageSnapshot();
+        return;
+      }
+      if (this.skillInventoryFirstPageSnapshotSaveTimer) {
+        window.clearTimeout(this.skillInventoryFirstPageSnapshotSaveTimer);
+      }
+      this.skillInventoryFirstPageSnapshotSaveTimer = window.setTimeout(() => {
+        this.skillInventoryFirstPageSnapshotSaveTimer = 0;
+        this.saveSkillInventoryFirstPageSnapshot();
+      }, delay);
     },
 
     safeCallDisplayValue(factory, fallback = '') {
@@ -4904,6 +5036,7 @@ export default {
         if (this.skillInventoryScanCacheLoaded !== true && !this.hasProjectScanProducts(this.scans)) {
           this.restoreWorkbenchDisplayCacheKeyIfEmpty('scans');
           this.restoreWorkbenchDisplayCacheKeyIfEmpty('skillInventoryProductStatsSnapshot');
+          this.restoreWorkbenchDisplayCacheKeyIfEmpty('skillInventoryFirstPageSnapshot');
         }
         this.restoreWorkbenchDisplayCacheKeyIfEmpty('aiAssetSheetRows');
         this.restoreWorkbenchDisplayCacheKeyIfEmpty('usageCounters');
@@ -5765,7 +5898,7 @@ export default {
           value,
           savedAt: new Date().toISOString()
         });
-        const maxPayloadLength = ['aiMembersSnapshot', 'aiMembersBoardHtmlSnapshot', 'usageCounters', 'scans'].includes(key) ? 1600 * 1024 : 220 * 1024;
+        const maxPayloadLength = LARGE_WORKBENCH_DISPLAY_CACHE_KEYS.has(key) ? 1600 * 1024 : 220 * 1024;
         if (payload.length > maxPayloadLength) {
           localStorage.removeItem(this.workbenchDisplayCacheKey(key));
           return;
@@ -5983,7 +6116,8 @@ export default {
         'operationLogs',
         'artProgressSummary',
         'usageCounters',
-        'skillInventoryProductStatsSnapshot'
+        'skillInventoryProductStatsSnapshot',
+        'skillInventoryFirstPageSnapshot'
       ].forEach(key => this.restoreWorkbenchDisplayCacheKey(key));
       this.restoreAiMembersBoardHtmlSnapshot();
       this.restoreAiMemberScoreSnapshot();
@@ -11832,6 +11966,7 @@ export default {
       if (this.hasProjectScanProducts(this.scans)) this.saveWorkbenchDisplayCache('scans', this.scans);
       else this.clearWorkbenchDisplayCacheKey('scans');
       this.ensureSkillInventoryVisibleListState();
+      this.scheduleSkillInventoryFirstPageSnapshotSave();
       return true;
     },
 
@@ -11868,6 +12003,7 @@ export default {
       if (this.hasProjectScanProducts(this.scans)) this.saveWorkbenchDisplayCache('scans', this.scans);
       else this.clearWorkbenchDisplayCacheKey('scans');
       this.ensureSkillInventoryVisibleListState();
+      this.scheduleSkillInventoryFirstPageSnapshotSave();
       return true;
     },
 
@@ -12097,6 +12233,7 @@ export default {
         this.mergeScansIntoInventoryState(scanMap, { force: true });
         this.saveWorkbenchDisplayCache('scans', this.scans);
         this.updateSkillInventoryProductStatsSnapshot(this.scans);
+        this.scheduleSkillInventoryFirstPageSnapshotSave();
         this.skillInventoryScanCacheLoaded = true;
         const activeProjectId = this.selectedProjectId && this.scans[this.selectedProjectId]
           ? this.selectedProjectId
