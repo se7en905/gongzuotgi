@@ -164,7 +164,16 @@ async function scanSkills(root, options = {}) {
       title: firstHeading(raw) || entry.name,
       triggers: extractTriggers(raw),
       description: extractSkillDescription(raw),
-      preview: raw.slice(0, 2400)
+      preview: raw.slice(0, 2400),
+      ...skillAuditFields({
+        id: entry.name,
+        title: firstHeading(raw) || entry.name,
+        triggers: extractTriggers(raw),
+        description: extractSkillDescription(raw),
+        content: raw,
+        path: path.relative(root, skillPath),
+        inventoryKind: 'skill'
+      })
     });
   }
   return [...skills, ...directoryProducts].sort((a, b) => a.id.localeCompare(b.id));
@@ -236,7 +245,7 @@ async function directoryProductRecord({ project = {}, fullPath = '', relativePat
   const skillFile = await findDirectorySkillFile(fullPath);
   const skillRaw = skillFile ? await readTextIfExists(skillFile) : '';
   const skillTitle = skillRaw ? firstHeading(skillRaw) || displayName : displayName;
-  return {
+  const product = {
     id: slugifySkillId(`directory-${relativePath || title}`),
     path: fullPath,
     skillPath: skillFile || '',
@@ -257,6 +266,10 @@ async function directoryProductRecord({ project = {}, fullPath = '', relativePat
     uploadedAt: stat?.mtime?.toISOString() || '',
     status: 'ready',
     statusLabel: '已接入'
+  };
+  return {
+    ...product,
+    ...(skillRaw ? skillAuditFields({ ...product, content: skillRaw }) : {})
   };
 }
 
@@ -353,10 +366,168 @@ async function scanArtGitSkills(options = {}) {
       version: '1.0',
       status: 'draft',
       statusLabel: '1.0 待验证',
-      validationCount: 0
+      validationCount: 0,
+      ...skillAuditFields({
+        ...parsed,
+        path: filePath,
+        relativePath,
+        triggers: extractTriggers(raw),
+        content: raw,
+        preview: raw.slice(0, 2400),
+        inventoryKind: classifyArtGitMarkdown(filePath, raw, parsed)
+      })
     });
   }
   return skills.sort((a, b) => String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')) || a.id.localeCompare(b.id));
+}
+
+export function skillAuditFields(skill = {}) {
+  if (!isSkillAuditTarget(skill)) return {};
+  const audit = auditSkillBySkillAuditor(skill);
+  return {
+    auditScore: audit.score,
+    auditScore90: audit.score90,
+    audit,
+    score: audit.score
+  };
+}
+
+function isSkillAuditTarget(skill = {}) {
+  const kind = String(skill.inventoryKind || '').toLowerCase();
+  if (kind === 'document' || kind === 'directory') return false;
+  const text = [skill.path, skill.relativePath, skill.skillRelativePath, skill.productFileName, skill.title].join('\n');
+  return kind === 'skill' || /(^|\/)SKILL\.md$/i.test(text) || /(^|\/)skills?\//i.test(text);
+}
+
+function auditSkillBySkillAuditor(skill = {}) {
+  const raw = String(skill.content || skill.raw || skill.preview || '').trim();
+  const description = String(skill.description || '').trim();
+  const triggers = Array.isArray(skill.triggers) ? skill.triggers.map(item => String(item || '').trim()).filter(Boolean) : [];
+  const title = String(skill.title || skill.productDisplayName || skill.productFileName || skill.id || '').trim();
+  const pathText = String(skill.relativePath || skill.path || skill.skillPath || '').replace(/\\/g, '/');
+  const frontmatter = parseSkillFrontmatter(raw);
+  const body = raw.replace(/^---\n[\s\S]*?\n---\n?/, '');
+  const allText = [
+    raw,
+    description,
+    title,
+    triggers.join('\n'),
+    pathText,
+    Object.values(frontmatter).join('\n')
+  ].join('\n');
+  const lower = allText.toLowerCase();
+  const has = pattern => pattern.test(allText);
+  const hasLower = pattern => pattern.test(lower);
+  const sectionCount = (body.match(/^#{1,4}\s+\S+/gm) || []).length;
+  const listCount = (body.match(/^\s*(?:[-*+]|\d+[.)])\s+\S+/gm) || []).length;
+  const tableCount = (body.match(/^\|.+\|$/gm) || []).length;
+  const codeCount = (body.match(/```[\s\S]*?```/g) || []).length;
+  const resourceSignals = [
+    /scripts?\//i.test(allText),
+    /references?\//i.test(allText),
+    /assets?\//i.test(allText),
+    /\/Users\/|\.\/|\.\.\//.test(allText),
+    hasLower(/\b(npm|node|python|bash|git|curl|figma|mcp|playwright|uv)\b/),
+    codeCount > 0
+  ].filter(Boolean).length;
+  const workflowSignals = [
+    sectionCount >= 3,
+    listCount >= 3,
+    has(/步骤|流程|阶段|先|然后|最后|工作流|执行流程|workflow|step|checklist/i),
+    has(/如果|当|否则|失败|异常|阻塞|缺失|不可用|fallback|error|blocked/i),
+    has(/停止|暂停|等待|确认|不要继续|return|stop/i)
+  ].filter(Boolean).length;
+  const outputSignals = [
+    has(/输出|产出|交付|结果|最终|返回|生成|写入|保存|deliver|output|result/i),
+    has(/格式|结构|字段|JSON|Markdown|表格|清单|报告|文件/i),
+    has(/成功|完成|验收|通过|done|success|pass/i),
+    tableCount > 0 || codeCount > 0
+  ].filter(Boolean).length;
+  const failureSignals = [
+    has(/失败|异常|报错|缺失|找不到|不可用|权限|超时|冲突|阻塞|fallback|error|timeout|permission|conflict|blocked/i),
+    has(/保留|回退|不覆盖|不清空|重试|跳过|停止|等待/i),
+    has(/输入缺失|资料冲突|工具失败|权限阻塞|无法验证|无法读取/i)
+  ].filter(Boolean).length;
+  const humanGateSignals = [
+    has(/确认|审批|人工|负责人|用户|等待|授权|二次确认|卡口|approval|confirm/i),
+    has(/不要直接|不得直接|必须.*确认|需要.*确认|等待.*确认/i)
+  ].filter(Boolean).length;
+  const verificationSignals = [
+    has(/验证|测试|检查|回读|截图|构建|渲染|比对|验收|自检|test|verify|check|screenshot|build|render/i),
+    has(/标准|通过|失败|成功|证据|日志|结果|门禁/i),
+    has(/npm run|node --check|curl|playwright|截图|产物证据/i)
+  ].filter(Boolean).length;
+  const blacklistSignals = [
+    has(/不要|不得|禁止|不能|严禁|不允许|黑名单|高风险|危险|破坏|删除|重置|覆盖|提交|发布|推送|delete|reset|commit|push|deploy|destructive/i),
+    has(/未经.*确认|没有.*确认|不要.*擅自|不得.*擅自/i)
+  ].filter(Boolean).length;
+
+  const dimensions = {
+    triggerClarity: scoreDimension([
+      Boolean(frontmatter.description || description),
+      triggers.length > 0,
+      has(/使用|适用|触发|when|use when|用于/i),
+      has(/文件|系统|任务|路径|类型|场景|关键词|范围/i)
+    ], 10, { textLength: description.length + triggers.join('').length }),
+    outputDefinition: scoreDimension(outputSignals, 10, { total: 4, textLength: allText.length }),
+    workflowStructure: scoreDimension(workflowSignals, 10, { total: 5, textLength: body.length }),
+    toolSpecificity: scoreDimension(resourceSignals, 10, { total: 6, textLength: allText.length }),
+    executableSpecificity: scoreDimension([
+      workflowSignals >= 3,
+      resourceSignals >= 2,
+      outputSignals >= 2,
+      listCount >= 5,
+      !has(/视情况|灵活|按需|自行判断|大概|尽量|建议即可/i)
+    ], 10, { textLength: body.length }),
+    failureModes: scoreDimension(failureSignals, 10, { total: 3, textLength: allText.length }),
+    humanGates: scoreDimension(humanGateSignals, 10, { total: 2, textLength: allText.length }),
+    verification: scoreDimension(verificationSignals, 10, { total: 3, textLength: allText.length }),
+    riskBlacklist: scoreDimension(blacklistSignals, 10, { total: 2, textLength: allText.length })
+  };
+  if (raw.length < 120) {
+    Object.keys(dimensions).forEach(key => {
+      dimensions[key] = Math.min(dimensions[key], 4);
+    });
+  }
+  const missingResourcePenalty = has(/scripts?\/|references?\/|assets?\//i) && !has(/存在|读取|检查|找不到|缺失|fallback|不可用|失败/i) ? 1 : 0;
+  if (missingResourcePenalty) dimensions.toolSpecificity = Math.max(0, dimensions.toolSpecificity - missingResourcePenalty);
+  const score90 = Object.values(dimensions).reduce((sum, value) => sum + Number(value || 0), 0);
+  const score = Math.max(0, Math.min(100, Math.round((score90 / 90) * 100)));
+  return {
+    standard: 'skill-auditor',
+    version: '9-dimension-v1',
+    score,
+    score90: Math.round(score90 * 10) / 10,
+    dimensions,
+    level: score >= 85 ? 'strong' : score >= 70 ? 'usable' : score >= 55 ? 'needs_focus' : 'high_risk',
+    summary: '按 skill-auditor 9 维评分标准计算。'
+  };
+}
+
+function parseSkillFrontmatter(raw = '') {
+  const match = String(raw || '').match(/^---\n([\s\S]*?)\n---\n?/);
+  if (!match) return {};
+  const frontmatter = {};
+  for (const line of match[1].split('\n')) {
+    const pair = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (pair) frontmatter[pair[1]] = pair[2].replace(/^['"]|['"]$/g, '').trim();
+  }
+  return frontmatter;
+}
+
+function scoreDimension(signals, max = 10, options = {}) {
+  if (Number.isFinite(signals)) {
+    const total = Math.max(1, Number(options.total || max));
+    const base = (Math.min(Math.max(0, signals), total) / total) * max;
+    const lengthBonus = Number(options.textLength || 0) >= 1200 ? 1 : Number(options.textLength || 0) >= 500 ? 0.5 : 0;
+    return Math.max(0, Math.min(max, Math.round((base + lengthBonus) * 2) / 2));
+  }
+  const values = Array.isArray(signals) ? signals : [signals];
+  const count = values.filter(Boolean).length;
+  const denominator = Math.max(1, values.length);
+  const base = (count / denominator) * max;
+  const lengthBonus = Number(options.textLength || 0) >= 1200 ? 1 : Number(options.textLength || 0) >= 500 ? 0.5 : 0;
+  return Math.max(0, Math.min(max, Math.round((base + lengthBonus) * 2) / 2));
 }
 
 async function collectMarkdownFiles(root) {

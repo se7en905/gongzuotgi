@@ -102,7 +102,7 @@ import {
   upsertArtBrief,
   upsertAiFlowRecords
 } from './store.mjs';
-import { collectRunArtifacts, scanProject } from './scanner.mjs';
+import { collectRunArtifacts, scanProject, skillAuditFields } from './scanner.mjs';
 import { cancelRun, startRun, subscribe } from './runner.mjs';
 import { buildWorkflowPlan, workflowLevels } from './workflow.mjs';
 import { getZentaoApi, getZentaoModules, resetZentaoApi } from './zentao-adapter.mjs';
@@ -714,12 +714,21 @@ async function handleApi(req, res, url) {
     const projects = await listProjects();
     const visibleProjectIds = new Set(projects.map(project => project.id));
     const cache = await loadProjectScanCache();
+    let shouldPersistAuditHydration = false;
     const scans = {};
     for (const [projectId, entry] of Object.entries(cache)) {
       if (!visibleProjectIds.has(projectId)) continue;
       const scan = entry?.scan;
       if (!scan || typeof scan !== 'object') continue;
-      const scanWithOverrides = await applySkillVersionOverridesToScan(scan);
+      const scanWithAudit = hydrateCachedSkillAuditScores(scan);
+      if (scanWithAudit !== scan) {
+        cache[projectId] = {
+          ...entry,
+          scan: scanWithAudit
+        };
+        shouldPersistAuditHydration = true;
+      }
+      const scanWithOverrides = await applySkillVersionOverridesToScan(scanWithAudit);
       scans[projectId] = {
         ...scan,
         ...scanWithOverrides,
@@ -727,6 +736,7 @@ async function handleApi(req, res, url) {
         cachedAt: entry.cachedAt || scanWithOverrides.cachedAt || ''
       };
     }
+    if (shouldPersistAuditHydration) await writeProjectScanCache(cache);
     sendJson(res, 200, { scans });
     return;
   }
@@ -3409,7 +3419,7 @@ async function readProjectScanFromCache(project = {}) {
   const cached = cache[project.id]?.scan;
   if (cached && typeof cached === 'object') {
     return await applySkillVersionOverridesToScan({
-      ...cached,
+      ...hydrateCachedSkillAuditScores(cached),
       cacheOnly: true,
       cachedAt: cache[project.id]?.cachedAt || cached.cachedAt || ''
     });
@@ -3420,7 +3430,7 @@ async function readProjectScanFromCache(project = {}) {
 async function scanProjectWithStableCache(project = {}, options = {}) {
   let cache = await loadProjectScanCache();
   try {
-    const scan = await applySkillVersionOverridesToScan(await scanProject(project, options));
+    const scan = await applySkillVersionOverridesToScan(hydrateCachedSkillAuditScores(await scanProject(project, options)));
     const previousScan = cache[project.id]?.scan || null;
     const stableScan = mergeStableProjectScan(project, previousScan, scan);
     const nextEntry = {
@@ -3481,6 +3491,18 @@ function emptyPreservedProjectScan(project = {}, error = null) {
     lastError: error?.message || String(error || '扫描失败'),
     lastFailedAt: new Date().toISOString()
   };
+}
+
+function hydrateCachedSkillAuditScores(scan = {}) {
+  if (!scan || typeof scan !== 'object') return scan;
+  const skills = Array.isArray(scan.skills)
+    ? scan.skills.map(skill => {
+      if (!skill || typeof skill !== 'object' || Number.isFinite(Number(skill.auditScore ?? skill.audit?.score))) return skill;
+      const auditFields = skillAuditFields(skill);
+      return Object.keys(auditFields).length ? { ...skill, ...auditFields } : skill;
+    })
+    : scan.skills;
+  return { ...scan, skills };
 }
 
 function mergeStableProjectScan(project = {}, previousScan = null, nextScan = {}) {

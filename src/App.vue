@@ -8406,6 +8406,10 @@ export default {
         displayRestoredAt: skill.displayRestoredAt || '',
         displayRestoredBy: skill.displayRestoredBy || '',
         skillInventoryKind: inventoryKind,
+        auditScore: skill.auditScore,
+        auditScore90: skill.auditScore90,
+        audit: skill.audit,
+        markdownQuality: skill.markdownQuality,
         uploadedAt: skill.uploadedAt || skill.git?.uploadedAt || '',
         skill: {
           ...skill,
@@ -8581,8 +8585,8 @@ export default {
         displayQualityScore: qualityScore,
         displayQualityClass: qualityScore === null ? '' : this.skillQualityScoreClass(qualityScore),
         displayQualityText: qualityScore === null
-          ? ''
-          : `质量分 ${qualityScore}：按 skill-auditor 9 维口径估算，包含触发清晰度、目标产物、工作流、工具资源、可执行性、失败模式、人工卡口、验证机制和风险黑名单。`,
+          ? '暂无 skill-auditor 评分，请点击刷新库存后重新计算。'
+          : `质量分 ${qualityScore}：按 skill-auditor 9 维评分标准计算，包含触发清晰度、目标产物、工作流、工具资源、可执行性、失败模式、人工卡口、验证机制和高风险动作黑名单。`,
         displayIsSkillProduct: isSkillProduct,
         displaySceneText: this.skillSceneText(row, '待补充适用场景'),
         displayOwnerText: this.displayChinesePersonList(row.uploader),
@@ -9455,56 +9459,14 @@ export default {
       const skill = row.skill || row;
       const explicit = [
         skill.auditScore,
-        skill.score,
         row.auditScore,
-        row.score
+        skill.audit?.score,
+        row.audit?.score,
+        skill.markdownQuality?.score,
+        row.markdownQuality?.score
       ].map(value => Number(value)).find(value => Number.isFinite(value) && value >= 0);
-      if (explicit !== undefined) return Math.max(0, Math.min(100, Math.round(explicit > 90 ? explicit : (explicit / 90) * 100)));
-
-      const text = [
-        skill.description,
-        skill.summary,
-        skill.content,
-        skill.readme,
-        skill.preview,
-        skill.raw,
-        row.description,
-        row.summary,
-        row.content,
-        row.readme,
-        row.preview,
-        row.title,
-        row.productDisplayName,
-        row.productFileName,
-        row.relativePath,
-        row.path,
-        ...(Array.isArray(skill.triggers) ? skill.triggers : []),
-        ...(Array.isArray(skill.aliases) ? skill.aliases : []),
-        ...(Array.isArray(row.aliases) ? row.aliases : []),
-        ...(Array.isArray(row.scenes) ? row.scenes : [])
-      ].join('\n').toLowerCase();
-      const has = pattern => pattern.test(text);
-      const path = String(row.relativePath || row.path || skill.path || '').toLowerCase();
-      const isSkill = this.isSkillInventorySkillProduct(row);
-      const hasSkillFile = /(^|\/)skill\.md$/i.test(path) || isSkill;
-      const sceneCount = Array.isArray(row.scenes) ? row.scenes.filter(Boolean).length : 0;
-      const aliasCount = Array.isArray(row.aliases) ? row.aliases.filter(Boolean).length : 0;
-      const triggerCount = Array.isArray(skill.triggers) ? skill.triggers.filter(Boolean).length : 0;
-      const versionMajor = Number(this.skillVersionMajor(row.version || skill.version));
-      const usageCount = Number(row.usageCount || 0);
-      const peopleCount = Number(row.usagePeopleCount || 0);
-      const score90 =
-        (hasSkillFile || text.length > 20 ? 7 : 3) +
-        (has(/交付|输出|产物|结果|成功|验收|report|deliver|output/) ? 8 : text.length > 80 ? 5 : 3) +
-        (has(/步骤|流程|阶段|先|然后|最后|workflow|step|checklist/) ? 8 : 4) +
-        ((path ? 3 : 0) + (has(/script|scripts|tool|mcp|figma|npm|node|python|命令|工具|路径/) ? 5 : 1)) +
-        ((aliasCount || triggerCount || sceneCount) ? 7 : 3) +
-        (has(/失败|异常|缺失|权限|报错|回退|fallback|error|blocked/) ? 8 : 3) +
-        (has(/确认|暂停|等待|人工|负责人|审批|confirm|approval/) ? 7 : 3) +
-        ((usageCount > 0 ? 3 : 0) + (peopleCount > 0 ? 2 : 0) + (has(/验证|测试|检查|截图|构建|自检|test|verify|screenshot/) ? 5 : 2)) +
-        (has(/不要|不得|禁止|不能|不要做|风险|黑名单|delete|reset|destructive/) ? 8 : 3);
-      const versionBonus = versionMajor >= 3 ? 4 : versionMajor >= 2 ? 2 : 0;
-      return Math.max(0, Math.min(100, Math.round((Math.min(90, score90) / 90) * 100 + versionBonus)));
+      if (explicit !== undefined) return Math.max(0, Math.min(100, Math.round(explicit)));
+      return null;
     },
 
     skillQualityScoreClass(score = 0) {
@@ -9517,7 +9479,8 @@ export default {
 
     skillQualityScoreText(row = {}) {
       const score = this.skillQualityScore(row);
-      return `质量分 ${score}：按 skill-auditor 9 维口径估算，包含触发清晰度、目标产物、工作流、工具资源、可执行性、失败模式、人工卡口、验证机制和风险黑名单。`;
+      if (score === null) return '暂无 skill-auditor 评分，请点击刷新库存后重新计算。';
+      return `质量分 ${score}：按 skill-auditor 9 维评分标准计算，包含触发清晰度、目标产物、工作流、工具资源、可执行性、失败模式、人工卡口、验证机制和高风险动作黑名单。`;
     },
 
     skillCategory(skill = {}) {
@@ -12200,6 +12163,7 @@ export default {
               skill.id,
               skill.git?.relativePath || skill.relativePath || skill.path,
               skill.productDisplayName || skill.displayName || skill.title,
+              skill.auditScore ?? skill.audit?.score ?? skill.markdownQuality?.score ?? '',
               skill.displayVersionOverride || '',
               skill.hidden === true ? 'hidden' : '',
               skill.displayHidden === true ? 'displayHidden' : ''
