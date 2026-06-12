@@ -2331,6 +2331,15 @@ export default {
       }
     },
 
+    skillInventoryHasStatsButNoRows() {
+      const snapshotTotal = Number(this.skillInventoryProductStatsSnapshot?.total || 0) || 0;
+      return snapshotTotal > 0 && !this.skillInventoryVisibleRows.length;
+    },
+
+    skillInventoryRecoveringRows() {
+      return this.loading.skillInventoryCache || this.skillInventoryHasStatsButNoRows;
+    },
+
     safeDisplayPagedSkillInventoryRows() {
       try {
         const rows = this.displayPagedSkillInventoryRows;
@@ -2833,6 +2842,30 @@ export default {
 
     skillInventoryProductStats() {
       if (!this.skillInventoryKeyword && !this.skillInventoryMemberFilter) {
+        const products = this.skillInventoryUniqueProductsByName(this.skillInventoryRowsForProductStats || []);
+        if (products.length) {
+          const snapshot = {
+            total: products.length,
+            skill: products.filter(row => this.isSkillInventorySkillProduct(row)).length,
+            standard: products.filter(row => this.isSkillInventoryStandardProduct(row)).length,
+            updatedAt: new Date().toISOString()
+          };
+          const cachedSnapshot = this.skillInventoryProductStatsSnapshot;
+          if (
+            !cachedSnapshot
+            || Number(cachedSnapshot.total || 0) !== snapshot.total
+            || Number(cachedSnapshot.skill || 0) !== snapshot.skill
+            || Number(cachedSnapshot.standard || 0) !== snapshot.standard
+          ) {
+            this.skillInventoryProductStatsSnapshot = snapshot;
+            this.saveWorkbenchDisplayCache('skillInventoryProductStatsSnapshot', this.skillInventoryProductStatsSnapshot);
+          }
+          return [
+            { key: 'total', label: '产物总计', value: snapshot.total },
+            { key: 'skill', label: '技能总数', value: snapshot.skill },
+            { key: 'standard', label: '规范总数', value: snapshot.standard }
+          ];
+        }
         if (this.hasProjectScanProducts(this.scans)) {
           const scanSnapshot = this.buildSkillInventoryProductStatsSnapshotFromScans(this.scans);
           const cachedSnapshot = this.skillInventoryProductStatsSnapshot;
@@ -4610,11 +4643,13 @@ export default {
         this.restoreWorkbenchDisplayCacheKey('usageCounters');
         this.ensureSkillInventoryUsageCounters();
         const hasRows = this.skillInventoryRows.length > 0;
+        const hasVisibleRows = this.skillInventoryVisibleRows.length > 0;
         const hasStatsSnapshot = Number(this.skillInventoryProductStatsSnapshot?.total || 0) > 0;
-        if (!this.loading.skillInventoryCache && (!hasRows || hasStatsSnapshot)) {
+        const needsInventoryRowRecovery = hasStatsSnapshot && !hasVisibleRows;
+        if (!this.loading.skillInventoryCache && (!hasRows || needsInventoryRowRecovery)) {
           this.loadProjectScanCacheForInventory({ force: true, silent: true }).catch(() => {});
         }
-        if (hasRows) {
+        if (hasVisibleRows) {
           this.skillInventoryScanCacheLoaded = true;
         }
         this.ensureSkillInventoryVisibleListState();
@@ -10044,6 +10079,7 @@ export default {
       if (this.isFigmaUseConnectorArtifact(row) || this.isFigmaUseConnectorArtifact(row.skill || {})) return false;
       if (row.skillInventoryKind === 'directory' || row.skill?.inventoryKind === 'directory') return true;
       if (row.skillInventoryKind === 'skill' || row.skill?.inventoryKind === 'skill') return true;
+      if (row.skillInventoryKind === 'document' || row.skill?.inventoryKind === 'document') return true;
       const relativePath = String(row.skill?.git?.relativePath || row.relativePath || row.path || '').replace(/\\/g, '/');
       const title = String(row.productDisplayName || row.productFileName || row.title || '').trim();
       const source = String(row.source || '').trim();
@@ -11297,14 +11333,21 @@ export default {
       if (!silent) this.scanOutput = '正在读取库存缓存...';
       this.skillInventoryCachePromise = (async () => {
       try {
-        await this.ensureProjectRowsForScanCache({ force: true });
+        await this.ensureProjectRowsForScanCache({ force: true }).catch(error => {
+          console.warn('AI 产物清单项目列表读取失败，继续读取库存缓存', error);
+          this.restoreWorkbenchDisplayCacheKey('projects');
+        });
         const result = await this.apiWithTimeout('/api/project-scan-cache', {}, {}, 15000);
         const scans = result?.scans && typeof result.scans === 'object' ? result.scans : {};
         if (!Object.keys(scans).length) {
-          await this.ensureProjectRowsForScanCache({ force: true });
+          await this.ensureProjectRowsForScanCache({ force: true }).catch(error => {
+            console.warn('AI 产物清单空缓存兜底项目列表读取失败', error);
+          });
         }
         this.skillInventoryScanCacheLoaded = true;
         if (this.applyProjectScanCachePayload(scans, { force, productStats: result?.productStats })) {
+          this.clearSkillInventoryRowsCache();
+          this.ensureSkillInventoryVisibleListState();
           const selectedScan = this.scans[this.selectedProjectId];
           if (!silent) {
             this.scanOutput = selectedScan
