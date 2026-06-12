@@ -10,6 +10,8 @@ export const artAssigneeOptions = [
   { account: 'yushengwei', realname: '余盛威' }
 ];
 
+const WEB_SKIN_SPLIT_MAIN_COMMENT = '此单为10-12-白依据';
+
 export async function assignZentaoTask(task = {}, assignee = {}, options = {}) {
   const taskId = zentaoTaskId(task);
   const assignedTo = String(assignee.account || assignee.assignedTo || '').trim();
@@ -51,6 +53,7 @@ export async function buildZentaoSplitPlan(task = {}) {
   const executionId = executionIdOf(artTemplate || detail, task);
   const parentTaskId = taskParentId(artTemplate || detail) || taskParentId(detail) || nonZeroIdValue(task.zentao?.parent) || taskId;
   const main = recommendedMainAssignee(text);
+  let mainComment = '';
   const children = [];
 
   if (/入口图标|入口图|入口icon|新增子游戏|新增小游戏|新增游戏/i.test(text)) {
@@ -66,17 +69,13 @@ export async function buildZentaoSplitPlan(task = {}) {
       children.push(childRow(`${prefix}${baseName || title}${suffix}`, account, deadline, executionId, parentTaskId, index, artTemplate));
     });
   } else if (/web5?|web/i.test(text)) {
-    children.push(childRow(`【制作单】${baseName || title}-2`, /皮肤/i.test(text) ? 'fengshuqi' : 'huangjianrong', deadline, executionId, parentTaskId, 0, artTemplate));
-    if (cocosTemplate || /cocos|(?:^|[^A-Za-z])cos\s*端|cos\s*15/i.test(text)) {
+    children.push(childRow(`【制作单】${baseName || title}-2`, 'huangjianrong', deadline, executionId, parentTaskId, 0, artTemplate));
+    if (cocosTemplate) {
       const cocosDeadline = validDate(cocosTemplate?.deadline || deadline);
       const cocosExecutionId = executionIdOf(cocosTemplate || artTemplate || detail, task);
-      children.push(childRow(`【制作单】${baseName || title}-cocos`, /15/.test(text) ? 'zhangzb' : 'lilh', cocosDeadline, cocosExecutionId, parentTaskId, 1, cocosTemplate || artTemplate));
+      children.push(childRow(`【制作单】${baseName || title}-15`, 'zhangzb', cocosDeadline, cocosExecutionId, parentTaskId, 1, cocosTemplate || artTemplate));
     }
-    if (/cocos\s*15|cos\s*15/i.test(text)) {
-      const cocosDeadline = validDate(cocosTemplate?.deadline || deadline);
-      const cocosExecutionId = executionIdOf(cocosTemplate || artTemplate || detail, task);
-      children.push(childRow(`【制作单】${baseName || title}-15`, 'yejunbo', cocosDeadline, cocosExecutionId, parentTaskId, 2, cocosTemplate || artTemplate));
-    }
+    mainComment = splitMainCommentForTask(text);
   } else {
     children.push(childRow(withTaskSuffix(`【制作单】${baseName || title}`, '-2'), main.account, deadline, executionId, parentTaskId, 0, artTemplate));
   }
@@ -88,6 +87,7 @@ export async function buildZentaoSplitPlan(task = {}) {
     executionId,
     parent: parentTaskId,
     mainAssignee: main.account,
+    mainComment,
     assignees: artAssigneeOptions,
     children
   };
@@ -133,9 +133,12 @@ export async function applyZentaoSplitPlan(task = {}, plan = {}, options = {}) {
   const childFailed = results.some(item => item.type === 'child' && item.ok === false);
   if (mainAssignee && !childFailed) {
     try {
+      const recomputedMainComment = splitMainCommentForTask(`${detail.name || detail.title || ''}\n${detail.desc || detail.description || ''}\n${task.requirement || ''}\n${task.zentao?.storyTitle || ''}`);
+      const requestedMainComment = String(plan.mainComment || '').trim();
+      const mainComment = recomputedMainComment || (requestedMainComment === WEB_SKIN_SPLIT_MAIN_COMMENT ? requestedMainComment : '');
       const fresh = await assignZentaoTask({ ...task, ...detail, taskNo: taskId, zentao: { ...(task.zentao || {}), id: taskId } }, { account: mainAssignee }, {
-        comment: explicitZentaoComment(options),
-        allowZentaoComment: options.allowZentaoComment === true
+        comment: mainComment || explicitZentaoComment(options),
+        allowZentaoComment: Boolean(mainComment) || options.allowZentaoComment === true
       });
       results.unshift({ type: 'main', ok: true, taskId, assignedTo: describeTaskAssignee(fresh) || mainAssignee });
     } catch (error) {
@@ -1008,9 +1011,17 @@ function findArtProductionTemplate(detail = {}, task = {}, related = []) {
 
 function findCocosProductionTemplate(detail = {}, task = {}, related = []) {
   return [detail, ...related].find(item => {
-    const name = String(item?.name || item?.title || '');
-    if (!/制作单|美术/i.test(name)) return false;
-    return /cocos|(?:^|[^A-Za-z])cos\s*\d*|客户端/i.test(name);
+    const haystack = [
+      item?.name,
+      item?.title,
+      item?.type,
+      item?.category,
+      item?.taskType,
+      item?.moduleName,
+      item?.executionName
+    ].map(value => String(value || '')).join('\n');
+    if (!/制作单|美术/i.test(haystack)) return false;
+    return /cocos|(?:^|[^A-Za-z])cos\s*\d*|客户端/i.test(haystack);
   }) || null;
 }
 
@@ -1047,6 +1058,11 @@ function recommendedMainAssignee(text = '') {
   if (/web5?[-_ ]?2.*皮肤|2皮肤/i.test(text)) return findAssignee('fengshuqi');
   if (/web5?[-_ ]?2\b|2主套/i.test(text)) return findAssignee('huangjianrong');
   return findAssignee('lilh');
+}
+
+function splitMainCommentForTask(text = '') {
+  const value = String(text || '');
+  return /皮肤/i.test(value) && /web5?|web/i.test(value) ? WEB_SKIN_SPLIT_MAIN_COMMENT : '';
 }
 
 function findAssignee(account) {
