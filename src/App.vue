@@ -2859,24 +2859,6 @@ export default {
           { key: 'skill', label: '技能总数', value: groupedRows.skill.length },
           { key: 'standard', label: '规范总数', value: groupedRows.standard.length }
         ];
-        if (!this.skillInventoryKeyword && !this.skillInventoryMemberFilter && groupedRows.total.length) {
-          const snapshot = {
-            total: groupedRows.total.length,
-            skill: groupedRows.skill.length,
-            standard: groupedRows.standard.length,
-            updatedAt: new Date().toISOString()
-          };
-          const cachedSnapshot = this.skillInventoryProductStatsSnapshot;
-          if (
-            !cachedSnapshot
-            || Number(cachedSnapshot.total || 0) !== snapshot.total
-            || Number(cachedSnapshot.skill || 0) !== snapshot.skill
-            || Number(cachedSnapshot.standard || 0) !== snapshot.standard
-          ) {
-            this.skillInventoryProductStatsSnapshot = snapshot;
-            this.saveWorkbenchDisplayCache('skillInventoryProductStatsSnapshot', this.skillInventoryProductStatsSnapshot);
-          }
-        }
         this.skillInventoryProductStatsCacheSet(cacheKey, stats);
         return stats;
       }
@@ -2897,16 +2879,6 @@ export default {
             standard: products.filter(row => this.isSkillInventoryStandardProduct(row)).length,
             updatedAt: new Date().toISOString()
           };
-          const cachedSnapshot = this.skillInventoryProductStatsSnapshot;
-          if (
-            !cachedSnapshot
-            || Number(cachedSnapshot.total || 0) !== snapshot.total
-            || Number(cachedSnapshot.skill || 0) !== snapshot.skill
-            || Number(cachedSnapshot.standard || 0) !== snapshot.standard
-          ) {
-            this.skillInventoryProductStatsSnapshot = snapshot;
-            this.saveWorkbenchDisplayCache('skillInventoryProductStatsSnapshot', this.skillInventoryProductStatsSnapshot);
-          }
           const stats = [
             { key: 'total', label: '产物总计', value: snapshot.total },
             { key: 'skill', label: '技能总数', value: snapshot.skill },
@@ -2922,8 +2894,13 @@ export default {
             || Number(scanSnapshot.total || 0) > Number(cachedSnapshot.total || 0)
             || Number(scanSnapshot.standard || 0) > Number(cachedSnapshot.standard || 0);
           if (shouldUseScanSnapshot) {
-            this.skillInventoryProductStatsSnapshot = scanSnapshot;
-            this.saveWorkbenchDisplayCache('skillInventoryProductStatsSnapshot', this.skillInventoryProductStatsSnapshot);
+            const stats = [
+              { key: 'total', label: '产物总计', value: Number(scanSnapshot.total || 0) },
+              { key: 'skill', label: '技能总数', value: Number(scanSnapshot.skill || 0) },
+              { key: 'standard', label: '规范总数', value: Number(scanSnapshot.standard || 0) }
+            ];
+            this.skillInventoryProductStatsCacheSet(cacheKey, stats);
+            return stats;
           }
         }
       }
@@ -8988,9 +8965,24 @@ export default {
         }
       };
       const metrics = this.safeSkillInventoryRowMetrics(baseRow);
-      return {
+      const rowWithMetrics = {
         ...baseRow,
         ...metrics
+      };
+      const displayVersionLabel = this.skillInventoryDisplayVersionLabel(rowWithMetrics);
+      const displayVersionClass = this.skillInventoryDisplayVersionClass({
+        ...rowWithMetrics,
+        displayVersionLabel
+      });
+      return {
+        ...rowWithMetrics,
+        displayVersionLabel,
+        displayVersionClass,
+        skill: {
+          ...(rowWithMetrics.skill || {}),
+          displayVersionLabel,
+          displayVersionClass
+        }
       };
     },
 
@@ -9158,6 +9150,48 @@ export default {
       return Number(this.skillInventoryUsageStatsForList(row).usageCount || 0);
     },
 
+    skillInventoryCachedUsageCountDisplay(row = {}) {
+      if (row.hidden === true) return '-';
+      const value = Number(row.usageCount ?? row.skill?.usageCount);
+      if (Number.isFinite(value)) return value;
+      return Number(this.skillInventoryUsageStatsForList(row).usageCount || 0);
+    },
+
+    skillInventoryCachedUsageRateDisplay(row = {}) {
+      if (row.hidden === true) return '-';
+      if (this.isOwnerYushengwei(row)) return '-';
+      const value = Number(row.usageRate ?? row.skill?.usageRate);
+      if (Number.isFinite(value)) return `${value}%`;
+      return this.skillUsageRateDisplay(row);
+    },
+
+    skillInventoryCachedQualityScore(row = {}) {
+      const explicit = [
+        row.auditScore,
+        row.skill?.auditScore,
+        row.audit?.score,
+        row.skill?.audit?.score
+      ].map(value => Number(value)).find(value => Number.isFinite(value) && value >= 0);
+      if (explicit !== undefined) return Math.max(0, Math.min(100, Math.round(explicit)));
+      return this.skillQualityScore(row);
+    },
+
+    skillInventoryDisplayVersionLabel(row = {}) {
+      if (row.hidden === true) return '1.0';
+      const cached = String(row.displayVersionLabel || row.skill?.displayVersionLabel || '').trim();
+      if (cached) return cached;
+      const displayVersion = String(row.displayVersionOverride || row.skill?.displayVersionOverride || '').trim();
+      if (displayVersion) return this.skillVersionShortLabel(displayVersion);
+      return this.skillVersionShortLabel(row);
+    },
+
+    skillInventoryDisplayVersionClass(row = {}) {
+      if (row.hidden === true) return 'version-hidden';
+      const cached = String(row.displayVersionClass || row.skill?.displayVersionClass || '').trim();
+      if (cached) return cached;
+      return this.skillVersionClass(this.skillInventoryDisplayVersionLabel(row));
+    },
+
     skillInventoryDisplayRowCacheKey(row = {}) {
       return [
         row.uid || row.id || '',
@@ -9184,16 +9218,16 @@ export default {
       if (cacheKey && this._skillInventoryDecoratedRowCache?.has(cacheKey)) {
         return this._skillInventoryDecoratedRowCache.get(cacheKey);
       }
-      const versionLabel = this.skillVersionShortLabel(row);
+      const versionLabel = this.skillInventoryDisplayVersionLabel(row);
       const isSkillProduct = this.isSkillInventorySkillProduct(row);
       const hidden = row.hidden === true;
-      const qualityScore = !hidden && isSkillProduct ? this.skillQualityScore(row) : null;
+      const qualityScore = !hidden && isSkillProduct ? this.skillInventoryCachedQualityScore(row) : null;
       const decorated = {
         ...row,
         displayVersionLabel: versionLabel,
-        displayVersionClass: this.skillVersionClass(row),
-        displayUsageCount: hidden ? '-' : this.skillInventoryUsageCountDisplay(row),
-        displayUsageRate: hidden ? '-' : this.skillUsageRateDisplay(row),
+        displayVersionClass: this.skillInventoryDisplayVersionClass(row),
+        displayUsageCount: hidden ? '-' : this.skillInventoryCachedUsageCountDisplay(row),
+        displayUsageRate: hidden ? '-' : this.skillInventoryCachedUsageRateDisplay(row),
         displayQualityScore: qualityScore,
         displayQualityClass: qualityScore === null ? '' : this.skillQualityScoreClass(qualityScore),
         displayQualityText: hidden
@@ -11510,10 +11544,19 @@ export default {
       }
       if (!Object.keys(scanMap).length) return false;
       this.replaceScansForSkillInventory(scanMap, { force: options.force === true });
-      this.skillInventoryProductStatsSnapshot = options.productStats && typeof options.productStats === 'object'
-        ? options.productStats
-        : this.buildSkillInventoryProductStatsSnapshotFromScans(this.scans);
-      this.saveWorkbenchDisplayCache('skillInventoryProductStatsSnapshot', this.skillInventoryProductStatsSnapshot);
+      if (options.productStats && typeof options.productStats === 'object') {
+        const current = this.skillInventoryProductStatsSnapshot || {};
+        const next = options.productStats;
+        const unchanged = Number(current.total || 0) === Number(next.total || 0)
+          && Number(current.skill || 0) === Number(next.skill || 0)
+          && Number(current.standard || 0) === Number(next.standard || 0);
+        if (!unchanged || !current.updatedAt) {
+          this.skillInventoryProductStatsSnapshot = next;
+          this.saveWorkbenchDisplayCache('skillInventoryProductStatsSnapshot', this.skillInventoryProductStatsSnapshot);
+        }
+      } else {
+        this.updateSkillInventoryProductStatsSnapshot(this.scans);
+      }
       this.saveWorkbenchDisplayCache('projects', this.projects);
       if (this.hasProjectScanProducts(this.scans)) this.saveWorkbenchDisplayCache('scans', this.scans);
       else this.clearWorkbenchDisplayCacheKey('scans');
@@ -11568,6 +11611,19 @@ export default {
         standard: products.filter(row => this.isSkillInventoryStandardProduct(row)).length,
         updatedAt: new Date().toISOString()
       };
+    },
+
+    updateSkillInventoryProductStatsSnapshot(scans = this.scans) {
+      const snapshot = this.buildSkillInventoryProductStatsSnapshotFromScans(scans);
+      const current = this.skillInventoryProductStatsSnapshot || {};
+      const unchanged = Number(current.total || 0) === Number(snapshot.total || 0)
+        && Number(current.skill || 0) === Number(snapshot.skill || 0)
+        && Number(current.standard || 0) === Number(snapshot.standard || 0);
+      if (unchanged && current.updatedAt) return snapshot;
+      this.skillInventoryProductStatsSnapshot = snapshot;
+      this.saveWorkbenchDisplayCache('skillInventoryProductStatsSnapshot', this.skillInventoryProductStatsSnapshot);
+      this._skillInventoryProductStatsCache = new Map();
+      return snapshot;
     },
 
     async loadProjectScanCacheForInventory(options = {}) {
@@ -11733,6 +11789,7 @@ export default {
         }
         this.mergeScansIntoInventoryState(scanMap, { force: true });
         this.saveWorkbenchDisplayCache('scans', this.scans);
+        this.updateSkillInventoryProductStatsSnapshot(this.scans);
         this.skillInventoryScanCacheLoaded = true;
         const activeProjectId = this.selectedProjectId && this.scans[this.selectedProjectId]
           ? this.selectedProjectId
