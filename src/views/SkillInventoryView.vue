@@ -28,7 +28,7 @@
     <div v-show="app.skillInventoryTab === 'list' || app.skillInventoryTab === 'assets'" class="skill-member-summary">
       <div class="skill-member-grid skill-product-stats-grid">
         <article
-          v-for="stat in app.skillInventoryProductStats"
+          v-for="stat in app.safeSkillInventoryProductStats"
           :key="stat.key"
           :class="['skill-member-card skill-product-stat-card', { active: app.isSkillInventoryProductStatActive(stat.key) }]"
           role="button"
@@ -46,6 +46,7 @@
     </div>
 
     <ElDialog
+      v-if="app.skillSourceDisplayDialog.visible"
       v-model="app.skillSourceDisplayDialog.visible"
       title="来源内容展示管理"
       width="1080px"
@@ -173,6 +174,7 @@
     </ElDialog>
 
     <ElDialog
+      v-if="app.aiAssetDialog.visible"
       v-model="app.aiAssetDialog.visible"
       :title="app.aiAssetDialog.mode === 'manualSkill' ? '手动创建技能' : app.aiAssetDialog.readonly ? '人工研究记录明细' : '人工研究记录'"
       width="940px"
@@ -277,7 +279,7 @@
     </ElDialog>
 
     <div v-show="app.skillInventoryTab === 'list' || app.skillInventoryTab === 'assets'" class="skill-list-section">
-    <div v-if="!app.filteredSkillInventoryRows.length" class="skill-inventory-empty-state">
+    <div v-if="!app.safeFilteredSkillInventoryRows.length" class="skill-inventory-empty-state">
       <strong>暂无扫描源产物</strong>
       <span>页面默认展示上次库存缓存；请先接入 Git 仓库、本地目录或共享盘路径，再由有权限账号点击刷新库存抓取新增和修改。</span>
       <div>
@@ -288,7 +290,7 @@
     <ElTable
       v-else
       class="skill-clean-table skill-product-table"
-      :data="app.displayPagedSkillInventoryRows"
+      :data="app.safeDisplayPagedSkillInventoryRows"
       :row-key="app.skillInventoryTableRowKey"
       table-layout="fixed"
       :scrollbar-always-on="true"
@@ -372,17 +374,17 @@
       </ElTableColumn>
     </ElTable>
     <div class="pagination-bar">
-      <span>共 {{ app.filteredSkillInventoryRows.length }} 条</span>
+      <span>共 {{ app.safeFilteredSkillInventoryRows.length }} 条</span>
       <ElPagination
         :current-page="app.skillInventoryPage" @update:current-page="value => app.skillInventoryPage = value"
         :page-size="app.skillInventoryPageSize" @update:page-size="value => app.setWorkbenchPageSize(value, 'skillInventoryPage')"
         :page-sizes="[10, 50, 100]"
-        :total="app.filteredSkillInventoryRows.length"
+        :total="app.safeFilteredSkillInventoryRows.length"
         page-size-label="条/页"
         layout="sizes, prev, pager, next"
       />
     </div>
-    <section v-if="app.skillInventoryDocumentRows.length" class="skill-document-section">
+    <section v-if="app.safeSkillInventoryDocumentRows.length" class="skill-document-section">
       <div class="skill-member-summary-head">
         <div>
           <strong>文件说明 / 指引</strong>
@@ -391,7 +393,7 @@
       </div>
       <ElTable
         class="skill-clean-table"
-        :data="app.skillInventoryDocumentRows"
+        :data="app.safeSkillInventoryDocumentRows"
         row-key="uid"
       >
         <ElTableColumn label="文件" min-width="320">
@@ -437,6 +439,7 @@
     </div>
 
     <ElDrawer
+      v-if="app.skillUsageDialog.visible"
       v-model="app.skillUsageDialog.visible"
       title="使用明细"
       direction="rtl"
@@ -490,7 +493,7 @@
       </div>
     </ElDrawer>
 
-    <ElDialog v-model="app.skillOwnerDialog.visible" title="调整产物贡献人" width="420px" class="app-dialog" append-to-body align-center>
+    <ElDialog v-if="app.skillOwnerDialog.visible" v-model="app.skillOwnerDialog.visible" title="调整产物贡献人" width="420px" class="app-dialog" append-to-body align-center>
       <ElForm label-position="top" @submit.prevent>
         <ElFormItem label="产物">
           <ElInput :model-value="app.skillOwnerDialog.row?.productDisplayName || app.skillOwnerDialog.row?.title || '-'" disabled />
@@ -510,7 +513,7 @@
       </template>
     </ElDialog>
 
-    <ElDialog v-model="app.skillHistoryDialog.visible" title="历史版本" width="760px" class="app-dialog skill-history-dialog" append-to-body>
+    <ElDialog v-if="app.skillHistoryDialog.visible" v-model="app.skillHistoryDialog.visible" title="历史版本" width="760px" class="app-dialog skill-history-dialog" append-to-body>
       <div class="skill-history-panel">
         <div class="skill-history-meta">
           <div><span>技能</span><strong>{{ app.skillHistoryDialog.row?.title || app.skillHistoryDialog.row?.id || '-' }}</strong></div>

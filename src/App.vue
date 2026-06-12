@@ -1029,8 +1029,9 @@ export default {
     },
 
     pageMeta() {
-      return {
+      const meta = {
         'skill-inventory': { eyebrow: '技能管理', title: this.skillInventoryPageTitle },
+        'skill-assets': { eyebrow: '技能管理', title: this.skillInventoryPageTitle },
         'ai-members': { eyebrow: 'AI 管理', title: 'AI部门看板' },
         tasks: { eyebrow: '任务中心', title: '任务中心' },
         'codex-config': { eyebrow: 'AI 管理', title: 'Codex 配置' },
@@ -1044,6 +1045,7 @@ export default {
         'task-result': { eyebrow: '任务产物', title: this.selectedTask?.name || '任务产物' },
         'manual-review': { eyebrow: '人工复核', title: '人工复核' }
       }[this.activeView];
+      return meta || { eyebrow: '工作台', title: '美术部工作台' };
     },
 
     selectedProject() {
@@ -2303,6 +2305,67 @@ export default {
       return paginate(this.projectRows, this.projectPage, this.projectPageSize);
     },
 
+    safeSkillInventoryRows() {
+      try {
+        const rows = this.skillInventoryRows;
+        return Array.isArray(rows) ? rows : [];
+      } catch (error) {
+        console.error('AI 产物清单库存行计算失败，已保留页面框架', error);
+        return [];
+      }
+    },
+
+    safeFilteredSkillInventoryRows() {
+      try {
+        const rows = this.filteredSkillInventoryRows;
+        return Array.isArray(rows) ? rows : [];
+      } catch (error) {
+        console.error('AI 产物清单筛选行计算失败，已回退到库存行', error);
+        return this.safeSkillInventoryRows
+          .filter(row => row.displayHidden !== true)
+          .filter(row => (row.hidden !== true || this.canOperateSkillInventoryManage) && this.safeIsVisibleSkillInventoryProductRow(row));
+      }
+    },
+
+    safeDisplayPagedSkillInventoryRows() {
+      try {
+        const rows = this.displayPagedSkillInventoryRows;
+        return Array.isArray(rows) ? rows : [];
+      } catch (error) {
+        console.error('AI 产物清单展示行计算失败，已回退到当前页基础行', error);
+        const pageSize = Math.max(1, Number(this.skillInventoryPageSize || 10) || 10);
+        const maxPage = Math.max(1, Math.ceil(this.safeFilteredSkillInventoryRows.length / pageSize));
+        const page = Math.min(Math.max(1, Number(this.skillInventoryPage || 1) || 1), maxPage);
+        return this.safeFilteredSkillInventoryRows
+          .slice((page - 1) * pageSize, page * pageSize)
+          .map(row => this.safeDecorateSkillInventoryDisplayRow(row));
+      }
+    },
+
+    safeSkillInventoryDocumentRows() {
+      try {
+        const rows = this.skillInventoryDocumentRows;
+        return Array.isArray(rows) ? rows : [];
+      } catch (error) {
+        console.error('AI 产物清单文档行计算失败，已隐藏文档区块', error);
+        return [];
+      }
+    },
+
+    safeSkillInventoryProductStats() {
+      try {
+        const stats = this.skillInventoryProductStats;
+        if (Array.isArray(stats) && stats.length) return stats;
+      } catch (error) {
+        console.error('AI 产物清单统计计算失败，已回退到库存总数', error);
+      }
+      return [
+        { key: 'total', label: '产物总计', value: this.safeSkillInventoryRows.length },
+        { key: 'skill', label: '技能总数', value: 0 },
+        { key: 'standard', label: '规范总数', value: 0 }
+      ];
+    },
+
     skillInventoryRows() {
       const token = this.skillInventoryRowsCacheKey;
       if (this._skillInventoryRowsCache?.token === token && Array.isArray(this._skillInventoryRowsCache.rows)) {
@@ -2316,7 +2379,7 @@ export default {
       });
       const nextRows = this.dedupeSkillInventoryRows(rows).sort((a, b) => {
         const timeDiff = String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || ''));
-        return timeDiff || a.title.localeCompare(b.title);
+        return timeDiff || String(a.title || '').localeCompare(String(b.title || ''));
       });
       this._skillInventoryRowsCache = { token, rows: nextRows };
       return nextRows;
@@ -2467,7 +2530,7 @@ export default {
         const sortedRows = [...rows].sort((a, b) => {
           const usageDiff = Number(b.usageCount || 0) - Number(a.usageCount || 0);
           if (usageDiff) return usageDiff;
-          return String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')) || a.title.localeCompare(b.title);
+          return String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')) || String(a.title || '').localeCompare(String(b.title || ''));
         });
         this._filteredSkillInventoryRowsCache = { token: cacheKey, rows: sortedRows };
         this.$nextTick(() => this.ensureSkillInventoryPageInRange(sortedRows.length));
@@ -2483,7 +2546,7 @@ export default {
         const aMine = this.skillInventoryRowBelongsToMember(a, mine) ? 1 : 0;
         const bMine = this.skillInventoryRowBelongsToMember(b, mine) ? 1 : 0;
         if (aMine !== bMine) return bMine - aMine;
-        return String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')) || a.title.localeCompare(b.title);
+        return String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')) || String(a.title || '').localeCompare(String(b.title || ''));
       });
       this._filteredSkillInventoryRowsCache = { token: cacheKey, rows: sortedRows };
       this.$nextTick(() => this.ensureSkillInventoryPageInRange(sortedRows.length));
@@ -4145,6 +4208,47 @@ export default {
     isSkillInventoryProductStatActive(key = '') {
       if (key === 'total') return !this.skillInventoryKindFilter;
       return this.skillInventoryKindFilter === key;
+    },
+
+    safeIsVisibleSkillInventoryProductRow(row = {}) {
+      try {
+        return this.isVisibleSkillInventoryProductRow(row);
+      } catch (error) {
+        console.error('AI 产物清单可见性判断失败，已保留该行展示', error);
+        return true;
+      }
+    },
+
+    safeDecorateSkillInventoryDisplayRow(row = {}) {
+      try {
+        return this.decorateSkillInventoryDisplayRow(row);
+      } catch (error) {
+        console.error('AI 产物清单行展示计算失败，已使用基础展示', error);
+        const versionLabel = this.safeCallDisplayValue(() => this.skillVersionShortLabel(row), '1.0');
+        return {
+          ...row,
+          displayVersionLabel: versionLabel,
+          displayVersionClass: this.safeCallDisplayValue(() => this.skillVersionClass(row), this.skillVersionClass(versionLabel)),
+          displayUsageCount: row.hidden === true ? '-' : Number(row.usageCount || 0),
+          displayUsageRate: row.hidden === true ? '-' : '-',
+          displayQualityScore: null,
+          displayQualityClass: '',
+          displayQualityText: '质量分暂未计算。',
+          displayIsSkillProduct: this.safeCallDisplayValue(() => this.isSkillInventorySkillProduct(row), false),
+          displaySceneText: this.safeCallDisplayValue(() => this.skillSceneText(row, '待补充适用场景'), '待补充适用场景'),
+          displayOwnerText: this.safeCallDisplayValue(() => this.displayChinesePersonList(row.uploader), row.uploader || '-'),
+          displayIsPathScanFolderProduct: this.safeCallDisplayValue(() => this.isPathScanFolderProductRow(row), false)
+        };
+      }
+    },
+
+    safeCallDisplayValue(factory, fallback = '') {
+      try {
+        const value = typeof factory === 'function' ? factory() : fallback;
+        return value === undefined || value === null || value === '' ? fallback : value;
+      } catch {
+        return fallback;
+      }
     },
 
     safeValidationText(value = '') {
@@ -10992,7 +11096,9 @@ export default {
       this.scans = nextScans;
       this.projects = this.projects.map(project => {
         const scan = nextScans[project.id] || null;
-        return scan ? { ...project, scan } : (({ scan: _oldScan, ...rest }) => rest)(project);
+        if (scan) return { ...project, scan };
+        const { scan: _oldScan, ...rest } = project;
+        return rest;
       });
       this.skillInventoryScanSignature = nextSignature;
       this.clearValidationMatchCache();
@@ -11017,16 +11123,6 @@ export default {
         }
       }
       if (!Object.keys(scanMap).length) return false;
-      const serverProjectIds = new Set(Object.keys(scanMap));
-      const nextScans = Object.fromEntries(
-        Object.entries(this.scans || {}).filter(([projectId]) => serverProjectIds.has(projectId))
-      );
-      this.scans = nextScans;
-      this.projects = this.projects.map(project => {
-        if (serverProjectIds.has(project.id)) return project;
-        const { scan: _oldScan, ...rest } = project;
-        return rest;
-      });
       this.mergeScansIntoInventoryState(scanMap);
       this.saveWorkbenchDisplayCache('projects', this.projects);
       if (this.hasProjectScanProducts(this.scans)) this.saveWorkbenchDisplayCache('scans', this.scans);
@@ -11047,7 +11143,6 @@ export default {
         const scans = result?.scans && typeof result.scans === 'object' ? result.scans : {};
         if (!Object.keys(scans).length) {
           await this.ensureProjectRowsForScanCache({ force: true });
-          this.pruneProjectScanStateToKnownProjects();
         }
         this.skillInventoryScanCacheLoaded = true;
         if (this.applyProjectScanCachePayload(scans)) {
@@ -11126,13 +11221,14 @@ export default {
     },
 
     projectFromCachedScan(projectId = '', scan = {}) {
+      const normalizedScan = scan?.scan && typeof scan.scan === 'object' ? scan.scan : scan;
       return {
         id: projectId,
-        name: scan.projectName || scan.name || projectId,
-        rootPath: scan.rootPath || '',
-        framework: scan.framework || scan.detected?.framework || '未知',
-        sourceType: scan.sourceType || 'git',
-        createdAt: scan.scannedAt || scan.cachedAt || ''
+        name: normalizedScan.projectName || normalizedScan.name || scan.projectName || scan.name || projectId,
+        rootPath: normalizedScan.rootPath || scan.rootPath || '',
+        framework: normalizedScan.framework || normalizedScan.detected?.framework || scan.framework || '未知',
+        sourceType: normalizedScan.sourceType || scan.sourceType || 'git',
+        createdAt: normalizedScan.scannedAt || normalizedScan.cachedAt || scan.cachedAt || ''
       };
     },
 

@@ -720,17 +720,19 @@ async function handleApi(req, res, url) {
     let shouldPersistAuditHydration = false;
     const scans = {};
     for (const [projectId, entry] of Object.entries(cache)) {
+      const scanEntry = entry?.scan && typeof entry.scan === 'object' ? entry.scan : entry;
+      const cachedAt = entry?.scan ? entry.cachedAt : entry?.cachedAt;
       if (projectIds.size && !projectIds.has(projectId)) {
-        const cachedScan = entry?.scan;
+        const cachedScan = scanEntry;
         const hasCachedProducts = Array.isArray(cachedScan?.skills) && cachedScan.skills.length > 0;
         if (!hasCachedProducts) continue;
       }
-      const scan = entry?.scan;
+      const scan = scanEntry;
       if (!scan || typeof scan !== 'object') continue;
       const scanWithAudit = await hydrateCachedSkillAuditScores(scan);
       if (scanWithAudit !== scan) {
         cache[projectId] = {
-          ...entry,
+          ...(entry?.scan ? entry : { projectId }),
           scan: scanWithAudit
         };
         shouldPersistAuditHydration = true;
@@ -740,7 +742,7 @@ async function handleApi(req, res, url) {
         ...scan,
         ...scanWithOverrides,
         cacheOnly: true,
-        cachedAt: entry.cachedAt || scanWithOverrides.cachedAt || ''
+        cachedAt: cachedAt || scanWithOverrides.cachedAt || ''
       };
     }
     if (shouldPersistAuditHydration) await writeProjectScanCache(cache);
