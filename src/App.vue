@@ -3022,39 +3022,41 @@ export default {
       };
     },
 
-    isSkillLikeMarkdownProduct(row = {}) {
-      const skill = row.skill || {};
-      const pathText = [
-        row.relativePath,
-        row.path,
-        skill.git?.relativePath,
-        skill.relativePath,
-        skill.path,
-        skill.skillPath
-      ].map(value => String(value || '').replace(/\\/g, '/').trim()).filter(Boolean).join('\n');
-      if (!/\.md$/i.test(pathText)) return false;
-      if (!/(^|\/)(skills|入口图)(\/|$)/i.test(pathText)) return false;
-      if (/(^|\/)(references|Design|skins|规范类|\.claude)(\/|$)/i.test(pathText)) return false;
-      const content = [
-        skill.preview,
-        row.preview,
-        skill.description,
-        row.description,
-        skill.title,
-        row.title,
-        skill.productDisplayName,
-        row.productDisplayName,
-        skill.productFileName,
-        row.productFileName,
-        pathText
-      ].join('\n');
-      const hasFrontmatterIdentity = /^---[\s\S]*?\nname:\s*\S+[\s\S]*?\ndescription:\s*\S+/im.test(content);
-      const hasExplicitSkillIdentity = /use this skill|this skill|使用(?:这个|此|本)?\s*Skill|本技能|这个\s*Skill|此\s*Skill/i.test(content);
-      const hasTriggerSignal = /use when|用于|当用户|当.*时使用|使用.*(?:场景|时机)|适用场景|触发(?:意图|场景|关键词)/i.test(content);
-      const hasWorkflowSignal = /工作流|工作流程|执行流程|执行步骤|workflow|step|步骤|##\s*(?:输入|输出|工作流程|异常处理|验证|执行|约束)/i.test(content);
-      const hasExecutionSignal = /输入|输出|产出|交付|验证|检查|失败|异常|阻塞|工具|Figma|执行|运行|读取|写入/i.test(content);
-      return (hasFrontmatterIdentity && (hasTriggerSignal || hasWorkflowSignal))
-        || (hasExplicitSkillIdentity && hasTriggerSignal && hasWorkflowSignal && hasExecutionSignal);
+    isSkillLikeMarkdownProduct() {
+      return (row = {}) => {
+        const skill = row.skill || {};
+        const pathText = [
+          row.relativePath,
+          row.path,
+          skill.git?.relativePath,
+          skill.relativePath,
+          skill.path,
+          skill.skillPath
+        ].map(value => String(value || '').replace(/\\/g, '/').trim()).filter(Boolean).join('\n');
+        if (!/\.md$/i.test(pathText)) return false;
+        if (!/(^|\/)(skills|入口图)(\/|$)/i.test(pathText)) return false;
+        if (/(^|\/)(references|Design|skins|规范类|\.claude)(\/|$)/i.test(pathText)) return false;
+        const content = [
+          skill.preview,
+          row.preview,
+          skill.description,
+          row.description,
+          skill.title,
+          row.title,
+          skill.productDisplayName,
+          row.productDisplayName,
+          skill.productFileName,
+          row.productFileName,
+          pathText
+        ].join('\n');
+        const hasFrontmatterIdentity = /^---[\s\S]*?\nname:\s*\S+[\s\S]*?\ndescription:\s*\S+/im.test(content);
+        const hasExplicitSkillIdentity = /use this skill|this skill|使用(?:这个|此|本)?\s*Skill|本技能|这个\s*Skill|此\s*Skill/i.test(content);
+        const hasTriggerSignal = /use when|用于|当用户|当.*时使用|使用.*(?:场景|时机)|适用场景|触发(?:意图|场景|关键词)/i.test(content);
+        const hasWorkflowSignal = /工作流|工作流程|执行流程|执行步骤|workflow|step|步骤|##\s*(?:输入|输出|工作流程|异常处理|验证|执行|约束)/i.test(content);
+        const hasExecutionSignal = /输入|输出|产出|交付|验证|检查|失败|异常|阻塞|工具|Figma|执行|运行|读取|写入/i.test(content);
+        return (hasFrontmatterIdentity && (hasTriggerSignal || hasWorkflowSignal))
+          || (hasExplicitSkillIdentity && hasTriggerSignal && hasWorkflowSignal && hasExecutionSignal);
+      };
     },
 
     isSkillInventoryStandardProduct() {
@@ -4267,7 +4269,7 @@ export default {
       if (['skill-inventory', 'skill-assets'].includes(value)) this.skillInventoryViewEverMounted = true;
       if (value === 'ai-members') this.prepareAiMembersView();
       else this.cancelAiMembersDeferredWork();
-      this.ensureActiveViewData(value);
+      this.scheduleActiveViewData(value);
       if (value === 'tasks') {
         this.stopZentaoAutoSyncPolling();
       }
@@ -4302,6 +4304,7 @@ export default {
   beforeUnmount() {
     if (this.zentaoSyncTimer) clearTimeout(this.zentaoSyncTimer);
     if (this.aiMembersBoardFrameReadyTimer) clearTimeout(this.aiMembersBoardFrameReadyTimer);
+    if (this._activeViewDataTimer) clearTimeout(this._activeViewDataTimer);
     this.stopZentaoAutoSyncPolling();
     this.stopTaskBriefRealtimeSync();
     this.stopPlatformEventSync();
@@ -4636,23 +4639,23 @@ export default {
 
     ensureSkillInventoryTabData(tab = 'assets') {
       if (tab === 'validations') {
-        this.restoreWorkbenchDisplayCacheKey('skillValidationRows');
+        this.restoreWorkbenchDisplayCacheKeyIfEmpty('skillValidationRows');
         return;
       }
       if (tab === 'events') {
-        this.restoreWorkbenchDisplayCacheKey('artProgressEvents');
-        this.restoreWorkbenchDisplayCacheKey('aiAssetSheetRows');
-        this.restoreWorkbenchDisplayCacheKey('usageCounters');
+        this.restoreWorkbenchDisplayCacheKeyIfEmpty('artProgressEvents');
+        this.restoreWorkbenchDisplayCacheKeyIfEmpty('aiAssetSheetRows');
+        this.restoreWorkbenchDisplayCacheKeyIfEmpty('usageCounters');
         return;
       }
       if (['assets', 'list'].includes(tab)) {
-        this.restoreWorkbenchDisplayCacheKey('projects');
-        if (this.skillInventoryScanCacheLoaded !== true) {
-          this.restoreWorkbenchDisplayCacheKey('scans');
-          this.restoreWorkbenchDisplayCacheKey('skillInventoryProductStatsSnapshot');
+        this.restoreWorkbenchDisplayCacheKeyIfEmpty('projects');
+        if (this.skillInventoryScanCacheLoaded !== true && !this.hasProjectScanProducts(this.scans)) {
+          this.restoreWorkbenchDisplayCacheKeyIfEmpty('scans');
+          this.restoreWorkbenchDisplayCacheKeyIfEmpty('skillInventoryProductStatsSnapshot');
         }
-        this.restoreWorkbenchDisplayCacheKey('aiAssetSheetRows');
-        this.restoreWorkbenchDisplayCacheKey('usageCounters');
+        this.restoreWorkbenchDisplayCacheKeyIfEmpty('aiAssetSheetRows');
+        this.restoreWorkbenchDisplayCacheKeyIfEmpty('usageCounters');
         this.ensureSkillInventoryUsageCounters();
         const hasRows = this.skillInventoryRows.length > 0;
         const hasVisibleRows = this.skillInventoryVisibleRows.length > 0;
@@ -4662,8 +4665,22 @@ export default {
         if (!this.loading.skillInventoryCache && (needsServerScanCacheRefresh || !hasRows || needsInventoryRowRecovery)) {
           this.loadProjectScanCacheForInventory({ force: true, silent: true }).catch(() => {});
         }
-        this.ensureSkillInventoryVisibleListState();
+        this.$nextTick(() => this.ensureSkillInventoryVisibleListState());
       }
+    },
+
+    scheduleActiveViewData(view = this.activeView) {
+      if (!view) return;
+      if (this._activeViewDataTimer) clearTimeout(this._activeViewDataTimer);
+      const token = `${view}:${Date.now()}:${Math.random()}`;
+      this._activeViewDataToken = token;
+      const run = () => {
+        this._activeViewDataTimer = 0;
+        if (this._activeViewDataToken !== token || this.activeView !== view) return;
+        this.ensureActiveViewData(view);
+      };
+      if (typeof window !== 'undefined') this._activeViewDataTimer = window.setTimeout(run, 0);
+      else this.$nextTick(run);
     },
 
     ensureActiveViewData(view = this.activeView) {
@@ -5123,11 +5140,39 @@ export default {
     },
 
     pushRoute(path) {
-      if (window.location.pathname !== path) {
-        window.history.pushState({}, '', path);
+      if (window.location.pathname === path) {
+        this.currentPath = window.location.pathname;
+        if (this.isRouteAlreadySynced(path)) return;
+        this.syncRoute();
+        return;
       }
+      window.history.pushState({}, '', path);
       this.currentPath = window.location.pathname;
       this.syncRoute();
+    },
+
+    activateRouteView(view = '') {
+      if (!view) return false;
+      if (this.activeView === view) return false;
+      this.activeView = view;
+      return true;
+    },
+
+    isRouteAlreadySynced(path = window.location.pathname) {
+      const normalizedPath = decodeURI(path || '');
+      if (normalizedPath === '/tasks') return this.activeView === 'tasks';
+      if (normalizedPath === '/skills/assets' || normalizedPath === '/skills/list' || normalizedPath === '/skill-inventory') {
+        return this.activeView === 'skill-inventory' && this.skillInventoryTab === 'assets';
+      }
+      if (normalizedPath === '/ai-members') return this.activeView === 'ai-members';
+      if (normalizedPath === '/codex-config') return this.activeView === 'codex-config';
+      if (normalizedPath === '/runs') return this.activeView === 'runs';
+      if (normalizedPath === '/agent-workers') return this.activeView === 'agent-workers';
+      if (normalizedPath === '/ai-archive') return this.activeView === 'ai-archive';
+      if (normalizedPath === '/user-access') return this.activeView === 'user-access';
+      if (normalizedPath === '/role-management') return this.activeView === 'role-management';
+      if (normalizedPath === '/operation-logs') return this.activeView === 'operation-logs';
+      return false;
     },
 
     syncRoute() {
@@ -5192,10 +5237,9 @@ export default {
         if (!preserveSkillFilters) this.resetSkillInventoryDefaultEntryState();
         this.skillInventoryTab = tab;
         this.skillInventoryViewEverMounted = true;
-        this.activeView = 'skill-inventory';
-        this.ensureActiveViewData('skill-inventory');
+        const viewChanged = this.activateRouteView('skill-inventory');
+        if (!viewChanged) this.ensureSkillInventoryTabData(tab);
         this.$nextTick(() => {
-          this.ensureSkillInventoryTabData(tab);
           this.ensureSkillInventoryVisibleListState({ preserveFilters: preserveSkillFilters });
         });
         return;
@@ -5206,8 +5250,7 @@ export default {
           return;
         }
         this.prepareAiMembersView();
-        this.activeView = 'ai-members';
-        this.ensureActiveViewData('ai-members');
+        this.activateRouteView('ai-members');
         return;
       }
       if (path === '/tasks') {
@@ -5215,7 +5258,7 @@ export default {
           this.pushRoute(this.firstAllowedRoute());
           return;
         }
-        this.activeView = 'tasks';
+        this.activateRouteView('tasks');
         return;
       }
       if (path === '/codex-config') {
@@ -5223,9 +5266,7 @@ export default {
           this.pushRoute(this.firstAllowedRoute());
           return;
         }
-        this.activeView = 'codex-config';
-        this.ensureActiveViewData('codex-config');
-        this.loadCodexConfig();
+        this.activateRouteView('codex-config');
         return;
       }
       if (path === '/runs') {
@@ -5233,8 +5274,7 @@ export default {
           this.pushRoute(this.firstAllowedRoute());
           return;
         }
-        this.activeView = 'runs';
-        this.ensureActiveViewData('runs');
+        this.activateRouteView('runs');
         return;
       }
       if (path === '/agent-workers') {
@@ -5242,8 +5282,7 @@ export default {
           this.pushRoute(this.firstAllowedRoute());
           return;
         }
-        this.activeView = 'agent-workers';
-        this.ensureActiveViewData('agent-workers');
+        this.activateRouteView('agent-workers');
         return;
       }
       if (path === '/ai-archive') {
@@ -5251,8 +5290,7 @@ export default {
           this.pushRoute(this.firstAllowedRoute());
           return;
         }
-        this.activeView = 'ai-archive';
-        this.ensureActiveViewData('ai-archive');
+        this.activateRouteView('ai-archive');
         return;
       }
       if (path === '/workflow-designer') {
@@ -5264,8 +5302,7 @@ export default {
           this.pushRoute(this.firstAllowedRoute());
           return;
         }
-        this.activeView = 'user-access';
-        this.ensureActiveViewData('user-access');
+        this.activateRouteView('user-access');
         return;
       }
       if (path === '/role-management') {
@@ -5273,8 +5310,7 @@ export default {
           this.pushRoute(this.firstAllowedRoute());
           return;
         }
-        this.activeView = 'role-management';
-        this.ensureActiveViewData('role-management');
+        this.activateRouteView('role-management');
         return;
       }
       if (path === '/operation-logs') {
@@ -5282,8 +5318,7 @@ export default {
           this.pushRoute(this.firstAllowedRoute());
           return;
         }
-        this.activeView = 'operation-logs';
-        this.ensureActiveViewData('operation-logs');
+        this.activateRouteView('operation-logs');
         return;
       }
       if (projectMatch) {
@@ -13933,9 +13968,6 @@ export default {
 
     switchView(view) {
       if (['skill-assets', 'skill-inventory'].includes(view)) {
-        this.skillInventoryTab = 'assets';
-        this.activeView = 'skill-inventory';
-        this.ensureSkillInventoryTabData('assets');
         this.pushRoute('/skills/assets');
         this.recordWorkbenchViewLog(view, '/skills/assets');
         return;
