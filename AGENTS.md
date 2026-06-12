@@ -83,12 +83,15 @@
   - 拖拽指派禅道任务时，后端只能走禅道经典 `assignTo` 指派表单；该路径失败时必须停止本次操作并向前端返回失败，不得兜底走编辑任务表单。
   - 禅道经典 `assignTo` 指派表单必须保留页面原始 `estimate`、`left`、`deadline`、`status` 等必填字段；当禅道返回 `0` 工时但经典表单校验不接受 `0` 时，必须提交禅道可接受的非空工时值，避免“预计剩余不能为空/最初预计不能为空”，并保证实时指派成功后再同步工作台。
   - 禅道经典页面会话失效时，拖拽指派必须清空经典页 cookie、重新登录并重试读取/提交 `assignTo` 表单；不得因为首次返回登录页就直接失败，也不得因此退回编辑任务表单。
+  - 禅道经典页登录必须兼容当前实例真实可用入口：`index.php?m=user&f=login` 是当前已验证可建立 `zentaosid/za/zp` 会话的入口；`user-login.html` 可能返回 404 或无法建立会话，只能作为兼容候选，不得把它作为唯一登录路径。
+  - 经典页登录成功判断不得只依赖单一页面；至少要确认拿到有效 session cookie，后续再由指派表单字段 `assignedTo`、`left` 等做最终可用性校验。
   - 拖拽指派的经典页 GET/POST 都必须识别登录页返回和必要字段缺失；重登后仍拿不到 `assignedTo`、`left` 等指派表单字段时必须明确失败并保留工作台原负责人。
   - 禅道指派后的校验必须兼容 `assignedTo` 字符串、对象、`assignedToName`、`assignedToRealName`、`task` 嵌套和 `brother` 结构；不得因为详情接口返回结构不同就误报“当前负责人为空”。
 - 任务中心标题预览：
   - 任务中心任务标题鼠标悬浮时必须显示任务描述预览窗口。
   - 预览内容优先读取任务 `requirement`、`description`、`zentao.desc`、`zentao.description`、`zentao.requirement`、`summary` 等服务端已落盘字段。
   - 预览必须支持禅道描述里的 HTML、列表、表格、链接和图片；图片自适应弹窗宽度，长内容在弹窗内滚动，不得撑乱任务列表。
+  - 禅道描述里的图片不得直接使用禅道原始附件地址渲染；必须走平台登录态下的 `/api/zentao-file` 代理，由后端带禅道经典页 cookie 读取图片，避免浏览器无禅道 cookie 时显示破图。
   - 任务描述预览必须做安全白名单清洗，过滤脚本、事件属性、样式注入和 `javascript:`/不安全 `data:` 链接；不得直接把未经处理的禅道 HTML 注入页面。
 - 任务中心美术摘要和 AI 工作说明：
   - 任务中心生成美术摘要必须使用 `/Users/se7en/ArtProject/DemandSummary/scripts/generate_art_summary.py` 这套已确认的 AI 工作说明流程。

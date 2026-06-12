@@ -246,7 +246,7 @@ async function classicGet(api, pathname, refererPath, options = {}) {
   const baseUrl = String(api.baseUrl || '').replace(/\/$/, '');
   let lastText = '';
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const cookies = await getClassicCookies(api, { force: attempt > 0 });
+    const cookies = await getZentaoClassicCookies(api, { force: attempt > 0 });
     const res = await fetch(`${baseUrl}/${pathname.replace(/^\/+/, '')}`, {
       headers: {
         Cookie: cookies,
@@ -272,7 +272,7 @@ async function classicPost(api, pathname, body, refererPath) {
   const baseUrl = String(api.baseUrl || '').replace(/\/$/, '');
   let lastText = '';
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const cookies = await getClassicCookies(api, { force: attempt > 0 });
+    const cookies = await getZentaoClassicCookies(api, { force: attempt > 0 });
     const res = await fetch(`${baseUrl}/${pathname.replace(/^\/+/, '')}`, {
       method: 'POST',
       headers: {
@@ -690,38 +690,79 @@ function classicLoginHint(html = '') {
 }
 
 let classicCookieJar = null;
-async function getClassicCookies(api, options = {}) {
+let classicLoginMode = 0;
+export async function getZentaoClassicCookies(api, options = {}) {
   if (options.force) classicCookieJar = null;
   if (classicCookieJar) return formatCookies(classicCookieJar);
   const baseUrl = String(api.baseUrl || '').replace(/\/$/, '');
-  classicCookieJar = {};
-  let res = await fetch(`${baseUrl}/index.php?m=user&f=login`, { redirect: 'manual' });
-  Object.assign(classicCookieJar, parseSetCookie(getSetCookieHeaders(res.headers)));
+  const loginPaths = classicLoginPaths();
+  let lastError = '';
+  for (let index = 0; index < loginPaths.length; index += 1) {
+    const loginPath = loginPaths[(classicLoginMode + index) % loginPaths.length];
+    try {
+      const jar = await loginClassicWithPath(api, baseUrl, loginPath);
+      classicCookieJar = jar;
+      classicLoginMode = (classicLoginMode + index) % loginPaths.length;
+      return formatCookies(classicCookieJar);
+    } catch (error) {
+      lastError = error.message || String(error);
+    }
+  }
+  classicCookieJar = null;
+  throw new Error(lastError || '禅道经典页面登录失败：未建立有效经典页会话');
+}
+
+function classicLoginPaths() {
+  return [
+    'user-login.html',
+    'index.php?m=user&f=login'
+  ];
+}
+
+async function loginClassicWithPath(api, baseUrl, loginPath) {
+  const jar = {};
+  const loginUrl = `${baseUrl}/${loginPath}`;
+  let res = await fetch(loginUrl, { redirect: 'manual' });
+  Object.assign(jar, parseSetCookie(getSetCookieHeaders(res.headers)));
+  const pageText = await res.text().catch(() => '');
   const body = new URLSearchParams({
-    account: api.account,
-    password: api.password,
+    account: api.account || '',
+    password: api.password || '',
     keepLogin: 'on'
   });
-  res = await fetch(`${baseUrl}/index.php?m=user&f=login`, {
+  for (const token of classicLoginHiddenFields(pageText)) {
+    if (!body.has(token.name)) body.append(token.name, token.value);
+  }
+  res = await fetch(loginUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
-      Cookie: formatCookies(classicCookieJar),
-      Referer: `${baseUrl}/index.php?m=user&f=login`
+      Cookie: formatCookies(jar),
+      Referer: loginUrl
     },
     body: body.toString(),
     redirect: 'manual'
   });
-  Object.assign(classicCookieJar, parseSetCookie(getSetCookieHeaders(res.headers)));
+  Object.assign(jar, parseSetCookie(getSetCookieHeaders(res.headers)));
   if (!res.ok) {
-    classicCookieJar = null;
-    throw new Error(`禅道经典页面登录失败：HTTP ${res.status}`);
+    throw new Error(`禅道经典页面登录失败：${loginPath} HTTP ${res.status}`);
   }
-  if (!(await verifyClassicLogin(api, classicCookieJar))) {
-    classicCookieJar = null;
-    throw new Error('禅道经典页面登录失败：账号密码未建立有效经典页会话');
+  if (!hasClassicSessionCookie(jar) && !(await verifyClassicLogin(api, jar))) {
+    throw new Error(`禅道经典页面登录失败：${loginPath} 未建立有效经典页会话`);
   }
-  return formatCookies(classicCookieJar);
+  return jar;
+}
+
+function classicLoginHiddenFields(html = '') {
+  const body = new URLSearchParams();
+  parseInputFields(String(html || '').replace(/<input\b/gi, '<input type="hidden" '), body);
+  return [...body.entries()]
+    .filter(([name]) => !['account', 'password', 'keepLogin'].includes(name))
+    .map(([name, value]) => ({ name, value }));
+}
+
+function hasClassicSessionCookie(jar = {}) {
+  return Object.keys(jar).some(key => /^(?:za|zentaosid|sid|PHPSESSID)$/i.test(key));
 }
 
 async function verifyClassicLogin(api, jar = {}) {

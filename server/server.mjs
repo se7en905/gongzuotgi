@@ -107,7 +107,7 @@ import { cancelRun, startRun, subscribe } from './runner.mjs';
 import { buildWorkflowPlan, workflowLevels } from './workflow.mjs';
 import { getZentaoApi, getZentaoModules, resetZentaoApi } from './zentao-adapter.mjs';
 import { syncZentaoBugsForProject } from './zentao-bug-sync.mjs';
-import { applyZentaoSplitPlan, assignZentaoTask, buildZentaoSplitPlan } from './zentao-task-actions.mjs';
+import { applyZentaoSplitPlan, assignZentaoTask, buildZentaoSplitPlan, getZentaoClassicCookies as getZentaoActionClassicCookies } from './zentao-task-actions.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, '..', process.env.STATIC_DIR || 'dist');
@@ -347,6 +347,11 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/platform-events') {
     subscribePlatformEvents(req, res, currentUser);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/zentao-file') {
+    await serveZentaoFileProxy(res, url.searchParams.get('url'));
     return;
   }
 
@@ -712,12 +717,16 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/project-scan-cache') {
     requireAnyPermission(currentUser, ['menu.skillList']);
     const projects = await listProjects();
-    const visibleProjectIds = new Set(projects.map(project => project.id));
+    const projectIds = new Set(projects.map(project => project.id));
     const cache = await loadProjectScanCache();
     let shouldPersistAuditHydration = false;
     const scans = {};
     for (const [projectId, entry] of Object.entries(cache)) {
-      if (!visibleProjectIds.has(projectId)) continue;
+      if (projectIds.size && !projectIds.has(projectId)) {
+        const cachedScan = entry?.scan;
+        const hasCachedProducts = Array.isArray(cachedScan?.skills) && cachedScan.skills.length > 0;
+        if (!hasCachedProducts) continue;
+      }
       const scan = entry?.scan;
       if (!scan || typeof scan !== 'object') continue;
       const scanWithAudit = await hydrateCachedSkillAuditScores(scan);
@@ -5290,6 +5299,50 @@ function normalizeClientIp(value = '') {
   if (ip === '::1') return '127.0.0.1';
   if (ip.startsWith('::ffff:')) return ip.slice(7);
   return ip;
+}
+
+async function serveZentaoFileProxy(res, rawUrl = '') {
+  const target = normalizeZentaoFileProxyUrl(rawUrl);
+  if (!target) {
+    sendJson(res, 400, { error: '无效的禅道图片地址。' });
+    return;
+  }
+  const api = await getZentaoApi();
+  const cookies = await getZentaoActionClassicCookies(api);
+  const response = await fetch(target, {
+    headers: {
+      Cookie: cookies,
+      Referer: normalizeZentaoSiteBaseUrl(api.baseUrl || zentaoBaseUrl)
+    },
+    redirect: 'follow'
+  });
+  if (!response.ok) {
+    sendJson(res, response.status === 404 ? 404 : 502, { error: `禅道图片读取失败：HTTP ${response.status}` });
+    return;
+  }
+  const contentType = response.headers.get('content-type') || mimeType(new URL(target).pathname);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  res.writeHead(200, {
+    'Content-Type': contentType,
+    'Cache-Control': 'private, max-age=300'
+  });
+  res.end(buffer);
+}
+
+function normalizeZentaoFileProxyUrl(rawUrl = '') {
+  const text = String(rawUrl || '').trim();
+  if (!text || /^(?:javascript|data):/i.test(text)) return '';
+  try {
+    const base = normalizeZentaoSiteBaseUrl(zentaoBaseUrl);
+    const target = new URL(text, `${base}/`);
+    const allowed = new URL(base);
+    if (target.origin !== allowed.origin) return '';
+    const value = target.toString();
+    if (!/(?:[?&]m=file(?:&|$)|\/data\/upload\/|\/file-read-|[?&]f=read(?:&|$))/i.test(value)) return '';
+    return value;
+  } catch {
+    return '';
+  }
 }
 
 async function serveArtifact(res, file, currentUser, options = {}) {

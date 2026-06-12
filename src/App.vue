@@ -2233,8 +2233,15 @@ export default {
     },
 
     projectRows() {
-      return this.projects.map(project => {
-        const scan = this.scans[project.id];
+      const projectList = Array.isArray(this.projects) ? [...this.projects] : [];
+      const knownProjectIds = new Set(projectList.map(project => String(project.id || '')));
+      for (const [projectId, scan] of Object.entries(this.scans || {})) {
+        if (!projectId || knownProjectIds.has(String(projectId))) continue;
+        projectList.push(this.projectFromCachedScan(projectId, scan));
+        knownProjectIds.add(String(projectId));
+      }
+      return projectList.map(project => {
+        const scan = this.scans[project.id] || project.scan || null;
         const scanError = scan?.error || '';
         const tasks = scan?.tasks || [];
         const skills = Array.isArray(scan?.skills) ? scan.skills : [];
@@ -5624,7 +5631,16 @@ export default {
     async refreshProjects() {
       this.loading.projects = true;
       try {
-        this.projects = await this.api('/api/projects');
+        const existingScans = { ...(this.scans || {}) };
+        const previousProjects = Array.isArray(this.projects) ? this.projects : [];
+        const previousById = new Map(previousProjects.map(project => [project.id, project]));
+        const projects = await this.api('/api/projects');
+        this.projects = (Array.isArray(projects) ? projects : []).map(project => {
+          const previous = previousById.get(project.id) || {};
+          const preservedScan = existingScans[project.id] || previous.scan || null;
+          return preservedScan ? { ...project, scan: preservedScan } : project;
+        });
+        this.mergeScansIntoInventoryState(existingScans);
         this.saveWorkbenchDisplayCache('projects', this.projects);
         if (this.selectedProjectId && !this.projects.some(project => project.id === this.selectedProjectId)) {
           this.selectedProjectId = this.projects[0]?.id || '';
@@ -10910,6 +10926,10 @@ export default {
             : '已读取库存缓存。';
           return;
         }
+        if (this.skillInventoryRows.length || Object.values(this.scans || {}).some(scan => Array.isArray(scan?.skills) && scan.skills.length)) {
+          this.scanOutput = '库存缓存暂未返回新内容，已保留上次扫描清单。';
+          return;
+        }
         if (!this.skillInventoryRows.length) this.scanOutput = '暂无库存缓存，请点击刷新库存后读取。';
       } catch (error) {
         this.skillInventoryScanCacheLoaded = true;
@@ -10965,13 +10985,18 @@ export default {
             knownProjectIds.add(projectId);
           }
         }
-        this.mergeScansIntoInventoryState(scanMap);
-        this.saveWorkbenchDisplayCache('projects', this.projects);
-        this.saveWorkbenchDisplayCache('scans', this.scans);
+        if (Object.keys(scanMap).length) {
+          this.mergeScansIntoInventoryState(scanMap);
+          this.saveWorkbenchDisplayCache('projects', this.projects);
+          this.saveWorkbenchDisplayCache('scans', this.scans);
+        } else {
+          this.restoreWorkbenchDisplayCacheKey('projects');
+          this.restoreWorkbenchDisplayCacheKey('scans');
+        }
         this.skillInventoryScanCacheLoaded = true;
         if (!silent) this.scanOutput = Object.keys(scanMap).length
           ? '已读取上次库存数据。'
-          : '暂无上次库存数据，请由有权限账号点击刷新库存。';
+          : (this.skillInventoryRows.length ? '库存缓存暂未返回新内容，已保留上次扫描清单。' : '暂无上次库存数据，请由有权限账号点击刷新库存。');
       } catch (error) {
         this.skillInventoryScanCacheLoaded = true;
         this.restoreWorkbenchDisplayCacheKey('projects');
@@ -11154,8 +11179,8 @@ export default {
       if (!previous) return scan;
       const nextSkills = Array.isArray(scan.skills) ? scan.skills : [];
       const nextTasks = Array.isArray(scan.tasks) ? scan.tasks : [];
-      const keepPreviousSkills = previous.skills?.length && !nextSkills.length && scan.error;
-      const keepPreviousTasks = previous.tasks?.length && !nextTasks.length && scan.error;
+      const keepPreviousSkills = previous.skills?.length && !nextSkills.length && (scan.error || scan.preserved || scan.cacheOnly || !Object.prototype.hasOwnProperty.call(scan, 'skills'));
+      const keepPreviousTasks = previous.tasks?.length && !nextTasks.length && (scan.error || scan.preserved || scan.cacheOnly || !Object.prototype.hasOwnProperty.call(scan, 'tasks'));
       return {
         ...previous,
         ...scan,
@@ -12242,6 +12267,10 @@ export default {
       const nextSignature = this.buildSkillInventoryScanSignature(nextScans);
       const changed = options.force === true || previousSignature !== nextSignature;
       this.scans = nextScans;
+      this.projects = this.projects.map(project => {
+        const scan = nextScans[project.id] || project.scan || null;
+        return scan ? { ...project, scan } : project;
+      });
       this.skillInventoryScanSignature = nextSignature;
       if (changed) {
         this.clearValidationMatchCache();
@@ -21092,7 +21121,7 @@ function sanitizeTaskRequirementHtml(value = '', baseUrl = '') {
       if (['href', 'src'].includes(name)) {
         const safeUrl = safeTaskRequirementUrl(attr.value, baseUrl);
         if (!safeUrl) node.removeAttribute(attr.name);
-        else node.setAttribute(attr.name, safeUrl);
+        else node.setAttribute(attr.name, name === 'src' ? taskRequirementImageProxyUrl(safeUrl) : safeUrl);
       }
     }
     if (node.tagName === 'A') {
@@ -21122,5 +21151,17 @@ function safeTaskRequirementUrl(value = '', baseUrl = '') {
   } catch {
     return '';
   }
+}
+
+function taskRequirementImageProxyUrl(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const url = new URL(raw, window.location.origin);
+    if (/^https?:$/i.test(url.protocol) && /cd\.baa360\.cc(?::20088)?$/i.test(url.host)) {
+      return `/api/zentao-file?url=${encodeURIComponent(url.toString())}`;
+    }
+  } catch {}
+  return raw;
 }
 </script>

@@ -6910,6 +6910,7 @@ body,
 .task-requirement-preview-body img {
   display: block;
   max-width: 100%;
+  min-height: 48px;
   height: auto;
   margin: 10px 0;
   border: 1px solid var(--line);
