@@ -2246,7 +2246,10 @@ export default {
         knownProjectIds.add(String(projectId));
       }
       return projectList.map(project => {
-        const scan = this.scans[project.id] || project.scan || null;
+        const rawScan = this.scans[project.id] || project.scan || null;
+        const scan = rawScan?.scan && typeof rawScan.scan === 'object'
+          ? { ...rawScan.scan, cachedAt: rawScan.cachedAt || rawScan.scan.cachedAt || '' }
+          : rawScan;
         const scanError = scan?.error || '';
         const tasks = scan?.tasks || [];
         const skills = Array.isArray(scan?.skills) ? scan.skills : [];
@@ -2812,6 +2815,19 @@ export default {
     },
 
     skillInventoryProductStats() {
+      if (!this.skillInventoryKeyword && !this.skillInventoryMemberFilter) {
+        if (this.hasProjectScanProducts(this.scans)) {
+          const scanSnapshot = this.buildSkillInventoryProductStatsSnapshotFromScans(this.scans);
+          const cachedSnapshot = this.skillInventoryProductStatsSnapshot;
+          const shouldUseScanSnapshot = !cachedSnapshot
+            || Number(scanSnapshot.total || 0) > Number(cachedSnapshot.total || 0)
+            || Number(scanSnapshot.standard || 0) > Number(cachedSnapshot.standard || 0);
+          if (shouldUseScanSnapshot) {
+            this.skillInventoryProductStatsSnapshot = scanSnapshot;
+            this.saveWorkbenchDisplayCache('skillInventoryProductStatsSnapshot', this.skillInventoryProductStatsSnapshot);
+          }
+        }
+      }
       if (!this.skillInventoryKeyword && !this.skillInventoryMemberFilter && this.skillInventoryProductStatsSnapshot) {
         const snapshot = this.skillInventoryProductStatsSnapshot;
         return [
@@ -5330,7 +5346,10 @@ export default {
 
     hasProjectScanProducts(scans = {}) {
       if (!scans || typeof scans !== 'object') return false;
-      return Object.values(scans).some(scan => Array.isArray(scan?.skills) && scan.skills.length > 0);
+      return Object.values(scans).some(scan => {
+        const normalizedScan = scan?.scan && typeof scan.scan === 'object' ? scan.scan : scan;
+        return Array.isArray(normalizedScan?.skills) && normalizedScan.skills.length > 0;
+      });
     },
 
     isAiMembersPlaceholderHtml(html = '') {
@@ -5527,7 +5546,8 @@ export default {
         'skillValidationRows',
         'operationLogs',
         'artProgressSummary',
-        'usageCounters'
+        'usageCounters',
+        'skillInventoryProductStatsSnapshot'
       ].forEach(key => this.restoreWorkbenchDisplayCacheKey(key));
       this.restoreAiMembersBoardHtmlSnapshot();
       this.restoreAiMemberScoreSnapshot();
@@ -11197,11 +11217,14 @@ export default {
     applyProjectScanCachePayload(scans = {}, options = {}) {
       const scanMap = {};
       const knownProjectIds = new Set(this.projects.map(project => String(project.id || '')).filter(Boolean));
-      for (const [projectId, scan] of Object.entries(scans || {})) {
-        if (!scan || typeof scan !== 'object') continue;
+      for (const [projectId, rawScan] of Object.entries(scans || {})) {
+        if (!rawScan || typeof rawScan !== 'object') continue;
+        const scan = rawScan.scan && typeof rawScan.scan === 'object'
+          ? { ...rawScan.scan, cachedAt: rawScan.cachedAt || rawScan.scan.cachedAt || '' }
+          : rawScan;
         scanMap[projectId] = this.mergeProjectScanResult(projectId, scan);
         if (!knownProjectIds.has(String(projectId || ''))) {
-          this.projects.push(this.projectFromCachedScan(projectId, scan));
+          this.projects.push(this.projectFromCachedScan(projectId, rawScan));
           knownProjectIds.add(String(projectId || ''));
         }
       }
@@ -11220,10 +11243,11 @@ export default {
 
     buildSkillInventoryProductStatsSnapshotFromScans(scans = {}) {
       const rows = [];
-      for (const [projectId, scan] of Object.entries(scans || {})) {
+      for (const [projectId, rawScan] of Object.entries(scans || {})) {
+        const scan = rawScan?.scan && typeof rawScan.scan === 'object' ? rawScan.scan : rawScan;
         const projectRow = this.projectRows.find(project => String(project.id || '') === String(projectId || ''))
           || this.projects.find(project => String(project.id || '') === String(projectId || ''))
-          || this.projectFromCachedScan(projectId, scan);
+          || this.projectFromCachedScan(projectId, rawScan);
         for (const skill of Array.isArray(scan?.skills) ? scan.skills : []) {
           try {
             if (!skill || skill.hidden === true || skill.displayHidden === true) continue;
@@ -12562,7 +12586,8 @@ export default {
 
     buildSkillInventoryScanSignature(scans = {}) {
       return Object.entries(scans || {})
-        .map(([projectId, scan]) => {
+        .map(([projectId, rawScan]) => {
+          const scan = rawScan?.scan && typeof rawScan.scan === 'object' ? rawScan.scan : rawScan;
           const skillSignature = Array.isArray(scan?.skills)
             ? scan.skills.map(skill => [
               skill.id,
