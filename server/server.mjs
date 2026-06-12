@@ -136,9 +136,9 @@ const defaultRunLogTailBytes = Number(process.env.RUN_LOG_TAIL_BYTES || 128 * 10
 const artProjectId = process.env.ART_PLATFORM_PROJECT_ID || zentaoAutoSyncProjectId;
 const zentaoAutoSyncScript = path.join(paths.root, 'scripts', 'sync-zentao-art-tasks.mjs');
 const zentaoBugSyncScript = path.join(paths.root, 'scripts', 'sync-zentao-art-bugs.mjs');
-const demandSummaryRoot = process.env.DEMAND_SUMMARY_ROOT || '/Users/se7en/ArtProject/DemandSummary';
-const zentaoArtBriefScript = path.join(demandSummaryRoot, 'scripts', 'generate_art_summary.py');
-const zentaoArtBriefOutDir = path.join(demandSummaryRoot, 'outputs');
+const zentaoArtBriefRoot = path.join(paths.root, 'scripts', 'art-brief');
+const zentaoArtBriefScript = process.env.ZENTAO_ART_BRIEF_SCRIPT || path.join(zentaoArtBriefRoot, 'generate_art_summary.py');
+const zentaoArtBriefOutDir = process.env.ZENTAO_ART_BRIEF_OUT_DIR || path.join(paths.root, 'outputs', 'art-briefs');
 const defaultAiFlowSheetId = '1tP9XTqxIMUQ6E6rq47fq0A0T7kxvJvnVEPKBpnoIpiw';
 const defaultAiFlowSheetGid = '1127778149';
 const defaultArtProjectSheetId = '18MyY-8UudwHjUcjt0dFgXUHhrqNqhoc1MOrn_b6gsmg';
@@ -6641,7 +6641,7 @@ async function generateZentaoArtBrief(task = {}) {
     '--out-dir',
     zentaoArtBriefOutDir
   ], {
-    cwd: demandSummaryRoot,
+    cwd: zentaoArtBriefRoot,
     env: {
       ...process.env,
       PATH: [
