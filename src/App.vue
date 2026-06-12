@@ -2857,11 +2857,28 @@ export default {
             map.set(key, row);
             continue;
           }
-          if (this.isSkillInventorySkillProduct(row) && !this.isSkillInventorySkillProduct(existing)) {
+          if (this.preferSkillInventoryProductStatRow(row, existing) === row) {
             map.set(key, row);
           }
         }
         return [...map.values()];
+      };
+    },
+
+    preferSkillInventoryProductStatRow() {
+      return (left = {}, right = {}) => {
+        const rank = row => {
+          const hasManualKindOverride = this.skillInventoryKindOverrideKeys(row)
+            .some(key => Object.prototype.hasOwnProperty.call(this.skillInventoryKindOverrides || {}, key));
+          const kind = this.skillInventoryProductKind(row);
+          const kindRank = kind === 'skill' ? 3 : kind === 'standard' ? 2 : kind === 'directory' ? 1 : 0;
+          return (hasManualKindOverride ? 100 : 0) + kindRank;
+        };
+        const leftRank = rank(left);
+        const rightRank = rank(right);
+        if (leftRank !== rightRank) return leftRank > rightRank ? left : right;
+        const timeDiff = String(left.uploadedAt || '').localeCompare(String(right.uploadedAt || ''));
+        return timeDiff >= 0 ? left : right;
       };
     },
 
@@ -2916,15 +2933,7 @@ export default {
 
     isSkillInventorySkillProduct() {
       return (row = {}) => {
-        const overrideKind = this.skillInventoryKindOverrideFor(row);
-        if (overrideKind === 'skill') return true;
-        if (['document', 'directory'].includes(overrideKind)) return false;
-        if (row.skillInventoryKind === 'document' || row.skill?.inventoryKind === 'document') return false;
-        if (row.skillInventoryKind === 'directory' || row.skill?.inventoryKind === 'directory') return false;
-        if (row.skillInventoryKind === 'skill' || row.skill?.inventoryKind === 'skill') return true;
-        if (this.isSkillLikeMarkdownProduct(row)) return true;
-        const text = [row.skillInventoryKind, row.relativePath, row.path, row.productFileName, row.productDisplayName, row.title].join('\n');
-        return /(^|\/)SKILL\.md$/i.test(text);
+        return this.skillInventoryProductKind(row) === 'skill';
       };
     },
 
@@ -2965,22 +2974,42 @@ export default {
 
     isSkillInventoryStandardProduct() {
       return (row = {}) => {
+        return this.skillInventoryProductKind(row) === 'standard';
+      };
+    },
+
+    skillInventoryProductKind() {
+      return (row = {}) => {
         const overrideKind = this.skillInventoryKindOverrideFor(row);
-        if (overrideKind === 'document') return true;
-        if (['skill', 'directory'].includes(overrideKind)) return false;
-        if (row.skillInventoryKind === 'directory' || row.skill?.inventoryKind === 'directory') return false;
-        if (row.skillInventoryKind === 'document' || row.skill?.inventoryKind === 'document') return true;
-        if (this.isSkillInventorySkillProduct(row)) return false;
+        if (overrideKind === 'skill') return 'skill';
+        if (overrideKind === 'document') return 'standard';
+        if (overrideKind === 'directory') return 'directory';
+        const directKind = String(row.skillInventoryKind || row.skill?.inventoryKind || '').trim();
+        if (directKind === 'skill') return 'skill';
+        if (directKind === 'document') return 'standard';
+        if (directKind === 'directory') return 'directory';
         const text = [
+          row.skillInventoryKind,
+          row.skill?.inventoryKind,
           row.relativePath,
           row.path,
+          row.skill?.git?.relativePath,
+          row.skill?.relativePath,
+          row.skill?.path,
           row.productFileName,
           row.productDisplayName,
           row.title,
+          row.description,
+          row.skill?.description,
+          row.preview,
+          row.skill?.preview,
           row.category,
           Array.isArray(row.scenes) ? row.scenes.join(' ') : row.scenes
         ].join('\n');
-        return /规范|规则|模板|说明|指南|标准|交付|命名|清单|流程|design|handoff|template|guide|standard/i.test(text);
+        if (this.isSkillLikeMarkdownProduct(row)) return 'skill';
+        if (/(^|\/)SKILL\.md$/i.test(text)) return 'skill';
+        if (/规范|规则|模板|说明|指南|标准|交付|命名|清单|流程|design|handoff|template|guide|standard/i.test(text)) return 'standard';
+        return 'directory';
       };
     },
 
@@ -4537,10 +4566,8 @@ export default {
         this.restoreWorkbenchDisplayCacheKey('aiAssetSheetRows');
         this.restoreWorkbenchDisplayCacheKey('usageCounters');
         this.ensureSkillInventoryUsageCounters();
-        if (!this.hasProjectScanProducts(this.scans) || !this.skillInventoryRows.length) {
+        if (!this.loading.skillInventoryCache) {
           this.loadProjectScanCacheForInventory({ force: true, silent: true }).catch(() => {});
-        } else if (!this.loading.skillInventoryCache) {
-          this.loadSkillInventorySavedSnapshot({ force: this.hasStaleSkillAuditScores() }).catch(() => {});
         }
         if (this.skillInventoryRows.length) {
           this.skillInventoryScanCacheLoaded = true;
@@ -11157,19 +11184,19 @@ export default {
       return true;
     },
 
-    applyProjectScanCachePayload(scans = {}) {
+    applyProjectScanCachePayload(scans = {}, options = {}) {
       const scanMap = {};
-      const knownProjectIds = new Set(this.projects.map(project => project.id));
+      const knownProjectIds = new Set(this.projects.map(project => String(project.id || '')).filter(Boolean));
       for (const [projectId, scan] of Object.entries(scans || {})) {
         if (!scan || typeof scan !== 'object') continue;
         scanMap[projectId] = this.mergeProjectScanResult(projectId, scan);
-        if (!knownProjectIds.has(projectId)) {
+        if (!knownProjectIds.has(String(projectId || ''))) {
           this.projects.push(this.projectFromCachedScan(projectId, scan));
-          knownProjectIds.add(projectId);
+          knownProjectIds.add(String(projectId || ''));
         }
       }
       if (!Object.keys(scanMap).length) return false;
-      this.mergeScansIntoInventoryState(scanMap);
+      this.mergeScansIntoInventoryState(scanMap, { force: options.force === true });
       this.saveWorkbenchDisplayCache('projects', this.projects);
       if (this.hasProjectScanProducts(this.scans)) this.saveWorkbenchDisplayCache('scans', this.scans);
       else this.clearWorkbenchDisplayCacheKey('scans');
@@ -11179,19 +11206,20 @@ export default {
 
     async loadProjectScanCacheForInventory(options = {}) {
       const silent = options.silent === true;
+      const force = options.force === true;
       if (this.skillInventoryCachePromise) return this.skillInventoryCachePromise;
       this.loading.skillInventoryCache = true;
       if (!silent) this.scanOutput = '正在读取库存缓存...';
       this.skillInventoryCachePromise = (async () => {
       try {
-        await this.ensureProjectRowsForScanCache();
+        await this.ensureProjectRowsForScanCache({ force: true });
         const result = await this.apiWithTimeout('/api/project-scan-cache', {}, {}, 15000);
         const scans = result?.scans && typeof result.scans === 'object' ? result.scans : {};
         if (!Object.keys(scans).length) {
           await this.ensureProjectRowsForScanCache({ force: true });
         }
         this.skillInventoryScanCacheLoaded = true;
-        if (this.applyProjectScanCachePayload(scans)) {
+        if (this.applyProjectScanCachePayload(scans, { force })) {
           const selectedScan = this.scans[this.selectedProjectId];
           if (!silent) {
             this.scanOutput = selectedScan
@@ -12498,6 +12526,9 @@ export default {
               skill.id,
               skill.git?.relativePath || skill.relativePath || skill.path,
               skill.productDisplayName || skill.displayName || skill.title,
+              skill.inventoryKind || '',
+              skill.category || '',
+              skill.inventoryKindOverride === true ? 'kindOverride' : '',
               skill.auditScore ?? skill.audit?.score ?? '',
               skill.displayVersionOverride || '',
               skill.hidden === true ? 'hidden' : '',
