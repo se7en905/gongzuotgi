@@ -2327,7 +2327,8 @@ export default {
         console.error('AI 产物清单筛选行计算失败，已回退到库存行', error);
         return this.safeSkillInventoryRows
           .filter(row => row.displayHidden !== true)
-          .filter(row => (row.hidden !== true || this.canOperateSkillInventoryManage) && this.safeIsVisibleSkillInventoryProductRow(row));
+          .filter(row => row.hidden !== true || (this.canOperateSkillInventoryManage && this.skillInventoryShowHidden))
+          .filter(row => this.safeIsVisibleSkillInventoryProductRow(row));
       }
     },
 
@@ -2383,15 +2384,21 @@ export default {
     },
 
     safeSkillInventoryFallbackProducts() {
+      const includeHidden = this.canOperateSkillInventoryManage && this.skillInventoryShowHidden === true;
       const map = new Map();
       for (const row of this.safeSkillInventoryRows) {
-        if (!row || row.hidden === true || row.displayHidden === true) continue;
+        if (!row || row.displayHidden === true) continue;
+        if (row.hidden === true && !includeHidden) continue;
         const key = this.safeCallDisplayValue(() => this.skillInventoryProductNameKey(row), '')
           || String(row.uid || row.id || row.productDisplayName || row.title || '').trim();
         if (!key || map.has(key)) continue;
         map.set(key, row);
       }
       return [...map.values()];
+    },
+
+    skillInventoryHiddenRowsCount() {
+      return this.skillInventoryRows.filter(row => row && row.hidden === true && row.displayHidden !== true).length;
     },
 
     skillInventoryRows() {
@@ -2457,7 +2464,8 @@ export default {
       const token = this.skillInventoryRowsCacheKey;
       const cacheKey = [
         token,
-        this.canOperateSkillInventoryManage ? 'manage' : 'view'
+        this.canOperateSkillInventoryManage ? 'manage' : 'view',
+        this.skillInventoryShowHidden ? 'show-hidden' : 'hide-hidden'
       ].join('::');
       if (this._skillInventoryVisibleRowsCache?.token === cacheKey && Array.isArray(this._skillInventoryVisibleRowsCache.rows)) {
         return this._skillInventoryVisibleRowsCache.rows;
@@ -2465,7 +2473,7 @@ export default {
       const rows = [];
       for (const row of this.skillInventoryRows) {
         if (!row || row.displayHidden === true) continue;
-        if (row.hidden === true && !this.canOperateSkillInventoryManage) continue;
+        if (row.hidden === true && (!this.canOperateSkillInventoryManage || !this.skillInventoryShowHidden)) continue;
         if (!this.safeIsVisibleSkillInventoryProductRow(row)) continue;
         rows.push(row);
       }
@@ -2559,7 +2567,8 @@ export default {
         kindFilter,
         this.skillInventoryMemberFilter || '',
         this.skillInventoryPreferMine ? 'mine' : 'all',
-        this.currentAccountPrimaryPersonName || ''
+        this.currentAccountPrimaryPersonName || '',
+        this.skillInventoryShowHidden ? 'show-hidden' : 'hide-hidden'
       ].join('::');
       if (this._filteredSkillInventoryRowsCache?.token === cacheKey && Array.isArray(this._filteredSkillInventoryRowsCache.rows)) {
         return this._filteredSkillInventoryRowsCache.rows;
@@ -2630,6 +2639,7 @@ export default {
         this.skillInventoryMemberFilter || '',
         this.skillInventoryPreferMine ? 'mine' : 'all',
         this.currentAccountPrimaryPersonName || '',
+        this.skillInventoryShowHidden ? 'show-hidden' : 'hide-hidden',
         this.skillInventoryPage,
         this.skillInventoryPageSize,
         this.usageCounters?.updatedAt || '',
@@ -4646,7 +4656,8 @@ export default {
         const hasVisibleRows = this.skillInventoryVisibleRows.length > 0;
         const hasStatsSnapshot = Number(this.skillInventoryProductStatsSnapshot?.total || 0) > 0;
         const needsInventoryRowRecovery = hasStatsSnapshot && !hasVisibleRows;
-        if (!this.loading.skillInventoryCache && (!hasRows || needsInventoryRowRecovery)) {
+        const needsServerScanCacheRefresh = this.skillInventoryScanCacheLoaded !== true;
+        if (!this.loading.skillInventoryCache && (needsServerScanCacheRefresh || !hasRows || needsInventoryRowRecovery)) {
           this.loadProjectScanCacheForInventory({ force: true, silent: true }).catch(() => {});
         }
         if (hasVisibleRows) {

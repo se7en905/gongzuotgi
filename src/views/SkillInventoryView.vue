@@ -10,6 +10,13 @@
         <ElTooltip v-if="app.canRefreshSkillInventoryScan" :content="app.skillInventoryRefreshHint" placement="top" effect="dark">
           <ElButton :loading="app.loading.scan" @click="app.scanAllProjects">刷新库存</ElButton>
         </ElTooltip>
+        <ElButton
+          v-if="app.canOperateSkillInventoryManage && app.skillInventoryHiddenRowsCount"
+          plain
+          @click="app.toggleSkillInventoryHiddenView"
+        >
+          {{ app.skillInventoryShowHidden ? '隐藏作废' : `查看作废 ${app.skillInventoryHiddenRowsCount}` }}
+        </ElButton>
         <ElButton v-if="app.canManageSkillSourceDisplay" plain @click="app.openSkillSourceDisplayDialog">展示管理</ElButton>
         <ElButton v-if="(app.skillInventoryTab === 'list' || app.skillInventoryTab === 'assets') && app.canConnectSkillInventorySource" type="primary" @click="app.openAssetScanConnect">接入扫描</ElButton>
       </div>
