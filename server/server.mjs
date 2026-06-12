@@ -754,7 +754,7 @@ async function handleApi(req, res, url) {
       };
     }
     if (shouldPersistAuditHydration) await writeProjectScanCache(cache);
-    sendJson(res, 200, { scans });
+    sendJson(res, 200, { scans, productStats: buildSkillInventoryProductStats(scans) });
     return;
   }
 
@@ -3424,6 +3424,93 @@ async function loadProjectScanCache() {
   } catch {
     return {};
   }
+}
+
+function normalizeInventoryProductKey(value = '') {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[\\/_.\-:：()[\]（）【】「」《》<>#?&=+，,。；;、\s]+/g, '');
+}
+
+function inventoryProductFileName(value = '') {
+  return path.basename(String(value || '').replace(/\\/g, '/'));
+}
+
+function inventoryProductKind(skill = {}) {
+  const directKind = String(skill.inventoryKind || skill.skillInventoryKind || '').trim();
+  if (directKind === 'skill') return 'skill';
+  if (directKind === 'document') return 'standard';
+  if (directKind === 'directory') return 'directory';
+  const text = [
+    skill.inventoryKind,
+    skill.skillInventoryKind,
+    skill.relativePath,
+    skill.path,
+    skill.git?.relativePath,
+    skill.productFileName,
+    skill.productDisplayName,
+    skill.displayName,
+    skill.title,
+    skill.description,
+    skill.preview,
+    skill.category
+  ].join('\n');
+  if (/(^|\/)SKILL\.md$/i.test(text)) return 'skill';
+  if (/规范|规则|模板|说明|指南|标准|交付|命名|清单|流程|design|handoff|template|guide|standard/i.test(text)) return 'standard';
+  return 'directory';
+}
+
+function isVisibleInventoryProduct(skill = {}) {
+  if (!skill || skill.hidden === true || skill.displayHidden === true) return false;
+  const kind = String(skill.inventoryKind || skill.skillInventoryKind || '').trim();
+  if (kind === 'directory' || kind === 'skill' || kind === 'document') return true;
+  const relativePath = String(skill.git?.relativePath || skill.relativePath || skill.path || '').replace(/\\/g, '/');
+  const title = String(skill.productDisplayName || skill.productFileName || skill.displayName || skill.title || '').trim();
+  const source = String(skill.source || '').trim();
+  const text = [relativePath, title, skill.description, skill.preview].join('\n');
+  if (!relativePath && !title) return false;
+  if (/^member-art-reporter\//i.test(relativePath)) return true;
+  if (/(^|\/)(README|CODEX_RULES|AGENTS|CLAUDE)\.md$/i.test(relativePath)) return false;
+  if (/(^|\/)(install|setup|report|auto-sync|troubleshooting|classification)\.md$/i.test(relativePath)) return false;
+  if (source.startsWith('Git:')) return true;
+  return /(\.md|SKILL\.md|skill|规范|组件|模板|流程|规则|资源|资产|design|命名|整理|拆解|提取)/i.test(text);
+}
+
+function inventoryProductName(skill = {}) {
+  return String(
+    skill.productDisplayName
+    || skill.productFileName
+    || skill.displayName
+    || skill.title
+    || inventoryProductFileName(skill.git?.relativePath || skill.relativePath || skill.path)
+    || skill.id
+    || ''
+  ).trim();
+}
+
+function buildSkillInventoryProductStats(scans = {}) {
+  const rank = { skill: 3, standard: 2, directory: 1 };
+  const products = new Map();
+  for (const scan of Object.values(scans || {})) {
+    for (const skill of Array.isArray(scan?.skills) ? scan.skills : []) {
+      if (!isVisibleInventoryProduct(skill)) continue;
+      const name = inventoryProductName(skill);
+      const key = normalizeInventoryProductKey(name || skill.id || '');
+      if (!key) continue;
+      const kind = inventoryProductKind(skill);
+      const existing = products.get(key);
+      if (!existing || rank[kind] > rank[existing.kind]) {
+        products.set(key, { kind });
+      }
+    }
+  }
+  const rows = [...products.values()];
+  return {
+    total: rows.length,
+    skill: rows.filter(row => row.kind === 'skill').length,
+    standard: rows.filter(row => row.kind === 'standard').length,
+    directory: rows.filter(row => row.kind === 'directory').length
+  };
 }
 
 async function writeProjectScanCache(cache = {}) {
