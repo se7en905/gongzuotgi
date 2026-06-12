@@ -179,8 +179,6 @@ let artDepartmentUsersCache = null;
 let artDepartmentUsersCacheAt = 0;
 let artDepartmentUsersRefreshPromise = null;
 const artDepartmentUsersCacheTtlMs = Number(process.env.ZENTAO_ART_USERS_CACHE_TTL_MS || 10 * 60 * 1000);
-let zentaoClassicCookieJar = null;
-let zentaoClassicCookiePromise = null;
 const zentaoClassicUserTaskMaxPages = Math.min(Math.max(Number(process.env.ZENTAO_CLASSIC_USER_TASK_MAX_PAGES || 80), 1), 300);
 const zentaoClassicUserTaskConcurrency = Math.min(Math.max(Number(process.env.ZENTAO_CLASSIC_USER_TASK_CONCURRENCY || 6), 1), 12);
 const dataRetentionDays = Math.max(1, Number(process.env.AWP_DATA_RETENTION_DAYS || 2) || 2);
@@ -7218,7 +7216,7 @@ function parseZentaoClassicRecTotal(html = '') {
 
 async function zentaoClassicGet(pathname, refererPath = '') {
   const { api } = await zentaoContext();
-  const cookies = await getZentaoClassicCookies(api);
+  const cookies = await getZentaoActionClassicCookies(api);
   const baseUrl = zentaoClassicBaseUrl(api);
   const url = `${baseUrl}/${String(pathname || '').replace(/^\/+/, '')}`;
   const res = await fetch(url, {
@@ -7231,72 +7229,16 @@ async function zentaoClassicGet(pathname, refererPath = '') {
   const text = await res.text();
   if (!res.ok) throw new Error(`禅道经典页面 HTTP ${res.status}`);
   if (isZentaoClassicLoginPage(text)) {
-    zentaoClassicCookieJar = null;
-    zentaoClassicCookiePromise = null;
+    await getZentaoActionClassicCookies(api, { force: true });
     throw new Error('禅道经典页面登录失效，无法读取人员任务页');
   }
   return text;
-}
-
-async function getZentaoClassicCookies(api) {
-  if (zentaoClassicCookieJar) return formatCookieJar(zentaoClassicCookieJar);
-  if (zentaoClassicCookiePromise) return zentaoClassicCookiePromise;
-  zentaoClassicCookiePromise = loginZentaoClassic(api).finally(() => {
-    zentaoClassicCookiePromise = null;
-  });
-  return zentaoClassicCookiePromise;
-}
-
-async function loginZentaoClassic(api) {
-  const baseUrl = zentaoClassicBaseUrl(api);
-  const jar = {};
-  let res = await fetch(`${baseUrl}/index.php?m=user&f=login`, { redirect: 'manual' });
-  Object.assign(jar, parseSetCookieHeaders(res.headers));
-  const body = new URLSearchParams({
-    account: api.account || '',
-    password: api.password || '',
-    keepLogin: 'on'
-  });
-  res = await fetch(`${baseUrl}/index.php?m=user&f=login`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Cookie: formatCookieJar(jar),
-      Referer: `${baseUrl}/index.php?m=user&f=login`
-    },
-    body: body.toString(),
-    redirect: 'manual'
-  });
-  Object.assign(jar, parseSetCookieHeaders(res.headers));
-  zentaoClassicCookieJar = jar;
-  return formatCookieJar(jar);
 }
 
 function zentaoClassicBaseUrl(api = {}) {
   const raw = String(api.baseUrl || zentaoBaseUrl || '').replace(/\/$/, '');
   if (!raw) return '';
   return raw.replace(/\/api\.php\/v1.*$/i, '').replace(/\/index\.php.*$/i, '');
-}
-
-function parseSetCookieHeaders(headers) {
-  const list = typeof headers?.getSetCookie === 'function' ? headers.getSetCookie() : [];
-  const combined = headers?.get?.('set-cookie');
-  if (combined) list.push(combined);
-  const jar = {};
-  for (const header of list) {
-    for (const part of String(header || '').split(/,(?=[^;,]+=)/)) {
-      const match = part.match(/^\s*([^=;\s]+)=([^;]*)/);
-      if (match) jar[match[1]] = match[2];
-    }
-  }
-  return jar;
-}
-
-function formatCookieJar(jar = {}) {
-  return Object.entries(jar)
-    .filter(([, value]) => value !== undefined && value !== null)
-    .map(([key, value]) => `${key}=${value}`)
-    .join('; ');
 }
 
 function isZentaoClassicLoginPage(html = '') {
@@ -7488,8 +7430,7 @@ async function callZentaoRead(operation) {
   const first = await operation(await zentaoContext());
   if (!isZentaoUnauthorizedPayload(first)) return first;
   resetZentaoApi();
-  zentaoClassicCookieJar = null;
-  zentaoClassicCookiePromise = null;
+  await getZentaoActionClassicCookies((await zentaoContext()).api, { force: true }).catch(() => {});
   const retry = await operation(await zentaoContext());
   return retry;
 }
