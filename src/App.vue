@@ -790,6 +790,7 @@ export default {
       eventSource: null,
       platformEventSource: null,
       platformEventRefreshTimers: {},
+      viewDataDirty: {},
       zentaoSyncTimer: null,
       zentaoAutoSyncPollTimer: null,
       zentaoAutoSyncWasRunning: false,
@@ -859,6 +860,7 @@ export default {
         aiFlowRecords: false,
         aiFlowImport: false,
         aiMembers: false,
+        config: false,
         users: false,
         roles: false,
         operationLogs: false,
@@ -1060,6 +1062,77 @@ export default {
       return this.runs.find(run => run.id === this.selectedRunId) || null;
     },
 
+    usersById() {
+      return new Map((this.users || []).map(user => [String(user.id || '').trim(), user]));
+    },
+
+    businessTasksByRunKey() {
+      const map = new Map();
+      for (const task of this.businessTasks || []) {
+        const taskId = String(task.id || '').trim();
+        const taskNo = String(task.taskNo || '').trim();
+        if (taskId) map.set(`id:${taskId}`, task);
+        if (taskNo) map.set(`zentao:${taskNo}`, task);
+      }
+      return map;
+    },
+
+    runsByTaskKey() {
+      const map = new Map();
+      const push = (key, run) => {
+        if (!key) return;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(run);
+      };
+      for (const run of this.runs || []) {
+        if (!this.isTaskCenterLinkedRun(run)) continue;
+        push(`id:${String(run.taskId || '').trim()}`, run);
+        push(`zentao:${String(run.zentaoId || '').trim()}`, run);
+      }
+      for (const rows of map.values()) {
+        rows.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      }
+      return map;
+    },
+
+    runAttemptGroups() {
+      const map = new Map();
+      const push = (key, run) => {
+        if (!key) return;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(run);
+      };
+      for (const run of this.runs || []) {
+        if (this.isTaskCenterLinkedRun(run)) {
+          push(`id:${String(run.taskId || '').trim()}`, run);
+          push(`zentao:${String(run.zentaoId || '').trim()}`, run);
+        } else {
+          push(`title:${String(run.title || '').trim()}`, run);
+        }
+      }
+      for (const rows of map.values()) {
+        rows.sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+      }
+      return map;
+    },
+
+    taskReviewsByTaskKey() {
+      const map = new Map();
+      const push = (key, review) => {
+        if (!key) return;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(review);
+      };
+      for (const review of this.taskReviews || []) {
+        push(`id:${String(review.taskId || '').trim()}`, review);
+        push(`zentao:${String(review.taskNo || '').trim()}`, review);
+      }
+      for (const rows of map.values()) {
+        rows.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      }
+      return map;
+    },
+
     enabledRoles() {
       return this.roles.filter(role => role.disabled !== true);
     },
@@ -1087,6 +1160,24 @@ export default {
         if (onlineDiff) return onlineDiff;
         return String(b.lastHeartbeatAt || '').localeCompare(String(a.lastHeartbeatAt || ''));
       });
+    },
+
+    agentWorkersByUserId() {
+      const map = new Map();
+      for (const worker of this.agentWorkerDisplayRows) {
+        const userId = String(worker.userId || '').trim();
+        if (userId && !map.has(userId)) map.set(userId, worker);
+      }
+      return map;
+    },
+
+    agentWorkersByDeviceId() {
+      const map = new Map();
+      for (const worker of this.agentWorkers || []) {
+        const deviceId = String(worker.deviceId || '').trim();
+        if (deviceId && !map.has(deviceId)) map.set(deviceId, worker);
+      }
+      return map;
     },
 
     directSkillRunRows() {
@@ -1153,6 +1244,30 @@ export default {
       return this.directSkillRunRows.filter(run => /done|success|passed|completed|finished/i.test(String(run.status || '')));
     },
 
+    directSkillRunsByUserId() {
+      const empty = () => ({ pending: [], active: [], completed: [] });
+      const map = new Map();
+      const ensure = userId => {
+        if (!map.has(userId)) map.set(userId, empty());
+        return map.get(userId);
+      };
+      for (const run of this.directSkillRunRows) {
+        const status = String(run.status || '');
+        const bucket = /pending|queued/i.test(status)
+          ? 'pending'
+          : /claimed|running|in_progress/i.test(status)
+            ? 'active'
+            : /done|success|passed|completed|finished/i.test(status)
+              ? 'completed'
+              : '';
+        if (!bucket) continue;
+        for (const userId of this.directSkillRunUserIds(run)) {
+          ensure(userId)[bucket].push(run);
+        }
+      }
+      return map;
+    },
+
     directSkillMemberReadinessRows() {
       const rows = this.users.length
         ? this.users
@@ -1163,16 +1278,14 @@ export default {
         .map(user => {
           const worker = this.directSkillWorkerForUser(user);
           const online = this.directSkillWorkerOnline(worker);
-          const pendingRuns = this.directSkillPendingRunsForUser(user);
-          const activeRuns = this.directSkillActiveRunsForUser(user);
-          const completedRuns = this.directSkillCompletedRunsForUser(user);
+          const runGroups = this.directSkillRunsForUser(user);
           return {
             user,
             worker,
             online,
-            pendingRuns,
-            activeRuns,
-            completedRuns,
+            pendingRuns: runGroups.pending,
+            activeRuns: runGroups.active,
+            completedRuns: runGroups.completed,
             codexReady: worker?.codexReady === true,
             figmaMcpReady: worker?.figmaMcpReady === true,
             ready: online && worker?.codexReady === true && worker?.figmaMcpReady === true
@@ -1203,9 +1316,9 @@ export default {
           user,
           worker,
           online,
-          pendingRuns: userId ? this.directSkillPendingRunsForUser(user) : [],
-          activeRuns: userId ? this.directSkillActiveRunsForUser(user) : [],
-          completedRuns: userId ? this.directSkillCompletedRunsForUser(user) : [],
+          pendingRuns: userId ? this.directSkillRunsForUser(user).pending : [],
+          activeRuns: userId ? this.directSkillRunsForUser(user).active : [],
+          completedRuns: userId ? this.directSkillRunsForUser(user).completed : [],
           codexReady: worker?.codexReady === true,
           figmaMcpReady: worker?.figmaMcpReady === true,
           ready: online && worker?.codexReady === true && worker?.figmaMcpReady === true
@@ -5200,6 +5313,67 @@ export default {
       return this.permissionSet.has(permission);
     },
 
+    requestRefreshKey(name = '', options = {}) {
+      if (!name) return { skip: false, key: '', now: Date.now() };
+      const now = Date.now();
+      const minInterval = Number(options.minInterval ?? options.cooldown ?? 0) || 0;
+      const background = options.background === true;
+      const key = `_refreshPromise_${name}`;
+      const atKey = `_refreshLastAt_${name}`;
+      if (this[key]) return { skip: true, promise: this[key], key, atKey, now };
+      if (background && minInterval > 0 && now - Number(this[atKey] || 0) < minInterval) {
+        return { skip: true, promise: null, key, atKey, now };
+      }
+      return { skip: false, key, atKey, now };
+    },
+
+    trackRefreshRequest(name = '', promise, options = {}) {
+      if (!name || !promise) return promise;
+      const key = `_refreshPromise_${name}`;
+      const atKey = `_refreshLastAt_${name}`;
+      this[key] = promise;
+      return promise
+        .then(result => {
+          this[atKey] = Date.now();
+          return result;
+        })
+        .finally(() => {
+          if (this[key] === promise) this[key] = null;
+        });
+    },
+
+    refreshSkippedValue(currentValue, fallback = null) {
+      return currentValue === undefined ? fallback : currentValue;
+    },
+
+    markViewDataDirty(view = '', key = '') {
+      if (!view) return;
+      this.viewDataDirty = {
+        ...(this.viewDataDirty || {}),
+        [view]: {
+          ...(this.viewDataDirty?.[view] || {}),
+          [key || view]: true
+        }
+      };
+    },
+
+    consumeViewDataDirty(view = '', key = '') {
+      if (!view) return false;
+      const current = this.viewDataDirty?.[view] || {};
+      const dirty = key ? Boolean(current[key]) : Object.values(current).some(Boolean);
+      if (!dirty) return false;
+      if (key) {
+        const next = { ...current };
+        delete next[key];
+        this.viewDataDirty = { ...(this.viewDataDirty || {}), [view]: next };
+      } else {
+        const next = { ...(this.viewDataDirty || {}) };
+        delete next[view];
+        this.viewDataDirty = next;
+      }
+      return true;
+    },
+
     canAny(permissions = []) {
       return permissions.some(permission => this.can(permission));
     },
@@ -5685,15 +5859,20 @@ export default {
       return true;
     },
 
-    async refreshAiMemberScoreSnapshotFromServer({ silent = true } = {}) {
+    async refreshAiMemberScoreSnapshotFromServer({ silent = true, background = false, minInterval = 15000 } = {}) {
       if (!this.canViewAiMemberScore || !this.can('api.aiMembers.score.read')) return false;
-      try {
-        const snapshot = await this.api('/api/ai-member-score-snapshot');
-        return this.applyAiMemberScoreSnapshotPayload(snapshot);
-      } catch (error) {
-        if (!silent) ElMessage.error(this.readApiError(error) || 'AI 评分快照读取失败');
-        return false;
-      }
+      const refresh = this.requestRefreshKey('aiMemberScoreSnapshot', { background, minInterval });
+      if (refresh.skip) return refresh.promise || false;
+      const request = (async () => {
+        try {
+          const snapshot = await this.api('/api/ai-member-score-snapshot');
+          return this.applyAiMemberScoreSnapshotPayload(snapshot);
+        } catch (error) {
+          if (!silent) ElMessage.error(this.readApiError(error) || 'AI 评分快照读取失败');
+          return false;
+        }
+      })();
+      return this.trackRefreshRequest('aiMemberScoreSnapshot', request);
     },
 
     async saveAiMemberScoreSnapshot(rows = [], key = '') {
@@ -5882,18 +6061,27 @@ export default {
       this.syncRoute();
     },
 
-    async refreshConfig() {
-      try {
-        this.appConfig = await this.api('/api/config');
-        this.taskCenterConfigReady = true;
-      } catch (error) {
-        if (!this.appConfig || !Object.keys(this.appConfig).length) {
-          this.appConfig = { zentaoBaseUrl: '', codex: null, zentaoAutoSync: null, zentaoArtUsers: [], taskCenter: null, workflowLevels: DEFAULT_WORKFLOW_LEVELS };
+    async refreshConfig(options = {}) {
+      const refresh = this.requestRefreshKey('config', { background: options.background === true, minInterval: options.minInterval ?? 8000 });
+      if (refresh.skip) return refresh.promise || this.appConfig;
+      const request = (async () => {
+        this.loading.config = true;
+        try {
+          this.appConfig = await this.api('/api/config');
+          this.taskCenterConfigReady = true;
+        } catch (error) {
+          if (!this.appConfig || !Object.keys(this.appConfig).length) {
+            this.appConfig = { zentaoBaseUrl: '', codex: null, zentaoAutoSync: null, zentaoArtUsers: [], taskCenter: null, workflowLevels: DEFAULT_WORKFLOW_LEVELS };
+          }
+          this.taskCenterConfigReady = Boolean(this.appConfig?.taskCenter);
+        } finally {
+          this.loading.config = false;
         }
-        this.taskCenterConfigReady = Boolean(this.appConfig?.taskCenter);
-      }
-      this.syncAiAssetVisibleColumnsFromConfig();
-      this.syncSkillValidationVisibleColumnsFromConfig();
+        this.syncAiAssetVisibleColumnsFromConfig();
+        this.syncSkillValidationVisibleColumnsFromConfig();
+        return this.appConfig;
+      })();
+      return this.trackRefreshRequest('config', request);
     },
 
     startZentaoAutoSyncPolling() {
@@ -7390,19 +7578,26 @@ export default {
 
     async refreshAiMembers(options = {}) {
       const silent = options.silent === true;
-      if (!silent) this.loading.aiMembers = true;
-      try {
-        const snapshot = await this.api('/api/ai-members');
-        this.aiMembersSnapshot = this.mergeAiMembersSnapshotWithBoardCache(snapshot);
-        this.saveAiMembersBoardHtmlSnapshot(this.aiMembersSnapshot);
-        this.saveWorkbenchDisplayCache('aiMembersSnapshot', this.aiMembersSnapshot);
-      } catch (error) {
-        this.restoreAiMembersBoardHtmlSnapshot();
-        if (!silent) ElMessage.error(this.readApiError(error) || 'AI 部门成员数据读取失败');
-        if (silent) throw error;
-      } finally {
-        if (!silent) this.loading.aiMembers = false;
-      }
+      const refresh = this.requestRefreshKey('aiMembers', { background: options.background === true, minInterval: options.minInterval ?? 15000 });
+      if (refresh.skip) return refresh.promise || this.aiMembersSnapshot;
+      const request = (async () => {
+        if (!silent) this.loading.aiMembers = true;
+        try {
+          const snapshot = await this.api('/api/ai-members');
+          this.aiMembersSnapshot = this.mergeAiMembersSnapshotWithBoardCache(snapshot);
+          this.saveAiMembersBoardHtmlSnapshot(this.aiMembersSnapshot);
+          this.saveWorkbenchDisplayCache('aiMembersSnapshot', this.aiMembersSnapshot);
+          return this.aiMembersSnapshot;
+        } catch (error) {
+          this.restoreAiMembersBoardHtmlSnapshot();
+          if (!silent) ElMessage.error(this.readApiError(error) || 'AI 部门成员数据读取失败');
+          if (silent) throw error;
+          return this.aiMembersSnapshot;
+        } finally {
+          if (!silent) this.loading.aiMembers = false;
+        }
+      })();
+      return this.trackRefreshRequest('aiMembers', request);
     },
 
     ensureAiMemberScoreData() {
@@ -8097,35 +8292,48 @@ export default {
       return '需关注';
     },
 
-    async refreshRuns() {
-      this.loading.runs = true;
-      try {
-        this.runs = await this.api('/api/runs');
-        this.saveWorkbenchDisplayCache('runs', this.runs);
-        if (this.selectedRunId && !this.runs.some(run => run.id === this.selectedRunId)) {
-          this.selectedRunId = this.runs[0]?.id || '';
+    async refreshRuns(options = {}) {
+      const refresh = this.requestRefreshKey('runs', { background: options.background === true, minInterval: options.minInterval ?? 6000 });
+      if (refresh.skip) return refresh.promise || this.runs;
+      const request = (async () => {
+        this.loading.runs = true;
+        try {
+          this.runs = await this.api('/api/runs');
+          this.saveWorkbenchDisplayCache('runs', this.runs);
+          if (this.selectedRunId && !this.runs.some(run => run.id === this.selectedRunId)) {
+            this.selectedRunId = this.runs[0]?.id || '';
+          }
+          if (!this.selectedRunId && this.runs[0]) this.selectedRunId = this.runs[0].id;
+          if (this.selectedRunId && this.isRunInProgress(this.selectedRun)) {
+            window.setTimeout(() => {
+              if (this.selectedRunId) this.loadSelectedRunLog().catch(() => {});
+            }, 0);
+          }
+          return this.runs;
+        } finally {
+          this.loading.runs = false;
         }
-        if (!this.selectedRunId && this.runs[0]) this.selectedRunId = this.runs[0].id;
-        if (this.selectedRunId && this.isRunInProgress(this.selectedRun)) {
-          window.setTimeout(() => {
-            if (this.selectedRunId) this.loadSelectedRunLog().catch(() => {});
-          }, 0);
-        }
-      } finally {
-        this.loading.runs = false;
-      }
+      })();
+      return this.trackRefreshRequest('runs', request);
     },
 
-    async refreshAgentWorkers() {
+    async refreshAgentWorkers(options = {}) {
       if (!this.can('api.agentWorkers.read')) return;
-      this.loading.agentWorkers = true;
-      try {
-        this.agentWorkers = await this.api('/api/agent-workers');
-      } catch (error) {
-        console.warn('本机 Worker 状态读取失败', error);
-      } finally {
-        this.loading.agentWorkers = false;
-      }
+      const refresh = this.requestRefreshKey('agentWorkers', { background: options.background === true, minInterval: options.minInterval ?? 8000 });
+      if (refresh.skip) return refresh.promise || this.agentWorkers;
+      const request = (async () => {
+        this.loading.agentWorkers = true;
+        try {
+          this.agentWorkers = await this.api('/api/agent-workers');
+          return this.agentWorkers;
+        } catch (error) {
+          console.warn('本机 Worker 状态读取失败', error);
+          return this.agentWorkers;
+        } finally {
+          this.loading.agentWorkers = false;
+        }
+      })();
+      return this.trackRefreshRequest('agentWorkers', request);
     },
 
     resetAiExecutionArchiveFilters() {
@@ -8215,39 +8423,46 @@ export default {
       }
     },
 
-    async refreshTasks() {
-      this.loading.tasks = true;
-      try {
-        const [tasksResult, bugsResult, taskReviewsResult] = await Promise.allSettled([
-          this.api('/api/tasks'),
-          this.api('/api/bugs'),
-          this.api('/api/task-reviews')
-        ]);
-        const tasks = tasksResult.status === 'fulfilled' ? tasksResult.value : null;
-        const bugs = bugsResult.status === 'fulfilled' ? bugsResult.value : null;
-        const taskReviews = taskReviewsResult.status === 'fulfilled' ? taskReviewsResult.value : null;
-        if (Array.isArray(tasks) && tasks.length) this.businessTasks = tasks;
-        else if (Array.isArray(tasks)) {
-          console.warn('任务接口返回空列表，已保留当前任务中心列表');
+    async refreshTasks(options = {}) {
+      const refresh = this.requestRefreshKey('tasks', { background: options.background === true, minInterval: options.minInterval ?? 6000 });
+      if (refresh.skip) return refresh.promise || this.businessTasks;
+      const request = (async () => {
+        this.loading.tasks = true;
+        try {
+          const [tasksResult, bugsResult, taskReviewsResult] = await Promise.allSettled([
+            this.api('/api/tasks'),
+            this.api('/api/bugs'),
+            this.api('/api/task-reviews')
+          ]);
+          const tasks = tasksResult.status === 'fulfilled' ? tasksResult.value : null;
+          const bugs = bugsResult.status === 'fulfilled' ? bugsResult.value : null;
+          const taskReviews = taskReviewsResult.status === 'fulfilled' ? taskReviewsResult.value : null;
+          if (Array.isArray(tasks) && tasks.length) this.businessTasks = tasks;
+          else if (Array.isArray(tasks)) {
+            console.warn('任务接口返回空列表，已保留当前任务中心列表');
+          }
+          if (Array.isArray(bugs)) this.bugs = bugs;
+          if (Array.isArray(taskReviews)) this.taskReviews = taskReviews;
+          if (Array.isArray(tasks) && tasks.length) this.saveWorkbenchDisplayCache('businessTasks', this.businessTasks);
+          if (Array.isArray(bugs)) this.saveWorkbenchDisplayCache('bugs', this.bugs);
+          if (Array.isArray(taskReviews)) this.saveWorkbenchDisplayCache('taskReviews', this.taskReviews);
+          [tasksResult, bugsResult, taskReviewsResult].forEach((result, index) => {
+            if (result.status !== 'rejected') return;
+            const label = ['任务列表', 'Bug 列表', '验收记录'][index];
+            console.warn(`${label}读取失败，已保留当前列表`, result.reason);
+          });
+          return this.businessTasks;
+        } catch (error) {
+          this.restoreWorkbenchDisplayCacheKey('businessTasks');
+          this.restoreWorkbenchDisplayCacheKey('bugs');
+          this.restoreWorkbenchDisplayCacheKey('taskReviews');
+          console.warn('任务中心数据读取失败，已保留当前列表', error);
+          return this.businessTasks;
+        } finally {
+          this.loading.tasks = false;
         }
-        if (Array.isArray(bugs)) this.bugs = bugs;
-        if (Array.isArray(taskReviews)) this.taskReviews = taskReviews;
-        if (Array.isArray(tasks) && tasks.length) this.saveWorkbenchDisplayCache('businessTasks', this.businessTasks);
-        if (Array.isArray(bugs)) this.saveWorkbenchDisplayCache('bugs', this.bugs);
-        if (Array.isArray(taskReviews)) this.saveWorkbenchDisplayCache('taskReviews', this.taskReviews);
-        [tasksResult, bugsResult, taskReviewsResult].forEach((result, index) => {
-          if (result.status !== 'rejected') return;
-          const label = ['任务列表', 'Bug 列表', '验收记录'][index];
-          console.warn(`${label}读取失败，已保留当前列表`, result.reason);
-        });
-      } catch (error) {
-        this.restoreWorkbenchDisplayCacheKey('businessTasks');
-        this.restoreWorkbenchDisplayCacheKey('bugs');
-        this.restoreWorkbenchDisplayCacheKey('taskReviews');
-        console.warn('任务中心数据读取失败，已保留当前列表', error);
-      } finally {
-        this.loading.tasks = false;
-      }
+      })();
+      return this.trackRefreshRequest('tasks', request);
     },
 
     startTaskBriefRealtimeSync() {
