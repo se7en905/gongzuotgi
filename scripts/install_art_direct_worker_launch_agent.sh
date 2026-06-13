@@ -59,6 +59,8 @@ cat > "${PLIST}" <<PLIST
     <string>${ART_WORKER_POLL_INTERVAL_MS:-300000}</string>
     <key>ART_WORKER_HEARTBEAT_INTERVAL_MS</key>
     <string>${ART_WORKER_HEARTBEAT_INTERVAL_MS:-300000}</string>
+    <key>ART_WORKER_LOCAL_CHECK_INTERVAL_MS</key>
+    <string>${ART_WORKER_LOCAL_CHECK_INTERVAL_MS:-2400000}</string>
     <key>CODEX_CLI_PATH</key>
     <string>${CODEX_CLI_PATH:-${DEFAULT_CODEX_CLI}}</string>
   </dict>

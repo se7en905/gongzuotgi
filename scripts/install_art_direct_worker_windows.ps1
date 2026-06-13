@@ -7,7 +7,7 @@ $Password = $env:ART_PLATFORM_PASSWORD
 $Api = $env:ART_PLATFORM_API
 $PollInterval = if ($env:ART_WORKER_POLL_INTERVAL_MS) { $env:ART_WORKER_POLL_INTERVAL_MS } else { '300000' }
 $HeartbeatInterval = if ($env:ART_WORKER_HEARTBEAT_INTERVAL_MS) { $env:ART_WORKER_HEARTBEAT_INTERVAL_MS } else { '300000' }
-$LocalCheckInterval = if ($env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS) { $env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS } else { '300000' }
+$LocalCheckInterval = if ($env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS) { $env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS } else { '2400000' }
 $CodexPath = if ($env:CODEX_CLI_PATH) { $env:CODEX_CLI_PATH } else { 'codex' }
 
 function ConvertTo-PSLiteral([string]$Value) {

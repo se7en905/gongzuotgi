@@ -17544,6 +17544,52 @@ export default {
       return Boolean(this.isDirectSkillRun(run) && /failed|error/i.test(String(run?.status || run?.workerStatus || '')));
     },
 
+    hasWorkerDurationEvidence(run = null) {
+      if (!this.isDirectSkillRun(run)) return false;
+      if (Number(run?.durationMs || 0) > 0) return true;
+      return Array.isArray(run?.stages) && run.stages.some(stage => Number(stage?.durationMs || 0) > 0);
+    },
+
+    directSkillRunSyncBadge(run = null) {
+      if (!this.isDirectSkillRun(run)) return { label: '', detail: '', tone: 'muted' };
+      const status = String(run?.status || run?.workerStatus || '').toLowerCase();
+      const worker = this.directSkillWorkerForRun(run);
+      const online = this.directSkillWorkerOnline(worker);
+      if (/pending|queued|created/.test(status)) {
+        return {
+          label: '待本机领取',
+          detail: '执行人启动 Worker 后自动领取。',
+          tone: 'muted'
+        };
+      }
+      if (/claimed|running|in_progress/.test(status)) {
+        return {
+          label: online ? '本机执行中' : '等待同步',
+          detail: online ? 'Worker 在线，执行状态会持续回传。' : 'Worker 离线或平台暂不可达，本机执行数据会在恢复后补回。',
+          tone: online ? 'running' : 'warning'
+        };
+      }
+      if (/completed|done|success|passed/.test(status)) {
+        return {
+          label: this.hasWorkerDurationEvidence(run) ? '本机计时已同步' : '本机已完成',
+          detail: this.hasWorkerDurationEvidence(run) ? '累计耗时使用执行人本机真实计时。' : 'Worker 已回传完成状态。',
+          tone: 'success'
+        };
+      }
+      if (/failed|error|blocked/.test(status)) {
+        return {
+          label: '本机回传异常',
+          detail: '请查看右上角原始执行日志确认阻塞原因。',
+          tone: 'danger'
+        };
+      }
+      return {
+        label: this.hasWorkerDurationEvidence(run) ? '本机计时' : 'Worker 同步',
+        detail: this.hasWorkerDurationEvidence(run) ? '累计耗时使用执行人本机真实计时。' : '等待 Worker 回传状态。',
+        tone: 'muted'
+      };
+    },
+
     directSkillRunOperatorName(run = null) {
       const userId = String(run?.createdBy || '').trim();
       const user = this.users.find(item => String(item.id || '') === userId);
@@ -17686,6 +17732,9 @@ export default {
       const password = String(user.passwordDisplay || '').trim();
       const apiBase = this.directSkillWorkerApiBase();
       const safePassword = password || '在这里填写该组员平台密码';
+      const pollInterval = '300000';
+      const heartbeatInterval = '300000';
+      const localCheckInterval = '2400000';
       const windowsRoot = '$env:USERPROFILE\\ArtDirectWorker';
       if (os === 'dual') {
         return [
@@ -17712,9 +17761,9 @@ export default {
           '$env:ART_PLATFORM_USERNAME = ' + this.powershellQuote(username || '组员账号'),
           '$env:ART_PLATFORM_PASSWORD = ' + this.powershellQuote(safePassword),
           '$env:ART_WORKER_HOME = $root',
-          '$env:ART_WORKER_POLL_INTERVAL_MS = ' + this.powershellQuote('300000'),
-          '$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = ' + this.powershellQuote('300000'),
-          '$env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS = ' + this.powershellQuote('300000'),
+          '$env:ART_WORKER_POLL_INTERVAL_MS = ' + this.powershellQuote(pollInterval),
+          '$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = ' + this.powershellQuote(heartbeatInterval),
+          '$env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS = ' + this.powershellQuote(localCheckInterval),
           '& $node.Source "$root\\scripts\\art-direct-worker.mjs"'
         ].join('\n');
       }
@@ -17726,8 +17775,9 @@ export default {
         `ART_PLATFORM_USERNAME=${this.shellQuote(username || '组员账号')} \\`,
         `ART_PLATFORM_PASSWORD=${this.shellQuote(safePassword)} \\`,
         'ART_WORKER_HOME="$WORKER_HOME" \\',
-        'ART_WORKER_POLL_INTERVAL_MS=300000 \\',
-        'ART_WORKER_HEARTBEAT_INTERVAL_MS=300000 \\',
+        `ART_WORKER_POLL_INTERVAL_MS=${pollInterval} \\`,
+        `ART_WORKER_HEARTBEAT_INTERVAL_MS=${heartbeatInterval} \\`,
+        `ART_WORKER_LOCAL_CHECK_INTERVAL_MS=${localCheckInterval} \\`,
         'node "$WORKER_HOME/scripts/art-direct-worker.mjs"'
       ].join('\n');
     },
@@ -17737,6 +17787,9 @@ export default {
       const password = String(user.passwordDisplay || '').trim();
       const apiBase = this.directSkillWorkerApiBase();
       const safePassword = password || '在这里填写该组员平台密码';
+      const pollInterval = '300000';
+      const heartbeatInterval = '300000';
+      const localCheckInterval = '2400000';
       const windowsRoot = '$env:USERPROFILE\\ArtDirectWorker';
       if (os === 'dual') {
         return [
@@ -17763,9 +17816,9 @@ export default {
           '$env:ART_PLATFORM_USERNAME = ' + this.powershellQuote(username || '组员账号'),
           '$env:ART_PLATFORM_PASSWORD = ' + this.powershellQuote(safePassword),
           '$env:ART_WORKER_HOME = $root',
-          '$env:ART_WORKER_POLL_INTERVAL_MS = ' + this.powershellQuote('300000'),
-          '$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = ' + this.powershellQuote('300000'),
-          '$env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS = ' + this.powershellQuote('300000'),
+          '$env:ART_WORKER_POLL_INTERVAL_MS = ' + this.powershellQuote(pollInterval),
+          '$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = ' + this.powershellQuote(heartbeatInterval),
+          '$env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS = ' + this.powershellQuote(localCheckInterval),
           'powershell -NoProfile -ExecutionPolicy Bypass -File "$root\\scripts\\install_art_direct_worker_windows.ps1"'
         ].join('\n');
       }
@@ -17778,8 +17831,9 @@ export default {
         `ART_PLATFORM_USERNAME=${this.shellQuote(username || '组员账号')} \\`,
         `ART_PLATFORM_PASSWORD=${this.shellQuote(safePassword)} \\`,
         'ART_WORKER_HOME="$WORKER_HOME" \\',
-        'ART_WORKER_POLL_INTERVAL_MS=300000 \\',
-        'ART_WORKER_HEARTBEAT_INTERVAL_MS=300000 \\',
+        `ART_WORKER_POLL_INTERVAL_MS=${pollInterval} \\`,
+        `ART_WORKER_HEARTBEAT_INTERVAL_MS=${heartbeatInterval} \\`,
+        `ART_WORKER_LOCAL_CHECK_INTERVAL_MS=${localCheckInterval} \\`,
         'bash "$WORKER_HOME/scripts/install_art_direct_worker_launch_agent.sh"'
       ].join('\n');
     },

@@ -463,8 +463,13 @@
   - 直接执行 Worker 必须优先使用平台随任务下发的 Skill/md 内容快照，不得要求组员电脑能读取负责人本机 Skill/md 文件路径。
   - 直接执行 Worker 默认运行在执行人自己的 `ArtDirectWorker` 目录，该目录不保证是 Git 仓库或 Codex 已信任目录；Worker 拉起 `codex exec` 时必须带 `--skip-git-repo-check`，避免还未真正执行 Figma 写入就因目录信任检查秒失败。
   - 组员本机 Worker 一旦已经领取任务并启动本机 Codex/Figma 执行，工作台服务器、负责人电脑、管理者笔记本有线网络、平台事件流或状态/日志回传临时断开，都不得中断组员电脑上已经运行的本机执行进程。
-  - Worker 执行中的日志回传和状态回传必须是非阻断逻辑；平台不可达、请求超时或负责人电脑断网时，必须把日志尾部片段和最终状态暂存在执行人本机离线队列，网络恢复后再按顺序补回平台。
-  - Worker 离线队列必须有容量和单条日志长度上限，默认只保留有限条数和日志尾部，避免断网期间无限写入导致组员电脑卡顿或数据暴增。
+  - Worker 执行中的日志回传、状态回传和阶段耗时回传必须是非阻断逻辑；平台不可达、请求超时或负责人电脑断网时，必须把日志尾部片段、最终状态、阶段开始/结束时间、`durationMs` 和必要执行快照暂存在执行人本机离线队列，网络恢复后再按顺序补回平台。
+  - Worker 离线队列必须有容量、单条日志长度和事件去重上限，默认只保留有限条数、日志尾部和必要执行状态，避免断网期间无限写入导致组员电脑卡顿或数据暴增。
+  - Worker 离线补同步必须按原 `runId` 幂等更新原执行记录，不得因为网络恢复、重复轮询或重复补传而新增执行记录、重复累计调用次数、重建任务中心记录或触发库存/评分/禅道同步。
+  - Worker 补回执行耗时时，执行台累计耗时和阶段耗时必须优先使用执行人本机记录的真实 `startedAt`、`finishedAt`、`durationMs`、`stages[].durationMs`；不得使用负责人电脑恢复网络那一刻的服务器时间伪造成执行耗时。
+  - Worker 只能恢复执行人本机已经存在未完成快照的同一条 `claimed/running` 直接执行；不得仅因服务端残留 `running` 状态就擅自重跑一条没有本机上下文的旧任务。
+  - 平台删除某条执行记录后，Worker 下次成功联网必须通过轻量对账清理执行人本机对应 `runId` 的快照、离线事件和缓存；删除对账不得依赖永久增长的全局墓碑表。
+  - 组员本机已经闭环但断网期间未同步的平台数据，必须在负责人电脑恢复原工作台地址可访问后由 Worker 自动补传；补传失败继续保留有限离线队列，不得阻塞组员当前电脑操作。
   - Figma 必须走原生授权和 Figma MCP；组员登录工作台后，也必须在自己的电脑使用自己的 Figma 账号和本机 Figma MCP。
   - 如果执行人本机 Codex 不可用、Figma MCP 未配置、Figma OAuth 失效、目标 Figma 文件无编辑权限或工具列表缺少写入工具，Worker 必须停止执行并回传阻塞原因。
   - 只有 Figma 写入工具真实返回 `createdNodeIds` 或 `mutatedNodeIds`，才允许判定写入完成。
@@ -480,11 +485,15 @@
   - Worker 心跳写入 `agent-workers` 数据，至少包含执行人、设备、最近心跳、Codex 是否就绪、Figma MCP 是否就绪、能力标记和检查消息。
   - Worker 登录平台成功后必须先上报一次基础心跳，再执行 Codex/Figma MCP 自检；不得因为本机 Codex 或 Figma MCP 自检卡住而让工作台一直显示“无心跳”。
   - Worker 的 Codex/Figma MCP 自检必须设置超时，默认 15 秒左右；超时只标记对应能力未就绪并写入检查消息，不得阻塞基础心跳上报和页面状态展示。
+  - Worker 空闲状态必须低打扰运行：不得弹窗、不得调用会抢焦点的 GUI、不得打开浏览器或 Figma 窗口、不得造成 Dock 闪烁；轮询只能做后台 Node 请求和必要本机命令检查。
+  - Worker 默认任务轮询和心跳兜底间隔为 5 分钟；Codex/Figma MCP 本机自检默认间隔为 40 分钟，即 `ART_WORKER_LOCAL_CHECK_INTERVAL_MS=2400000`。除非负责人明确要求，复制命令、开机自启脚本和 Worker 默认值都必须保持该低打扰配置。
+  - Worker 必须在真正领取任务、恢复本机未完成任务或执行结束时才启动较重的 Codex 子进程；空轮询不得每轮重复启动 Codex/Figma 检查进程。
   - Worker 设备花名保存为独立展示字段；后续心跳不得因未携带花名而清空已保存花名。
   - Worker 设备花名只能由设备所属账号本人修改，不允许组员修改他人设备花名。
   - 直接执行领取必须校验执行人账号、项目权限、被分配关系、本机能力和 Worker 权限。
   - Worker 只能领取并回传分配给自己的直接执行任务；除 admin 审计能力外，不得回传他人任务状态。
   - Worker 日志回传要限制单次长度，避免日志过大拖慢平台。
+  - Worker 本机状态目录只允许保存当前执行所需的轻量快照、有限离线事件和必要同步去重信息；不得保存整个平台数据、全量日志历史、全量聊天记录、Figma token 或其它长期敏感数据。
   - 工作台前端不得整段渲染原始 Codex/Worker/Figma 日志；`run.log` 中的 Figma 截图、base64、图片、超长 JSON 和大段 MCP 工具返回必须摘要、截断或过滤后再展示。
   - `/api/runs/:id/log` 默认只返回尾部日志摘要；完整原始日志只作为服务器文件保留，排查时查看文件，不得作为页面切换或刷新时的默认渲染数据。
   - 前端默认请求执行日志尾部不得超过 `48KB`；如需排查更大原始日志，只能在明确调试入口或服务器文件中查看，不能作为页面默认加载内容。
@@ -572,6 +581,9 @@
   - `/api/agent-workers/heartbeat`：Worker 心跳。
   - `PATCH /api/agent-workers/:id/alias`：本人修改 Worker 设备花名。
   - `/api/agent-runs/next`：Worker 自动领取直接执行。
+  - `/api/agent-runs/recover`：Worker 只按执行人本机已有未完成快照恢复同设备直接执行；不得无本机快照恢复旧 `running` 记录。
+  - `/api/agent-runs/:id/sync`：Worker 批量补传离线日志、状态和阶段耗时事件；必须按 `runId + eventId` 幂等更新原执行记录。
+  - `/api/agent-runs/missing`：Worker 上报本机仍保留的 `runId` 列表，平台只返回已经不存在的执行记录 ID，用于执行人本机清理缓存；不得作为长期删除墓碑写入无限增长数据。
   - `/api/agent-runs/:id/log`：Worker 回传执行日志。
   - `/api/agent-runs/:id/status`：Worker 回传执行状态。
 - Git 自动备份数据约定：
@@ -667,6 +679,11 @@
   - 禁止只生成本地脚本或提示词就声称 Figma 写入完成。
   - 禁止直接执行 Worker 领取或回传不属于当前执行人的任务。
   - 禁止直接执行 Worker 在执行人本机下载目录里调用 `codex exec` 时漏掉 `--skip-git-repo-check`。
+  - 禁止 Worker 空轮询时弹窗、打开浏览器、打开 Figma、抢焦点、制造 Dock 闪烁或影响组员正常操作电脑。
+  - 禁止 Worker 空轮询每 5 分钟重复启动 Codex/Figma 自检；本机 Codex/Figma MCP 自检默认 40 分钟一次，只有负责人明确要求时才可调整。
+  - 禁止 Worker 断网恢复补同步时新建重复 run、重复累计调用次数、重建任务中心记录或触发库存扫描、评分重算、禅道同步。
+  - 禁止把平台删除执行记录后的 Worker 本机清理做成永久增长的全局墓碑表；必须采用轻量 `runId` 对账或同等不累积方案。
+  - 禁止执行台恢复网络后用服务器恢复时间覆盖执行人本机真实 `durationMs`。
   - 禁止美术执行台顶部 `再次执行` 为普通执行调用 `/api/runs/:id/retry` 克隆新记录；普通再次执行必须复用当前执行记录。
   - 禁止把本机执行状态页藏在深层入口。
   - 禁止新增界面、新按钮、新接口后不更新角色管理权限目录。
@@ -706,6 +723,10 @@
     ```bash
     node --check scripts/art-direct-worker.mjs
     bash -n scripts/install_art_direct_worker_launch_agent.sh
+    ```
+  - Windows 直接执行 Worker 开机自启脚本静态检查：
+    ```bash
+    pwsh -NoProfile -Command '$null = [System.Management.Automation.Language.Parser]::ParseFile("scripts/install_art_direct_worker_windows.ps1", [ref]$null, [ref]$null)'
     ```
   - 启动/重启工作台服务：
     ```bash

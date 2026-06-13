@@ -81,6 +81,7 @@
         <span class="focused-run-total-time">
           <small>累计执行耗时</small>
           <strong>{{ app.liveRunClockDurationText(app.selectedRun) }}</strong>
+          <em v-if="app.hasWorkerDurationEvidence(app.selectedRun)">本机计时</em>
         </span>
       </div>
       <div class="focused-run-step-flow">
@@ -130,10 +131,16 @@
         </div>
       </div>
       <div class="run-worker-note">
+        <span
+          v-if="app.directSkillRunSyncBadge(app.selectedRun).label"
+          :class="['run-worker-sync-badge', app.directSkillRunSyncBadge(app.selectedRun).tone]"
+        >
+          {{ app.directSkillRunSyncBadge(app.selectedRun).label }}
+        </span>
         <span v-if="app.isDirectSkillFailedRun(app.selectedRun)">该任务已由执行人本机 Worker 自动领取后执行失败；请点击右上角日志图标查看具体原因。</span>
         <span v-else-if="!app.directSkillWorkerForRun(app.selectedRun)">执行人需要启动本机 Worker 后，任务才会从“待领取”变为“已领取 / 执行中”。</span>
         <span v-else-if="!app.directSkillWorkerForRun(app.selectedRun)?.figmaMcpReady">该设备未通过 Figma MCP 自检，请执行人在本机完成 Figma MCP 授权。</span>
-        <span v-else>本机 Worker 会把 Codex 日志和执行结果回传到当前执行记录。</span>
+        <span v-else>{{ app.directSkillRunSyncBadge(app.selectedRun).detail || '本机 Worker 会把 Codex 日志和执行结果回传到当前执行记录。' }}</span>
       </div>
       <div v-if="app.isDirectSkillClaimedRun(app.selectedRun)" class="run-worker-claim-evidence">
         <span>自动领取：{{ app.formatDateTime(app.selectedRun.claimedAt) || '-' }}</span>
@@ -907,6 +914,22 @@ export default {
       font-weight: 900;
       line-height: 1.2;
     }
+
+    em {
+      display: inline-flex;
+      align-items: center;
+      min-height: 18px;
+      padding: 1px 7px;
+      border: 1px solid rgba(14, 165, 233, 0.26);
+      border-radius: 999px;
+      background: rgba(14, 165, 233, 0.08);
+      color: #0369a1;
+      font-size: 11px;
+      font-style: normal;
+      font-weight: 850;
+      line-height: 1.2;
+      white-space: nowrap;
+    }
   }
 
   .focused-run-step-flow {
@@ -1376,9 +1399,50 @@ export default {
   }
 
   .run-worker-note {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
     color: #475569;
     font-size: 12px;
     line-height: 1.6;
+  }
+
+  .run-worker-sync-badge {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    min-height: 22px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 900;
+    line-height: 1.25;
+
+    &.running {
+      background: rgba(14, 165, 233, 0.11);
+      color: #0369a1;
+    }
+
+    &.warning {
+      background: rgba(245, 158, 11, 0.13);
+      color: #92400e;
+    }
+
+    &.success {
+      background: rgba(22, 163, 74, 0.12);
+      color: #166534;
+    }
+
+    &.danger {
+      background: rgba(239, 68, 68, 0.12);
+      color: #b91c1c;
+    }
+
+    &.muted {
+      background: rgba(100, 116, 139, 0.1);
+      color: #475569;
+    }
   }
 
   .run-worker-claim-evidence {
