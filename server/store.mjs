@@ -5,6 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { normalizeCustomStages, normalizeLevel, normalizeWorkflowId, stagesForWorkflow, workflowForLevel } from './workflow.mjs';
 import { normalizeGitConfig } from './repository-config.mjs';
+import { splitProjectDeletionSnapshot, splitRunsByArchiveDeleteFilters } from './business-regression-rules.mjs';
 import {
   ensureMysqlStore,
   readMysqlCollection,
@@ -121,37 +122,40 @@ export async function deleteProject(id) {
     readJson(paths.runs, []),
     readJson(paths.customWorkflows, [])
   ]);
-  const nextTasks = tasks.filter(task => task.projectId !== projectId);
-  const nextBugs = bugs.filter(bug => bug.projectId !== projectId);
-  const nextReviews = reviews.filter(review => review.projectId !== projectId);
-  const nextNotes = notes.filter(note => note.projectId !== projectId);
-  const nextArtBriefs = artBriefs.filter(record => record.projectId !== projectId);
-  const retainedRuns = runs.filter(run => run.projectId === projectId);
-  const retainedWorkflows = workflows.filter(workflow => workflow.projectId === projectId);
+  const deletion = splitProjectDeletionSnapshot({
+    projects,
+    tasks,
+    bugs,
+    taskReviews: reviews,
+    taskProcessingNotes: notes,
+    artBriefs,
+    runs,
+    customWorkflows: workflows
+  }, projectId);
 
   await Promise.all([
-    writeJson(paths.projects, projects),
-    writeJson(paths.tasks, nextTasks),
-    writeJson(paths.bugs, nextBugs),
-    writeJson(paths.taskReviews, nextReviews),
-    writeJson(paths.taskProcessingNotes, nextNotes),
-    writeJson(paths.artBriefs, nextArtBriefs)
+    writeJson(paths.projects, deletion.projects),
+    writeJson(paths.tasks, deletion.tasks),
+    writeJson(paths.bugs, deletion.bugs),
+    writeJson(paths.taskReviews, deletion.taskReviews),
+    writeJson(paths.taskProcessingNotes, deletion.taskProcessingNotes),
+    writeJson(paths.artBriefs, deletion.artBriefs)
   ]);
 
   return {
     project,
     removed: {
-      tasks: tasks.length - nextTasks.length,
-      bugs: bugs.length - nextBugs.length,
-      taskReviews: reviews.length - nextReviews.length,
-      taskProcessingNotes: notes.length - nextNotes.length,
-      artBriefs: artBriefs.length - nextArtBriefs.length,
+      tasks: tasks.length - deletion.tasks.length,
+      bugs: bugs.length - deletion.bugs.length,
+      taskReviews: reviews.length - deletion.taskReviews.length,
+      taskProcessingNotes: notes.length - deletion.taskProcessingNotes.length,
+      artBriefs: artBriefs.length - deletion.artBriefs.length,
       runs: 0,
       customWorkflows: 0
     },
     retained: {
-      runs: retainedRuns.length,
-      customWorkflows: retainedWorkflows.length,
+      runs: deletion.retained.runs,
+      customWorkflows: deletion.retained.customWorkflows,
       artifactRoot: path.join(paths.artifactDir, projectId)
     }
   };
@@ -1313,36 +1317,7 @@ export async function deleteRun(id) {
 
 export async function deleteRunsByFilters(filters = {}) {
   const runs = await readJson(paths.runs, []);
-  const from = filters.from ? Date.parse(filters.from) : 0;
-  const to = filters.to ? Date.parse(filters.to) : 0;
-  if (!from || !to || from > to) return { deleted: [], remaining: runs };
-  const sourceType = cleanString(filters.sourceType || filters.executionMode);
-  const keyword = cleanString(filters.keyword).toLowerCase();
-  const projectId = cleanString(filters.projectId);
-  const userId = cleanString(filters.userId);
-  const status = cleanString(filters.status).toLowerCase();
-  const deleted = [];
-  const remaining = [];
-  for (const run of runs) {
-    const time = Date.parse(run.createdAt || run.updatedAt || run.finishedAt || run.startedAt || '');
-    const inRange = Boolean(time && time >= from && time <= to);
-    const matchesProject = !projectId || cleanString(run.projectId) === projectId;
-    const matchesSource = !sourceType || run.sourceType === sourceType || run.executionMode === sourceType;
-    const matchesUser = !userId || [run.createdBy, run.ownerUserId, run.assignedToUserId, run.startedBy].map(cleanString).includes(userId);
-    const matchesStatus = !status || cleanString(run.status).toLowerCase() === status;
-    const haystack = [
-      run.title,
-      run.primarySkillPath,
-      run.stage,
-      run.assignedToName,
-      run.developer,
-      run.figmaLinks,
-      run.requirement
-    ].map(value => cleanString(value).toLowerCase()).join(' ');
-    const matchesKeyword = !keyword || haystack.includes(keyword);
-    if (inRange && matchesProject && matchesSource && matchesUser && matchesStatus && matchesKeyword && !isRunningRunStatus(run.status)) deleted.push(run);
-    else remaining.push(run);
-  }
+  const { deleted, remaining } = splitRunsByArchiveDeleteFilters(runs, filters);
   if (!deleted.length) return { deleted: [], remaining: runs };
   await writeJson(paths.runs, remaining);
   for (const run of deleted) {
@@ -3455,10 +3430,6 @@ function isWorkerExecutableRun(run = {}) {
     || run.executionMode === 'direct-skill'
     || run.executionHost === 'local-worker'
     || run.workerExecution === true;
-}
-
-function isRunningRunStatus(status = '') {
-  return /running|in_progress|claimed/i.test(String(status || ''));
 }
 
 function normalizeWorkerRunStatus(value = '') {

@@ -1,0 +1,271 @@
+import assert from 'node:assert/strict';
+import {
+  applyTaskRefreshResult,
+  applySkillVersionOverrideRecordState,
+  applyZentaoAssignResultToTasks,
+  buildSkillInventoryStats,
+  comparePermissionCatalogs,
+  deleteOperationLogRecords,
+  displayMetricsForSkillInventoryRow,
+  shouldReplaceAiMembersBoardHtml,
+  splitProjectDeletionSnapshot,
+  splitRunsByArchiveDeleteFilters
+} from './business-regression-rules.mjs';
+
+function testSkillInventoryStatsStayConsistent() {
+  const rows = [
+    { id: 'skill-a', productDisplayName: '界面收尾', productKind: 'skill', uploadedAt: '2026-06-01T00:00:00.000Z' },
+    { id: 'standard-a', productDisplayName: '交付规范', productKind: 'standard', uploadedAt: '2026-06-01T00:00:00.000Z' },
+    { id: 'folder-a', productDisplayName: '图标文件夹', productKind: 'directory', uploadedAt: '2026-06-01T00:00:00.000Z' },
+    { id: 'hidden-a', productDisplayName: '隐藏产物', productKind: 'skill', displayHidden: true },
+    { id: 'duplicate-as-standard', productDisplayName: '界面收尾', productKind: 'standard', uploadedAt: '2026-06-02T00:00:00.000Z' }
+  ];
+  const grouped = buildSkillInventoryStats(rows);
+  const stats = Object.fromEntries(grouped.stats.map(item => [item.key, item.value]));
+  assert.equal(stats.total, grouped.total.length, '产物总计统计必须等于总筛选列表条数');
+  assert.equal(stats.skill, grouped.skill.length, 'Skill 统计必须等于点击 Skill 统计卡后的列表条数');
+  assert.equal(stats.standard, grouped.standard.length, '规范统计必须等于点击规范统计卡后的列表条数');
+  assert.equal(stats.total, 3, '隐藏产物和同名重复产物不得污染总数');
+  assert.equal(stats.skill, 1, '同名产物去重时应优先保留 Skill 口径');
+  assert.equal(stats.standard, 1, '规范统计只统计最终去重后的规范产物');
+}
+
+function testVersionOverrideDoesNotPolluteAliases() {
+  const state = applySkillVersionOverrideRecordState({}, {
+    key: 'version:project-a:skills/ui/SKILL.md',
+    projectId: 'project-a',
+    relativePath: 'skills/ui/SKILL.md',
+    version: '3.0',
+    aliases: ['不应进入别名']
+  });
+  assert.deepEqual(state.skillVersionOverrides, { 'version:project-a:skills/ui/SKILL.md': '3.0' });
+  assert.deepEqual(state.skillAliasOverrides, {}, 'version: 记录不得写入调用别名覆盖');
+  assert.deepEqual(state.skillAliasHistoryOverrides, {}, 'version: 记录不得写入别名历史');
+
+  const aliasState = applySkillVersionOverrideRecordState(state, {
+    key: 'alias:project-a:skills/ui/SKILL.md',
+    aliases: ['界面收尾', 'UI收尾']
+  });
+  assert.deepEqual(aliasState.skillAliasOverrides['alias:project-a:skills/ui/SKILL.md'], ['界面收尾', 'UI收尾']);
+  assert.deepEqual(aliasState.skillVersionOverrides, state.skillVersionOverrides, '别名保存不得反向污染版本覆盖');
+}
+
+function testVisibilityRestoreDoesNotRecalculateUsageCounters() {
+  const usageCounters = {
+    buckets: {
+      'alias:界面收尾': { count: 12, people: ['盛威', '小美'] }
+    }
+  };
+  const hiddenMetrics = displayMetricsForSkillInventoryRow({
+    hidden: true,
+    version: '2.0',
+    usageCount: usageCounters.buckets['alias:界面收尾'].count,
+    usageRate: 0.8,
+    qualityScore: 91
+  });
+  assert.equal(hiddenMetrics.displayVersionLabel, '1.0', '作废期间版本展示必须置灰为 1.0');
+  assert.equal(hiddenMetrics.usageCountLabel, '-', '作废期间调用次数展示必须为横线');
+  assert.equal(hiddenMetrics.usageRateLabel, '-', '作废期间有效占比展示必须为横线');
+  assert.equal(usageCounters.buckets['alias:界面收尾'].count, 12, '作废展示不得扣减累计调用次数');
+
+  const restoredMetrics = displayMetricsForSkillInventoryRow({
+    hidden: false,
+    version: '2.0',
+    usageCount: usageCounters.buckets['alias:界面收尾'].count,
+    usageRate: 0.8,
+    qualityScore: 91
+  });
+  assert.equal(restoredMetrics.displayVersionLabel, '2.0', '恢复后必须继续展示真实版本');
+  assert.equal(restoredMetrics.usageCountLabel, '12', '恢复后必须展示作废前累计调用次数');
+  assert.equal(usageCounters.buckets['alias:界面收尾'].count, 12, '恢复展示不得重算或清零累计调用次数');
+}
+
+function testProjectDeletionKeepsRunsAndWorkflows() {
+  const snapshot = {
+    projects: [{ id: 'project-a' }, { id: 'project-b' }],
+    tasks: [{ id: 'task-a', projectId: 'project-a' }, { id: 'task-b', projectId: 'project-b' }],
+    bugs: [{ id: 'bug-a', projectId: 'project-a' }],
+    taskReviews: [{ id: 'review-a', projectId: 'project-a' }],
+    taskProcessingNotes: [{ id: 'note-a', projectId: 'project-a' }],
+    artBriefs: [{ id: 'brief-a', projectId: 'project-a' }],
+    runs: [{ id: 'run-a', projectId: 'project-a' }, { id: 'run-b', projectId: 'project-b' }],
+    customWorkflows: [{ id: 'workflow-a', projectId: 'project-a' }]
+  };
+  const result = splitProjectDeletionSnapshot(snapshot, 'project-a');
+  assert.deepEqual(result.projects.map(item => item.id), ['project-b']);
+  assert.deepEqual(result.tasks.map(item => item.id), ['task-b']);
+  assert.deepEqual(result.bugs, []);
+  assert.deepEqual(result.taskReviews, []);
+  assert.deepEqual(result.taskProcessingNotes, []);
+  assert.deepEqual(result.artBriefs, []);
+  assert.deepEqual(result.runs.map(item => item.id), ['run-a', 'run-b'], '项目删除不得删除美术执行台和 AI档案执行记录');
+  assert.deepEqual(result.customWorkflows.map(item => item.id), ['workflow-a'], '项目删除不得顺带删除自定义流程模板');
+  assert.equal(result.retained.runs, 1);
+  assert.equal(result.retained.customWorkflows, 1);
+}
+
+function testAiArchiveDeleteFiltersMatchVisibleScope() {
+  const runs = [
+    {
+      id: 'run-target',
+      projectId: 'deleted-project',
+      sourceType: 'direct-skill',
+      createdBy: 'admin',
+      status: 'completed',
+      title: '目标执行',
+      createdAt: '2026-06-10T10:00:00.000Z'
+    },
+    {
+      id: 'run-same-project-running',
+      projectId: 'deleted-project',
+      sourceType: 'direct-skill',
+      createdBy: 'admin',
+      status: 'running',
+      title: '运行中不可删',
+      createdAt: '2026-06-10T10:00:00.000Z'
+    },
+    {
+      id: 'run-other-project',
+      projectId: 'other-project',
+      sourceType: 'direct-skill',
+      createdBy: 'admin',
+      status: 'completed',
+      title: '其它来源',
+      createdAt: '2026-06-10T10:00:00.000Z'
+    }
+  ];
+  const byProject = splitRunsByArchiveDeleteFilters(runs, {
+    projectId: 'deleted-project',
+    from: '2026-06-10T00:00:00.000Z',
+    to: '2026-06-11T00:00:00.000Z'
+  });
+  assert.deepEqual(byProject.deleted.map(run => run.id), ['run-target'], '按已删除来源 projectId 清理时不得误删其它来源或运行中记录');
+  assert.deepEqual(byProject.remaining.map(run => run.id), ['run-same-project-running', 'run-other-project']);
+
+  const byRunId = splitRunsByArchiveDeleteFilters(runs, {
+    runId: 'run-target',
+    projectId: 'deleted-project',
+    from: '2026-06-10T00:00:00.000Z',
+    to: '2026-06-11T00:00:00.000Z'
+  });
+  assert.deepEqual(byRunId.deleted.map(run => run.id), ['run-target'], '后端范围删除必须支持前端传入的 runId 筛选');
+}
+
+function testZentaoAssignFailureKeepsLocalOwner() {
+  const tasks = [
+    { id: 'task-1', projectId: 'project-a', taskNo: '1001', developer: '原负责人', assignedTo: 'old' }
+  ];
+  const failedResult = applyZentaoAssignResultToTasks(tasks, tasks[0], null);
+  assert.deepEqual(failedResult, tasks, '禅道拖拽指派失败时不得改变本地负责人');
+
+  const successResult = applyZentaoAssignResultToTasks(tasks, tasks[0], {
+    id: 'task-1',
+    projectId: 'project-a',
+    taskNo: '1001',
+    developer: '新负责人',
+    assignedTo: 'new'
+  });
+  assert.equal(successResult[0].developer, '新负责人', '只有禅道成功返回更新任务后才允许改本地负责人');
+  assert.equal(successResult[0].assignedTo, 'new');
+}
+
+function testTaskRefreshEmptyResultKeepsExistingTasks() {
+  const currentTasks = [
+    { id: 'task-a', title: '已同步任务', taskNo: '1001' }
+  ];
+  assert.deepEqual(
+    applyTaskRefreshResult(currentTasks, []),
+    currentTasks,
+    '任务接口空数组不得覆盖已有任务中心列表'
+  );
+  assert.deepEqual(
+    applyTaskRefreshResult(currentTasks, null),
+    currentTasks,
+    '任务接口失败或异常结果不得清空已有任务中心列表'
+  );
+  assert.deepEqual(
+    applyTaskRefreshResult(currentTasks, [{ id: 'task-b', title: '新任务' }]),
+    [{ id: 'task-b', title: '新任务' }],
+    '任务接口返回真实列表时才允许替换当前列表'
+  );
+}
+
+function testAiMembersBoardPlaceholderDoesNotReplaceCachedHtml() {
+  const cachedHtml = '<html><body><main>真实 AI部门看板</main></body></html>';
+  assert.equal(
+    shouldReplaceAiMembersBoardHtml(cachedHtml, ''),
+    false,
+    '空 HTML 不得覆盖已有 AI部门看板缓存'
+  );
+  assert.equal(
+    shouldReplaceAiMembersBoardHtml(cachedHtml, '<div>正在加载 AI部门看板...</div>'),
+    false,
+    '加载占位不得覆盖已有 AI部门看板缓存'
+  );
+  assert.equal(
+    shouldReplaceAiMembersBoardHtml(cachedHtml, '<html><body><main>新的真实看板</main></body></html>'),
+    true,
+    '只有真实 HTML 看板才允许替换缓存'
+  );
+}
+
+function testOperationLogDeleteDoesNotMutateUsageCounters() {
+  const usageCounters = {
+    updatedAt: '2026-06-10T00:00:00.000Z',
+    buckets: {
+      'alias:界面收尾': { count: 5 }
+    }
+  };
+  const result = deleteOperationLogRecords(
+    [
+      { id: 'log-a', module: 'task' },
+      { id: 'log-b', module: 'run' }
+    ],
+    log => log.module === 'task',
+    usageCounters
+  );
+  assert.deepEqual(result.deleted.map(log => log.id), ['log-a']);
+  assert.deepEqual(result.kept.map(log => log.id), ['log-b']);
+  assert.strictEqual(result.usageCounters, usageCounters, '删除操作日志不得重算、替换或扣减 usage counters 对象');
+  assert.equal(result.usageCounters.buckets['alias:界面收尾'].count, 5);
+}
+
+function testPermissionCatalogsStayAligned() {
+  const backend = ['menu.tasks', 'menu.skillList', 'api.operationLogs.delete'];
+  const frontend = ['menu.tasks', 'menu.skillList', 'api.operationLogs.delete'];
+  assert.deepEqual(comparePermissionCatalogs(backend, frontend), {
+    missingInFrontend: [],
+    missingInBackend: []
+  });
+  assert.deepEqual(comparePermissionCatalogs(backend, ['menu.tasks']), {
+    missingInFrontend: ['api.operationLogs.delete', 'menu.skillList'],
+    missingInBackend: []
+  }, '权限目录不一致时必须能被回归测试发现');
+}
+
+testSkillInventoryStatsStayConsistent();
+testVersionOverrideDoesNotPolluteAliases();
+testVisibilityRestoreDoesNotRecalculateUsageCounters();
+testProjectDeletionKeepsRunsAndWorkflows();
+testAiArchiveDeleteFiltersMatchVisibleScope();
+testZentaoAssignFailureKeepsLocalOwner();
+testTaskRefreshEmptyResultKeepsExistingTasks();
+testAiMembersBoardPlaceholderDoesNotReplaceCachedHtml();
+testOperationLogDeleteDoesNotMutateUsageCounters();
+testPermissionCatalogsStayAligned();
+
+console.log(JSON.stringify({
+  ok: true,
+  tests: [
+    'AI产物清单统计一致',
+    '版本覆盖不污染别名',
+    '作废恢复不重算调用次数',
+    '项目删除不删执行记录',
+    'AI档案范围删除筛选一致',
+    '禅道拖拽失败不改本地负责人',
+    '任务接口空返回不清空任务中心',
+    'AI部门看板占位不覆盖真实缓存',
+    '操作日志删除不影响累计调用次数',
+    '权限目录前后端一致性'
+  ]
+}, null, 2));

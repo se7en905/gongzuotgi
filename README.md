@@ -339,6 +339,7 @@ pnpm build         # 构建界面
 pnpm start         # 生产方式启动 API + 静态资源
 pnpm remote:start  # 远程环境 PM2 启动/重载
 pnpm smoke         # 本地冒烟
+pnpm test:regression # 关键业务回归
 pnpm db:sync       # JSON 同步到 MySQL
 npm run audit:cleanup # 只读清理巡检
 ```
@@ -403,6 +404,14 @@ pnpm smoke
 - `AGENTS.md`
 - `.agent-hub/skills`
 - 历史任务沉淀
+
+### 关键回归
+
+```bash
+pnpm test:regression
+```
+
+关键回归使用内存样例验证 AI 产物统计、版本/别名覆盖、作废恢复、项目删除保留执行记录、AI 档案范围删除和禅道指派失败保护，不读写真实业务数据。
 
 ### 建议验证方式
 
