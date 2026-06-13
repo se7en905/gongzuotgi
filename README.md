@@ -65,18 +65,30 @@ platform/
 └── README.md
 ```
 
-常见页面位于 `src/views/`：
+常见页面与组件位于 `src/views/` 和 `src/components/`：
 
-- `WorkspaceView.vue`：工作台总览
-- `ProjectListView.vue`：项目/资料库
-- `TaskCenterView.vue`：任务中心
-- `SkillInventoryView.vue`：AI 资源清单
-- `AiMembersView.vue`：AI 部门看板
-- `AiArchiveView.vue`：AI 档案
-- `RunsView.vue` / `TaskResultView.vue`：执行与产物
-- `RoleManagementView.vue`：角色管理
-- `UserAccessView.vue`：账号管理
-- `OperationLogView.vue`：操作日志
+- `src/App.vue`：应用壳、导航、全局状态、权限判断和核心数据调度。
+- `TaskCenterView.vue`：任务中心。
+- `SkillInventoryView.vue`：AI 产物清单。
+- `AiMembersView.vue`：AI 部门看板。
+- `AiArchiveView.vue`：AI 档案。
+- `RunsView.vue` / `TaskResultView.vue`：美术执行台与执行产物。
+- `AgentWorkersView.vue`：本机执行状态。
+- `RoleManagementView.vue`：角色管理。
+- `UserAccessView.vue`：账号管理。
+- `OperationLogView.vue`：操作日志。
+- `src/components/dialogs/`：新建执行、任务同步、Skill 预览、项目接入等弹窗。
+
+项目清理边界参考：[docs/项目清理边界说明.md](/Users/se7en/ArtProject/platform/docs/项目清理边界说明.md)。
+低影响维护优化清单参考：[docs/维护优化清单.md](/Users/se7en/ArtProject/platform/docs/维护优化清单.md)。
+
+清理前可先运行只读巡检：
+
+```bash
+npm run audit:cleanup
+```
+
+这个命令只输出清理候选、数据体量和外部配置线索，不会删除、移动或修改任何文件。
 
 ## 环境要求
 
@@ -260,6 +272,10 @@ node scripts/sync-zentao-art-bugs.mjs
 - `workspace/<run_id>/`：单次执行工作区
 - `workspace/artifacts/`：归档产物
 - `data/`：本地数据、缓存和兼容路径
+- `outputs/art-briefs/`：任务中心生成的正式美术需求摘要和 AI 工作说明
+- `logs/`：平台服务、LaunchAgent 和自动备份日志
+
+手动清理前应先运行 `npm run audit:cleanup`。`data/`、`workspace/`、`workspace/artifacts/`、`outputs/art-briefs/` 不得通过文件系统手动删除；业务数据必须通过工作台页面或对应 API 处理。
 
 如果需要把历史 JSON 数据同步进 MySQL，可执行：
 
@@ -318,6 +334,7 @@ pnpm start         # 生产方式启动 API + 静态资源
 pnpm remote:start  # 远程环境 PM2 启动/重载
 pnpm smoke         # 本地冒烟
 pnpm db:sync       # JSON 同步到 MySQL
+npm run audit:cleanup # 只读清理巡检
 ```
 
 ## 接口概览

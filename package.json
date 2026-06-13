@@ -13,7 +13,8 @@
     "backup:git": "bash scripts/git-auto-backup.sh",
     "backup:git:install": "bash scripts/install_git_auto_backup_launch_agent.sh",
     "smoke": "node server/smoke.mjs",
-    "db:sync": "node scripts/sync-json-to-mysql.mjs"
+    "db:sync": "node scripts/sync-json-to-mysql.mjs",
+    "audit:cleanup": "node scripts/audit-cleanup-candidates.mjs"
   },
   "engines": {
     "node": ">=20"
