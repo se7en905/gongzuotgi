@@ -2693,6 +2693,13 @@ button {
   gap: 2px;
 }
 
+.art-run-dialog .run-create-top-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 14px;
+  align-items: start;
+}
+
 .art-run-dialog .art-run-source-segment.el-segmented,
 .art-run-dialog .art-run-level-segment.el-segmented {
   width: fit-content;
@@ -2726,6 +2733,145 @@ button {
   overflow: visible !important;
   text-overflow: clip !important;
   white-space: nowrap !important;
+}
+
+.art-run-dialog .run-selected-material-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  row-gap: 18px;
+  column-gap: 0;
+  width: 100%;
+  margin-top: 12px;
+  padding: 14px 0 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft-card);
+}
+
+.art-run-dialog .run-selected-material-item {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  min-height: 134px;
+  padding: 0 14px 12px;
+}
+
+.art-run-dialog .run-selected-material-step-line {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  min-height: 36px;
+}
+
+.art-run-dialog .run-selected-material-step-line::before,
+.art-run-dialog .run-selected-material-step-line::after {
+  content: "";
+  position: absolute;
+  top: 18px;
+  width: calc(50% - 22px);
+  border-top: 2px dashed rgba(148, 163, 184, 0.55);
+}
+
+.art-run-dialog .run-selected-material-step-line::before {
+  left: 0;
+}
+
+.art-run-dialog .run-selected-material-step-line::after {
+  right: 0;
+}
+
+.art-run-dialog .run-selected-material-item:first-child .run-selected-material-step-line::before,
+.art-run-dialog .run-selected-material-item:last-child .run-selected-material-step-line::after {
+  display: none;
+}
+
+.art-run-dialog .run-selected-material-node {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 2px solid rgba(99, 102, 241, 0.28);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 850;
+  box-shadow: 0 0 0 5px rgba(99, 102, 241, 0.08);
+}
+
+.art-run-dialog .run-selected-material-item:first-child .run-selected-material-node {
+  background: var(--primary);
+  color: #fff;
+}
+
+.art-run-dialog .run-selected-material-body {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  text-align: center;
+}
+
+.art-run-dialog .run-selected-material-order {
+  color: var(--heading);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.art-run-dialog .run-selected-material-item strong {
+  color: var(--heading);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.art-run-dialog .run-selected-material-subtitle,
+.art-run-dialog .run-selected-material-item small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.art-run-dialog .run-selected-material-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 70px;
+  height: 26px;
+  padding: 0 14px;
+  border: 1px solid rgba(220, 38, 38, 0.45);
+  border-radius: 999px;
+  background: #fff;
+  color: #dc2626;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.art-run-dialog .run-selected-material-remove:hover {
+  background: #dc2626;
+  color: #fff;
+}
+
+@media (max-width: 720px) {
+  .art-run-dialog .run-create-top-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .art-run-dialog .run-selected-material-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .art-run-dialog .run-selected-material-step-line::before,
+  .art-run-dialog .run-selected-material-step-line::after {
+    display: none;
+  }
 }
 
 .config-hint {

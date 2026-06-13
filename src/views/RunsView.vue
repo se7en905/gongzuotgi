@@ -12,7 +12,10 @@
           <h3>美术执行清单</h3>
           <p>选择一条执行记录后，右侧查看当前任务从需求到产物的推进状态。</p>
         </div>
-        <ElButton v-if="app.can('run.create')" type="primary" @click="app.openRunCreateDrawer">新建美术执行</ElButton>
+        <div class="run-list-header-actions">
+          <ElButton plain @click="scrollToTemplateManager">模板管理</ElButton>
+          <ElButton v-if="app.can('run.create')" type="primary" @click="app.openRunCreateDrawer">新建美术执行</ElButton>
+        </div>
       </div>
     </template>
     <div class="run-list">
@@ -42,14 +45,14 @@
       </button>
       <div v-if="!app.runs.length" class="empty-block">还没有美术执行记录，点击“新建美术执行”开始。</div>
     </div>
-    <div v-if="app.customWorkflows.length" class="run-template-manager">
+    <div v-if="showTemplateManager || app.customWorkflows.length" ref="runTemplateManager" class="run-template-manager">
       <div class="run-template-manager-head">
         <div>
           <strong>已保存自定义流程</strong>
-          <span>新建执行已改为本次临时选择；这里仅用于清理旧模板。</span>
+          <span>{{ app.customWorkflows.length ? '新建执行已改为本次临时选择；这里仅用于清理旧模板。' : '当前项目还没有已保存的自定义流程模板。' }}</span>
         </div>
       </div>
-      <div class="run-template-list">
+      <div v-if="app.customWorkflows.length" class="run-template-list">
         <article v-for="workflow in app.customWorkflows" :key="workflow.id" class="run-template-item">
           <div>
             <strong>{{ workflow.name }}</strong>
@@ -65,6 +68,10 @@
             删除
           </ElButton>
         </article>
+      </div>
+      <div v-else class="run-template-empty">
+        <strong>暂无已保存自定义流程</strong>
+        <span>现在新建执行里的“自定义流程”是本次临时按顺序选择多个 md / Skill，不会自动保存为模板。</span>
       </div>
     </div>
   </ElCard>
@@ -467,7 +474,8 @@ export default {
         startY: 0,
         originX: 0,
         originY: 0
-      }
+      },
+      showTemplateManager: false
     };
   },
   computed: {
@@ -631,6 +639,15 @@ export default {
           logBody.scrollTop = logBody.scrollHeight;
         });
       });
+    },
+    scrollToTemplateManager() {
+      this.showTemplateManager = true;
+      this.$nextTick(() => {
+        this.$refs.runTemplateManager?.scrollIntoView?.({
+          behavior: 'smooth',
+          block: 'nearest'
+        });
+      });
     }
   }
 };
@@ -658,6 +675,14 @@ export default {
   }
 
   .run-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex: 0 0 auto;
+  }
+
+  .run-list-header-actions {
     display: flex;
     align-items: center;
     justify-content: flex-end;
@@ -715,6 +740,27 @@ export default {
   .run-template-list {
     display: grid;
     gap: 8px;
+  }
+
+  .run-template-empty {
+    display: grid;
+    gap: 5px;
+    padding: 12px;
+    border: 1px dashed var(--line);
+    border-radius: 8px;
+    background: var(--panel-tint);
+
+    strong {
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
   }
 
   .run-template-item {

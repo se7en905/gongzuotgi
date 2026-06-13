@@ -4442,7 +4442,6 @@ export default {
       if (!task) return;
       this.runForm.projectId = task.projectId;
       this.runForm.zentaoId = task.taskNo || this.runForm.zentaoId;
-      this.runForm.developer = task.developer || this.runForm.developer;
       this.runForm.requirement = executionInstructionForTask(task) || this.runForm.requirement;
     },
 
@@ -16726,7 +16725,7 @@ export default {
         workflowLevel: 'XS',
         title: '',
         zentaoId: task.taskNo || '',
-        developer: task.developer || this.defaultRunDeveloperName,
+        developer: this.defaultRunDeveloperName,
         figmaLinks: task.figmaLinks || '',
         requirement: executionInstructionForTask(task),
         sourceType: 'task-center',
@@ -16759,7 +16758,7 @@ export default {
         sourceTitle: row.title || row.productDisplayName || row.productFileName || productName,
         primarySkillPath: skillPath,
         primarySkillContent: this.skillContentCache[row.id] || row.preview || row.skill?.preview || '',
-        developer: owner,
+        developer: this.defaultRunDeveloperName,
         targetPage: skillPath || productName,
         showdocHints: skillPath,
         selectedMaterialHints: skillPath ? [skillPath] : [],
@@ -16784,7 +16783,7 @@ export default {
         stage: 'bug-fix',
         title: this.bugDisplayTitle(bug),
         zentaoId: bug.bugNo || '',
-        developer: bug.developer || bug.assignedTo || this.defaultRunDeveloperName,
+        developer: this.defaultRunDeveloperName,
         targetPage: bug.targetPage || '',
         figmaLinks: bug.figmaLinks || '',
         showdocHints: bug.showdocHints || '',
@@ -17136,6 +17135,7 @@ export default {
       const payload = {
         ...this.runForm,
         projectId,
+        developer: this.defaultRunDeveloperName,
         title: generatedTitle,
         figmaLinks,
         stage: this.isBugFixRun ? this.runForm.stage : primaryMaterial,
@@ -17923,6 +17923,13 @@ export default {
     updateRunMaterialSelection(value) {
       const hints = this.normalizedRunMaterialHints(value);
       this.runForm.selectedMaterialHints = this.isCustomWorkflowRun ? hints : hints.slice(0, 1);
+    },
+
+    removeRunMaterialSelection(index) {
+      const hints = this.normalizedRunMaterialHints();
+      if (index < 0 || index >= hints.length) return;
+      hints.splice(index, 1);
+      this.runForm.selectedMaterialHints = hints;
     },
 
     materialOptionForValue(value = '') {

@@ -1,17 +1,22 @@
 <template>
   <ElDialog v-model="app.runDrawer" width="760px" :title="app.runDialogTitle" class="app-dialog art-run-dialog" align-center>
     <ElForm :model="app.runForm" label-position="top" @submit.prevent>
-      <ElFormItem label="执行来源" class="is-required-field">
-        <ElSegmented
-          v-model="app.runForm.sourceMode"
-          class="art-run-source-segment"
-          :options="[
-            { label: '关联任务', value: 'zentao-task' },
-            { label: '独立执行', value: 'standalone' }
-          ]"
-        />
-        <div class="field-hint">执行台默认用于实验、复查和独立操作，只保留执行过程与结果追溯；只有从任务中心发起或主动关联任务时，才和任务中心记录挂靠。</div>
-      </ElFormItem>
+      <div class="run-create-top-row">
+        <ElFormItem label="执行来源" class="is-required-field">
+          <ElSegmented
+            v-model="app.runForm.sourceMode"
+            class="art-run-source-segment"
+            :options="[
+              { label: '独立执行', value: 'standalone' },
+              { label: '关联任务', value: 'zentao-task' }
+            ]"
+          />
+          <div class="field-hint">执行台默认用于实验、复查和独立操作，只保留执行过程与结果追溯；只有从任务中心发起或主动关联任务时，才和任务中心记录挂靠。</div>
+        </ElFormItem>
+        <ElFormItem label="负责人 / 执行人">
+          <ElInput :model-value="app.defaultRunDeveloperName" disabled />
+        </ElFormItem>
+      </div>
       <ElFormItem v-if="app.runForm.sourceMode === 'zentao-task'" label="关联任务中心记录">
         <ElSelect v-model="app.runForm.taskId" placeholder="选择后才会和任务中心挂靠；不选则只创建独立执行记录" clearable filterable>
           <ElOption
@@ -44,7 +49,6 @@
         <p>{{ app.selectedWorkflowRuleText }}</p>
       </div>
       <ElFormItem v-if="app.isBugFixRun" label="Bug 标题" class="is-required-field"><ElInput v-model="app.runForm.title" placeholder="Bug 标题" /></ElFormItem>
-      <ElFormItem label="负责人 / 执行人"><ElInput v-model="app.runForm.developer" placeholder="成员姓名" /></ElFormItem>
       <ElFormItem v-if="app.isBugFixRun" label="影响页面">
         <ElInput v-model="app.runForm.targetPage" placeholder="例如：指定页面、指定 Frame、分区名称、整页处理或本地产物目录" />
         <div class="field-hint">这是给执行时看的备注；真实读取或写入的 Figma 文件、页面、Frame、分区，以下面粘贴的 Figma 链接为准。</div>
@@ -77,6 +81,28 @@
               </div>
             </ElOption>
           </ElSelect>
+          <div v-if="app.isCustomWorkflowRun && app.normalizedRunMaterialHints().length" class="run-selected-material-list">
+            <article
+              v-for="(value, index) in app.normalizedRunMaterialHints()"
+              :key="`${value}-${index}`"
+              class="run-selected-material-item"
+            >
+              <div class="run-selected-material-step-line">
+                <span class="run-selected-material-node">{{ String(index + 1).padStart(2, '0') }}</span>
+              </div>
+              <div class="run-selected-material-body">
+                <span class="run-selected-material-order">第 {{ index + 1 }} 步</span>
+                <strong>{{ app.runMaterialDisplayName(value) }}</strong>
+                <button
+                  type="button"
+                  class="run-selected-material-remove"
+                  @click.stop.prevent="app.removeRunMaterialSelection(index)"
+                >
+                  删除
+                </button>
+              </div>
+            </article>
+          </div>
           <div class="field-hint">{{ app.isCustomWorkflowRun ? '执行时会按当前选择顺序从前到后逐个完整执行。' : '只执行当前选择的一个 md / Skill，不自动扩展为其它流程。' }}</div>
         </ElFormItem>
       </template>
