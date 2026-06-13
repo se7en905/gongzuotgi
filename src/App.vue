@@ -905,6 +905,7 @@ export default {
         artProgressEvents: false,
         aiAssetSheet: false,
         skillVersion: false,
+        folderScan: false,
         taskAssign: false,
         taskSplit: false
       },
@@ -2690,6 +2691,10 @@ export default {
         .filter(project => Array.isArray(project.scan?.skills) && project.scan.skills.length);
     },
 
+    skillInventoryFolderScanSourceCount() {
+      return this.getSkillSourceProjectsByScanKind('folder').length;
+    },
+
     skillSourceDisplayRows() {
       const keyword = String(this.skillSourceDisplayDialog.keyword || '').trim().toLowerCase();
       const rows = this.skillSourceDisplaySourceRows.flatMap(projectRow => {
@@ -3678,8 +3683,8 @@ export default {
 
     skillInventoryRefreshHint() {
       return this.isPlatformAdmin
-        ? '刷新库存：重新扫描已接入的 Git、共享盘和本地路径，只在这里抓取新增和修改；默认页面展示上次库存缓存。'
-        : '刷新库存：重新读取当前产物列表、版本和贡献人信息。';
+        ? '刷新库存：只同步已接入 Git 来源；本地目录和共享盘请在展示管理里点击扫描文件夹。默认页面展示上次库存缓存。'
+        : '刷新库存：重新读取当前 Git 产物列表、版本和贡献人信息。';
     },
 
     taskProcessingNotePlaceholder() {
@@ -12178,84 +12183,128 @@ export default {
       };
     },
 
+    isGitSkillSourceProject(project = {}) {
+      const sourceType = String(project.sourceType || '').toLowerCase();
+      return sourceType === 'git' || sourceType === 'research' || Boolean(project.git?.remoteUrl || project.gitRemoteUrl);
+    },
+
+    isFolderSkillSourceProject(project = {}) {
+      return ['local', 'shared'].includes(String(project.sourceType || '').toLowerCase());
+    },
+
+    getSkillSourceProjectsByScanKind(kind = 'git') {
+      const predicate = kind === 'folder' ? this.isFolderSkillSourceProject : this.isGitSkillSourceProject;
+      return (this.projects || []).filter(project => project?.id && predicate(project));
+    },
+
+    async ensureSkillSourceProjectsLoaded() {
+      if (!this.projects.length) {
+        this.projects = await this.apiWithTimeout('/api/projects', {}, {}, 15000);
+        this.saveWorkbenchDisplayCache('projects', this.projects);
+        if (!this.selectedProjectId && this.projects[0]) this.selectedProjectId = this.projects[0].id;
+      }
+      return this.projects;
+    },
+
+    async scanSkillSourceProjects(projects = [], options = {}) {
+      const timeoutMs = Number(options.timeoutMs || 60000) || 60000;
+      const entries = [];
+      for (const project of projects) {
+        try {
+          this.scanOutput = `正在扫描来源「${project.name || project.id}」...`;
+          const scan = await this.apiWithTimeout(`/api/projects/${encodeURIComponent(project.id)}/scan?refresh=1`, {}, {}, timeoutMs);
+          entries.push([project.id, this.mergeProjectScanResult(project.id, scan)]);
+        } catch (error) {
+          const previous = this.scans[project.id];
+          if (previous) {
+            entries.push([project.id, {
+              ...previous,
+              preserved: true,
+              lastError: this.formatSkillInventoryScanError(error),
+              lastFailedAt: new Date().toISOString()
+            }]);
+          }
+        }
+      }
+      return Object.fromEntries(entries);
+    },
+
+    formatSkillInventoryScanError(error) {
+      const apiError = this.readApiError(error);
+      const raw = String(apiError || error?.message || error || '').trim();
+      if (!raw) return '扫描失败';
+      if (/failed to fetch|networkerror|load failed|network request failed/i.test(raw)) return '工作台接口连接中断，请确认 API 服务仍在运行后重试';
+      if (/请求超时|aborterror|timeout|timed out/i.test(raw)) return '扫描请求超时，已保留上次库存';
+      return raw;
+    },
+
+    applySkillSourceScanMap(scanMap = {}, previousInventoryRows = [], options = {}) {
+      if (!Object.keys(scanMap || {}).length) return { applied: false, preservedScans: [], changeSummary: { added: 0, changed: 0, removed: 0 } };
+      this.mergeScansIntoInventoryState(scanMap, { force: true });
+      this.saveWorkbenchDisplayCache('scans', this.scans);
+      this.updateSkillInventoryProductStatsSnapshot(this.scans);
+      this.scheduleSkillInventoryFirstPageSnapshotSave();
+      this.skillInventoryScanCacheLoaded = true;
+      const activeProjectId = this.selectedProjectId && this.scans[this.selectedProjectId]
+        ? this.selectedProjectId
+        : Object.keys(scanMap)[0] || this.selectedProjectId;
+      const rows = Array.isArray(scanMap[activeProjectId]?.tasks) ? scanMap[activeProjectId].tasks : [];
+      this.detailProjectTasks = rows;
+      this.detailPagedProjectTasks = rows.slice(0, this.taskPageSize);
+      const selectedScan = this.scans[activeProjectId];
+      this.scanOutput = selectedScan
+        ? JSON.stringify({
+          configs: selectedScan.configs,
+          skills: (selectedScan.skills || []).map(skill => ({ id: skill.id, title: skill.title, triggers: skill.triggers })),
+          tasks: (selectedScan.tasks || []).slice(0, 20),
+          detected: selectedScan.detected,
+          error: selectedScan.error || selectedScan.lastError || ''
+        }, null, 2)
+        : (options.fallbackOutput || '已完成库存同步。');
+      return {
+        applied: true,
+        preservedScans: Object.values(scanMap).filter(scan => scan?.preserved === true || scan?.lastError),
+        changeSummary: this.skillInventoryScanChangeSummary(previousInventoryRows, scanMap)
+      };
+    },
+
     async scanAllProjects() {
       if (!this.canRefreshSkillInventoryScan) {
         ElMessage.warning('当前角色没有刷新库存扫描的权限');
         return;
       }
       if (this.loading.scan) return;
-      if (!this.projects.length) {
-        this.projects = await this.apiWithTimeout('/api/projects', {}, {}, 15000);
-        this.saveWorkbenchDisplayCache('projects', this.projects);
-        if (!this.selectedProjectId && this.projects[0]) this.selectedProjectId = this.projects[0].id;
-      }
-      if (!this.projects.length) {
-        this.scanOutput = '暂无扫描源，请先接入 Git、本地目录或共享盘路径。';
-        ElMessage.warning(this.scanOutput);
-        return;
-      }
-      await this.loadSkillInventorySavedSnapshot({ force: true, silent: true });
       this.loading.scan = true;
-      this.scanOutput = '正在刷新已接入来源库存...';
+      this.scanOutput = '正在同步 Git 来源库存...';
       try {
-        const previousInventoryRows = this.skillInventoryRows.map(row => ({ ...row, skill: { ...(row.skill || {}) } }));
-        const previousRowCount = previousInventoryRows.length;
-        const scanProjects = this.projects.filter(project => {
-          const sourceType = String(project.sourceType || '').toLowerCase();
-          return ['git', 'research', 'local', 'shared'].includes(sourceType) || project.git?.remoteUrl || project.rootPath;
-        });
-        const entries = await Promise.all(scanProjects.map(async project => {
-          try {
-            const scan = await this.apiWithTimeout(`/api/projects/${encodeURIComponent(project.id)}/scan?refresh=1`, {}, {}, 45000);
-            return [project.id, this.mergeProjectScanResult(project.id, scan)];
-          } catch (error) {
-            const previous = this.scans[project.id];
-            if (previous) {
-              return [project.id, {
-                ...previous,
-                preserved: true,
-                lastError: this.readApiError(error) || error.message || '扫描失败',
-                lastFailedAt: new Date().toISOString()
-              }];
-            }
-            return null;
-          }
-        }));
-        const scanMap = Object.fromEntries(entries.filter(Boolean));
-        if (!Object.keys(scanMap).length) {
-          await this.loadProjectScanCacheForInventory({ force: true, silent: true });
-          this.scanOutput = previousRowCount
-            ? '刷新库存失败，已保留上次扫描内容。'
-            : '刷新库存失败，暂无可展示的上次扫描内容。';
+        await this.ensureSkillSourceProjectsLoaded();
+        if (!this.projects.length) {
+          this.scanOutput = '暂无扫描源，请先接入 Git 来源。';
           ElMessage.warning(this.scanOutput);
           return;
         }
-        this.mergeScansIntoInventoryState(scanMap, { force: true });
-        this.saveWorkbenchDisplayCache('scans', this.scans);
-        this.updateSkillInventoryProductStatsSnapshot(this.scans);
-        this.scheduleSkillInventoryFirstPageSnapshotSave();
-        this.skillInventoryScanCacheLoaded = true;
-        const activeProjectId = this.selectedProjectId && this.scans[this.selectedProjectId]
-          ? this.selectedProjectId
-          : Object.keys(scanMap)[0] || this.selectedProjectId;
-        const rows = Array.isArray(scanMap[activeProjectId]?.tasks) ? scanMap[activeProjectId].tasks : [];
-        this.detailProjectTasks = rows;
-        this.detailPagedProjectTasks = rows.slice(0, this.taskPageSize);
-        const selectedScan = this.scans[activeProjectId];
-        const scanChangeSummary = this.skillInventoryScanChangeSummary(previousInventoryRows, scanMap);
-        const preservedScans = Object.values(scanMap).filter(scan => scan?.preserved === true || scan?.lastError);
-        this.scanOutput = selectedScan
-          ? JSON.stringify({
-            configs: selectedScan.configs,
-            skills: (selectedScan.skills || []).map(skill => ({ id: skill.id, title: skill.title, triggers: skill.triggers })),
-            tasks: (selectedScan.tasks || []).slice(0, 20),
-            detected: selectedScan.detected,
-            error: selectedScan.error
-          }, null, 2)
-          : '已完成美术资料库库存同步。';
+        await this.loadSkillInventorySavedSnapshot({ force: true, silent: true });
+        const previousInventoryRows = this.skillInventoryRows.map(row => ({ ...row, skill: { ...(row.skill || {}) } }));
+        const previousRowCount = previousInventoryRows.length;
+        const scanProjects = this.getSkillSourceProjectsByScanKind('git');
+        if (!scanProjects.length) {
+          this.scanOutput = '暂无 Git 扫描源；本地目录和共享盘请在展示管理中点击扫描文件夹。';
+          ElMessage.warning(this.scanOutput);
+          return;
+        }
+        const scanMap = await this.scanSkillSourceProjects(scanProjects, { timeoutMs: 60000 });
+        if (!Object.keys(scanMap).length) {
+          await this.loadProjectScanCacheForInventory({ force: true, silent: true });
+          this.scanOutput = previousRowCount
+            ? 'Git 刷新失败，已保留上次扫描内容。'
+            : 'Git 刷新失败，暂无可展示的上次扫描内容。';
+          ElMessage.warning(this.scanOutput);
+          return;
+        }
+        const { preservedScans, changeSummary: scanChangeSummary } = this.applySkillSourceScanMap(scanMap, previousInventoryRows, { fallbackOutput: '已完成 Git 库存同步。' });
         if (preservedScans.length) {
           const reason = preservedScans.map(scan => scan.lastError || scan.error).filter(Boolean)[0] || '本次刷新未读取到新库存';
-          ElMessage.warning(`刷新库存失败，已保留上次扫描内容：${reason}`);
+          ElMessage.warning(`Git 刷新失败，已保留上次扫描内容：${reason}`);
           return;
         }
         const nextRows = this.skillInventoryRows.length;
@@ -12264,15 +12313,68 @@ export default {
           scanChangeSummary.changed ? `变更 ${scanChangeSummary.changed}` : '',
           scanChangeSummary.removed ? `删除 ${scanChangeSummary.removed}` : ''
         ].filter(Boolean).join('，');
-        ElMessage.success(changeText ? `库存扫描已更新：${changeText}` : (nextRows === previousRowCount ? '库存扫描已完成，未发现内容变化' : '库存扫描已更新'));
+        ElMessage.success(changeText ? `Git 库存已更新：${changeText}` : (nextRows === previousRowCount ? 'Git 库存已同步，未发现内容变化' : 'Git 库存已更新'));
       } catch (error) {
         await this.loadProjectScanCacheForInventory({ force: true, silent: true });
         this.scanOutput = this.skillInventoryRows.length
-          ? '刷新库存超时或失败，已保留上次扫描内容。'
-          : (this.readApiError(error) || '刷新库存失败，请稍后重试。');
+          ? 'Git 刷新超时或失败，已保留上次扫描内容。'
+          : (this.formatSkillInventoryScanError(error) || 'Git 刷新失败，请稍后重试。');
         ElMessage.warning(this.scanOutput);
       } finally {
         this.loading.scan = false;
+      }
+    },
+
+    async scanFolderSkillSources() {
+      if (!this.canRefreshSkillInventoryScan) {
+        ElMessage.warning('当前角色没有扫描文件夹的权限');
+        return;
+      }
+      if (this.loading.folderScan) return;
+      this.loading.folderScan = true;
+      this.scanOutput = '正在扫描本地目录和共享盘文件夹...';
+      try {
+        await this.ensureSkillSourceProjectsLoaded();
+        const scanProjects = this.getSkillSourceProjectsByScanKind('folder');
+        if (!scanProjects.length) {
+          this.scanOutput = '暂无本地目录或共享盘扫描源，请先接入文件夹来源。';
+          ElMessage.warning(this.scanOutput);
+          return;
+        }
+        await this.loadSkillInventorySavedSnapshot({ force: true, silent: true });
+        const previousInventoryRows = this.skillInventoryRows.map(row => ({ ...row, skill: { ...(row.skill || {}) } }));
+        const previousRowCount = previousInventoryRows.length;
+        const scanMap = await this.scanSkillSourceProjects(scanProjects, { timeoutMs: 60000 });
+        if (!Object.keys(scanMap).length) {
+          await this.loadProjectScanCacheForInventory({ force: true, silent: true });
+          this.scanOutput = previousRowCount
+            ? '扫描文件夹失败，已保留上次扫描内容。'
+            : '扫描文件夹失败，暂无可展示的上次扫描内容。';
+          ElMessage.warning(this.scanOutput);
+          return;
+        }
+        const { preservedScans, changeSummary } = this.applySkillSourceScanMap(scanMap, previousInventoryRows, { fallbackOutput: '已完成文件夹扫描。' });
+        if (preservedScans.length) {
+          const reason = preservedScans.map(scan => scan.lastError || scan.error).filter(Boolean)[0] || '本次扫描未读取到新库存';
+          ElMessage.warning(`扫描文件夹失败，已保留上次扫描内容：${reason}`);
+          return;
+        }
+        this.resetSkillSourceDisplayDrafts();
+        const nextRows = this.skillInventoryRows.length;
+        const changeText = [
+          changeSummary.added ? `新增 ${changeSummary.added}` : '',
+          changeSummary.changed ? `变更 ${changeSummary.changed}` : '',
+          changeSummary.removed ? `删除 ${changeSummary.removed}` : ''
+        ].filter(Boolean).join('，');
+        ElMessage.success(changeText ? `文件夹扫描已更新：${changeText}` : (nextRows === previousRowCount ? '文件夹扫描已完成，未发现内容变化' : '文件夹扫描已更新'));
+      } catch (error) {
+        await this.loadProjectScanCacheForInventory({ force: true, silent: true });
+        this.scanOutput = this.skillInventoryRows.length
+          ? '扫描文件夹超时或失败，已保留上次扫描内容。'
+          : (this.formatSkillInventoryScanError(error) || '扫描文件夹失败，请稍后重试。');
+        ElMessage.warning(this.scanOutput);
+      } finally {
+        this.loading.folderScan = false;
       }
     },
 

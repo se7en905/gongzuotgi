@@ -70,14 +70,23 @@
           >
             全选展示
           </ElCheckbox>
-          <span>取消展示后，产物不会出现在 AI 产物清单；源文件不会被删除。</span>
+          <ElButton
+            v-if="app.canRefreshSkillInventoryScan"
+            type="primary"
+            plain
+            :loading="app.loading.folderScan"
+            @click="app.scanFolderSkillSources"
+          >
+            扫描文件夹
+          </ElButton>
+          <span>扫描文件夹只刷新本地目录和共享盘；顶部刷新库存只同步 Git。取消展示不会删除源文件。</span>
         </div>
         <ElTable
           class="skill-clean-table skill-source-display-table"
           :data="app.skillSourceDisplayRows"
           row-key="uid"
           max-height="560"
-          empty-text="暂无本地路径或共享盘扫描产物，请先确认路径可读取并完成扫描"
+          empty-text="暂无本地路径或共享盘扫描产物，请点击扫描文件夹或先接入文件夹来源"
         >
           <ElTableColumn label="展示" width="86" align="center">
             <template #default="{ row }">
@@ -281,7 +290,7 @@
     <div v-show="app.skillInventoryTab === 'list' || app.skillInventoryTab === 'assets'" class="skill-list-section">
     <div v-if="!app.skillInventoryDisplayHasRows" class="skill-inventory-empty-state">
       <strong>{{ app.skillInventoryRecoveringRows ? '正在恢复库存明细' : '暂无扫描源产物' }}</strong>
-      <span>{{ app.skillInventoryRecoveringRows ? '已检测到上次库存统计，正在重新读取明细列表；如果长期没有恢复，请点击刷新库存重建缓存。' : '页面默认展示上次库存缓存；请先接入 Git 仓库、本地目录或共享盘路径，再由有权限账号点击刷新库存抓取新增和修改。' }}</span>
+      <span>{{ app.skillInventoryRecoveringRows ? '已检测到上次库存统计，正在重新读取明细列表；如果长期没有恢复，请点击刷新库存重建 Git 缓存，或在展示管理中扫描文件夹。' : '页面默认展示上次库存缓存；Git 内容点击刷新库存，本地目录和共享盘内容请在展示管理中扫描文件夹。' }}</span>
       <div>
         <ElButton v-if="app.canRefreshSkillInventoryScan" :loading="app.loading.scan || app.loading.skillInventoryCache" @click="app.scanAllProjects">刷新库存</ElButton>
         <ElButton v-if="app.canConnectSkillInventorySource" type="primary" @click="app.openAssetScanConnect">接入扫描</ElButton>
