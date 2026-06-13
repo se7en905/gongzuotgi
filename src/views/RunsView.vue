@@ -42,6 +42,31 @@
       </button>
       <div v-if="!app.runs.length" class="empty-block">还没有美术执行记录，点击“新建美术执行”开始。</div>
     </div>
+    <div v-if="app.customWorkflows.length" class="run-template-manager">
+      <div class="run-template-manager-head">
+        <div>
+          <strong>已保存自定义流程</strong>
+          <span>新建执行已改为本次临时选择；这里仅用于清理旧模板。</span>
+        </div>
+      </div>
+      <div class="run-template-list">
+        <article v-for="workflow in app.customWorkflows" :key="workflow.id" class="run-template-item">
+          <div>
+            <strong>{{ workflow.name }}</strong>
+            <span>{{ app.customWorkflowSummary(workflow) }}</span>
+          </div>
+          <ElButton
+            v-if="app.can('workflow.manage') || app.can('api.workflow.manage')"
+            size="small"
+            type="danger"
+            plain
+            @click.stop="app.deleteCustomWorkflowTemplate(workflow)"
+          >
+            删除
+          </ElButton>
+        </article>
+      </div>
+    </div>
   </ElCard>
 
   <ElCard shadow="never" class="panel-card run-detail">
@@ -652,6 +677,80 @@ export default {
     padding: 14px;
     max-height: calc(100vh - 260px);
     overflow: auto;
+  }
+
+  .run-template-manager {
+    display: grid;
+    gap: 10px;
+    margin: 0 14px 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+  }
+
+  .run-template-manager-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+
+    div {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    strong {
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+  }
+
+  .run-template-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .run-template-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--soft-card);
+
+    div {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    strong,
+    span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    strong {
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    span {
+      color: var(--muted);
+      font-size: 12px;
+    }
   }
 
   .run-item {

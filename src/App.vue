@@ -967,15 +967,18 @@ export default {
         type: ''
       },
       runForm: {
-        sourceMode: 'zentao-task',
+        sourceMode: 'standalone',
         taskId: '',
         projectId: '',
-        executionMode: 'level-process',
-        workflow: 'art-standard-process',
-        workflowLevel: 'M',
+        executionMode: 'single-skill',
+        workflow: 'art-single-skill',
+        workflowLevel: 'XS',
         customWorkflowId: '',
+        customWorkflowName: '',
+        customStages: [],
         title: '',
         stage: '',
+        primarySkillPath: '',
         zentaoId: '',
         developer: '',
         targetPage: '',
@@ -983,7 +986,7 @@ export default {
         showdocHints: '',
         selectedMaterialHints: [],
         requirement: '',
-        sourceType: 'task'
+        sourceType: 'standalone'
       },
       runChatInput: '',
       runChatPanelOpen: false,
@@ -1631,6 +1634,11 @@ export default {
         seen.add(key);
         return true;
       });
+    },
+
+    runMaterialSelectionValue() {
+      const values = this.normalizedRunMaterialHints();
+      return this.isCustomWorkflowRun ? values : (values[0] || '');
     },
 
     isBugFixRun() {
@@ -4432,42 +4440,29 @@ export default {
     'runForm.taskId'(value) {
       const task = this.businessTasks.find(item => item.id === value);
       if (!task) return;
-      const project = this.projects.find(item => item.id === task.projectId);
-      const workloadLevel = inferTaskWorkloadLevel(task, project)?.level || 'M';
       this.runForm.projectId = task.projectId;
-      this.runForm.title = task.title || this.runForm.title;
       this.runForm.zentaoId = task.taskNo || this.runForm.zentaoId;
       this.runForm.developer = task.developer || this.runForm.developer;
       this.runForm.requirement = executionInstructionForTask(task) || this.runForm.requirement;
-      if (!this.isBugFixRun && this.runForm.executionMode === 'level-process') {
-        this.runForm.workflowLevel = workloadLevel;
-        this.runForm.workflow = workflowForLevel(workloadLevel);
-      }
     },
 
     'runForm.sourceMode'(value) {
-      if (value === 'figma-link') {
-        this.runForm.taskId = '';
-        if (!this.runForm.title) this.runForm.title = 'Figma 界面执行';
-      }
       if (value === 'standalone') {
         this.runForm.taskId = '';
         this.runForm.zentaoId = '';
-        if (!this.runForm.title) this.runForm.title = '独立执行实验';
-      }
-      if (value === 'completed-task') {
-        this.runForm.taskId = '';
-        if (!this.runForm.title) this.runForm.title = '基于已完成任务继续处理';
       }
     },
 
     'runForm.selectedMaterialHints'(value) {
-      const hints = Array.isArray(value) ? value : [];
-      const manual = String(this.runForm.showdocHints || '')
-        .split(/\r?\n/)
-        .map(item => item.trim())
-        .filter(item => item && !this.currentProjectExecutionMaterialOptions.some(option => option.value === item));
-      this.runForm.showdocHints = [...manual, ...hints].filter(Boolean).join('\n');
+      const hints = this.normalizedRunMaterialHints(value);
+      const nextHints = this.isCustomWorkflowRun ? hints : hints.slice(0, 1);
+      if (nextHints.length !== hints.length || nextHints.some((item, index) => item !== hints[index])) {
+        this.runForm.selectedMaterialHints = nextHints;
+        return;
+      }
+      this.runForm.stage = nextHints[0] || '';
+      this.runForm.primarySkillPath = nextHints[0] || '';
+      this.runForm.showdocHints = nextHints.join('\n');
     },
 
     'runForm.workflowLevel'(value) {
@@ -4481,6 +4476,10 @@ export default {
         : value === 'custom-workflow'
           ? 'custom-workflow'
           : workflowForLevel(this.runForm.workflowLevel);
+      const hints = this.normalizedRunMaterialHints();
+      if (value === 'single-skill' && hints.length > 1) {
+        this.runForm.selectedMaterialHints = hints.slice(0, 1);
+      }
     },
 
     'runForm.projectId'(value) {
@@ -12608,7 +12607,7 @@ export default {
         ElMessage.warning('当前产物缺少可执行的 Skill 或 md 路径');
         return;
       }
-      if (!figmaLinks) {
+      if (!this.isBugFixRun && !figmaLinks) {
         ElMessage.warning('请填写 Figma 链接');
         return;
       }
@@ -16718,19 +16717,17 @@ export default {
     },
 
     createRunFromTask(task) {
-      const workloadLevel = this.isLowEffortArtAcceptanceTask(task)
-        ? 'XS'
-        : task.workloadEstimate?.level || inferTaskWorkloadLevel(task, this.projects.find(item => item.id === task.projectId))?.level || 'M';
       this.openRunCreateDrawer({
         taskId: task.id,
         projectId: task.projectId,
         sourceMode: 'zentao-task',
-        executionMode: 'level-process',
-        workflow: workflowForLevel(workloadLevel),
-        workflowLevel: workloadLevel,
-        title: this.taskDisplayTitle(task),
+        executionMode: 'single-skill',
+        workflow: 'art-single-skill',
+        workflowLevel: 'XS',
+        title: '',
         zentaoId: task.taskNo || '',
         developer: task.developer || this.defaultRunDeveloperName,
+        figmaLinks: task.figmaLinks || '',
         requirement: executionInstructionForTask(task),
         sourceType: 'task-center',
         createTaskForRun: true
@@ -16757,7 +16754,7 @@ export default {
         workflow: 'art-single-skill',
         workflowLevel: 'XS',
         stage: skillPath,
-        title: `执行 ${productName}`,
+        title: '',
         productName,
         sourceTitle: row.title || row.productDisplayName || row.productFileName || productName,
         primarySkillPath: skillPath,
@@ -16968,6 +16965,24 @@ export default {
       ElMessage.success('自定义工作流已保存');
     },
 
+    async deleteCustomWorkflowTemplate(workflow = {}) {
+      if (!workflow?.id) return;
+      await ElMessageBox.confirm(
+        `确认删除自定义流程模板「${workflow.name || workflow.id}」？已创建的执行记录不会被删除。`,
+        '删除自定义流程模板',
+        {
+          confirmButtonText: '删除',
+          cancelButtonText: '取消',
+          type: 'warning',
+          confirmButtonClass: 'el-button--danger'
+        }
+      );
+      await this.api(`/api/custom-workflows/${encodeURIComponent(workflow.id)}`, { method: 'DELETE' });
+      await this.refreshCustomWorkflows();
+      if (this.workflowDesigner.id === workflow.id) this.resetWorkflowDesigner();
+      ElMessage.success('自定义流程模板已删除');
+    },
+
     createRunFromCustomWorkflow(workflow) {
       if (!workflow?.id && !this.workflowDesigner.name) {
         ElMessage.warning('请先保存模板');
@@ -16986,6 +17001,8 @@ export default {
         workflowLevel: 'CUSTOM',
         customWorkflowId: saved.id,
         title: saved.name,
+        selectedMaterialHints: (saved.stages || []).map(stage => stage.skillId || stage.artifactDir || stage.name).filter(Boolean),
+        showdocHints: (saved.stages || []).map(stage => stage.skillId || stage.artifactDir || stage.name).filter(Boolean).join('\n'),
         requirement: saved.description || '请按自定义工作流模板执行，并在每个阶段记录产物与结论。',
         sourceType: 'standalone'
       });
@@ -17079,41 +17096,62 @@ export default {
     },
 
     async createRun() {
-      if (!this.runForm.projectId || !this.runForm.title) {
-        ElMessage.warning('请选择项目并填写任务标题');
+      const projectId = this.runForm.projectId || this.selectedProjectId || this.projects[0]?.id || '';
+      const figmaLinks = String(this.runForm.figmaLinks || '').trim();
+      const materialHints = this.normalizedRunMaterialHints();
+      if (!projectId) {
+        ElMessage.warning('当前没有可用项目，请先接入项目后再创建执行');
         return;
       }
-      if (this.runForm.sourceMode === 'figma-link' && !String(this.runForm.figmaLinks || '').trim()) {
-        ElMessage.warning('请填写 Figma 界面链接');
+      if (!figmaLinks) {
+        ElMessage.warning('请填写 Figma 链接');
         return;
       }
-      if (this.runForm.sourceMode === 'completed-task' && !String(this.runForm.zentaoId || '').trim()) {
-        ElMessage.warning('请填写已完成任务 ID 或禅道 ID');
+      if (this.isBugFixRun && !String(this.runForm.title || '').trim()) {
+        ElMessage.warning('请填写 Bug 标题');
         return;
       }
-      if (this.isSingleSkillRun && !this.runForm.stage) {
-        ElMessage.warning('请选择规范 / Skill / 执行类型');
+      if (this.isSingleSkillRun && !materialHints.length) {
+        ElMessage.warning('请选择一个 md / Skill');
         return;
       }
-      if (this.isCustomWorkflowRun && !this.runForm.customWorkflowId) {
-        ElMessage.warning('请选择自定义工作流模板');
+      if (this.isCustomWorkflowRun && !materialHints.length) {
+        ElMessage.warning('请按顺序选择至少一个 md / Skill');
         return;
       }
+      const primaryMaterial = materialHints[0] || '';
+      const workflow = this.isBugFixRun
+        ? 'bug-fix'
+        : this.isSingleSkillRun
+          ? 'art-single-skill'
+          : this.isCustomWorkflowRun
+            ? 'custom-workflow'
+            : workflowForLevel(this.runForm.workflowLevel);
+      const generatedTitle = this.isBugFixRun
+        ? String(this.runForm.title || '').trim()
+        : this.runMaterialTitle(this.runForm.executionMode, materialHints);
+      const customStages = this.isCustomWorkflowRun
+        ? materialHints.map((value, index) => this.runMaterialStageFromValue(value, index))
+        : [];
       const payload = {
         ...this.runForm,
+        projectId,
+        title: generatedTitle,
+        figmaLinks,
+        stage: this.isBugFixRun ? this.runForm.stage : primaryMaterial,
+        primarySkillPath: this.isBugFixRun ? this.runForm.primarySkillPath || this.runForm.stage : primaryMaterial,
+        selectedMaterialHints: materialHints,
+        showdocHints: materialHints.join('\n'),
+        customWorkflowId: this.isCustomWorkflowRun ? '' : this.runForm.customWorkflowId,
+        customWorkflowName: this.isCustomWorkflowRun ? generatedTitle : this.runForm.customWorkflowName,
+        customStages,
         sourceType: this.runForm.taskId
           ? 'task-center'
           : this.isBugFixRun
             ? 'bug'
             : 'standalone',
         createTaskForRun: Boolean(this.runForm.taskId),
-        workflow: this.isBugFixRun
-          ? 'bug-fix'
-          : this.isSingleSkillRun
-            ? 'art-single-skill'
-            : this.isCustomWorkflowRun
-              ? 'custom-workflow'
-              : workflowForLevel(this.runForm.workflowLevel)
+        workflow
       };
       const run = await this.api('/api/runs', {
         method: 'POST',
@@ -17247,6 +17285,9 @@ export default {
 
     runGroupTitle(run = {}) {
       const task = this.businessTaskForRun(run);
+      if (this.hasRunSelectedSkillOrMdMaterial(run) || normalizeWorkflowId(run.workflow) === 'custom-workflow') {
+        return run.title || task?.displayTitle || task?.title || '未命名任务';
+      }
       return task?.displayTitle || task?.title || run.title || '未命名任务';
     },
 
@@ -17867,6 +17908,63 @@ export default {
       return this.businessTasks.filter(task => !projectId || task.projectId === projectId);
     },
 
+    normalizedRunMaterialHints(value = this.runForm.selectedMaterialHints) {
+      const source = Array.isArray(value) ? value : [value];
+      const seen = new Set();
+      return source
+        .map(item => String(item || '').trim())
+        .filter(item => {
+          if (!item || seen.has(item)) return false;
+          seen.add(item);
+          return true;
+        });
+    },
+
+    updateRunMaterialSelection(value) {
+      const hints = this.normalizedRunMaterialHints(value);
+      this.runForm.selectedMaterialHints = this.isCustomWorkflowRun ? hints : hints.slice(0, 1);
+    },
+
+    materialOptionForValue(value = '') {
+      const key = String(value || '').trim();
+      if (!key) return null;
+      return this.currentProjectExecutionMaterialOptions.find(item => item.value === key) || null;
+    },
+
+    runMaterialDisplayName(value = '') {
+      const key = String(value || '').trim();
+      if (!key) return '';
+      const option = this.materialOptionForValue(key);
+      if (option?.label) return option.label.replace(/^(Skill|md|资料)\s*·\s*/, '').trim() || option.label;
+      return this.meaningfulNameFromPath(key) || this.fileNameFromPath(key) || key;
+    },
+
+    runMaterialStageFromValue(value = '', index = 0) {
+      const key = String(value || '').trim();
+      const name = this.runMaterialDisplayName(key) || `自定义阶段 ${index + 1}`;
+      const skillId = key && (!/[\\/]/.test(key) || /(^|[\\/])SKILL\.md$/i.test(key))
+        ? name
+        : '';
+      return {
+        id: key || `custom-stage-${index + 1}`,
+        name,
+        skillId,
+        artifactDir: key || name,
+        required: true,
+        skippable: false,
+        description: key && key !== name ? `按顺序执行 ${key}` : '',
+        doneCriteria: '完整执行该 md / Skill，并输出阶段结论。'
+      };
+    },
+
+    runMaterialTitle(mode = this.runForm.executionMode, values = this.normalizedRunMaterialHints()) {
+      const names = values.map(value => this.runMaterialDisplayName(value)).filter(Boolean);
+      if (mode === 'custom-workflow') {
+        return `自定义流程：${names.length ? names.join(' / ') : '未选择 md / Skill'}`;
+      }
+      return `只执行一个规范 / Skill：${names[0] || '未选择 md / Skill'}`;
+    },
+
     taskDisplayTitle(task) {
       return [task.taskNo, this.cleanTaskCenterDisplayTitle(task.title)].filter(Boolean).join(' ');
     },
@@ -18035,7 +18133,7 @@ export default {
       const workflow = normalizeWorkflowId(run.workflow);
       if (workflow === 'bug-fix') return 'Bug 修复';
       if (workflow === 'art-single-skill') return `单技能 · ${run.stage || '指定阶段'}`;
-      if (workflow === 'custom-workflow') return `自定义 · ${run.customWorkflowName || this.customWorkflows.find(item => item.id === run.customWorkflowId)?.name || '工作流'}`;
+      if (workflow === 'custom-workflow') return `自定义流程 · ${run.stages?.length || 0} 个 md/Skill`;
       const level = run.workflowLevel || levelForWorkflow(workflow);
       const plan = (this.appConfig.workflowLevels || DEFAULT_WORKFLOW_LEVELS).find(item => item.level === level);
       return plan ? `${level} · ${plan.name}` : run.workflow;
@@ -21135,12 +21233,15 @@ function emptyRunForm() {
     sourceMode: 'standalone',
     taskId: '',
     projectId: '',
-    executionMode: 'level-process',
-    workflow: 'art-standard-process',
-    workflowLevel: 'M',
+    executionMode: 'single-skill',
+    workflow: 'art-single-skill',
+    workflowLevel: 'XS',
     customWorkflowId: '',
+    customWorkflowName: '',
+    customStages: [],
     title: '',
     stage: '',
+    primarySkillPath: '',
     zentaoId: '',
     developer: '',
     targetPage: '',
