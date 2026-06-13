@@ -41,6 +41,7 @@
           <span v-if="app.runReferenceCount(run)" class="run-action-chip reference">
             md 引用 {{ app.runReferenceCount(run) }}
           </span>
+          <span v-if="app.isRunSourceDeleted(run)" class="run-action-chip source-deleted">来源已删除</span>
         </div>
       </button>
       <div v-if="!app.runs.length" class="empty-block">还没有美术执行记录，点击“新建美术执行”开始。</div>
@@ -155,8 +156,8 @@
           <p>{{ app.runDetailDescription(app.selectedRun) }}</p>
         </div>
         <div class="run-actions">
-          <ElButton v-if="app.can('run.codex.execute') && !app.isDirectSkillRun(app.selectedRun)" type="primary" @click="app.startSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun) || app.isRunWaitingForLocalWorker(app.selectedRun)" :loading="app.isRunInProgress(app.selectedRun)">{{ app.selectedRunActionLabel }}</ElButton>
-          <ElButton v-if="app.can('run.codex.execute') && app.canRestartSelectedRun" plain @click="app.restartSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun) || app.isRunWaitingForLocalWorker(app.selectedRun)">重新执行</ElButton>
+          <ElButton v-if="app.can('run.codex.execute') && !app.isDirectSkillRun(app.selectedRun)" type="primary" @click="app.startSelectedRun" :disabled="!app.selectedRun || app.isRunSourceDeleted(app.selectedRun) || app.isRunInProgress(app.selectedRun) || app.isRunWaitingForLocalWorker(app.selectedRun)" :loading="app.isRunInProgress(app.selectedRun)">{{ app.selectedRunActionLabel }}</ElButton>
+          <ElButton v-if="app.can('run.codex.execute') && app.canRestartSelectedRun" plain @click="app.restartSelectedRun" :disabled="!app.selectedRun || app.isRunSourceDeleted(app.selectedRun) || app.isRunInProgress(app.selectedRun) || app.isRunWaitingForLocalWorker(app.selectedRun)">重新执行</ElButton>
           <ElButton v-if="app.can('run.codex.execute')" @click="app.cancelSelectedRun" :disabled="!app.selectedRun || !app.isRunInProgress(app.selectedRun)">中断</ElButton>
           <ElButton v-if="app.can('run.delete')" type="danger" plain @click="app.deleteSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun)">删除</ElButton>
           <ElTooltip content="原始执行日志" placement="bottom">
@@ -176,6 +177,14 @@
       </div>
     </template>
     <section v-if="app.selectedRun" class="focused-run-flow-panel">
+      <ElAlert
+        v-if="app.isRunSourceDeleted(app.selectedRun)"
+        class="run-source-deleted-alert"
+        type="warning"
+        :closable="false"
+        title="来源已删除"
+        :description="app.runSourceDeletedText(app.selectedRun)"
+      />
       <div class="run-section-head">
         <div>
           <h4>执行步骤明细</h4>
@@ -1067,6 +1076,12 @@ export default {
       background: rgba(99, 102, 241, 0.08);
       color: #4338ca;
     }
+
+    &.source-deleted {
+      border-color: rgba(245, 158, 11, 0.34);
+      background: rgba(245, 158, 11, 0.12);
+      color: #92400e;
+    }
   }
 
   .stage-steps-wrap {
@@ -1084,6 +1099,10 @@ export default {
     border: 1px solid rgba(245, 158, 11, 0.24);
     border-radius: 8px;
     background: rgba(255, 251, 235, 0.62);
+  }
+
+  .run-source-deleted-alert {
+    border-radius: 8px;
   }
 
   .focused-run-total-time {

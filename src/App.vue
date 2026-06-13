@@ -804,6 +804,7 @@ export default {
         userId: '',
         status: '',
         archiveBucket: '',
+        projectId: '',
         sourceType: '',
         runId: '',
         from: '',
@@ -1300,6 +1301,13 @@ export default {
       return rows.slice(start, start + pageSize);
     },
 
+    aiExecutionArchiveProjectFilterName() {
+      const projectId = String(this.aiExecutionArchiveFilters?.projectId || '').trim();
+      if (!projectId) return '';
+      const project = this.projects.find(item => String(item.id || '').trim() === projectId);
+      return project?.name || projectId;
+    },
+
     aiExecutionArchiveDetailRun() {
       const id = String(this.aiExecutionArchiveDetail?.run?.id || '').trim();
       if (!id) return null;
@@ -1561,6 +1569,7 @@ export default {
 
     selectedRunActionLabel() {
       if (this.isDirectSkillRun(this.selectedRun)) return this.selectedRun?.status === 'pending' ? '等待 Worker 自动领取' : '本机执行';
+      if (this.isRunSourceDeleted(this.selectedRun)) return '来源已删除';
       if (this.isRunWaitingForLocalWorker(this.selectedRun)) return '等待本机 Worker';
       if (this.isRunInProgress(this.selectedRun)) return this.isLocalWorkerRun(this.selectedRun) ? '本机执行中' : '执行中';
       if (this.canResumeRun(this.selectedRun)) return '继续执行';
@@ -1568,7 +1577,7 @@ export default {
     },
 
     canRestartSelectedRun() {
-      return Boolean(this.selectedRun && !this.isDirectSkillRun(this.selectedRun) && !this.isRunInProgress(this.selectedRun) && this.hasRunExecuted(this.selectedRun));
+      return Boolean(this.selectedRun && !this.isDirectSkillRun(this.selectedRun) && !this.isRunSourceDeleted(this.selectedRun) && !this.isRunInProgress(this.selectedRun) && this.hasRunExecuted(this.selectedRun));
     },
 
     runDiffPreviewTitle() {
@@ -8589,6 +8598,7 @@ export default {
         userId: '',
         status: '',
         archiveBucket: '',
+        projectId: '',
         sourceType: '',
         runId: '',
         from: '',
@@ -8622,7 +8632,7 @@ export default {
         }
       );
       const query = new URLSearchParams();
-      const allowedFilterKeys = new Set(['keyword', 'userId', 'status', 'sourceType', 'runId', 'from', 'to']);
+      const allowedFilterKeys = new Set(['keyword', 'userId', 'status', 'projectId', 'sourceType', 'runId', 'from', 'to']);
       for (const [key, value] of Object.entries(filters)) {
         if (!allowedFilterKeys.has(key)) continue;
         if (String(value || '').trim()) query.set(key, String(value).trim());
@@ -14958,13 +14968,9 @@ export default {
         return;
       }
       if (!project?.id) return;
-      const runningRuns = this.runs.filter(run => run.projectId === project.id && this.isRunInProgress(run));
-      if (runningRuns.length) {
-        ElMessage.warning('项目下有执行中的任务，结束后再删除项目');
-        return;
-      }
+      const retainedRuns = this.runs.filter(run => String(run.projectId || '') === String(project.id || ''));
       await ElMessageBox.confirm(
-        `确认删除项目「${project.name || project.id}」的接入记录？\n本操作只删除平台内的项目记录、同步任务、Bug、执行记录和平台产物，不会删除本地项目目录：${project.rootPath || '-'}`,
+        `确认删除项目「${project.name || project.id}」的接入记录？\n本操作只删除平台内的项目记录、同步任务、Bug 和扫描缓存；不会删除本地项目目录，也不会删除美术执行记录、自定义流程模板或累计调用次数。\n当前会保留执行记录 ${retainedRuns.length} 条，后续请到 AI档案或美术执行台用独立删除入口清理。\n路径：${project.rootPath || '-'}`,
         '删除项目',
         {
           confirmButtonText: '删除项目',
@@ -14982,9 +14988,6 @@ export default {
       this.businessTasks = this.businessTasks.filter(task => task.projectId !== project.id);
       this.bugs = this.bugs.filter(bug => bug.projectId !== project.id);
       this.taskReviews = this.taskReviews.filter(review => review.projectId !== project.id);
-      this.runs = this.runs.filter(run => run.projectId !== project.id);
-      this.customWorkflows = this.customWorkflows.filter(workflow => workflow.projectId !== project.id);
-      if (this.selectedRun && this.selectedRun.projectId === project.id) this.selectedRunId = this.runs[0]?.id || null;
       if (this.taskFilters.projectId === project.id) this.updateTaskFilter('projectId', '');
       if (this.archiveFilters.projectId === project.id) this.archiveFilters.projectId = '';
       if (this.runForm.projectId === project.id) this.runForm.projectId = nextProjects[0]?.id || '';
@@ -15001,7 +15004,35 @@ export default {
         this.pushRoute('/projects');
       }
       const removed = result.removed || {};
-      ElMessage.success(`项目已删除：清理任务 ${removed.tasks || 0}、Bug ${removed.bugs || 0}、执行记录 ${removed.runs || 0}`);
+      const retained = result.retained || {};
+      ElMessage.success(`项目已删除：清理任务 ${removed.tasks || 0}、Bug ${removed.bugs || 0}；保留执行记录 ${retained.runs || 0} 条`);
+      if (Number(retained.runs || retainedRuns.length || 0) > 0 && this.can('menu.aiArchive')) {
+        this.confirmOpenRetainedRunsArchive(project, Number(retained.runs || retainedRuns.length || 0));
+      }
+    },
+
+    async confirmOpenRetainedRunsArchive(project = {}, count = 0) {
+      try {
+        await ElMessageBox.confirm(
+          `已保留 ${count} 条执行记录。是否现在去 AI档案查看并按需要删除？`,
+          '查看保留执行记录',
+          {
+            confirmButtonText: '去 AI档案',
+            cancelButtonText: '留在当前页',
+            type: 'warning'
+          }
+        );
+        this.aiExecutionArchiveFilters = {
+          ...this.aiExecutionArchiveFilters,
+          projectId: project.id || '',
+          keyword: '',
+          sourceType: '',
+          status: '',
+          runId: ''
+        };
+        this.aiExecutionArchivePage = 1;
+        this.switchView('ai-archive');
+      } catch {}
     },
 
     openUserCreateDrawer() {
@@ -17351,6 +17382,7 @@ export default {
 
     canResumeRun(run = null) {
       if (!run || this.isDirectSkillRun(run) || this.isRunInProgress(run)) return false;
+      if (this.isRunSourceDeleted(run)) return false;
       return /cancelled|canceled|blocked|failed/i.test(String(run.status || ''));
     },
 
@@ -17364,6 +17396,17 @@ export default {
 
     isDirectSkillRun(run = null) {
       return run?.sourceType === 'direct-skill' || run?.executionMode === 'direct-skill';
+    },
+
+    isRunSourceDeleted(run = null) {
+      const projectId = String(run?.projectId || '').trim();
+      if (!projectId) return false;
+      return !this.projects.some(project => String(project.id || '').trim() === projectId);
+    },
+
+    runSourceDeletedText(run = null) {
+      if (!this.isRunSourceDeleted(run)) return '';
+      return '来源已删除，仅保留查看、日志、档案和删除；不能继续执行或重新执行。';
     },
 
     isLocalWorkerRun(run = null) {
@@ -18302,12 +18345,14 @@ export default {
       const userId = String(filters.userId || '').trim();
       const status = String(filters.status || '').trim();
       const archiveBucket = options.ignoreBucket ? '' : String(filters.archiveBucket || '').trim();
+      const projectId = String(filters.projectId || '').trim();
       const sourceType = String(filters.sourceType || '').trim();
       const runId = String(filters.runId || '').trim();
       const from = filters.from ? Date.parse(filters.from) : 0;
       const to = filters.to ? Date.parse(filters.to) : 0;
       return (this.runs || [])
         .filter(run => !runId || String(run.id || '') === runId)
+        .filter(run => !projectId || String(run.projectId || '') === projectId)
         .filter(run => !sourceType || run.sourceType === sourceType || run.executionMode === sourceType)
         .filter(run => !status || String(run.status || '') === status)
         .filter(run => this.aiExecutionArchiveRunMatchesBucket(run, archiveBucket))
@@ -19942,6 +19987,10 @@ export default {
 
     startSelectedRun() {
       if (!this.selectedRun) return;
+      if (this.isRunSourceDeleted(this.selectedRun)) {
+        ElMessage.warning('该执行记录的扫描来源已删除，只能查看、归档或删除，不能继续执行。');
+        return;
+      }
       if (this.isRunInProgress(this.selectedRun)) {
         ElMessage.info('当前任务正在执行中');
         return;
@@ -19956,6 +20005,10 @@ export default {
 
     restartSelectedRun() {
       if (!this.selectedRun) return;
+      if (this.isRunSourceDeleted(this.selectedRun)) {
+        ElMessage.warning('该执行记录的扫描来源已删除，只能查看、归档或删除，不能重新执行。');
+        return;
+      }
       if (this.isRunInProgress(this.selectedRun)) {
         ElMessage.info('当前任务正在执行中');
         return;
@@ -19969,6 +20022,11 @@ export default {
 
     async confirmStartRun(mode = 'start') {
       if (!this.selectedRun) return;
+      if (this.isRunSourceDeleted(this.selectedRun)) {
+        this.startConfirm.visible = false;
+        ElMessage.warning('该执行记录的扫描来源已删除，只能查看、归档或删除，不能继续执行。');
+        return;
+      }
       if (this.isRunInProgress(this.selectedRun)) {
         this.startConfirm.visible = false;
         ElMessage.info('当前任务正在执行中');

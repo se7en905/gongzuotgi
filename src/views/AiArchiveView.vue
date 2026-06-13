@@ -70,6 +70,10 @@
         <ElButton v-if="app.can('api.aiArchive.delete')" type="danger" plain :loading="app.loading.runs" @click="app.deleteAiExecutionArchiveRunsByCurrentFilters">删除当前范围</ElButton>
       </div>
     </div>
+    <div v-if="app.aiExecutionArchiveProjectFilterName" class="ai-archive-source-filter-note">
+      <span>当前只显示来源「{{ app.aiExecutionArchiveProjectFilterName }}」保留的执行记录。</span>
+      <ElButton link type="primary" @click="app.resetAiExecutionArchiveFilters">查看全部档案</ElButton>
+    </div>
 
     <ElTable class="skill-clean-table ai-archive-table" :data="app.aiExecutionArchivePagedRunRows" table-layout="fixed" empty-text="暂无 AI 执行档案" v-loading="app.loading.runs">
       <ElTableColumn label="执行内容" min-width="260">
@@ -91,7 +95,10 @@
       </ElTableColumn>
       <ElTableColumn label="状态" width="110">
         <template #default="{ row }">
-          <ElTag size="small" :type="app.runTagType(row.status)">{{ app.directSkillRunStatusLabel(row) || app.runStatusLabel(row.status) }}</ElTag>
+          <div class="ai-archive-status-stack">
+            <ElTag size="small" :type="app.runTagType(row.status)">{{ app.directSkillRunStatusLabel(row) || app.runStatusLabel(row.status) }}</ElTag>
+            <ElTag v-if="app.isRunSourceDeleted(row)" size="small" type="warning">来源已删除</ElTag>
+          </div>
         </template>
       </ElTableColumn>
       <ElTableColumn label="Figma 链接" min-width="180">
@@ -369,6 +376,28 @@ export default {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.ai-archive-source-filter-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 14px 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.08);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ai-archive-status-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
 
 .ai-archive-run-title {

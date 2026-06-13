@@ -1566,12 +1566,6 @@ async function handleApi(req, res, url) {
   if (req.method === 'DELETE' && projectDetail) {
     const projectId = decodeURIComponent(projectDetail[1]);
     requireProjectAccess(currentUser, projectId, 'admin', 'api.skillSources.delete');
-    const projectRuns = (await listRuns()).filter(run => run.projectId === projectId);
-    const runningRun = projectRuns.find(run => /running|in_progress/i.test(String(run.status || '')));
-    if (runningRun) {
-      sendJson(res, 409, { error: '项目下有执行中的任务，结束后再删除项目。' });
-      return;
-    }
     const result = await deleteProject(projectId);
     if (!result) {
       sendJson(res, 404, { error: 'project not found' });
@@ -1625,7 +1619,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/runs') {
-    sendJson(res, 200, (await listRunsWithExpandedChanges()).filter(run => canAccessProject(currentUser, run.projectId)));
+    sendJson(res, 200, await listVisibleRunsForUser(currentUser));
     return;
   }
 
@@ -2229,7 +2223,10 @@ async function handleApi(req, res, url) {
   if (req.method === 'POST' && runStart) {
     const run = await requireRun(runStart[1]);
     const body = await readBody(req).catch(() => ({}));
-    const project = await requireProject(run.projectId);
+    const project = await getProject(run.projectId);
+    if (!project) {
+      throw new HttpError(409, '该执行记录的扫描来源已删除，只能查看、归档或删除，不能继续执行。');
+    }
     requireProjectAccess(currentUser, project.id, 'developer', 'run.codex.execute');
     if (run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill') {
       throw new HttpError(409, '直接执行任务只能由执行人本机 Worker 领取，不能在平台服务器启动。');
@@ -2265,6 +2262,10 @@ async function handleApi(req, res, url) {
   const runRetry = url.pathname.match(/^\/api\/runs\/([^/]+)\/retry$/);
   if (req.method === 'POST' && runRetry) {
     const source = await requireRun(runRetry[1]);
+    const project = await getProject(source.projectId);
+    if (!project) {
+      throw new HttpError(409, '该执行记录的扫描来源已删除，只能查看、归档或删除，不能再次执行。');
+    }
     requireProjectAccess(currentUser, source.projectId, 'developer', 'run.codex.execute');
     const body = await readBody(req);
     const retryRun = await cloneRunForRetry(source.id, {
@@ -2331,7 +2332,7 @@ async function handleApi(req, res, url) {
   const runDelete = url.pathname.match(/^\/api\/runs\/([^/]+)$/);
   if (req.method === 'DELETE' && runDelete) {
     const targetRun = await requireRun(runDelete[1]);
-    requireProjectAccess(currentUser, targetRun.projectId, 'admin', 'api.runs.delete');
+    await requireRunDeleteAccess(currentUser, targetRun);
     const run = await deleteRun(runDelete[1]);
     if (!run) {
       sendJson(res, 404, { error: 'run not found' });
@@ -2369,7 +2370,7 @@ async function handleApi(req, res, url) {
   const runLog = url.pathname.match(/^\/api\/runs\/([^/]+)\/log$/);
   if (req.method === 'GET' && runLog) {
     const run = await requireRun(runLog[1]);
-    requireProjectAccess(currentUser, run.projectId, 'viewer');
+    await requireRunViewAccess(currentUser, run);
     const fallbackLogPath = path.join(paths.workspaceDir, run.id, 'run.log');
     const tailBytes = clampNumber(url.searchParams.get('tailBytes'), 16 * 1024, 1024 * 1024, defaultRunLogTailBytes);
     await serveRunLog(res, run.logPath || fallbackLogPath, currentUser, { tailBytes });
@@ -3846,14 +3847,11 @@ async function cleanupRemovedScanSourceProductData(project = {}, previousScan = 
     return key && !nextKeys.has(key);
   });
   if (!removedSkills.length) return { removed: 0 };
-  const [overrideCleanup, usageCleanup] = await Promise.all([
-    cleanupRemovedSkillVersionOverrides(project, removedSkills, nextCache),
-    cleanupRemovedUsageCounters(removedSkills, nextCache)
-  ]);
+  const overrideCleanup = await cleanupRemovedSkillVersionOverrides(project, removedSkills, nextCache);
   return {
     removed: removedSkills.length,
     overrides: overrideCleanup.removed || 0,
-    usageCounters: usageCleanup.removed || 0
+    usageCounters: 0
   };
 }
 
@@ -3922,133 +3920,6 @@ function skillOverrideCandidateKeys(input = {}) {
   return values
     .map(value => skillVersionOverrideKey({ relativePath: value }))
     .filter(value => value && value.length >= 2)
-    .filter((value, index, array) => array.indexOf(value) === index);
-}
-
-async function cleanupRemovedUsageCounters(removedSkills = [], nextCache = {}) {
-  let counters = null;
-  try {
-    const raw = await fs.readFile(paths.usageCounters, 'utf8');
-    counters = JSON.parse(raw);
-  } catch {
-    return { removed: 0 };
-  }
-  const buckets = counters?.buckets;
-  if (!buckets || typeof buckets !== 'object') return { removed: 0 };
-  const removedKeys = new Set(removedSkills.flatMap(skill => skillUsageCandidateKeys(skill)));
-  if (!removedKeys.size) return { removed: 0 };
-  const remainingKeys = new Set([
-    ...collectScanUsageCandidateKeys(nextCache),
-    ...await collectNonScanUsageCandidateKeys()
-  ]);
-  let removed = 0;
-  for (const key of removedKeys) {
-    if (remainingKeys.has(key) || !Object.prototype.hasOwnProperty.call(buckets, key)) continue;
-    delete buckets[key];
-    removed += 1;
-  }
-  if (removed) {
-    counters.updatedAt = new Date().toISOString();
-    await fs.writeFile(paths.usageCounters, `${JSON.stringify(counters, null, 2)}\n`);
-  }
-  return { removed };
-}
-
-async function collectNonScanUsageCandidateKeys() {
-  const keys = new Set();
-  const addValues = values => {
-    for (const value of values) {
-      const key = usageCounterKeyForScanProduct(value);
-      if (key) keys.add(key);
-    }
-  };
-  try {
-    const raw = await fs.readFile(aiAssetSheetPath, 'utf8');
-    const parsed = JSON.parse(raw);
-    const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
-    rows.forEach(row => {
-      if (row?.deleted === true) return;
-      addValues([
-        row.title,
-        row.suites,
-        row.finalPath,
-        row.projectName,
-        row.skillPath,
-        row.fileLink
-      ]);
-    });
-  } catch {}
-  try {
-    const raw = await fs.readFile(skillValidationsPath, 'utf8');
-    const parsed = JSON.parse(raw);
-    const records = Array.isArray(parsed.records)
-      ? parsed.records
-      : [
-          ...(Array.isArray(parsed.googleRecords) ? parsed.googleRecords : []),
-          ...(Array.isArray(parsed.manualRecords) ? parsed.manualRecords : [])
-        ];
-    records.forEach(record => addValues([
-      record.artifactName,
-      record.researchName,
-      record.artifactLocation,
-      record.sourceRef,
-      record.workflowScene,
-      record.scope
-    ]));
-  } catch {}
-  try {
-    const raw = await fs.readFile(paths.artProgressEvents, 'utf8');
-    const events = JSON.parse(raw);
-    if (Array.isArray(events)) {
-      events.forEach(event => {
-        const metadata = event?.metadata && typeof event.metadata === 'object' ? event.metadata : {};
-        addValues([
-          event.skillId,
-          event.skillName,
-          event.repoPath,
-          event.title,
-          metadata.path,
-          metadata.filePath,
-          metadata.finalPath,
-          metadata.skillPath,
-          metadata.artifactPath,
-          metadata.artifactLocation,
-          ...(Array.isArray(metadata.artifactPaths) ? metadata.artifactPaths : []),
-          ...(Array.isArray(metadata.artifactNames) ? metadata.artifactNames : []),
-          ...(Array.isArray(metadata.calledArtifacts) ? metadata.calledArtifacts.flatMap(item => [item?.id, item?.name, item?.path]) : []),
-          ...(Array.isArray(metadata.matchedArtifacts) ? metadata.matchedArtifacts.flatMap(item => [item?.id, item?.name, item?.path]) : [])
-        ]);
-      });
-    }
-  } catch {}
-  return keys;
-}
-
-function collectScanUsageCandidateKeys(cache = {}) {
-  const keys = new Set();
-  for (const entry of Object.values(cache || {})) {
-    const scan = entry?.scan || entry;
-    for (const skill of Array.isArray(scan?.skills) ? scan.skills : []) {
-      skillUsageCandidateKeys(skill).forEach(key => keys.add(key));
-    }
-  }
-  return keys;
-}
-
-function skillUsageCandidateKeys(skill = {}) {
-  return [
-    skill.productFileName,
-    skill.productDisplayName,
-    skill.displayName,
-    skill.title,
-    ...(Array.isArray(skill.aliases) ? skill.aliases : []),
-    ...(Array.isArray(skill.aliasHistory) ? skill.aliasHistory : []),
-    path.basename(String(skill.relativePath || '').replace(/\\/g, '/')),
-    path.basename(String(skill.path || '').replace(/\\/g, '/')),
-    path.basename(String(skill.git?.relativePath || '').replace(/\\/g, '/'))
-  ]
-    .map(usageCounterKeyForScanProduct)
-    .filter(Boolean)
     .filter((value, index, array) => array.indexOf(value) === index);
 }
 
@@ -5580,7 +5451,7 @@ async function serveArtifact(res, file, currentUser, options = {}) {
     const roots = [run.artifactRoot, run.logPath, run.promptPath, run.materialPath].filter(Boolean).map(item => path.resolve(item));
     return roots.some(root => abs === root || abs.startsWith(`${root}${path.sep}`));
   });
-  if (matchedRun) requireProjectAccess(currentUser, matchedRun.projectId, 'viewer');
+  if (matchedRun) await requireRunViewAccess(currentUser, matchedRun);
   let stat;
   try {
     stat = await fs.stat(abs);
@@ -5629,7 +5500,7 @@ async function serveRunLog(res, file, currentUser, options = {}) {
     const roots = [run.logPath, path.join(paths.workspaceDir, run.id, 'run.log')].filter(Boolean).map(item => path.resolve(item));
     return roots.some(root => abs === root || abs.startsWith(`${root}${path.sep}`));
   });
-  if (matchedRun) requireProjectAccess(currentUser, matchedRun.projectId, 'viewer');
+  if (matchedRun) await requireRunViewAccess(currentUser, matchedRun);
   let stat;
   try {
     stat = await fs.stat(abs);
@@ -5728,6 +5599,47 @@ async function listRunsWithExpandedChanges() {
       changeSummary: await expandChangeSummaryDirectories(project.rootPath, run.changeSummary)
     };
   }));
+}
+
+async function listVisibleRunsForUser(user = {}) {
+  const runs = await listRunsWithExpandedChanges();
+  const projects = await listProjects();
+  const activeProjectIds = new Set(projects.map(project => String(project.id || '').trim()).filter(Boolean));
+  return runs.filter(run => canAccessRunRecord(user, run, activeProjectIds));
+}
+
+function canAccessRunRecord(user = {}, run = {}, activeProjectIds = new Set()) {
+  if (!user || !run) return false;
+  const projectId = String(run.projectId || '').trim();
+  const isOrphanRun = Boolean(projectId && !activeProjectIds.has(projectId));
+  if (!isOrphanRun && canAccessProject(user, run.projectId)) return true;
+  if (!isOrphanRun || (!hasPermission(user, 'menu.runs') && !hasPermission(user, 'menu.aiArchive'))) return false;
+  if (user.role === 'admin') return true;
+  const userId = String(user.id || '').trim();
+  return [
+    run.createdBy,
+    run.ownerUserId,
+    run.assignedToUserId,
+    run.startedBy,
+    run.queuedForUserId
+  ].map(value => String(value || '').trim()).filter(Boolean).includes(userId);
+}
+
+async function requireRunViewAccess(user = {}, run = {}) {
+  const activeProjectIds = new Set((await listProjects()).map(project => String(project.id || '').trim()).filter(Boolean));
+  if (!canAccessRunRecord(user, run, activeProjectIds)) {
+    throw new HttpError(403, '当前账号没有该执行记录权限。');
+  }
+  return user;
+}
+
+async function requireRunDeleteAccess(user = {}, run = {}) {
+  requirePermission(user, 'api.runs.delete');
+  const activeProjectIds = new Set((await listProjects()).map(project => String(project.id || '').trim()).filter(Boolean));
+  if (!canAccessRunRecord(user, run, activeProjectIds)) {
+    throw new HttpError(403, '当前账号没有该执行记录权限。');
+  }
+  return user;
 }
 
 async function expandChangeSummaryDirectories(rootPath, summary) {
