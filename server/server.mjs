@@ -2552,7 +2552,6 @@ function broadcastUsageCountersChanged(result = null, payload = {}) {
 
 function watchAiMembersBoardFiles() {
   const boardFiles = [
-    '美术部 AI 可视化看板.html',
     '美术部AI看板.html'
   ];
   let timer = null;
@@ -8636,22 +8635,14 @@ function isSgProjectTask(task = {}) {
 }
 
 async function loadAiMembersSnapshot(currentUser = {}) {
-  const ownerBoardPath = path.join(aiWeekDir, '美术部 AI 可视化看板.html');
-  const memberBoardPath = path.join(aiWeekDir, '美术部AI看板.html');
-  const canViewOwnerBoard = hasPermission(currentUser, 'menu.aiMembers.owner');
-  const canViewMemberBoard = hasPermission(currentUser, 'menu.aiMembers.member') || !canViewOwnerBoard;
-  const boardPath = canViewOwnerBoard ? ownerBoardPath : memberBoardPath;
-  const memberDataPath = memberBoardPath;
-  const [boardStat, boardHtml, memberBoardHtml, ownerBoardHtml] = await Promise.all([
+  const boardPath = path.join(aiWeekDir, '美术部AI看板.html');
+  const [boardStat, boardHtml] = await Promise.all([
     statIfExists(boardPath),
-    readTextIfExists(boardPath),
-    canViewMemberBoard ? readTextIfExists(memberDataPath) : Promise.resolve(''),
-    canViewOwnerBoard ? readTextIfExists(ownerBoardPath) : Promise.resolve('')
+    readTextIfExists(boardPath)
   ]);
-  const ownerHtml = buildEmbeddedAiBoardHtml(ownerBoardHtml || boardHtml);
-  const memberHtml = buildEmbeddedAiBoardHtml(memberBoardHtml || boardHtml);
+  const embeddedHtml = buildEmbeddedAiBoardHtml(boardHtml);
   return {
-    mode: canViewOwnerBoard ? 'owner' : 'member',
+    mode: 'all',
     viewer: {
       username: currentUser.username || '',
       displayName: currentUser.displayName || '',
@@ -8660,17 +8651,13 @@ async function loadAiMembersSnapshot(currentUser = {}) {
     source: {
       root: aiWeekDir,
       boardFile: boardPath,
-      boardView: canViewOwnerBoard ? '负责人看板' : '组员看板',
+      boardView: '全员看板',
       boardUpdatedAt: boardStat?.mtime?.toISOString?.() || '',
       fetchedAt: new Date().toISOString()
     },
-    members: parseAiBoardMembers(memberBoardHtml || boardHtml),
-    html: canViewOwnerBoard ? ownerHtml : memberHtml,
-    ownerHtml: canViewOwnerBoard ? ownerHtml : '',
-    memberHtml: canViewMemberBoard ? memberHtml : '',
-    privacyNotice: canViewOwnerBoard
-      ? '负责人视角：原样展示美术部 AI 可视化看板。'
-      : '组员视角：原样展示美术部AI看板。'
+    members: parseAiBoardMembers(boardHtml),
+    html: embeddedHtml,
+    privacyNotice: '全员视角：原样展示美术部AI看板。'
   };
 }
 

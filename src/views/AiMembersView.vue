@@ -1,8 +1,5 @@
 <template>
 <section v-show="app.activeView === 'ai-members'" class="ai-board-embed-view">
-  <div v-if="boardModeOptions.length > 1" class="ai-board-switcher">
-    <ElSegmented v-model="app.aiMembersBoardMode" :options="boardModeOptions" />
-  </div>
   <section v-if="app.canViewAiMemberScore" class="ai-score-panel">
     <div class="ai-score-head">
       <div>
@@ -70,12 +67,6 @@ export default {
     }
   },
   computed: {
-    boardModeOptions() {
-      return [
-        this.app.can('menu.aiMembers.owner') ? { label: '负责人看板', value: 'owner' } : null,
-        this.app.can('menu.aiMembers.member') ? { label: '组员看板', value: 'member' } : null
-      ].filter(Boolean);
-    },
     snapshot() {
       return this.app.aiMembersSnapshot || {};
     },
@@ -90,11 +81,7 @@ export default {
       return this.app.isAiMembersBoardHtml ? this.app.isAiMembersBoardHtml(html) : html.length > 1000;
     },
     activeBoardHtml() {
-      if (!this.app.can('menu.aiMembers.owner')) return this.snapshot.memberHtml || this.boardHtml;
-      if (this.app.aiMembersBoardMode === 'owner' && !this.snapshot.ownerHtml) return this.snapshot.memberHtml || this.boardHtml;
-      return this.app.aiMembersBoardMode === 'member'
-        ? (this.snapshot.memberHtml || this.boardHtml)
-        : (this.snapshot.ownerHtml || this.boardHtml);
+      return this.boardHtml;
     }
   },
   data() {

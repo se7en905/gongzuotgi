@@ -94,7 +94,7 @@ const allPermissionIds = permissionCatalog.map(item => item.id);
 const levelPermissions = {
   4: allPermissionIds,
   3: [
-    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive',
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive',
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy',
     'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'run.start', 'run.cancel', 'review.submit', 'review.image.submit',
     'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.asset.create', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
@@ -102,10 +102,10 @@ const levelPermissions = {
     'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.reviews.submit', 'api.codex.config.read', 'api.skillSources.manage', 'api.skillScan.run', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.aiMembers.read', 'api.aiMembers.score.read'
   ],
   2: [
-    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'menu.runs', 'menu.aiArchive',
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.runs', 'menu.aiArchive',
     'task.codexPrompt.copy', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.reviews.submit', 'api.skillAlias.manage', 'api.aiMembers.read', 'api.aiMembers.score.read'
   ],
-  1: ['menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.aiMembers.read', 'api.aiMembers.score.read']
+  1: ['menu.tasks', 'menu.skillList', 'menu.aiMembers', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.aiMembers.read', 'api.aiMembers.score.read']
 };
 const defaultRoles = [
   {
@@ -202,14 +202,14 @@ export async function ensureDefaultRoles() {
 function legacyRolePermissionAdditions(roleId = '') {
   if (roleId === 'admin') return levelPermissions[4];
   if (roleId === 'developer') return [
-    'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'menu.agentWorkers',
+    'menu.skillList', 'menu.aiMembers', 'menu.agentWorkers',
     'run.directSkill.create', 'run.directSkill.workerCommand',
     'skill.alias.manage', 'skill.usageLogs.view', 'aiMembers.score.view',
     'api.skillAlias.manage', 'api.aiMembers.read', 'api.aiMembers.score.read', 'api.agentRuns.create', 'api.agentWorkers.read',
     'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status'
   ];
-  if (roleId === 'reviewer') return ['menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'skill.alias.manage', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.skillAlias.manage', 'api.aiMembers.read', 'api.aiMembers.score.read'];
-  if (roleId === 'viewer') return ['menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.aiMembers.read', 'api.aiMembers.score.read'];
+  if (roleId === 'reviewer') return ['menu.skillList', 'menu.aiMembers', 'skill.alias.manage', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.skillAlias.manage', 'api.aiMembers.read', 'api.aiMembers.score.read'];
+  if (roleId === 'viewer') return ['menu.skillList', 'menu.aiMembers', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.aiMembers.read', 'api.aiMembers.score.read'];
   return [];
 }
 
@@ -684,7 +684,7 @@ function expandLegacyPermission(permission = '') {
     'menu.repository': ['menu.skillList', 'skill.source.connect', 'skill.source.edit'],
     'menu.skillManagement': ['menu.skillList'],
     'menu.skillMembers': ['menu.skillList'],
-    'menu.aiMembers': ['menu.aiMembers', 'menu.aiMembers.member', 'aiMembers.score.view', 'api.aiMembers.read', 'api.aiMembers.score.read'],
+    'menu.aiMembers': ['menu.aiMembers', 'aiMembers.score.view', 'api.aiMembers.read', 'api.aiMembers.score.read'],
     'project.create': ['skill.source.connect', 'api.skillSources.manage'],
     'project.edit': ['skill.source.edit', 'api.skillSources.manage'],
     'project.delete': ['skill.source.delete', 'api.skillSources.delete'],

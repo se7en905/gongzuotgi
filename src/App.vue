@@ -567,7 +567,7 @@ function readWorkbenchDisplayCacheArray(key = '') {
 
 const roleLevelPermissionPresets = {
   4: [
-    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.owner', 'menu.aiMembers.member', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive', 'menu.users', 'menu.roles', 'menu.operationLogs',
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive', 'menu.users', 'menu.roles', 'menu.operationLogs',
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy', 'task.personPressure.view', 'task.platform.delete',
     'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'run.start', 'run.cancel', 'run.delete', 'review.submit', 'review.image.submit',
     'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.source.delete', 'skill.asset.create', 'skill.asset.void', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
@@ -576,7 +576,7 @@ const roleLevelPermissionPresets = {
     'api.skillSources.manage', 'api.skillSources.delete', 'api.skillScan.run', 'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.tasks.deletePlatform', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.runs.delete', 'api.aiArchive.delete', 'api.reviews.submit', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.skillAsset.void', 'api.aiMembers.read', 'api.aiMembers.score.read', 'api.aiMembers.score.write', 'api.aiMembers.refresh', 'api.codex.config.read', 'api.codex.config.manage', 'api.users.manage', 'api.roles.manage', 'api.taskCenter.config.manage', 'api.operationLogs.read', 'api.operationLogs.delete'
   ],
   3: [
-    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive',
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive',
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy',
     'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'run.start', 'run.cancel', 'review.submit', 'review.image.submit',
     'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.asset.create', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
@@ -584,10 +584,10 @@ const roleLevelPermissionPresets = {
     'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.reviews.submit', 'api.codex.config.read', 'api.skillSources.manage', 'api.skillScan.run', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.aiMembers.read', 'api.aiMembers.score.read'
   ],
   2: [
-    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'menu.runs', 'menu.aiArchive',
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.runs', 'menu.aiArchive',
     'task.codexPrompt.copy', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.reviews.submit', 'api.skillAlias.manage', 'api.aiMembers.read', 'api.aiMembers.score.read'
   ],
-  1: ['menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.aiMembers.member', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.aiMembers.read', 'api.aiMembers.score.read']
+  1: ['menu.tasks', 'menu.skillList', 'menu.aiMembers', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.aiMembers.read', 'api.aiMembers.score.read']
 };
 
 export default {
@@ -931,7 +931,6 @@ export default {
       taskSyncDrawer: false,
       taskCenterMode: 'task',
       taskCenterRevision: 0,
-      aiMembersBoardMode: 'owner',
       taskCenterModeOptions: [
         { label: '任务大厅', value: 'task' },
         { label: 'Bug大厅', value: 'bug' }
@@ -5932,7 +5931,7 @@ export default {
 
     hasAiMembersBoardHtml(snapshot = {}) {
       if (!snapshot || typeof snapshot !== 'object') return false;
-      return ['html', 'ownerHtml', 'memberHtml'].some(key => this.isAiMembersBoardHtml(snapshot[key]));
+      return this.isAiMembersBoardHtml(snapshot.html);
     },
 
     readAiMembersBoardHtmlSnapshot() {
@@ -5941,7 +5940,14 @@ export default {
         if (!raw) return null;
         const parsed = JSON.parse(raw);
         const value = parsed?.value && typeof parsed.value === 'object' ? parsed.value : parsed;
-        return this.hasAiMembersBoardHtml(value) ? value : null;
+        const html = this.isAiMembersBoardHtml(value?.html)
+          ? value.html
+          : this.isAiMembersBoardHtml(value?.memberHtml)
+            ? value.memberHtml
+            : this.isAiMembersBoardHtml(value?.ownerHtml)
+              ? value.ownerHtml
+              : '';
+        return html ? { ...value, html } : null;
       } catch {
         return null;
       }
@@ -5952,11 +5958,8 @@ export default {
       const payload = {
         mode: snapshot.mode || '',
         source: snapshot.source || {},
-        html: this.isAiMembersBoardHtml(snapshot.html) ? snapshot.html : '',
-        ownerHtml: this.isAiMembersBoardHtml(snapshot.ownerHtml) ? snapshot.ownerHtml : '',
-        memberHtml: this.isAiMembersBoardHtml(snapshot.memberHtml) ? snapshot.memberHtml : ''
+        html: this.isAiMembersBoardHtml(snapshot.html) ? snapshot.html : ''
       };
-      if (!payload.html) payload.html = payload.ownerHtml || payload.memberHtml || '';
       this.saveWorkbenchDisplayCache('aiMembersBoardHtmlSnapshot', payload);
     },
 
@@ -5965,23 +5968,15 @@ export default {
       const current = this.aiMembersSnapshot && typeof this.aiMembersSnapshot === 'object' ? this.aiMembersSnapshot : {};
       const cached = this.readAiMembersBoardHtmlSnapshot() || {};
       const merged = { ...current, ...cached, ...source };
-      ['html', 'ownerHtml', 'memberHtml'].forEach(key => {
-        const sourceHtml = source[key];
-        const currentHtml = current[key];
-        const cachedHtml = cached[key];
-        merged[key] = this.isAiMembersBoardHtml(sourceHtml)
-          ? sourceHtml
-          : this.isAiMembersBoardHtml(currentHtml)
-            ? currentHtml
-            : this.isAiMembersBoardHtml(cachedHtml)
-              ? cachedHtml
-              : sourceHtml || currentHtml || cachedHtml || '';
-      });
-      if (!this.isAiMembersBoardHtml(merged.html)) {
-        merged.html = merged.mode === 'member'
-          ? (merged.memberHtml || merged.ownerHtml || merged.html || '')
-          : (merged.ownerHtml || merged.memberHtml || merged.html || '');
-      }
+      merged.html = this.isAiMembersBoardHtml(source.html)
+        ? source.html
+        : this.isAiMembersBoardHtml(current.html)
+          ? current.html
+          : this.isAiMembersBoardHtml(cached.html)
+            ? cached.html
+            : source.html || current.html || cached.html || '';
+      delete merged.ownerHtml;
+      delete merged.memberHtml;
       return merged;
     },
 
