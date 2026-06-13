@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import os from 'node:os';
 import path from 'node:path';
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile, readdir, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -18,8 +18,10 @@ const codexPath = process.env.CODEX_CLI_PATH || 'codex';
 const workerHome = process.env.ART_WORKER_HOME || path.join(os.homedir(), 'ArtDirectWorker');
 const defaultProjectRoot = process.env.ART_WORKER_PROJECT_ROOT || workerHome || process.cwd();
 const offlineQueuePath = process.env.ART_WORKER_OFFLINE_QUEUE_PATH || path.join(workerHome, 'state', 'offline-run-updates.json');
+const runStateDir = process.env.ART_WORKER_RUN_STATE_DIR || path.join(workerHome, 'state', 'runs');
 const offlineQueueMaxItems = Math.max(20, Number(process.env.ART_WORKER_OFFLINE_QUEUE_MAX_ITEMS || 200));
 const offlineLogChunkMaxChars = Math.max(1000, Number(process.env.ART_WORKER_OFFLINE_LOG_CHUNK_MAX_CHARS || 8000));
+const runEventQueueMaxItems = Math.max(20, Number(process.env.ART_WORKER_RUN_EVENT_QUEUE_MAX_ITEMS || 500));
 
 let cookie = '';
 let currentUser = null;
@@ -42,6 +44,7 @@ main().catch(error => {
 });
 
 async function main() {
+  await mkdir(runStateDir, { recursive: true });
   await waitForLogin();
   console.log(`[worker] 已登录 ${apiBase}，当前账号：${currentUser?.displayName || currentUser?.username || username}`);
   await heartbeat(true);
@@ -55,6 +58,7 @@ async function main() {
     try {
       await refreshLocalChecks();
       await flushOfflineQueue();
+      await syncLocalRunState();
       await heartbeat();
       await checkAndExecuteNextRun();
     } catch (error) {
@@ -117,6 +121,32 @@ async function claimNextRun() {
   return result.run || null;
 }
 
+async function claimRecoverableRun(runId = '') {
+  if (!localChecks.codexReady || !localChecks.figmaMcpReady) return null;
+  const result = await fetchJson('/api/agent-runs/recover', {
+    method: 'POST',
+    body: {
+      ...workerPayload(),
+      runId
+    }
+  });
+  return result.run || null;
+}
+
+async function claimLocalRecoverableRun() {
+  const states = await listRunStates();
+  const pending = states.filter(state => state?.runId && state.startedAt && !state.finishedAt);
+  for (const state of pending) {
+    const run = await claimRecoverableRun(state.runId).catch(error => {
+      if (/404|not found/i.test(error.message)) void removeRunState(state.runId);
+      else logOfflineNotice(`本机执行恢复查询失败，稍后重试：${error.message}`);
+      return null;
+    });
+    if (run) return run;
+  }
+  return null;
+}
+
 async function refreshLocalChecks(force = false) {
   const now = Date.now();
   if (!force && now - lastLocalCheckAt < localCheckIntervalMs) return localChecks;
@@ -131,10 +161,11 @@ async function checkAndExecuteNextRun() {
   try {
     await flushOfflineQueue();
     while (true) {
-      const run = await claimNextRun();
+      const run = await claimLocalRecoverableRun() || await claimNextRun();
       if (!run) break;
       await executeRun(run);
       await flushOfflineQueue();
+      await syncLocalRunState();
       await heartbeat(true);
     }
   } finally {
@@ -193,11 +224,28 @@ function handlePlatformEventBlock(block = '') {
 }
 
 async function executeRun(run) {
-  console.log(`[worker] 领取直接执行：${run.title} (${run.id})`);
+  const runState = await loadOrCreateRunState(run);
+  const resume = Boolean(runState.startedAt && !runState.finishedAt);
+  const startedAt = runState.startedAt || new Date().toISOString();
+  const stageName = workerStageName(run);
+  runState.startedAt = startedAt;
+  runState.status = 'running';
+  runState.finishedAt = '';
+  runState.durationMs = 0;
+  await writeRunState(run.id, runState);
+  console.log(`[worker] ${resume ? '恢复' : '领取'}直接执行：${run.title} (${run.id})`);
+  await enqueueRunEvent(run.id, {
+    type: 'stage',
+    phase: 'start',
+    stageName,
+    status: 'running',
+    at: startedAt,
+    startedAt
+  });
   await safeUpdateRunStatus(run.id, {
     status: 'running',
     workerStatus: 'running',
-    startedAt: new Date().toISOString(),
+    startedAt,
     currentStage: '本机 Codex 执行'
   });
 
@@ -252,12 +300,39 @@ async function executeRun(run) {
   }
 
   const exitCode = await waitForChild(child);
+  const finishedAt = new Date().toISOString();
+  const durationMs = Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt));
   const status = exitCode === 0 ? 'completed' : 'failed';
+  await enqueueRunEvent(run.id, {
+    type: 'stage',
+    phase: 'end',
+    stageName,
+    status,
+    at: finishedAt,
+    startedAt,
+    finishedAt,
+    durationMs
+  });
+  runState.status = status;
+  runState.finishedAt = finishedAt;
+  runState.durationMs = durationMs;
+  await writeRunState(run.id, runState);
   await safeUpdateRunStatus(run.id, {
     status,
     workerStatus: status,
     exitCode,
-    finishedAt: new Date().toISOString(),
+    startedAt,
+    finishedAt,
+    durationMs,
+    stages: [
+      {
+        name: stageName,
+        status,
+        startedAt,
+        finishedAt,
+        durationMs
+      }
+    ],
     resultSummary: buildResultSummary(status, exitCode, [finalText, stderrText].filter(Boolean).join('\n')),
     workerResult: {
       deviceId,
@@ -272,12 +347,43 @@ async function executeRun(run) {
 
 async function failRunBeforeCodex(run, reason) {
   console.error(`[worker] ${reason}`);
+  const runState = await loadOrCreateRunState(run);
+  const startedAt = runState.startedAt || new Date().toISOString();
+  const finishedAt = new Date().toISOString();
+  const durationMs = Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt));
+  const stageName = workerStageName(run);
+  runState.startedAt = startedAt;
+  runState.finishedAt = finishedAt;
+  runState.durationMs = durationMs;
+  runState.status = 'failed';
+  await writeRunState(run.id, runState);
+  await enqueueRunEvent(run.id, {
+    type: 'stage',
+    phase: 'end',
+    stageName,
+    status: 'failed',
+    at: finishedAt,
+    startedAt,
+    finishedAt,
+    durationMs
+  });
   await safeAppendRunLog(run.id, `\n[worker blocked] ${reason}\n`);
   await safeUpdateRunStatus(run.id, {
     status: 'failed',
     workerStatus: 'failed',
     exitCode: -1,
-    finishedAt: new Date().toISOString(),
+    startedAt,
+    finishedAt,
+    durationMs,
+    stages: [
+      {
+        name: stageName,
+        status: 'failed',
+        startedAt,
+        finishedAt,
+        durationMs
+      }
+    ],
     currentStage: '本机 Codex 执行',
     resultSummary: buildResultSummary('failed', -1, reason),
     workerResult: {
@@ -345,6 +451,11 @@ function workerPayload() {
     figmaMcpReady: localChecks.figmaMcpReady,
     checks: localChecks
   };
+}
+
+function workerStageName(run = {}) {
+  const firstStage = Array.isArray(run.stages) ? run.stages.find(stage => stage?.name) : null;
+  return firstStage?.name || run.stage || run.primarySkillPath || '本机执行';
 }
 
 async function runLocalChecks() {
@@ -423,13 +534,10 @@ async function safeAppendRunLog(runId, chunk) {
       body: { chunk }
     });
   } catch (error) {
-    await enqueueOfflineUpdate({
+    await enqueueRunEvent(runId, {
       type: 'log',
-      runId,
-      body: { chunk: String(chunk).slice(-offlineLogChunkMaxChars) },
-      createdAt: new Date().toISOString()
-    }).catch(queueError => {
-      console.error(`[worker] 离线日志暂存失败：${queueError.message}`);
+      at: new Date().toISOString(),
+      chunk: String(chunk).slice(-offlineLogChunkMaxChars)
     });
     logOfflineNotice(`日志回传失败，已暂存在本机：${error.message}`);
   }
@@ -439,13 +547,10 @@ async function safeUpdateRunStatus(runId, body) {
   try {
     await updateRunStatus(runId, body);
   } catch (error) {
-    await enqueueOfflineUpdate({
+    await enqueueRunEvent(runId, {
       type: 'status',
-      runId,
-      body,
-      createdAt: new Date().toISOString()
-    }).catch(queueError => {
-      console.error(`[worker] 离线状态暂存失败：${queueError.message}`);
+      at: new Date().toISOString(),
+      ...body
     });
     logOfflineNotice(`状态回传失败，已暂存在本机：${error.message}`);
   }
@@ -469,6 +574,11 @@ async function flushOfflineQueue() {
         }
         flushed += 1;
       } catch (error) {
+        if (/404|not found/i.test(error.message)) {
+          await removeRunState(item.runId);
+          flushed += 1;
+          continue;
+        }
         remaining.push(item);
         const tail = queue.slice(queue.indexOf(item) + 1);
         remaining.push(...tail);
@@ -514,6 +624,156 @@ function logOfflineNotice(message) {
   if (now - lastOfflineNoticeAt < 30000) return;
   lastOfflineNoticeAt = now;
   console.error(`[worker] ${message}；本机 Codex/Figma 执行不会因此中断。`);
+}
+
+async function loadOrCreateRunState(run = {}) {
+  const existing = await readRunState(run.id);
+  if (existing) return {
+    ...existing,
+    snapshot: existing.snapshot || run
+  };
+  const state = {
+    runId: run.id,
+    title: run.title || '',
+    status: run.status || 'claimed',
+    startedAt: run.startedAt || '',
+    finishedAt: run.finishedAt || '',
+    durationMs: Number(run.durationMs || 0),
+    snapshot: run,
+    events: [],
+    syncedEventIds: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  await writeRunState(run.id, state);
+  return state;
+}
+
+async function readRunState(runId) {
+  if (!runId) return null;
+  try {
+    const text = await readFile(runStatePath(runId), 'utf8');
+    const value = JSON.parse(text);
+    return value && typeof value === 'object' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeRunState(runId, state = {}) {
+  if (!runId) return;
+  const dir = path.dirname(runStatePath(runId));
+  await mkdir(dir, { recursive: true });
+  const next = {
+    ...state,
+    runId,
+    events: Array.isArray(state.events) ? state.events.slice(-runEventQueueMaxItems) : [],
+    syncedEventIds: Array.isArray(state.syncedEventIds) ? state.syncedEventIds.slice(-runEventQueueMaxItems) : [],
+    updatedAt: new Date().toISOString()
+  };
+  await writeFile(runStatePath(runId), JSON.stringify(next, null, 2), 'utf8');
+}
+
+async function enqueueRunEvent(runId, event = {}) {
+  if (!runId || !event.type) return;
+  const state = await readRunState(runId) || {
+    runId,
+    status: '',
+    startedAt: '',
+    finishedAt: '',
+    durationMs: 0,
+    snapshot: {},
+    events: [],
+    syncedEventIds: [],
+    createdAt: new Date().toISOString()
+  };
+  const item = {
+    ...event,
+    id: event.id || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    at: event.at || new Date().toISOString()
+  };
+  state.events = [...(Array.isArray(state.events) ? state.events : []), item].slice(-runEventQueueMaxItems);
+  await writeRunState(runId, state);
+}
+
+async function syncLocalRunState() {
+  const states = await listRunStates();
+  if (!states.length) return;
+  await cleanupDeletedPlatformRuns(states);
+  for (const state of states) {
+    const events = Array.isArray(state.events) ? state.events : [];
+    if (!events.length) continue;
+    try {
+      await fetchJson(`/api/agent-runs/${encodeURIComponent(state.runId)}/sync`, {
+        method: 'POST',
+        body: { events }
+      });
+      state.syncedEventIds = [...(Array.isArray(state.syncedEventIds) ? state.syncedEventIds : []), ...events.map(event => event.id).filter(Boolean)].slice(-runEventQueueMaxItems);
+      state.events = [];
+      await writeRunState(state.runId, state);
+      if (/completed|failed|blocked|cancelled/.test(String(state.status || ''))) await cleanupCompletedRunState(state.runId);
+    } catch (error) {
+      if (/404|not found/i.test(error.message)) {
+        await removeRunState(state.runId);
+      } else {
+        logOfflineNotice(`本机执行事件同步失败，稍后重试：${error.message}`);
+      }
+      break;
+    }
+  }
+}
+
+async function cleanupDeletedPlatformRuns(states = []) {
+  const runIds = states.map(state => state.runId).filter(Boolean);
+  if (!runIds.length) return;
+  try {
+    const result = await fetchJson('/api/agent-runs/missing', {
+      method: 'POST',
+      body: { runIds }
+    });
+    const missing = Array.isArray(result?.missingRunIds) ? result.missingRunIds : [];
+    for (const runId of missing) await removeRunState(runId);
+  } catch (error) {
+    if (!/401|登录态|认证/.test(error.message)) logOfflineNotice(`本机执行清理对账失败，稍后重试：${error.message}`);
+  }
+}
+
+async function cleanupCompletedRunState(runId) {
+  const state = await readRunState(runId);
+  if (!state || (Array.isArray(state.events) && state.events.length)) return;
+  await removeRunState(runId);
+}
+
+async function listRunStates() {
+  try {
+    const entries = await readdir(runStateDir, { withFileTypes: true });
+    const states = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const state = await readRunState(entry.name);
+      if (state?.runId) states.push(state);
+    }
+    return states;
+  } catch {
+    return [];
+  }
+}
+
+async function removeRunState(runId) {
+  if (!runId) return;
+  await rm(path.dirname(runStatePath(runId)), { recursive: true, force: true }).catch(() => {});
+}
+
+function runStatePath(runId) {
+  return path.join(runStateDir, safePathSegment(runId), 'state.json');
+}
+
+function safePathSegment(value = '') {
+  return String(value || 'run')
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120) || 'run';
 }
 
 function buildResultSummary(status, exitCode, finalText) {

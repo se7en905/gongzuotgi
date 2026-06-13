@@ -1045,12 +1045,44 @@ export async function claimNextAgentRun(input = {}) {
   return hydrateRunStages(run);
 }
 
+export async function claimRecoverableAgentRun(input = {}) {
+  const userId = String(input.userId || '').trim();
+  const deviceId = String(input.deviceId || '').trim();
+  const runId = cleanString(input.runId);
+  if (!userId || !deviceId) return null;
+  const capabilities = normalizeLineList(input.capabilities);
+  if (!capabilities.includes('codex.exec') || !capabilities.includes('figma.mcp.write')) return null;
+  const allowedProjectIds = normalizeLineList(input.allowedProjectIds);
+  const canAccessAllProjects = input.canAccessAllProjects === true || allowedProjectIds.includes('*');
+  const runs = await readJson(paths.runs, []);
+  const now = new Date().toISOString();
+  const candidateIndex = runs.findIndex(run => (!runId || cleanString(run.id) === runId) && isRecoverableAgentRun(run, userId, deviceId, { allowedProjectIds, canAccessAllProjects }));
+  if (candidateIndex === -1) return null;
+  const existing = runs[candidateIndex];
+  const run = {
+    ...existing,
+    status: 'claimed',
+    workerStatus: 'claimed',
+    assignedToUserId: existing.assignedToUserId || userId,
+    claimedByDeviceId: existing.claimedByDeviceId || deviceId,
+    claimedAt: existing.claimedAt || now,
+    resumedAt: now,
+    startedBy: existing.startedBy || userId,
+    workerCapabilities: capabilities,
+    updatedAt: now
+  };
+  runs[candidateIndex] = run;
+  await writeJson(paths.runs, runs);
+  return hydrateRunStages(run);
+}
+
 export async function updateAgentRunFromWorker(runId, input = {}) {
   const runs = await readJson(paths.runs, []);
   const index = runs.findIndex(item => item.id === runId);
   if (index === -1) return null;
   const now = new Date().toISOString();
   const existing = runs[index];
+  const timingPatch = normalizeWorkerTimingPatch(input, existing);
   const patch = {
     workerStatus: input.workerStatus || input.status || existing.workerStatus || '',
     status: normalizeWorkerRunStatus(input.status || input.workerStatus || existing.status),
@@ -1058,10 +1090,11 @@ export async function updateAgentRunFromWorker(runId, input = {}) {
     blocker: input.blocker ?? existing.blocker,
     resultSummary: input.resultSummary ?? existing.resultSummary,
     exitCode: input.exitCode ?? existing.exitCode,
-    finishedAt: input.finishedAt || (/completed|blocked|failed|cancelled/.test(String(input.status || input.workerStatus || '')) ? now : existing.finishedAt),
+    finishedAt: input.finishedAt || timingPatch.finishedAt || (/completed|blocked|failed|cancelled/.test(String(input.status || input.workerStatus || '')) ? now : existing.finishedAt),
     workerResult: input.workerResult ?? existing.workerResult,
     figmaWriteResult: input.figmaWriteResult ?? existing.figmaWriteResult,
-    updatedAt: now
+    updatedAt: now,
+    ...timingPatch
   };
   if (input.pid !== undefined) patch.pid = input.pid;
   if (input.startedAt) patch.startedAt = input.startedAt;
@@ -1071,6 +1104,53 @@ export async function updateAgentRunFromWorker(runId, input = {}) {
   runs[index] = { ...existing, ...patch };
   await writeJson(paths.runs, runs);
   return hydrateRunStages(runs[index]);
+}
+
+export async function applyAgentRunEvents(runId, input = {}) {
+  const runs = await readJson(paths.runs, []);
+  const index = runs.findIndex(item => item.id === runId);
+  if (index === -1) return null;
+  const existing = runs[index];
+  const events = Array.isArray(input.events) ? input.events.map(normalizeAgentRunEvent).filter(Boolean) : [];
+  const knownIds = new Set(Array.isArray(existing.workerEventIds) ? existing.workerEventIds.map(cleanString).filter(Boolean) : []);
+  const newEvents = events.filter(event => event.id && !knownIds.has(event.id));
+  if (!newEvents.length) return hydrateRunStages(existing);
+
+  let next = { ...existing };
+  let logChunks = [];
+  for (const event of newEvents) {
+    knownIds.add(event.id);
+    if (event.type === 'log') {
+      if (event.chunk) logChunks.push(event.chunk);
+      continue;
+    }
+    if (event.type === 'status') {
+      next = mergeAgentRunStatusEvent(next, event);
+      continue;
+    }
+    if (event.type === 'stage') {
+      next = mergeAgentRunStageEvent(next, event);
+      continue;
+    }
+  }
+  const now = new Date().toISOString();
+  next = {
+    ...next,
+    workerEventIds: [...knownIds].slice(-500),
+    updatedAt: now
+  };
+  runs[index] = next;
+  await writeJson(paths.runs, runs);
+  for (const chunk of logChunks) await appendRunLog(runId, chunk);
+  if (logChunks.length) await ensureRunLogPath(runId);
+  return hydrateRunStages(next);
+}
+
+export async function listMissingRunIds(runIds = []) {
+  const ids = normalizeLineList(runIds);
+  if (!ids.length) return [];
+  const existingIds = new Set((await readJson(paths.runs, [])).map(run => cleanString(run.id)).filter(Boolean));
+  return ids.filter(id => !existingIds.has(id));
 }
 
 export async function cloneRunForRetry(id, overrides = {}) {
@@ -3297,6 +3377,17 @@ function isClaimableAgentRun(run = {}, userId = '', access = {}) {
   return normalizeLineList(access.allowedProjectIds).includes(String(run.projectId || '').trim());
 }
 
+function isRecoverableAgentRun(run = {}, userId = '', deviceId = '', access = {}) {
+  if (run.sourceType !== 'direct-skill' && run.executionMode !== 'direct-skill') return false;
+  if (!/claimed|running|in_progress/i.test(String(run.status || run.workerStatus || ''))) return false;
+  const assignee = String(run.assignedToUserId || run.ownerUserId || '').trim();
+  if (assignee && assignee !== userId) return false;
+  const claimedDevice = cleanString(run.claimedByDeviceId);
+  if (claimedDevice && claimedDevice !== deviceId) return false;
+  if (access.canAccessAllProjects) return true;
+  return normalizeLineList(access.allowedProjectIds).includes(String(run.projectId || '').trim());
+}
+
 function isRunningRunStatus(status = '') {
   return /running|in_progress|claimed/i.test(String(status || ''));
 }
@@ -3307,6 +3398,125 @@ function normalizeWorkerRunStatus(value = '') {
   if (status === 'done' || status === 'success') return 'completed';
   if (status === 'error') return 'failed';
   return status || 'running';
+}
+
+function normalizeAgentRunEvent(input = {}) {
+  if (!input || typeof input !== 'object') return null;
+  const id = cleanString(input.id || input.eventId);
+  const type = cleanString(input.type || input.eventType);
+  if (!id || !type) return null;
+  return {
+    ...input,
+    id,
+    type,
+    at: cleanString(input.at || input.createdAt || input.updatedAt || new Date().toISOString()),
+    stageName: cleanString(input.stageName || input.name || input.currentStage),
+    status: cleanString(input.status || input.workerStatus),
+    chunk: String(input.chunk || input.text || '').slice(0, 20000)
+  };
+}
+
+function mergeAgentRunStatusEvent(run = {}, event = {}) {
+  const status = normalizeWorkerRunStatus(event.status || run.status);
+  const timingPatch = normalizeWorkerTimingPatch(event, run);
+  return {
+    ...run,
+    status,
+    workerStatus: status,
+    currentStage: event.currentStage ?? run.currentStage,
+    blocker: event.blocker ?? run.blocker,
+    resultSummary: event.resultSummary ?? run.resultSummary,
+    exitCode: event.exitCode ?? run.exitCode,
+    workerResult: event.workerResult ?? run.workerResult,
+    figmaWriteResult: event.figmaWriteResult ?? run.figmaWriteResult,
+    ...timingPatch
+  };
+}
+
+function mergeAgentRunStageEvent(run = {}, event = {}) {
+  const stageName = event.stageName;
+  if (!stageName) return run;
+  const status = normalizeWorkerRunStatus(event.status || (event.phase === 'end' ? 'completed' : 'running'));
+  const stages = normalizeRunStagesForWorkerEvents(run.stages, stageName);
+  const index = findRunStageIndex(stages, stageName);
+  const eventAt = cleanString(event.at);
+  const previous = stages[index] || { no: index + 1, name: stageName };
+  const startedAt = event.startedAt || (event.phase === 'start' ? eventAt : previous.startedAt || '');
+  const finishedAt = event.finishedAt || (event.phase === 'end' || /completed|failed|blocked|cancelled/.test(status) ? eventAt : previous.finishedAt || '');
+  const durationMs = normalizeDurationMs(event.durationMs, startedAt, finishedAt, previous.durationMs);
+  stages[index] = {
+    ...previous,
+    name: previous.name || stageName,
+    status,
+    startedAt,
+    finishedAt,
+    durationMs
+  };
+  return {
+    ...run,
+    stages,
+    currentStage: /running|in_progress/.test(status) ? stageName : run.currentStage
+  };
+}
+
+function normalizeWorkerTimingPatch(input = {}, existing = {}) {
+  const startedAt = cleanString(input.startedAt || existing.startedAt);
+  const finishedAt = cleanString(input.finishedAt || existing.finishedAt);
+  const durationMs = normalizeDurationMs(input.durationMs, startedAt, finishedAt, existing.durationMs);
+  const stages = Array.isArray(input.stages)
+    ? mergeWorkerStages(existing.stages, input.stages)
+    : existing.stages;
+  return {
+    ...(startedAt ? { startedAt } : {}),
+    ...(finishedAt ? { finishedAt } : {}),
+    ...(durationMs > 0 ? { durationMs } : {}),
+    ...(Array.isArray(stages) ? { stages } : {})
+  };
+}
+
+function normalizeRunStagesForWorkerEvents(stages = [], fallbackName = '') {
+  const rows = Array.isArray(stages) && stages.length ? stages.map((stage, index) => ({ no: stage.no || index + 1, ...stage })) : [];
+  if (!findRunStage(stages, fallbackName)) rows.push({ no: rows.length + 1, name: fallbackName, status: 'pending' });
+  return rows;
+}
+
+function mergeWorkerStages(existingStages = [], inputStages = []) {
+  let stages = Array.isArray(existingStages) ? existingStages.map((stage, index) => ({ no: stage.no || index + 1, ...stage })) : [];
+  for (const raw of Array.isArray(inputStages) ? inputStages : []) {
+    const name = cleanString(raw?.name || raw?.stageName);
+    if (!name) continue;
+    stages = normalizeRunStagesForWorkerEvents(stages, name);
+    const index = findRunStageIndex(stages, name);
+    const previous = stages[index] || {};
+    stages[index] = {
+      ...previous,
+      ...raw,
+      name: previous.name || name,
+      status: raw.status || previous.status || 'pending',
+      durationMs: normalizeDurationMs(raw.durationMs, raw.startedAt || previous.startedAt, raw.finishedAt || previous.finishedAt, previous.durationMs)
+    };
+  }
+  return stages;
+}
+
+function findRunStage(stages = [], name = '') {
+  const index = findRunStageIndex(stages, name);
+  return index >= 0 ? stages[index] : null;
+}
+
+function findRunStageIndex(stages = [], name = '') {
+  const target = normalizeStageName(name);
+  return (Array.isArray(stages) ? stages : []).findIndex(stage => normalizeStageName(stage?.name) === target);
+}
+
+function normalizeDurationMs(value, startedAt = '', finishedAt = '', fallback = 0) {
+  const explicit = Number(value || 0);
+  if (Number.isFinite(explicit) && explicit > 0) return Math.round(explicit);
+  const start = Date.parse(startedAt || '');
+  const finish = Date.parse(finishedAt || '');
+  if (start && finish && finish >= start) return finish - start;
+  const previous = Number(fallback || 0);
+  return Number.isFinite(previous) && previous > 0 ? Math.round(previous) : 0;
 }
 
 function isGenericUsageTarget(value = '') {

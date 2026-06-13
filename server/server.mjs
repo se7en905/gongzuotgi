@@ -63,6 +63,9 @@ import {
   appendRunLog,
   ensureRunLogPath,
   claimNextAgentRun,
+  claimRecoverableAgentRun,
+  applyAgentRunEvents,
+  listMissingRunIds,
   listCustomWorkflows,
   listAgentWorkers,
   listOperationLogs,
@@ -1428,6 +1431,50 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/agent-runs/recover') {
+    requirePermission(currentUser, 'api.agentRuns.claim');
+    const body = await readBody(req).catch(() => ({}));
+    const workerInput = {
+      ...body,
+      userId: currentUser.id,
+      userName: currentUser.displayName || currentUser.username,
+      status: 'online',
+      lastHeartbeatAt: new Date().toISOString()
+    };
+    const capabilities = Array.isArray(workerInput.capabilities)
+      ? workerInput.capabilities
+      : String(workerInput.capabilities || '').split(/\n|,|，/).map(item => item.trim()).filter(Boolean);
+    const run = await claimRecoverableAgentRun({
+      userId: currentUser.id,
+      deviceId: workerInput.deviceId,
+      runId: workerInput.runId,
+      capabilities,
+      allowedProjectIds: currentUser.projectIds || [],
+      canAccessAllProjects: currentUser.role === 'admin'
+    });
+    if (!run) {
+      sendJson(res, 200, { run: null });
+      return;
+    }
+    const worker = await upsertAgentWorker(workerInput);
+    broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, module: 'agent-worker' });
+    await writeOperationLog(req, {
+      user: currentUser,
+      module: 'run',
+      action: 'RECOVER_DIRECT_SKILL_RUN',
+      actionName: '恢复本机直接执行',
+      targetType: 'run',
+      targetId: run.id,
+      targetName: run.title,
+      after: run,
+      metadata: { deviceId: worker.deviceId, capabilities: worker.capabilities },
+      description: `${currentUser.displayName || currentUser.username} 的本机 Worker 恢复直接执行「${run.title}」`
+    });
+    broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, module: 'agent-run-recover' });
+    sendJson(res, 200, { run, worker });
+    return;
+  }
+
   const agentRunLog = url.pathname.match(/^\/api\/agent-runs\/([^/]+)\/log$/);
   if (req.method === 'POST' && agentRunLog) {
     const run = await requireRun(agentRunLog[1]);
@@ -1469,6 +1516,26 @@ async function handleApi(req, res, url) {
     });
     broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, module: 'agent-run-status' });
     sendJson(res, 200, updated);
+    return;
+  }
+
+  const agentRunSync = url.pathname.match(/^\/api\/agent-runs\/([^/]+)\/sync$/);
+  if (req.method === 'POST' && agentRunSync) {
+    const run = await requireRun(agentRunSync[1]);
+    requireProjectAccess(currentUser, run.projectId, 'developer', 'api.agentRuns.status');
+    ensureWorkerCanUpdateRun(currentUser, run);
+    const body = await readBody(req).catch(() => ({}));
+    const updated = await applyAgentRunEvents(run.id, body);
+    broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, module: 'agent-run-offline-sync' });
+    sendJson(res, 200, updated || run);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/agent-runs/missing') {
+    requireAnyPermission(currentUser, ['api.agentRuns.claim', 'api.agentRuns.status']);
+    const body = await readBody(req).catch(() => ({}));
+    const runIds = Array.isArray(body.runIds) ? body.runIds : [];
+    sendJson(res, 200, { missingRunIds: await listMissingRunIds(runIds) });
     return;
   }
 

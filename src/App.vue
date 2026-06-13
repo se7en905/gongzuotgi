@@ -18731,15 +18731,15 @@ export default {
       const nextStart = this.nextStageStartAt(stages, index, lowerBound);
       const clampToNextStart = value => (nextStart && value > nextStart ? nextStart : value);
       const directEnd = Date.parse(stage.finishedAt || '');
+      if (Number(stage.durationMs) > 0) {
+        const durationStart = stageStart || runStart;
+        if (durationStart) return clampToNextStart(durationStart + Number(stage.durationMs));
+      }
       if (directEnd) {
         if (runEnd && index === stages.length - 1 && runEnd > directEnd) return runEnd;
         return clampToNextStart(directEnd);
       }
       if (/running|in_progress/i.test(stage.status || '') && this.isRunInProgress(run)) return this.nowTick;
-      if (Number(stage.durationMs) > 0) {
-        const durationStart = stageStart || runStart;
-        if (durationStart) return clampToNextStart(durationStart + Number(stage.durationMs));
-      }
       if (nextStart) return nextStart;
       if (runEnd && index === stages.length - 1) return runEnd;
       return 0;
@@ -19516,6 +19516,7 @@ export default {
     },
 
     runDurationMs(run) {
+      if (!this.isRunInProgress(run) && Number(run?.durationMs || 0) > 0) return Number(run.durationMs);
       const start = Date.parse(run.startedAt || run.createdAt || '');
       const end = this.isRunInProgress(run) ? this.nowTick : Date.parse(run.finishedAt || run.completedAt || run.updatedAt || '');
       if (!start || !end || end < start) return 0;
