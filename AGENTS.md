@@ -201,7 +201,10 @@
   - 套用模板创建执行时，执行记录应保留所选模板的 `customWorkflowId` 和 `customWorkflowName`；如果套用后负责人手动删除或补充步骤，应清除本次执行和模板的绑定，避免误显示仍完全使用原模板。
   - 自定义流程模板和执行记录都必须按业务删除入口清理；平台不得因为轮询、日志、临时事件或模板套用无意义复制长期数据，避免工作台数据暴增卡顿。
   - 美术执行台里的普通执行记录，负责人或组员点击 `发起执行`、`继续执行`、`重新执行` 时，必须排队给当前点击账号的本机 Worker 领取执行；不得再由工作台服务器或负责人 Mac 直接启动 Codex 跑普通执行。
+  - 美术执行台启动普通执行的核心目的，是避免组员操作时消耗负责人 Mac 上的 Codex key、token、Figma OAuth 或 Figma MCP 授权；平台不得回退到负责人 Mac、本机服务器或平台侧 Codex/Figma 凭据执行。
+  - 谁点击启动，就必须使用谁自己电脑上的 Codex CLI 登录态、Codex key/token、Figma MCP、Figma OAuth 和 Figma 文件权限；执行失败也只能提示该操作人补齐本机授权，不得自动改用负责人 Mac 的授权兜底。
   - 普通执行排队给本机 Worker 前，必须确认当前账号有在线且 Codex/Figma MCP 都就绪的 Worker；未就绪时必须明确提示先启动本机 Worker，不得让任务静默进入无人领取的排队状态。
+  - 美术执行台里创建任务并点击启动时，如果当前账号 Worker 在线、Codex 就绪、Figma MCP 就绪，必须视为可以进入真实本机执行闭环；任务应由该账号本机 Worker 领取、运行 Codex、操作 Figma 链接并回传日志、状态、耗时和阻塞原因。
   - 本机 Worker 领取普通美术执行时必须按 `queuedForUserId`、`assignedToUserId` 或 `ownerUserId` 限制账号，其他账号 Worker 不得抢领；同一账号多台电脑同时开 Worker 时，只能按账号绑定由先轮询到的本机 Worker 领取。
   - 普通执行进入本机 Worker 队列后，状态必须显示为 `等待本机 Worker`、`已领取` 或 `本机执行中` 等负责人可判断的口径，并在右侧展示执行人本机状态、领取设备、最近心跳和 Codex/Figma MCP 就绪情况。
   - 本机 Worker 执行普通美术任务时，必须优先使用平台下发的任务资料、阶段列表、Figma 链接和 Skill/md 快照；不得要求组员电脑必须存在负责人 Mac 上的项目目录。若本机无法读取必要路径或 Figma 权限不足，必须回传阻塞原因。
@@ -478,6 +481,8 @@
   - 组员本机 Worker 必须使用执行人自己的 Codex CLI、Figma MCP、Figma OAuth 和 Figma 文件权限。
   - 组员电脑默认没有负责人本机的项目代码，Worker 启动命令不得依赖负责人本机路径、相对 `scripts/` 路径或整套项目代码。
   - Worker 启动命令必须通过工作台服务 URL 下载 Worker 脚本到组员自己的用户目录；默认目录为 Windows `%USERPROFILE%\ArtDirectWorker`、macOS `$HOME/ArtDirectWorker`。
+  - 工作台服务更新后，组员重新复制并执行 `本机执行状态` 页面里的最新 `复制手动启动` 或 `复制开机自启` 命令，必须重新下载最新 `art-direct-worker.mjs`；不得继续沿用旧 Worker 脚本。
+  - 组员推荐重新执行 `复制开机自启` 命令来更新 Worker；该流程必须覆盖同账号旧自启配置并启动最新 Worker。仅使用 `复制手动启动` 时，必须先关闭旧 Worker 终端或旧 worker 进程，避免同账号同电脑同时跑新旧两个 Worker。
   - Windows `复制开机自启` 必须使用当前用户启动项安装 Worker，不得依赖管理员权限或必须注册系统计划任务；普通组员 PowerShell 可直接执行，重复安装只覆盖同一个启动项。
   - Windows `复制开机自启` 重复安装时必须停止同一 Worker 目录下的旧进程，并清理当前用户启动项里旧的 `ArtDirectWorker-*` 快捷方式，只保留本次账号对应的启动项；不得因为检测到旧进程就继续沿用旧账号、旧密码或旧工作台地址。
   - macOS `复制开机自启` 使用当前用户 LaunchAgent；开机自启安装只需要操作一次，后续电脑登录系统自动启动 Worker，除非脚本、账号或工作台地址需要更新。
