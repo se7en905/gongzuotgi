@@ -57,6 +57,22 @@
         <ElInput v-model="app.runForm.figmaLinks" type="textarea" :rows="3" placeholder="粘贴要执行到的具体 Frame、分区或整页 Figma 链接；每行一个。" />
         <div class="field-hint">这里是本次执行的真实目标。Codex 会按该链接解析文件、页面或 node-id，并把执行结果落到对应位置或记录阻塞原因。</div>
       </ElFormItem>
+      <ElFormItem v-if="app.isCustomWorkflowRun" label="使用已保存模板">
+        <ElSelect v-model="app.runForm.customWorkflowId" placeholder="可选择已保存模板，也可以不选直接临时自定义" clearable filterable>
+          <ElOption
+            v-for="workflow in app.runnableCustomWorkflows"
+            :key="workflow.id"
+            :label="workflow.name"
+            :value="workflow.id"
+          >
+            <div class="skill-option-row">
+              <strong>{{ workflow.name }}</strong>
+              <span>{{ app.customWorkflowSummary(workflow) }}</span>
+            </div>
+          </ElOption>
+        </ElSelect>
+        <div class="field-hint">选择模板后，会自动把模板里的 md / Skill 按保存顺序填入下方流程；仍可继续删除或补充本次执行步骤。</div>
+      </ElFormItem>
       <template v-if="!app.isBugFixRun">
         <ElFormItem :label="app.isCustomWorkflowRun ? '按顺序选择多个 md / Skill' : '从 Git 仓库选择 md / Skill'" class="is-required-field">
           <ElSelect

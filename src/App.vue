@@ -719,6 +719,7 @@ export default {
       ],
       projects: [],
       customWorkflows: [],
+      applyingRunWorkflowTemplate: false,
       businessTasks: readWorkbenchDisplayCacheArray('businessTasks'),
       bugs: readWorkbenchDisplayCacheArray('bugs'),
       aiFlowRecords: [],
@@ -1560,7 +1561,8 @@ export default {
 
     selectedRunActionLabel() {
       if (this.isDirectSkillRun(this.selectedRun)) return this.selectedRun?.status === 'pending' ? '等待 Worker 自动领取' : '本机执行';
-      if (this.isRunInProgress(this.selectedRun)) return '执行中';
+      if (this.isRunWaitingForLocalWorker(this.selectedRun)) return '等待本机 Worker';
+      if (this.isRunInProgress(this.selectedRun)) return this.isLocalWorkerRun(this.selectedRun) ? '本机执行中' : '执行中';
       if (this.canResumeRun(this.selectedRun)) return '继续执行';
       return this.hasRunExecuted(this.selectedRun) ? '再次执行' : '发起执行';
     },
@@ -1610,7 +1612,8 @@ export default {
     },
 
     currentProjectExecutionMaterialOptions() {
-      const scan = this.scans[this.runForm.projectId] || null;
+      const projectId = this.runForm.projectId || this.selectedProjectId || this.projects[0]?.id || '';
+      const scan = this.scans[projectId] || null;
       const skills = Array.isArray(scan?.skills) ? scan.skills : [];
       const rows = skills
         .map(skill => {
@@ -1658,7 +1661,7 @@ export default {
     },
 
     runnableCustomWorkflows() {
-      return this.customWorkflows.filter(workflow => !workflow.projectId || !this.runForm.projectId || workflow.projectId === this.runForm.projectId);
+      return this.customWorkflows.filter(workflow => workflow?.id);
     },
 
     selectedCustomWorkflow() {
@@ -4478,6 +4481,31 @@ export default {
       const hints = this.normalizedRunMaterialHints();
       if (value === 'single-skill' && hints.length > 1) {
         this.runForm.selectedMaterialHints = hints.slice(0, 1);
+      }
+      if (value !== 'custom-workflow') {
+        this.runForm.customWorkflowId = '';
+        this.runForm.customWorkflowName = '';
+      }
+    },
+
+    'runForm.customWorkflowId'(value) {
+      if (!this.isCustomWorkflowRun) return;
+      const workflow = this.customWorkflows.find(item => item.id === value);
+      if (!workflow) {
+        this.runForm.customWorkflowName = '';
+        return;
+      }
+      const hints = this.materialHintsFromCustomWorkflow(workflow);
+      this.runForm.customWorkflowName = workflow.name || '';
+      if (hints.length) {
+        this.applyingRunWorkflowTemplate = true;
+        this.runForm.selectedMaterialHints = hints;
+        this.$nextTick(() => {
+          this.applyingRunWorkflowTemplate = false;
+        });
+      }
+      if (workflow.description && !String(this.runForm.requirement || '').trim()) {
+        this.runForm.requirement = workflow.description;
       }
     },
 
@@ -17132,6 +17160,9 @@ export default {
       const customStages = this.isCustomWorkflowRun
         ? materialHints.map((value, index) => this.runMaterialStageFromValue(value, index))
         : [];
+      const selectedTemplate = this.isCustomWorkflowRun && this.runForm.customWorkflowId
+        ? this.customWorkflows.find(item => item.id === this.runForm.customWorkflowId)
+        : null;
       const payload = {
         ...this.runForm,
         projectId,
@@ -17142,8 +17173,8 @@ export default {
         primarySkillPath: this.isBugFixRun ? this.runForm.primarySkillPath || this.runForm.stage : primaryMaterial,
         selectedMaterialHints: materialHints,
         showdocHints: materialHints.join('\n'),
-        customWorkflowId: this.isCustomWorkflowRun ? '' : this.runForm.customWorkflowId,
-        customWorkflowName: this.isCustomWorkflowRun ? generatedTitle : this.runForm.customWorkflowName,
+        customWorkflowId: this.isCustomWorkflowRun ? (selectedTemplate?.id || '') : this.runForm.customWorkflowId,
+        customWorkflowName: this.isCustomWorkflowRun ? (selectedTemplate?.name || generatedTitle) : this.runForm.customWorkflowName,
         customStages,
         sourceType: this.runForm.taskId
           ? 'task-center'
@@ -17324,11 +17355,19 @@ export default {
     },
 
     isRunInProgress(run = null) {
-      return /running|in_progress/i.test(String(run?.status || ''));
+      return /running|in_progress|claimed/i.test(String(run?.status || ''));
+    },
+
+    isRunWaitingForLocalWorker(run = null) {
+      return Boolean(this.isLocalWorkerRun(run) && /queued/i.test(String(run?.status || '')));
     },
 
     isDirectSkillRun(run = null) {
       return run?.sourceType === 'direct-skill' || run?.executionMode === 'direct-skill';
+    },
+
+    isLocalWorkerRun(run = null) {
+      return Boolean(run && (this.isDirectSkillRun(run) || run.executionHost === 'local-worker' || run.workerExecution === true));
     },
 
     isSingleSkillWorkflowRun(run = null) {
@@ -17399,6 +17438,7 @@ export default {
 
     runFlowHelperTitle(run = null) {
       if (!run) return '选择执行记录 → 查看右侧进度和结果';
+      if (this.isLocalWorkerRun(run) && !this.isDirectSkillRun(run)) return '选择执行记录 → 本机 Worker 执行 → 看结果 → 进入 AI档案';
       if (this.isDirectSkillRun(run)) return '选择直接执行记录 → 看 Worker 状态 → 看执行结果 → 进入 AI档案';
       if (this.isSingleSkillWorkflowRun(run)) return '选择单技能记录 → 看执行步骤 → 看结果明细';
       return '选择执行记录 → 启动 / 查看进度 → 看任务链路 → 到产物列表看明细';
@@ -17406,6 +17446,9 @@ export default {
 
     runFlowHelperDescription(run = null) {
       if (!run) return '左侧选择一条执行记录后，右侧会按执行类型展示对应内容。';
+      if (this.isLocalWorkerRun(run) && !this.isDirectSkillRun(run)) {
+        return '这条执行由当前操作人本机 Worker 领取，使用操作人本机 Codex、Figma MCP 和 Figma 授权，并把日志和结果回传到当前记录。';
+      }
       if (this.isDirectSkillRun(run)) {
         return '引用 Skill/md 的直接执行只展示执行对象、执行人本机状态、阶段进度和档案入口，不展示普通任务的关键动作、任务链路和继续对话。';
       }
@@ -17435,10 +17478,19 @@ export default {
     directSkillWorkerForRun(run = null) {
       if (!run) return null;
       const claimedDevice = String(run.claimedByDeviceId || '').trim();
-      const assignee = String(run.assignedToUserId || run.ownerUserId || '').trim();
+      const assignee = String(run.queuedForUserId || run.assignedToUserId || run.ownerUserId || '').trim();
       return (claimedDevice ? this.agentWorkersByDeviceId.get(claimedDevice) : null)
         || (assignee ? this.agentWorkersByUserId.get(assignee) : null)
         || null;
+    },
+
+    currentUserReadyWorker() {
+      const currentUserId = String(this.currentUser?.id || '').trim();
+      if (!currentUserId) return null;
+      const worker = this.agentWorkersByUserId.get(currentUserId) || null;
+      if (!worker || !this.directSkillWorkerOnline(worker)) return null;
+      if (worker.codexReady !== true || worker.figmaMcpReady !== true) return null;
+      return worker;
     },
 
     directSkillWorkerForUser(user = null) {
@@ -17578,21 +17630,21 @@ export default {
     },
 
     isDirectSkillClaimedRun(run = null) {
-      return Boolean(this.isDirectSkillRun(run) && (run?.claimedAt || run?.startedAt || run?.claimedByDeviceId));
+      return Boolean(this.isLocalWorkerRun(run) && (run?.claimedAt || run?.startedAt || run?.claimedByDeviceId));
     },
 
     isDirectSkillFailedRun(run = null) {
-      return Boolean(this.isDirectSkillRun(run) && /failed|error/i.test(String(run?.status || run?.workerStatus || '')));
+      return Boolean(this.isLocalWorkerRun(run) && /failed|error/i.test(String(run?.status || run?.workerStatus || '')));
     },
 
     hasWorkerDurationEvidence(run = null) {
-      if (!this.isDirectSkillRun(run)) return false;
+      if (!this.isLocalWorkerRun(run)) return false;
       if (Number(run?.durationMs || 0) > 0) return true;
       return Array.isArray(run?.stages) && run.stages.some(stage => Number(stage?.durationMs || 0) > 0);
     },
 
     directSkillRunSyncBadge(run = null) {
-      if (!this.isDirectSkillRun(run)) return { label: '', detail: '', tone: 'muted' };
+      if (!this.isLocalWorkerRun(run)) return { label: '', detail: '', tone: 'muted' };
       const status = String(run?.status || run?.workerStatus || '').toLowerCase();
       const worker = this.directSkillWorkerForRun(run);
       const online = this.directSkillWorkerOnline(worker);
@@ -17923,6 +17975,10 @@ export default {
     updateRunMaterialSelection(value) {
       const hints = this.normalizedRunMaterialHints(value);
       this.runForm.selectedMaterialHints = this.isCustomWorkflowRun ? hints : hints.slice(0, 1);
+      if (this.isCustomWorkflowRun && !this.applyingRunWorkflowTemplate) {
+        this.runForm.customWorkflowId = '';
+        this.runForm.customWorkflowName = '';
+      }
     },
 
     removeRunMaterialSelection(index) {
@@ -17930,6 +17986,10 @@ export default {
       if (index < 0 || index >= hints.length) return;
       hints.splice(index, 1);
       this.runForm.selectedMaterialHints = hints;
+      if (this.isCustomWorkflowRun && !this.applyingRunWorkflowTemplate) {
+        this.runForm.customWorkflowId = '';
+        this.runForm.customWorkflowName = '';
+      }
     },
 
     materialOptionForValue(value = '') {
@@ -17962,6 +18022,18 @@ export default {
         description: key && key !== name ? `按顺序执行 ${key}` : '',
         doneCriteria: '完整执行该 md / Skill，并输出阶段结论。'
       };
+    },
+
+    materialHintsFromCustomWorkflow(workflow = {}) {
+      return this.normalizedRunMaterialHints((workflow.stages || []).map(stage => {
+        const candidates = [
+          stage.skillId,
+          stage.artifactDir,
+          stage.id,
+          stage.name
+        ];
+        return candidates.map(value => String(value || '').trim()).find(Boolean) || '';
+      }));
     },
 
     runMaterialTitle(mode = this.runForm.executionMode, values = this.normalizedRunMaterialHints()) {
@@ -18792,10 +18864,15 @@ export default {
       return status || '待判定';
     },
 
+    runDisplayStatusLabel(run = null) {
+      if (this.isLocalWorkerRun(run)) return this.directSkillRunStatusLabel(run);
+      return this.runStatusLabel(run?.status);
+    },
+
     directSkillRunStatusLabel(run = null) {
       if (!run) return '待判定';
       const value = String(run.status || '').toLowerCase();
-      if (/pending|created|queued/.test(value)) return '待领取';
+      if (/pending|created|queued/.test(value)) return '等待本机 Worker';
       if (/claimed/.test(value)) return '已领取';
       if (/running|in_progress/.test(value)) return '本机执行中';
       if (/failed|error/.test(value)) return '本机执行失败';
@@ -19869,6 +19946,10 @@ export default {
         ElMessage.info('当前任务正在执行中');
         return;
       }
+      if (this.isRunWaitingForLocalWorker(this.selectedRun)) {
+        ElMessage.info('当前任务已排队，等待本机 Worker 领取');
+        return;
+      }
       const mode = this.canResumeRun(this.selectedRun) ? 'resume' : this.hasRunExecuted(this.selectedRun) ? 'restart' : 'start';
       return this.confirmStartRun(mode);
     },
@@ -19877,6 +19958,10 @@ export default {
       if (!this.selectedRun) return;
       if (this.isRunInProgress(this.selectedRun)) {
         ElMessage.info('当前任务正在执行中');
+        return;
+      }
+      if (this.isRunWaitingForLocalWorker(this.selectedRun)) {
+        ElMessage.info('当前任务已排队，等待本机 Worker 领取');
         return;
       }
       return this.confirmStartRun('restart');
@@ -19889,6 +19974,15 @@ export default {
         ElMessage.info('当前任务正在执行中');
         return;
       }
+      if (this.isRunWaitingForLocalWorker(this.selectedRun)) {
+        this.startConfirm.visible = false;
+        ElMessage.info('当前任务已排队，等待本机 Worker 领取');
+        return;
+      }
+      if (!this.currentUserReadyWorker()) {
+        ElMessage.warning('当前账号本机 Worker 未在线或 Codex/Figma MCP 未就绪，请先在本机执行状态页启动本机 Worker。');
+        return;
+      }
       if (this.startConfirm.submitting) return;
       this.startConfirm.submitting = true;
       const sourceRun = this.selectedRun;
@@ -19896,14 +19990,19 @@ export default {
         this.startConfirm.visible = false;
         const runId = sourceRun.id;
         this.patchRun(runId, {
-          status: 'running',
+          status: 'queued',
+          workerStatus: 'queued',
+          executionHost: 'local-worker',
+          workerExecution: true,
+          queuedForUserId: this.currentUser?.id || '',
+          queuedForName: this.currentUser?.displayName || this.currentUser?.username || '',
           resultSummary: null,
           changeSummary: null,
           exitCode: null,
           blocker: null,
           cancelledBy: ''
         });
-        this.logText = mode === 'resume' ? '继续执行已启动，保留旧产物并等待新日志输出...' : '执行已启动，等待日志输出...';
+        this.logText = mode === 'resume' ? '继续执行已排队，等待当前账号本机 Worker 领取...' : '执行已排队，等待当前账号本机 Worker 领取...';
         this.runLogCollapse = [];
         this.runLogDrawerVisible = false;
         await this.api(`/api/runs/${encodeURIComponent(runId)}/start`, {

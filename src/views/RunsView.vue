@@ -13,7 +13,7 @@
           <p>选择一条执行记录后，右侧查看当前任务从需求到产物的推进状态。</p>
         </div>
         <div class="run-list-header-actions">
-          <ElButton plain @click="scrollToTemplateManager">模板管理</ElButton>
+          <ElButton plain @click="openTemplateManagerDialog">模板管理</ElButton>
           <ElButton v-if="app.can('run.create')" type="primary" @click="app.openRunCreateDrawer">新建美术执行</ElButton>
         </div>
       </div>
@@ -23,7 +23,7 @@
         <div class="run-item-head">
           <a v-if="app.runTaskUrl(run)" :href="app.runTaskUrl(run)" target="_blank" rel="noopener noreferrer" class="task-title-link" @click.stop>{{ app.runGroupTitle(run) }}</a>
           <strong v-else>{{ app.runGroupTitle(run) }}</strong>
-          <span class="run-status-tag">{{ app.isDirectSkillRun(run) ? app.directSkillRunStatusLabel(run) : app.runStatusLabel(run.status) }}</span>
+          <span class="run-status-tag">{{ app.runDisplayStatusLabel(run) }}</span>
         </div>
         <div class="run-item-meta">
           <span>第 {{ app.runAttemptNumber(run) }} 次执行</span>
@@ -45,36 +45,107 @@
       </button>
       <div v-if="!app.runs.length" class="empty-block">还没有美术执行记录，点击“新建美术执行”开始。</div>
     </div>
-    <div v-if="showTemplateManager || app.customWorkflows.length" ref="runTemplateManager" class="run-template-manager">
-      <div class="run-template-manager-head">
-        <div>
-          <strong>已保存自定义流程</strong>
-          <span>{{ app.customWorkflows.length ? '新建执行已改为本次临时选择；这里仅用于清理旧模板。' : '当前项目还没有已保存的自定义流程模板。' }}</span>
-        </div>
-      </div>
-      <div v-if="app.customWorkflows.length" class="run-template-list">
-        <article v-for="workflow in app.customWorkflows" :key="workflow.id" class="run-template-item">
-          <div>
-            <strong>{{ workflow.name }}</strong>
-            <span>{{ app.customWorkflowSummary(workflow) }}</span>
-          </div>
-          <ElButton
-            v-if="app.can('workflow.manage') || app.can('api.workflow.manage')"
-            size="small"
-            type="danger"
-            plain
-            @click.stop="app.deleteCustomWorkflowTemplate(workflow)"
-          >
-            删除
-          </ElButton>
-        </article>
-      </div>
-      <div v-else class="run-template-empty">
-        <strong>暂无已保存自定义流程</strong>
-        <span>现在新建执行里的“自定义流程”是本次临时按顺序选择多个 md / Skill，不会自动保存为模板。</span>
-      </div>
-    </div>
   </ElCard>
+
+  <ElDialog
+    v-model="templateManagerVisible"
+    width="820px"
+    title="自定义流程模板管理"
+    class="app-dialog run-template-dialog"
+    align-center
+  >
+    <div class="run-template-dialog-body">
+      <section class="run-template-create-panel">
+        <div class="run-template-section-head">
+          <div>
+            <strong>新建模板</strong>
+            <span>把常用的多个 md / Skill 顺序保存下来，后续新建执行时可以直接套用。</span>
+          </div>
+        </div>
+        <ElForm :model="templateForm" label-position="top" @submit.prevent>
+          <ElFormItem label="模板名称" class="is-required-field">
+            <ElInput v-model="templateForm.name" placeholder="例如：Figma 收尾标准流程" />
+          </ElFormItem>
+          <ElFormItem label="模板说明">
+            <ElInput v-model="templateForm.description" type="textarea" :rows="3" placeholder="说明这个模板适合什么场景。" />
+          </ElFormItem>
+          <ElFormItem label="按顺序选择 md / Skill" class="is-required-field">
+            <ElSelect
+              v-model="templateForm.materialHints"
+              multiple
+              filterable
+              clearable
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="按执行顺序选择多个 md、SKILL.md 或技能"
+            >
+              <ElOption
+                v-for="item in templateMaterialOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              >
+                <div class="skill-option-row">
+                  <strong>{{ item.label }}</strong>
+                  <span>{{ item.subtitle }}</span>
+                </div>
+              </ElOption>
+            </ElSelect>
+            <div v-if="normalizedTemplateMaterialHints.length" class="run-template-stage-preview">
+              <article
+                v-for="(value, index) in normalizedTemplateMaterialHints"
+                :key="`${value}-${index}`"
+              >
+                <span>{{ String(index + 1).padStart(2, '0') }}</span>
+                <strong>{{ templateMaterialDisplayName(value) }}</strong>
+                <button type="button" @click.stop.prevent="removeTemplateMaterial(index)">删除</button>
+              </article>
+            </div>
+          </ElFormItem>
+          <div class="run-template-create-actions">
+            <ElButton @click="resetTemplateForm">清空</ElButton>
+            <ElButton
+              v-if="app.can('workflow.manage') || app.can('api.workflow.manage')"
+              type="primary"
+              :loading="templateSubmitting"
+              @click="saveTemplateFromDialog"
+            >
+              保存模板
+            </ElButton>
+          </div>
+        </ElForm>
+      </section>
+      <section class="run-template-saved-panel">
+        <div class="run-template-section-head">
+          <div>
+            <strong>已保存模板</strong>
+            <span>新增模板会出现在新建美术执行弹窗的“使用已保存模板”下拉里。</span>
+          </div>
+        </div>
+        <div v-if="app.customWorkflows.length" class="run-template-list">
+          <article v-for="workflow in app.customWorkflows" :key="workflow.id" class="run-template-item">
+            <div>
+              <strong>{{ workflow.name }}</strong>
+              <span>{{ app.customWorkflowSummary(workflow) }}</span>
+            </div>
+            <ElButton
+              v-if="app.can('workflow.manage') || app.can('api.workflow.manage')"
+              size="small"
+              type="danger"
+              plain
+              @click.stop="app.deleteCustomWorkflowTemplate(workflow)"
+            >
+              删除
+            </ElButton>
+          </article>
+        </div>
+        <div v-else class="run-template-empty">
+          <strong>暂无已保存自定义流程</strong>
+          <span>保存左侧模板后，就能在新建美术执行里选择使用。</span>
+        </div>
+      </section>
+    </div>
+  </ElDialog>
 
   <ElCard shadow="never" class="panel-card run-detail">
     <template #header>
@@ -84,8 +155,8 @@
           <p>{{ app.runDetailDescription(app.selectedRun) }}</p>
         </div>
         <div class="run-actions">
-          <ElButton v-if="app.can('run.codex.execute') && !app.isDirectSkillRun(app.selectedRun)" type="primary" @click="app.startSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun)" :loading="app.isRunInProgress(app.selectedRun)">{{ app.selectedRunActionLabel }}</ElButton>
-          <ElButton v-if="app.can('run.codex.execute') && app.canRestartSelectedRun" plain @click="app.restartSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun)">重新执行</ElButton>
+          <ElButton v-if="app.can('run.codex.execute') && !app.isDirectSkillRun(app.selectedRun)" type="primary" @click="app.startSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun) || app.isRunWaitingForLocalWorker(app.selectedRun)" :loading="app.isRunInProgress(app.selectedRun)">{{ app.selectedRunActionLabel }}</ElButton>
+          <ElButton v-if="app.can('run.codex.execute') && app.canRestartSelectedRun" plain @click="app.restartSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun) || app.isRunWaitingForLocalWorker(app.selectedRun)">重新执行</ElButton>
           <ElButton v-if="app.can('run.codex.execute')" @click="app.cancelSelectedRun" :disabled="!app.selectedRun || !app.isRunInProgress(app.selectedRun)">中断</ElButton>
           <ElButton v-if="app.can('run.delete')" type="danger" plain @click="app.deleteSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun)">删除</ElButton>
           <ElTooltip content="原始执行日志" placement="bottom">
@@ -136,18 +207,18 @@
         <strong>{{ app.focusedRunExecutionModeText(app.selectedRun) }}</strong>
       </div>
     </section>
-    <section v-if="app.selectedRun && app.isDirectSkillRun(app.selectedRun)" class="run-worker-panel">
+    <section v-if="app.selectedRun && app.isLocalWorkerRun(app.selectedRun)" class="run-worker-panel">
       <div class="run-section-head">
         <div>
           <h4>执行人本机状态</h4>
-          <p>直接执行由执行人本机 Worker 领取，使用执行人自己的 Codex、Figma MCP 和 Figma 账号授权。</p>
+          <p>本机执行由当前操作人电脑上的 Worker 领取，使用操作人自己的 Codex、Figma MCP 和 Figma 账号授权。</p>
         </div>
         <ElButton size="small" :loading="app.loading.agentWorkers" @click="app.refreshAgentWorkers">刷新状态</ElButton>
       </div>
       <div class="run-worker-grid">
         <div>
           <span>执行人</span>
-          <strong>{{ app.selectedRun.assignedToName || app.selectedRun.developer || '-' }}</strong>
+          <strong>{{ app.selectedRun.queuedForName || app.selectedRun.assignedToName || app.selectedRun.developer || '-' }}</strong>
         </div>
         <div>
           <span>领取设备</span>
@@ -447,6 +518,8 @@
 </template>
 
 <script>
+import { ElMessage } from 'element-plus';
+
 const RUN_CODEX_FLOATING_POSITION_KEY = 'awp-run-codex-floating-window-position-v2';
 const RUN_CODEX_FLOATING_SIZE = 54;
 const RUN_CODEX_FLOATING_PADDING = 12;
@@ -475,10 +548,22 @@ export default {
         originX: 0,
         originY: 0
       },
-      showTemplateManager: false
+      templateManagerVisible: false,
+      templateSubmitting: false,
+      templateForm: {
+        name: '',
+        description: '',
+        materialHints: []
+      }
     };
   },
   computed: {
+    templateMaterialOptions() {
+      return this.app.currentProjectExecutionMaterialOptions || [];
+    },
+    normalizedTemplateMaterialHints() {
+      return this.normalizeTemplateMaterialHints(this.templateForm.materialHints);
+    },
     logScrollSignal() {
       return [
         this.app.selectedRunId || '',
@@ -640,14 +725,75 @@ export default {
         });
       });
     },
-    scrollToTemplateManager() {
-      this.showTemplateManager = true;
-      this.$nextTick(() => {
-        this.$refs.runTemplateManager?.scrollIntoView?.({
-          behavior: 'smooth',
-          block: 'nearest'
+    emptyTemplateForm() {
+      return {
+        name: '',
+        description: '',
+        materialHints: []
+      };
+    },
+    async openTemplateManagerDialog() {
+      this.templateManagerVisible = true;
+      if (!this.templateForm.name && !this.templateForm.materialHints.length) this.resetTemplateForm();
+      const projectId = this.app.selectedProjectId || this.app.runForm.projectId || this.app.projects[0]?.id || '';
+      if (projectId && !this.app.scans[projectId]) {
+        this.app.ensureRunProjectScanCache(projectId).catch(() => {});
+      }
+    },
+    resetTemplateForm() {
+      this.templateForm = this.emptyTemplateForm();
+    },
+    normalizeTemplateMaterialHints(value = this.templateForm.materialHints) {
+      const source = Array.isArray(value) ? value : [value];
+      const seen = new Set();
+      return source
+        .map(item => String(item || '').trim())
+        .filter(item => {
+          if (!item || seen.has(item)) return false;
+          seen.add(item);
+          return true;
         });
-      });
+    },
+    removeTemplateMaterial(index) {
+      const hints = this.normalizedTemplateMaterialHints;
+      if (index < 0 || index >= hints.length) return;
+      hints.splice(index, 1);
+      this.templateForm.materialHints = hints;
+    },
+    templateMaterialDisplayName(value = '') {
+      return this.app.runMaterialDisplayName(value);
+    },
+    async saveTemplateFromDialog() {
+      const name = String(this.templateForm.name || '').trim();
+      const materialHints = this.normalizedTemplateMaterialHints;
+      if (!name) {
+        ElMessage.warning('请填写模板名称');
+        return;
+      }
+      if (!materialHints.length) {
+        ElMessage.warning('请按顺序选择至少一个 md / Skill');
+        return;
+      }
+      this.templateSubmitting = true;
+      try {
+        const payload = {
+          name,
+          description: String(this.templateForm.description || '').trim(),
+          projectId: this.app.selectedProjectId || this.app.runForm.projectId || this.app.projects[0]?.id || '',
+          stages: materialHints.map((value, index) => this.app.runMaterialStageFromValue(value, index))
+        };
+        await this.app.api('/api/custom-workflows', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+        await this.app.refreshCustomWorkflows();
+        this.resetTemplateForm();
+        ElMessage.success('自定义流程模板已保存');
+      } catch (error) {
+        ElMessage.error(this.app.readApiError?.(error) || '自定义流程模板保存失败');
+      } finally {
+        this.templateSubmitting = false;
+      }
     }
   }
 };
@@ -702,101 +848,6 @@ export default {
     padding: 14px;
     max-height: calc(100vh - 260px);
     overflow: auto;
-  }
-
-  .run-template-manager {
-    display: grid;
-    gap: 10px;
-    margin: 0 14px 14px;
-    padding-top: 12px;
-    border-top: 1px solid var(--line);
-  }
-
-  .run-template-manager-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-
-    div {
-      display: grid;
-      gap: 4px;
-      min-width: 0;
-    }
-
-    strong {
-      color: var(--heading);
-      font-size: 13px;
-      font-weight: 900;
-    }
-
-    span {
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.45;
-    }
-  }
-
-  .run-template-list {
-    display: grid;
-    gap: 8px;
-  }
-
-  .run-template-empty {
-    display: grid;
-    gap: 5px;
-    padding: 12px;
-    border: 1px dashed var(--line);
-    border-radius: 8px;
-    background: var(--panel-tint);
-
-    strong {
-      color: var(--heading);
-      font-size: 13px;
-      font-weight: 850;
-    }
-
-    span {
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.55;
-    }
-  }
-
-  .run-template-item {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    background: var(--soft-card);
-
-    div {
-      display: grid;
-      gap: 4px;
-      min-width: 0;
-    }
-
-    strong,
-    span {
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    strong {
-      color: var(--heading);
-      font-size: 13px;
-      font-weight: 850;
-    }
-
-    span {
-      color: var(--muted);
-      font-size: 12px;
-    }
   }
 
   .run-item {
@@ -2964,6 +3015,180 @@ export default {
     height: 36px;
     font-size: 18px;
     font-weight: 900;
+  }
+}
+
+.run-template-dialog {
+  .run-template-dialog-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(260px, 0.95fr);
+    gap: 18px;
+  }
+
+  .run-template-create-panel,
+  .run-template-saved-panel {
+    display: grid;
+    align-content: start;
+    gap: 14px;
+    min-width: 0;
+  }
+
+  .run-template-section-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+
+    div {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    strong {
+      color: var(--heading);
+      font-size: 14px;
+      font-weight: 900;
+    }
+
+    span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+  }
+
+  .run-template-stage-preview {
+    display: grid;
+    gap: 8px;
+    width: 100%;
+    margin-top: 10px;
+
+    article {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--soft-card);
+    }
+
+    span {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 999px;
+      background: rgba(99, 102, 241, 0.1);
+      color: var(--primary);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    strong {
+      min-width: 0;
+      color: var(--heading);
+      font-size: 13px;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 58px;
+      height: 26px;
+      padding: 0 12px;
+      border: 1px solid rgba(220, 38, 38, 0.42);
+      border-radius: 999px;
+      background: #fff;
+      color: #dc2626;
+      font-size: 12px;
+      font-weight: 760;
+      cursor: pointer;
+    }
+  }
+
+  .run-template-create-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .run-template-list {
+    display: grid;
+    gap: 8px;
+    max-height: 430px;
+    overflow: auto;
+  }
+
+  .run-template-empty {
+    display: grid;
+    gap: 5px;
+    padding: 12px;
+    border: 1px dashed var(--line);
+    border-radius: 8px;
+    background: var(--panel-tint);
+
+    strong {
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+  }
+
+  .run-template-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--soft-card);
+
+    div {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    strong,
+    span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    strong {
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+  }
+}
+
+@media (max-width: 860px) {
+  .run-template-dialog {
+    .run-template-dialog-body {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 }
 

@@ -233,7 +233,7 @@ async function executeRun(run) {
   runState.finishedAt = '';
   runState.durationMs = 0;
   await writeRunState(run.id, runState);
-  console.log(`[worker] ${resume ? '恢复' : '领取'}直接执行：${run.title} (${run.id})`);
+  console.log(`[worker] ${resume ? '恢复' : '领取'}本机执行：${run.title} (${run.id})`);
   await enqueueRunEvent(run.id, {
     type: 'stage',
     phase: 'start',
@@ -250,7 +250,7 @@ async function executeRun(run) {
   });
 
   const prompt = buildPrompt(run);
-  const cwd = run.projectRoot || defaultProjectRoot;
+  const cwd = await resolveExecutionCwd(run);
   const cwdExists = await pathExists(cwd);
   if (!cwdExists) {
     await failRunBeforeCodex(run, `执行目录不存在：${cwd}`);
@@ -397,22 +397,36 @@ async function failRunBeforeCodex(run, reason) {
 }
 
 function buildPrompt(run = {}) {
+  const stages = Array.isArray(run.stages) ? run.stages.filter(stage => stage?.name || stage?.description || stage?.doneCriteria) : [];
+  const stageText = stages.length
+    ? stages.map((stage, index) => [
+      `${index + 1}. ${stage.name || stage.id || `阶段 ${index + 1}`}`,
+      stage.description ? `   - 说明：${stage.description}` : '',
+      stage.doneCriteria ? `   - 完成标准：${stage.doneCriteria}` : ''
+    ].filter(Boolean).join('\n')).join('\n')
+    : '- 平台未提供阶段列表，按本次执行要求完成。';
   return [
-    '# 美术工作台直接执行任务',
+    '# 美术工作台本机执行任务',
     '',
-    '你正在执行一个无多轮对话的直接执行任务。必须严格按输入操作，不扩展无关范围。',
+    '你正在执行一个由当前操作人电脑领取的美术执行台任务。必须严格按输入操作，不扩展无关范围。',
     '',
     '## 输入',
     '',
     `- runId: ${run.id}`,
     `- 标题: ${run.title}`,
+    `- 执行模式: ${run.workflow || run.executionMode || ''}`,
     `- 主执行 Skill / md: ${run.primarySkillPath || run.stage || ''}`,
     `- Figma 链接: ${run.figmaLinks || ''}`,
     `- 写入方式: ${run.figmaWriteMode || 'target-node'}`,
     `- 资料路径: ${run.materialPath || ''}`,
     `- 平台产物目录记录: ${run.artifactRoot || ''}`,
+    `- 排队给: ${run.queuedForName || run.assignedToName || run.developer || currentUser?.displayName || currentUser?.username || ''}`,
     '',
-    '## Skill / md 内容快照',
+    '## 执行步骤',
+    '',
+    stageText,
+    '',
+    '## 平台任务资料 / Skill / md 内容快照',
     '',
     run.primarySkillContent || '平台未提供 Skill / md 内容快照。若本机无法读取任务中的路径线索，必须停止并回传阻塞原因。',
     '',
@@ -422,11 +436,12 @@ function buildPrompt(run = {}) {
     '',
     '## 本机授权规则',
     '',
-    '- 必须使用当前组员本机 Codex 会话里的 Figma MCP。',
-    '- 必须使用当前组员自己的 Figma 授权和 Figma 文件权限。',
+    '- 必须使用当前操作人本机 Codex 会话里的 Figma MCP。',
+    '- 必须使用当前操作人自己的 Figma 授权和 Figma 文件权限。',
     '- 不得依赖负责人电脑、本机 figma-write-local 插件或平台服务器 Figma token。',
     '- 如果当前 Codex 工具列表缺少 Figma 写入工具，或者 Figma OAuth 失效，必须停止并说明阻塞原因。',
-    '- 必须优先使用上方 Skill / md 内容快照执行，不要求组员电脑存在负责人本机项目目录。',
+    '- 必须优先使用上方平台任务资料和 Skill / md 内容快照执行，不要求组员电脑存在负责人本机项目目录。',
+    '- 如果是自定义流程，必须按“执行步骤”从前到后逐个完整执行。',
     '- 只有 Figma 写入工具成功返回 createdNodeIds 或 mutatedNodeIds，才算写入完成。',
     '',
     '## 交付',
@@ -435,6 +450,20 @@ function buildPrompt(run = {}) {
     '- 报告必须包含：读取的 Skill/md、Figma 链接、写入节点、阻塞原因、人工复核建议。',
     '- 最终回答用中文简短总结结果。'
   ].join('\n');
+}
+
+async function resolveExecutionCwd(run = {}) {
+  const candidates = [
+    run.projectRoot,
+    process.env.ART_WORKER_PROJECT_ROOT,
+    defaultProjectRoot,
+    workerHome,
+    os.homedir()
+  ].map(value => String(value || '').trim()).filter(Boolean);
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) return candidate;
+  }
+  return defaultProjectRoot;
 }
 
 function workerPayload() {

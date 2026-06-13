@@ -86,6 +86,7 @@ import {
   recordUsageCountersForDirectSkillRun,
   recordUsageCountersForSkillValidation,
   recordUsageCountersForSkillAliases,
+  queueRunForLocalWorker,
   reconcileZentaoTaskSnapshot,
   upsertBugs,
   redactCodexConfig,
@@ -1417,14 +1418,14 @@ async function handleApi(req, res, url) {
     await writeOperationLog(req, {
       user: currentUser,
       module: 'run',
-      action: 'CLAIM_DIRECT_SKILL_RUN',
-      actionName: '本机领取直接执行',
+      action: run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill' ? 'CLAIM_DIRECT_SKILL_RUN' : 'CLAIM_LOCAL_WORKER_RUN',
+      actionName: run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill' ? '本机领取直接执行' : '本机领取美术执行',
       targetType: 'run',
       targetId: run.id,
       targetName: run.title,
       after: run,
       metadata: { deviceId: worker.deviceId, capabilities: worker.capabilities },
-      description: `${currentUser.displayName || currentUser.username} 的本机 Worker 领取直接执行「${run.title}」`
+      description: `${currentUser.displayName || currentUser.username} 的本机 Worker 领取${run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill' ? '直接执行' : '美术执行'}「${run.title}」`
     });
     broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, module: 'agent-run' });
     sendJson(res, 200, { run, worker });
@@ -1461,14 +1462,14 @@ async function handleApi(req, res, url) {
     await writeOperationLog(req, {
       user: currentUser,
       module: 'run',
-      action: 'RECOVER_DIRECT_SKILL_RUN',
-      actionName: '恢复本机直接执行',
+      action: run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill' ? 'RECOVER_DIRECT_SKILL_RUN' : 'RECOVER_LOCAL_WORKER_RUN',
+      actionName: run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill' ? '恢复本机直接执行' : '恢复本机美术执行',
       targetType: 'run',
       targetId: run.id,
       targetName: run.title,
       after: run,
       metadata: { deviceId: worker.deviceId, capabilities: worker.capabilities },
-      description: `${currentUser.displayName || currentUser.username} 的本机 Worker 恢复直接执行「${run.title}」`
+      description: `${currentUser.displayName || currentUser.username} 的本机 Worker 恢复${run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill' ? '直接执行' : '美术执行'}「${run.title}」`
     });
     broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, module: 'agent-run-recover' });
     sendJson(res, 200, { run, worker });
@@ -1498,11 +1499,12 @@ async function handleApi(req, res, url) {
     ensureWorkerCanUpdateRun(currentUser, run);
     const body = await readBody(req).catch(() => ({}));
     const updated = await updateAgentRunFromWorker(run.id, body);
+    const workerRunKind = run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill' ? '直接执行' : '美术执行';
     await writeOperationLog(req, {
       user: currentUser,
       module: 'run',
-      action: 'UPDATE_DIRECT_SKILL_RUN',
-      actionName: '回传直接执行状态',
+      action: workerRunKind === '直接执行' ? 'UPDATE_DIRECT_SKILL_RUN' : 'UPDATE_LOCAL_WORKER_RUN',
+      actionName: `回传${workerRunKind}状态`,
       targetType: 'run',
       targetId: run.id,
       targetName: run.title,
@@ -1512,7 +1514,7 @@ async function handleApi(req, res, url) {
         status: body.status || body.workerStatus || '',
         figmaWritten: body.figmaWriteResult?.written === true || body.resultSummary?.figmaWritten === true
       },
-      description: `${currentUser.displayName || currentUser.username} 回传直接执行「${run.title}」状态：${body.status || body.workerStatus || 'running'}`
+      description: `${currentUser.displayName || currentUser.username} 回传${workerRunKind}「${run.title}」状态：${body.status || body.workerStatus || 'running'}`
     });
     broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, module: 'agent-run-status' });
     sendJson(res, 200, updated);
@@ -2232,53 +2234,31 @@ async function handleApi(req, res, url) {
     if (run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill') {
       throw new HttpError(409, '直接执行任务只能由执行人本机 Worker 领取，不能在平台服务器启动。');
     }
-    const globalCodexConfig = redactCodexConfig(await getCodexConfig());
-    const runCodexRequest = run.codexRequest || {};
-    const effectiveCodexModel = runCodexRequest.model || globalCodexConfig.model || '';
-    const effectiveReasoningEffort = runCodexRequest.reasoningEffort || '';
+    const readyWorker = await getReadyLocalWorkerForUser(currentUser.id);
+    if (!readyWorker) {
+      throw new HttpError(409, '当前账号本机 Worker 未在线或 Codex/Figma MCP 未就绪，请先在本机执行状态页启动本机 Worker。');
+    }
     const startMode = ['resume', 'restart'].includes(String(body.mode || '').trim()) ? String(body.mode).trim() : 'start';
-    const startResult = await startRun(project, { ...run, startedBy: currentUser.id, startMode });
-    const started = {
-      ...run,
-      ...startResult,
-      status: startResult?.blocked ? 'blocked' : 'running',
-      startedBy: currentUser.id,
+    const queued = await queueRunForLocalWorker(run.id, {
+      queuedForUserId: currentUser.id,
+      queuedForName: currentUser.displayName || currentUser.username || currentUser.id,
       startMode
-    };
-    const usagePatch = startResult?.blocked
-      ? null
-      : await recordUsageCountersForRun(started, { source: `run-${startMode}` }).catch(error => {
-        console.warn('美术执行调用次数累计失败', error);
-        return null;
-      });
+    });
     await writeOperationLog(req, {
       user: currentUser,
       module: 'run',
-      action: 'START_RUN',
-      actionName: '启动执行',
+      action: 'QUEUE_RUN_LOCAL_WORKER',
+      actionName: '本机启动执行',
       targetType: 'run',
       targetId: run.id,
       targetName: run.title,
       before: run,
-      after: started,
-      metadata: {
-        codexKeyFingerprint: globalCodexConfig.keyFingerprint || '',
-        codexHasApiKey: globalCodexConfig.hasApiKey === true,
-        codexModel: effectiveCodexModel,
-        codexReasoningEffort: effectiveReasoningEffort,
-        codexRequestSource: runCodexRequest.source || '',
-        codexBaseUrl: globalCodexConfig.baseUrl || '',
-        runId: run.id,
-        projectId: project.id,
-        startedBy: currentUser.id,
-        countAsSkillUsage: false,
-        countAsProductUsage: false,
-        ...runUsageLogMetadata(started)
-      },
-      description: `${currentUser.displayName || currentUser.username} 启动执行「${run.title}」${globalCodexConfig.keyFingerprint ? `，使用 Key ${globalCodexConfig.keyFingerprint}` : '，使用本机 Codex 配置'}`
+      after: queued,
+      metadata: { executionHost: 'local-worker', queuedForUserId: currentUser.id, startMode },
+      description: `${currentUser.displayName || currentUser.username} 将执行「${run.title}」排队到本人本机 Worker`
     });
-    broadcastUsageCountersChanged(usagePatch, { module: 'run', runId: started.id, projectId: project.id, action: 'START_RUN' });
-    sendJson(res, 200, started);
+    broadcastPlatformEvent('runs.changed', { projectId: project.id, runId: run.id, module: 'local-worker-run' });
+    sendJson(res, 200, queued);
     return;
   }
 
@@ -2468,6 +2448,22 @@ function ensureWorkerCanUpdateRun(user = {}, run = {}) {
   const assignee = String(run.assignedToUserId || run.ownerUserId || '').trim();
   if (!assignee || assignee === userId || hasPermission(user, 'api.runs.delete')) return;
   throw new HttpError(403, '只能回传分配给自己的直接执行任务。');
+}
+
+async function getReadyLocalWorkerForUser(userId = '') {
+  const id = String(userId || '').trim();
+  if (!id) return null;
+  const workers = await listAgentWorkers({ userId: id });
+  const now = Date.now();
+  return workers.find(worker => {
+    const last = Date.parse(worker.lastHeartbeatAt || '');
+    return Boolean(
+      last
+      && now - last < 600000
+      && worker.codexReady === true
+      && worker.figmaMcpReady === true
+    );
+  }) || null;
 }
 
 function buildDirectSkillRequirement(body = {}) {

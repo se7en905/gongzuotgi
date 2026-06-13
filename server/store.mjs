@@ -933,6 +933,11 @@ export async function createRun(input) {
     claimedByDeviceId: input.claimedByDeviceId || '',
     claimedAt: input.claimedAt || '',
     workerStatus: input.workerStatus || '',
+    executionHost: input.executionHost || '',
+    workerExecution: input.workerExecution === true,
+    queuedForUserId: input.queuedForUserId || '',
+    queuedForName: input.queuedForName || '',
+    queuedAt: input.queuedAt || '',
     workerCapabilities: normalizeLineList(input.workerCapabilities),
     executionMode: input.executionMode || '',
     codexRequest: normalizeRunCodexRequest(input.codexRequest),
@@ -1034,6 +1039,7 @@ export async function claimNextAgentRun(input = {}) {
     status: 'claimed',
     workerStatus: 'claimed',
     assignedToUserId: runs[candidateIndex].assignedToUserId || userId,
+    queuedForUserId: runs[candidateIndex].queuedForUserId || userId,
     claimedByDeviceId: deviceId,
     claimedAt: now,
     startedBy: userId,
@@ -1064,6 +1070,7 @@ export async function claimRecoverableAgentRun(input = {}) {
     status: 'claimed',
     workerStatus: 'claimed',
     assignedToUserId: existing.assignedToUserId || userId,
+    queuedForUserId: existing.queuedForUserId || userId,
     claimedByDeviceId: existing.claimedByDeviceId || deviceId,
     claimedAt: existing.claimedAt || now,
     resumedAt: now,
@@ -1188,6 +1195,55 @@ export async function updateRun(id, patch) {
   runs[index] = { ...runs[index], ...patch, updatedAt: new Date().toISOString() };
   await writeJson(paths.runs, runs);
   return runs[index];
+}
+
+export async function queueRunForLocalWorker(id, input = {}) {
+  const runs = await readJson(paths.runs, []);
+  const index = runs.findIndex(item => item.id === id);
+  if (index === -1) return null;
+  const now = new Date().toISOString();
+  const existing = runs[index];
+  const queuedForUserId = cleanString(input.queuedForUserId || input.userId || existing.queuedForUserId || existing.assignedToUserId || existing.ownerUserId);
+  const queuedForName = cleanString(input.queuedForName || input.userName || existing.queuedForName || existing.assignedToName || existing.developer);
+  const materialSnapshot = await readRunMaterialSnapshot(existing);
+  runs[index] = {
+    ...existing,
+    status: 'queued',
+    workerStatus: 'queued',
+    executionHost: 'local-worker',
+    workerExecution: true,
+    queuedForUserId,
+    queuedForName,
+    queuedAt: now,
+    assignedToUserId: queuedForUserId || existing.assignedToUserId || existing.ownerUserId || '',
+    assignedToName: queuedForName || existing.assignedToName || existing.developer || '',
+    claimedByDeviceId: '',
+    claimedAt: '',
+    startedBy: queuedForUserId || existing.startedBy || '',
+    startMode: input.startMode || existing.startMode || 'start',
+    currentStage: '等待本机 Worker 领取',
+    primarySkillContent: existing.primarySkillContent || materialSnapshot,
+    blocker: null,
+    resultSummary: null,
+    strictCheck: null,
+    exitCode: null,
+    pid: null,
+    updatedAt: now
+  };
+  await writeJson(paths.runs, runs);
+  return hydrateRunStages(runs[index]);
+}
+
+async function readRunMaterialSnapshot(run = {}) {
+  const candidates = [run.materialPath, run.promptPath].map(cleanString).filter(Boolean);
+  for (const file of candidates) {
+    try {
+      const text = await fs.readFile(file, 'utf8');
+      if (text.trim()) return text.slice(0, 60000);
+    } catch {
+    }
+  }
+  return '';
 }
 
 export async function listArtProgressEvents(filters = {}) {
@@ -3369,23 +3425,30 @@ function normalizeLineList(value = []) {
 }
 
 function isClaimableAgentRun(run = {}, userId = '', access = {}) {
-  if (run.sourceType !== 'direct-skill' && run.executionMode !== 'direct-skill') return false;
+  if (!isWorkerExecutableRun(run)) return false;
   if (!['pending', 'queued'].includes(String(run.status || '').toLowerCase())) return false;
-  const assignee = String(run.assignedToUserId || run.ownerUserId || '').trim();
+  const assignee = String(run.queuedForUserId || run.assignedToUserId || run.ownerUserId || '').trim();
   if (assignee && assignee !== userId) return false;
   if (access.canAccessAllProjects) return true;
   return normalizeLineList(access.allowedProjectIds).includes(String(run.projectId || '').trim());
 }
 
 function isRecoverableAgentRun(run = {}, userId = '', deviceId = '', access = {}) {
-  if (run.sourceType !== 'direct-skill' && run.executionMode !== 'direct-skill') return false;
+  if (!isWorkerExecutableRun(run)) return false;
   if (!/claimed|running|in_progress/i.test(String(run.status || run.workerStatus || ''))) return false;
-  const assignee = String(run.assignedToUserId || run.ownerUserId || '').trim();
+  const assignee = String(run.queuedForUserId || run.assignedToUserId || run.ownerUserId || '').trim();
   if (assignee && assignee !== userId) return false;
   const claimedDevice = cleanString(run.claimedByDeviceId);
   if (claimedDevice && claimedDevice !== deviceId) return false;
   if (access.canAccessAllProjects) return true;
   return normalizeLineList(access.allowedProjectIds).includes(String(run.projectId || '').trim());
+}
+
+function isWorkerExecutableRun(run = {}) {
+  return run.sourceType === 'direct-skill'
+    || run.executionMode === 'direct-skill'
+    || run.executionHost === 'local-worker'
+    || run.workerExecution === true;
 }
 
 function isRunningRunStatus(status = '') {
