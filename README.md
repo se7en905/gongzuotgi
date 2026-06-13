@@ -186,6 +186,12 @@ STATIC_DIR=dist
 AWP_SESSION_MAX_AGE_MS=604800000
 ```
 
+目录选择器默认只允许浏览项目目录、`~/Desktop/code/git`、用户常用目录和 `/Volumes` 共享盘。如需接入其它固定资料盘，可用逗号或分号扩展白名单：
+
+```bash
+ART_PLATFORM_ALLOWED_BROWSE_ROOTS=/path/to/source-a,/path/to/source-b
+```
+
 ### 默认管理员
 
 首次启动且系统内还没有用户时，会自动创建管理员账号：

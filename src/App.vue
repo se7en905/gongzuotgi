@@ -6284,6 +6284,11 @@ export default {
           await this.refreshAgentWorkers({ background: true, minInterval: 1500 });
         }, 500);
       }
+      if (type === 'access-control.changed' && this.can('api.users.manage')) {
+        this.schedulePlatformRefresh('access-control-users', async () => {
+          await this.refreshUsers();
+        }, 400);
+      }
       if (type === 'ai-member-score-snapshot.changed' && this.can('api.aiMembers.score.read')) {
         if (this.activeView !== 'ai-members') {
           this.markViewDataDirty('ai-members', 'score');

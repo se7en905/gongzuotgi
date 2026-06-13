@@ -143,6 +143,7 @@ const zentaoBugSyncScript = path.join(paths.root, 'scripts', 'sync-zentao-art-bu
 const zentaoArtBriefRoot = path.join(paths.root, 'scripts', 'art-brief');
 const zentaoArtBriefScript = process.env.ZENTAO_ART_BRIEF_SCRIPT || path.join(zentaoArtBriefRoot, 'generate_art_summary.py');
 const zentaoArtBriefOutDir = process.env.ZENTAO_ART_BRIEF_OUT_DIR || path.join(paths.root, 'outputs', 'art-briefs');
+const defaultDirectoryBrowseRoot = path.join(os.homedir(), 'Desktop', 'code', 'git');
 const defaultAiFlowSheetId = '1tP9XTqxIMUQ6E6rq47fq0A0T7kxvJvnVEPKBpnoIpiw';
 const defaultAiFlowSheetGid = '1127778149';
 const defaultArtProjectSheetId = '18MyY-8UudwHjUcjt0dFgXUHhrqNqhoc1MOrn_b6gsmg';
@@ -315,6 +316,7 @@ async function handleApi(req, res, url) {
       targetName: user.username,
       description: `${user.displayName || user.username} 修改了本人登录密码`
     });
+    broadcastPlatformEvent('access-control.changed', { module: 'user', reason: 'password-display-updated' });
     res.setHeader('Set-Cookie', clearSessionCookie());
     sendJson(res, 200, { user });
     return;
@@ -1183,6 +1185,10 @@ async function handleApi(req, res, url) {
     const target = normalizeFsPath(body.path);
     if (!target) {
       sendJson(res, 400, { error: 'path is required' });
+      return;
+    }
+    if (!isDirectoryBrowseAllowed(target)) {
+      sendJson(res, 403, { error: '目录不在允许浏览范围内，请调整目录或配置 ART_PLATFORM_ALLOWED_BROWSE_ROOTS。' });
       return;
     }
     const stat = await fs.stat(target).catch(() => null);
@@ -5440,18 +5446,31 @@ async function serveArtifact(res, file, currentUser, options = {}) {
     sendJson(res, 400, { error: 'path is required' });
     return;
   }
-  const abs = path.resolve(file);
-  const allowedRoots = [paths.artifactDir, paths.workspaceDir, zentaoArtBriefOutDir].map(item => path.resolve(item));
-  if (!allowedRoots.some(root => abs === root || abs.startsWith(`${root}${path.sep}`))) {
+  requireAuth(currentUser);
+  const abs = resolveArtifactRequestPath(file);
+  if (!abs) {
     sendJson(res, 403, { error: 'artifact path is outside platform workspace' });
     return;
   }
   const runs = await listRuns();
   const matchedRun = runs.find(run => {
-    const roots = [run.artifactRoot, run.logPath, run.promptPath, run.materialPath].filter(Boolean).map(item => path.resolve(item));
-    return roots.some(root => abs === root || abs.startsWith(`${root}${path.sep}`));
+    const roots = [
+      run.artifactRoot,
+      run.logPath,
+      run.promptPath,
+      run.materialPath,
+      run.id ? path.join(paths.workspaceDir, run.id, 'run.log') : ''
+    ].filter(Boolean);
+    return roots.some(root => isPathInside(abs, root));
   });
-  if (matchedRun) await requireRunViewAccess(currentUser, matchedRun);
+  if (matchedRun) {
+    await requireRunViewAccess(currentUser, matchedRun);
+  } else if (!isPathInside(abs, zentaoArtBriefOutDir)) {
+    sendJson(res, 403, { error: 'artifact path is not linked to an accessible run' });
+    return;
+  } else {
+    requireAnyPermission(currentUser, ['menu.tasks', 'api.taskArtBrief.generate']);
+  }
   let stat;
   try {
     stat = await fs.stat(abs);
@@ -5489,18 +5508,22 @@ async function serveRunLog(res, file, currentUser, options = {}) {
     sendJson(res, 400, { error: 'path is required' });
     return;
   }
-  const abs = path.resolve(file);
-  const allowedRoot = path.resolve(paths.workspaceDir);
-  if (!(abs === allowedRoot || abs.startsWith(`${allowedRoot}${path.sep}`))) {
+  requireAuth(currentUser);
+  const abs = resolveWorkspaceRequestPath(file);
+  if (!abs) {
     sendJson(res, 403, { error: 'run log path is outside platform workspace' });
     return;
   }
   const runs = await listRuns();
   const matchedRun = runs.find(run => {
-    const roots = [run.logPath, path.join(paths.workspaceDir, run.id, 'run.log')].filter(Boolean).map(item => path.resolve(item));
-    return roots.some(root => abs === root || abs.startsWith(`${root}${path.sep}`));
+    const roots = [run.logPath, run.id ? path.join(paths.workspaceDir, run.id, 'run.log') : ''].filter(Boolean);
+    return roots.some(root => isPathInside(abs, root));
   });
-  if (matchedRun) await requireRunViewAccess(currentUser, matchedRun);
+  if (!matchedRun) {
+    sendJson(res, 403, { error: 'run log path is not linked to an accessible run' });
+    return;
+  }
+  await requireRunViewAccess(currentUser, matchedRun);
   let stat;
   try {
     stat = await fs.stat(abs);
@@ -5539,13 +5562,18 @@ async function serveRunFilePreview(res, project, file, version = 'current') {
     sendJson(res, 400, { error: 'file is required' });
     return;
   }
+  if (!project?.rootPath) {
+    sendJson(res, 400, { error: 'project rootPath is missing' });
+    return;
+  }
   const root = path.resolve(project.rootPath);
-  const relativeFile = normalizeGitPath(file);
-  const abs = path.resolve(root, relativeFile);
-  if (!abs.startsWith(`${root}${path.sep}`) && abs !== root) {
+  let relativeFile = normalizeGitPath(file).replaceAll('\\', '/').replace(/^\/+/, '');
+  const abs = resolveInsideRoot(root, relativeFile);
+  if (!abs) {
     sendJson(res, 400, { error: 'file is outside project root' });
     return;
   }
+  relativeFile = path.relative(root, abs).replaceAll('\\', '/');
   try {
     const content = version === 'head'
       ? await gitHeadFileBuffer(root, relativeFile)
@@ -5567,12 +5595,13 @@ async function serveProjectFilePreview(res, project, file) {
     return;
   }
   const root = path.resolve(project.rootPath);
-  const relativeFile = normalizeGitPath(file).replaceAll('\\', '/').replace(/^\/+/, '');
-  const abs = path.resolve(root, relativeFile);
-  if (!abs.startsWith(`${root}${path.sep}`) && abs !== root) {
+  let relativeFile = normalizeGitPath(file).replaceAll('\\', '/').replace(/^\/+/, '');
+  const abs = resolveInsideRoot(root, relativeFile);
+  if (!abs) {
     sendJson(res, 400, { error: 'file is outside project root' });
     return;
   }
+  relativeFile = path.relative(root, abs).replaceAll('\\', '/');
   try {
     const stat = await fs.stat(abs);
     if (!stat.isFile()) {
@@ -5649,7 +5678,11 @@ async function expandChangeSummaryDirectories(rootPath, summary) {
       const relativePath = normalizeGitPath(item?.path || '');
       const normalizedItem = changeCategory && !item?.changeCategory ? { ...item, changeCategory } : item;
       if (item?.status === '??' && relativePath.endsWith('/')) {
-        const abs = path.resolve(rootPath, relativePath);
+        const abs = resolveInsideRoot(rootPath, relativePath);
+        if (!abs) {
+          expanded.push(normalizedItem);
+          continue;
+        }
         const stat = await fs.stat(abs).catch(() => null);
         if (stat?.isDirectory()) {
           const files = await listDirectoryPreview(abs, relativePath);
@@ -5673,11 +5706,12 @@ async function expandChangeSummaryDirectories(rootPath, summary) {
 async function getRunFileDiff(project, run, file) {
   if (!file) throw new Error('file is required');
   const root = path.resolve(project.rootPath);
-  const relativeFile = normalizeGitPath(file);
-  const abs = path.resolve(root, relativeFile);
-  if (!abs.startsWith(`${root}${path.sep}`) && abs !== root) {
+  let relativeFile = normalizeGitPath(file).replaceAll('\\', '/').replace(/^\/+/, '');
+  const abs = resolveInsideRoot(root, relativeFile);
+  if (!abs) {
     throw new Error('file is outside project root');
   }
+  relativeFile = path.relative(root, abs).replaceAll('\\', '/');
 
   const statusFromRun = run?.changeSummary?.after?.find(item => normalizeGitPath(item?.path || '') === relativeFile)?.status || '';
   const status = await gitStatusForFile(root, relativeFile);
@@ -5983,9 +6017,97 @@ function escapeRegExp(value = '') {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function isPathInside(target, root) {
+  if (!target || !root) return false;
+  const resolvedTarget = path.resolve(target);
+  const resolvedRoot = path.resolve(root);
+  const relative = path.relative(resolvedRoot, resolvedTarget);
+  return relative === '' || (relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function resolveInsideRoot(root, ...segments) {
+  if (!root) return '';
+  const resolvedRoot = path.resolve(root);
+  const resolvedTarget = path.resolve(resolvedRoot, ...segments.filter(segment => segment !== undefined && segment !== null));
+  return isPathInside(resolvedTarget, resolvedRoot) ? resolvedTarget : '';
+}
+
+function normalizeFsPath(value = '') {
+  const text = String(value || '').trim().replace(/^['"]+|['"]+$/g, '').trim();
+  if (!text) return '';
+  if (text === '~') return os.homedir();
+  if (text.startsWith('~/')) return path.join(os.homedir(), text.slice(2));
+  return text;
+}
+
+function resolveArtifactRequestPath(file = '') {
+  const raw = normalizeFsPath(file);
+  if (!raw || /^https?:\/\//i.test(raw) || raw.includes('\0')) return '';
+  const normalized = raw.replaceAll('\\', '/');
+  const relative = normalized.replace(/^\/+/, '');
+  const abs = path.isAbsolute(raw)
+    ? path.resolve(raw)
+    : relative.startsWith('platform-artifacts/')
+      ? path.resolve(paths.artifactDir, relative.replace(/^platform-artifacts\/+/, ''))
+      : path.resolve(paths.root, relative);
+  return [paths.artifactDir, paths.workspaceDir, zentaoArtBriefOutDir].some(root => isPathInside(abs, root)) ? abs : '';
+}
+
+function resolveWorkspaceRequestPath(file = '') {
+  const raw = normalizeFsPath(file);
+  if (!raw || /^https?:\/\//i.test(raw) || raw.includes('\0')) return '';
+  const normalized = raw.replaceAll('\\', '/');
+  const relative = normalized.replace(/^\/+/, '');
+  const abs = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(paths.root, relative);
+  return isPathInside(abs, paths.workspaceDir) ? abs : '';
+}
+
+function allowedDirectoryBrowseRoots() {
+  const envRoots = String(process.env.ART_PLATFORM_ALLOWED_BROWSE_ROOTS || '')
+    .split(/[;,]/)
+    .map(normalizeFsPath)
+    .filter(Boolean);
+  const roots = [
+    defaultDirectoryBrowseRoot,
+    path.join(os.homedir(), 'Desktop'),
+    path.join(os.homedir(), 'Documents'),
+    path.join(os.homedir(), 'Downloads'),
+    '/Volumes',
+    path.dirname(paths.root),
+    paths.root,
+    ...envRoots
+  ];
+  return [...new Set(roots.map(item => path.resolve(item)).filter(Boolean))];
+}
+
+function isDirectoryBrowseAllowed(target = '') {
+  if (!target) return false;
+  const resolved = path.resolve(target);
+  return allowedDirectoryBrowseRoots().some(root => isPathInside(resolved, root));
+}
+
+async function resolveDirectoryBrowseTarget(inputPath = '') {
+  const requested = normalizeFsPath(inputPath);
+  if (requested) {
+    const target = path.resolve(requested);
+    if (!isDirectoryBrowseAllowed(target)) {
+      throw new HttpError(403, '目录不在允许浏览范围内，请调整目录或配置 ART_PLATFORM_ALLOWED_BROWSE_ROOTS。');
+    }
+    return target;
+  }
+  for (const root of allowedDirectoryBrowseRoots()) {
+    const stat = await fs.stat(root).catch(() => null);
+    if (stat?.isDirectory()) return root;
+  }
+  return paths.root;
+}
+
 async function listDirectories(inputPath) {
-  const fallbackPath = path.join(os.homedir(), 'Desktop', 'code', 'git');
-  const target = path.resolve(inputPath || fallbackPath);
+  const target = await resolveDirectoryBrowseTarget(inputPath);
+  const stat = await fs.stat(target).catch(() => null);
+  if (!stat?.isDirectory()) {
+    throw new HttpError(404, '目录不存在或不是目录。');
+  }
   const entries = await fs.readdir(target, { withFileTypes: true });
   const directories = entries
     .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
@@ -5997,7 +6119,7 @@ async function listDirectories(inputPath) {
 
   return {
     path: target,
-    parent: path.dirname(target) === target ? '' : path.dirname(target),
+    parent: path.dirname(target) !== target && isDirectoryBrowseAllowed(path.dirname(target)) ? path.dirname(target) : '',
     directories
   };
 }
@@ -8505,8 +8627,9 @@ function taskInputToBug(input = {}) {
 
 async function serveStatic(res, pathname) {
   const safePath = pathname === '/' ? '/index.html' : pathname;
-  const file = path.join(publicDir, safePath);
-  if (!file.startsWith(publicDir)) {
+  const normalizedPath = safePath.replace(/^\/+/, '');
+  const file = resolveInsideRoot(publicDir, normalizedPath);
+  if (!file) {
     sendJson(res, 403, { error: 'forbidden' });
     return;
   }

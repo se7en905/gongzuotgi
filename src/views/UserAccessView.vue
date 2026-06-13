@@ -14,7 +14,7 @@
     <div class="password-display-panel">
       <div>
         <strong>密码展示区</strong>
-        <span>只展示平台创建或重置后记录过的密码；历史哈希密码无法反解，需重置后才会显示。</span>
+        <span>展示平台创建、重置、本人修改或管理员登记后记录过的密码；历史哈希密码无法反解，需重置后才会显示。</span>
       </div>
       <ElTag type="warning" effect="plain">仅管理员可见</ElTag>
     </div>
