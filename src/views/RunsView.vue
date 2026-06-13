@@ -19,7 +19,14 @@
       </div>
     </template>
     <div class="run-list">
-      <button v-for="run in app.runs" :key="run.id" class="run-item" :class="[app.runStatusClass(run.status), { active: run.id === app.selectedRunId }]" @click="app.selectRunFromList(run)">
+      <button
+        v-for="run in app.runs"
+        :key="run.id"
+        class="run-item"
+        :class="[app.runStatusClass(run.status), { active: run.id === app.selectedRunId }]"
+        :aria-current="run.id === app.selectedRunId ? 'true' : undefined"
+        @click="app.selectRunFromList(run)"
+      >
         <div class="run-item-head">
           <a v-if="app.runTaskUrl(run)" :href="app.runTaskUrl(run)" target="_blank" rel="noopener noreferrer" class="task-title-link" @click.stop>{{ app.runGroupTitle(run) }}</a>
           <strong v-else>{{ app.runGroupTitle(run) }}</strong>
@@ -42,6 +49,7 @@
             md 引用 {{ app.runReferenceCount(run) }}
           </span>
           <span v-if="app.isRunSourceDeleted(run)" class="run-action-chip source-deleted">来源已删除</span>
+          <span v-if="run.id === app.selectedRunId" class="run-action-chip current-detail">当前明细</span>
         </div>
       </button>
       <div v-if="!app.runs.length" class="empty-block">还没有美术执行记录，点击“新建美术执行”开始。</div>
@@ -903,22 +911,31 @@ export default {
   }
 
   .run-item.active {
-    border-color: rgba(34, 197, 94, 0.55);
-    background: var(--primary-soft);
-    box-shadow: inset 3px 0 0 var(--primary);
+    border-color: rgba(22, 101, 52, 0.72);
+    background:
+      linear-gradient(90deg, rgba(34, 197, 94, 0.18), rgba(34, 197, 94, 0.06) 52%, transparent),
+      var(--primary-soft);
+    box-shadow:
+      inset 5px 0 0 var(--primary),
+      0 0 0 2px rgba(34, 197, 94, 0.16);
+    position: relative;
   }
 
   .run-item.is-running.active {
     border-color: rgba(14, 165, 233, 0.58);
     background: rgba(14, 165, 233, 0.1);
-    box-shadow: inset 4px 0 0 var(--accent);
+    box-shadow:
+      inset 5px 0 0 var(--accent),
+      0 0 0 2px rgba(14, 165, 233, 0.16);
   }
 
   .run-item.is-failed.active,
   .run-item.is-blocked.active {
     border-color: rgba(220, 38, 38, 0.62);
     background: rgba(220, 38, 38, 0.1);
-    box-shadow: inset 4px 0 0 var(--danger);
+    box-shadow:
+      inset 5px 0 0 var(--danger),
+      0 0 0 2px rgba(220, 38, 38, 0.14);
   }
 
   .run-item-head {
@@ -1081,6 +1098,12 @@ export default {
       border-color: rgba(245, 158, 11, 0.34);
       background: rgba(245, 158, 11, 0.12);
       color: #92400e;
+    }
+
+    &.current-detail {
+      border-color: rgba(22, 101, 52, 0.34);
+      background: #166534;
+      color: #ffffff;
     }
   }
 
