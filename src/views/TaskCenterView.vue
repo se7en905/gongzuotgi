@@ -158,7 +158,7 @@
           </span>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="P" min-width="80">
+      <ElTableColumn label="优先级" min-width="80">
         <template #default="{ row }">
           <ElTag :type="app.bugPriorityTagType(row.pri || row.priority || row.zentao?.pri)" effect="plain">P{{ row.pri || row.priority || row.zentao?.pri || '-' }}</ElTag>
         </template>
@@ -166,14 +166,14 @@
       <ElTableColumn label="AI评估" min-width="132" align="center">
         <template #default="{ row }">
           <ElTooltip
-            :content="app.workloadEstimateText(row.workloadEstimate)"
+            :content="row.isLowEffortAcceptance ? '设计同步单/验收单不参与 AI 量级评估' : app.workloadEstimateText(row.workloadEstimate)"
             placement="top"
             effect="dark"
             :show-after="180"
           >
             <ElSelect
-              v-if="app.isPlatformAdmin"
-              :model-value="row.workloadLevel || row.workloadEstimate?.level || 'S'"
+              v-if="app.isPlatformAdmin && !row.isLowEffortAcceptance"
+              :model-value="app.taskWorkloadDisplayLevel(row)"
               size="small"
               class="task-workload-select"
               :disabled="app.loading.taskWorkload"
@@ -182,7 +182,7 @@
             >
               <ElOption v-for="option in app.taskWorkloadLevelOptions" :key="option.value" :label="option.label" :value="option.value" />
             </ElSelect>
-            <span v-else class="task-workload-pill">{{ row.workloadLevel || row.workloadEstimate?.level || 'S' }}</span>
+            <span v-else :class="['task-workload-pill', { empty: app.taskWorkloadDisplayLevel(row) === '-' }]">{{ app.taskWorkloadDisplayLevel(row) }}</span>
           </ElTooltip>
         </template>
       </ElTableColumn>
@@ -199,10 +199,9 @@
       <ElTableColumn label="创建时间" min-width="150">
         <template #default="{ row }">{{ app.formatDateTime(row.zentaoCreatedAt || row.zentao?.openedDate || row.createdAt) }}</template>
       </ElTableColumn>
-      <ElTableColumn label="操作" width="320" fixed="right" align="center">
+      <ElTableColumn label="操作" width="200" fixed="right" align="center">
         <template #default="{ row }">
           <div class="table-action-row">
-            <ElButton v-if="app.can('task.artBrief.generate')" size="small" plain @click.stop="openTaskSummary(row)">摘要</ElButton>
             <ElButton v-if="app.shouldShowTaskSplitButton(row)" size="small" type="primary" plain class="task-split-button" @click.stop="app.openTaskSplitDialog(row)">拆单</ElButton>
             <ElButton v-if="app.can('run.create')" type="primary" plain size="small" @click.stop="startRun(row)">发起执行</ElButton>
             <ElButton v-if="app.canDeletePlatformTask(row)" type="danger" plain size="small" @click.stop="deleteTask(row)">删除</ElButton>
@@ -293,8 +292,8 @@
           <article class="task-processing-workload">
             <span>AI评估</span>
             <ElSelect
-              v-if="app.isPlatformAdmin"
-              :model-value="app.selectedBusinessTask.workloadLevel || app.selectedBusinessTask.workloadEstimate?.level || 'S'"
+              v-if="app.isPlatformAdmin && !app.selectedBusinessTask.isLowEffortAcceptance"
+              :model-value="app.taskWorkloadDisplayLevel(app.selectedBusinessTask)"
               size="small"
               class="task-workload-select"
               :disabled="app.loading.taskWorkload"
@@ -302,7 +301,7 @@
             >
               <ElOption v-for="option in app.taskWorkloadLevelOptions" :key="option.value" :label="option.label" :value="option.value" />
             </ElSelect>
-            <strong v-else class="task-workload-pill">{{ app.selectedBusinessTask.workloadLevel || app.selectedBusinessTask.workloadEstimate?.level || 'S' }}</strong>
+            <strong v-else :class="['task-workload-pill', { empty: app.taskWorkloadDisplayLevel(app.selectedBusinessTask) === '-' }]">{{ app.taskWorkloadDisplayLevel(app.selectedBusinessTask) }}</strong>
           </article>
         </div>
         <section class="task-processing-block">
@@ -375,9 +374,6 @@ export default {
       this.app.createRunFromTask(row);
       this.app.activeView = 'runs';
       this.app.pushRoute('/runs');
-    },
-    openTaskSummary(row) {
-      this.app.selectBusinessTask(row);
     },
     deleteTask(row) {
       this.app.deletePlatformTask(row);
@@ -586,15 +582,16 @@ export default {
   }
 
   .task-workload-select {
-    width: 72px;
+    width: 56px;
 
     :deep(.el-select__wrapper) {
-      min-height: 30px;
+      min-height: 24px;
+      padding: 0 6px 0 10px;
       border-radius: 999px;
       overflow: hidden;
       font-weight: 820;
       box-shadow: none;
-      background: #f6f8fb;
+      background: #fdf0d6;
     }
 
     :deep(.el-select__wrapper.is-focused) {
@@ -605,13 +602,19 @@ export default {
     :deep(.el-select__selected-item),
     :deep(.el-select__placeholder) {
       color: var(--heading);
+      font-size: 12px;
       font-weight: 860;
       justify-content: center;
     }
 
     :deep(.el-select__suffix) {
-      margin-left: 2px;
+      margin-left: 0;
       color: var(--muted);
+
+      .el-icon {
+        width: 11px;
+        height: 11px;
+      }
     }
   }
 
@@ -619,15 +622,20 @@ export default {
     align-items: center;
     display: inline-flex;
     justify-content: center;
-    min-width: 48px;
-    min-height: 30px;
-    padding: 0 12px;
+    min-width: 34px;
+    min-height: 24px;
+    padding: 0 8px;
     border-radius: 999px;
-    background: #f6f8fb;
+    background: #fdf0d6;
     color: var(--heading);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 860;
     line-height: 1;
+
+    &.empty {
+      background: #f3f5f9;
+      color: var(--muted);
+    }
   }
 
   .task-processing-block {

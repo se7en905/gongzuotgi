@@ -15907,6 +15907,10 @@ export default {
         ElMessage.warning('只有管理员可以更改 AI评估');
         return;
       }
+      if (this.isLowEffortArtAcceptanceTask(task)) {
+        ElMessage.warning('设计同步单/验收单不参与 AI 量级评估');
+        return;
+      }
       const taskKey = this.taskOperationKey(task);
       const nextLevel = normalizeWorkloadLevel(level);
       if (!taskKey || !nextLevel) return;
@@ -15918,11 +15922,14 @@ export default {
           method: 'PATCH',
           body: JSON.stringify({ workloadLevel: nextLevel })
         });
-        this.applyUpdatedBusinessTask(updated);
+        const updatedTasks = Array.isArray(updated?.updatedTasks) && updated.updatedTasks.length ? updated.updatedTasks : [updated].filter(Boolean);
+        updatedTasks.forEach(item => this.applyUpdatedBusinessTask(item));
+        this.saveWorkbenchDisplayCache('businessTasks', this.businessTasks);
         if (this.selectedBusinessTaskId === task.id || this.taskOperationKey(this.selectedBusinessTask || {}) === taskKey) {
-          this.selectedBusinessTaskId = updated.id || task.id || this.selectedBusinessTaskId;
+          const currentUpdated = updatedTasks.find(item => item.id === task.id) || updated;
+          this.selectedBusinessTaskId = currentUpdated.id || task.id || this.selectedBusinessTaskId;
         }
-        ElMessage.success(`AI评估已改为 ${nextLevel}`);
+        ElMessage.success(updatedTasks.length > 1 ? `同主单 ${updatedTasks.length} 条任务 AI评估已改为 ${nextLevel}` : `AI评估已改为 ${nextLevel}`);
       } catch (error) {
         ElMessage.error(this.readApiError(error) || 'AI评估保存失败');
       } finally {
@@ -16096,13 +16103,17 @@ export default {
           body: JSON.stringify({ plan: this.taskSplitDialog.plan })
         });
         this.taskSplitDialog.visible = false;
+        if (result?.updatedTask?.id) {
+          this.applyUpdatedBusinessTask(result.updatedTask);
+          this.saveWorkbenchDisplayCache('businessTasks', this.businessTasks);
+        }
         const failed = Array.isArray(result?.results) ? result.results.filter(item => item.ok === false) : [];
         if (failed.length) {
           ElMessage.warning(`拆单已处理，成功 ${result.successCount || 0} 条，失败 ${failed.length} 条；失败项请查看操作日志。`);
         } else {
           ElMessage.success('拆单已写入禅道。');
         }
-        await this.refreshTasks();
+        this.refreshTasks().catch(() => {});
       } catch (error) {
         ElMessage.error(this.readApiError(error) || '拆单写入失败');
       } finally {
@@ -18274,6 +18285,11 @@ export default {
       if (level === 'M') return 'warning';
       if (level === 'S') return 'success';
       return 'info';
+    },
+
+    taskWorkloadDisplayLevel(task = {}) {
+      if (this.isLowEffortArtAcceptanceTask(task)) return '-';
+      return normalizeWorkloadLevel(task.workloadLevel || task.workloadEstimate?.level) || 'S';
     },
 
     workloadEstimateText(estimate = {}) {

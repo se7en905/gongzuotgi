@@ -924,6 +924,7 @@ function classicRequiredHour(value, fallbackHour = '4') {
 }
 
 function taskWorkloadAssignHour(task = {}, detail = {}) {
+  if (isLowEffortArtAcceptanceTask(task, detail)) return WORKLOAD_ASSIGN_HOURS.S;
   const level = taskWorkloadLevel(task, detail);
   return WORKLOAD_ASSIGN_HOURS[level] || WORKLOAD_ASSIGN_HOURS.S;
 }
@@ -1002,6 +1003,40 @@ function inferTaskWorkloadLevelForAssign(task = {}, detail = {}) {
 
 function countMatches(text = '', pattern) {
   return String(text || '').match(pattern)?.length || 0;
+}
+
+function isLowEffortArtAcceptanceTask(task = {}, detail = {}) {
+  const titleText = [
+    detail.name,
+    detail.title,
+    detail.storyTitle,
+    task.title,
+    task.displayTitle,
+    task.name,
+    task.taskName,
+    task.taskNameAndNo,
+    task.zentao?.name,
+    task.zentao?.title,
+    task.zentao?.taskName,
+    task.zentao?.storyTitle,
+    task.zentao?.parentName
+  ].filter(Boolean).join('\n');
+  if (/(?:美术)?验收单|美术验收|验收走查|走查单|设计同步单|设计同步/.test(titleText)) return true;
+
+  const bodyText = [
+    detail.desc,
+    detail.description,
+    detail.type,
+    detail.taskType,
+    task.summary,
+    task.requirement,
+    task.description,
+    task.type,
+    task.taskType,
+    task.zentao?.type,
+    task.zentao?.taskType
+  ].filter(Boolean).join('\n');
+  return /(?:任务类型|单据类型|流程类型|工单类型|类型)[：:\s]*(?:美术)?(?:验收|验收单|走查|走查单|设计同步|设计同步单)/.test(bodyText);
 }
 
 function stripHtml(value = '') {

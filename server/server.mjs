@@ -1722,23 +1722,35 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const task = await requireTaskLike(taskPatch[1]);
     requireProjectAccess(currentUser, task.projectId, 'admin', 'task.sync');
+    if (isLowEffortArtAcceptanceTaskInput(task)) throw new HttpError(400, '设计同步单/验收单不参与 AI 量级评估。');
     const workloadLevel = normalizeTaskWorkloadLevelInput(body.workloadLevel || body.workloadEstimate?.level);
     if (!workloadLevel) throw new HttpError(400, '任务量级只能选择 XS、S、M、L。');
     const before = task;
-    const previousEstimate = task.workloadEstimate && typeof task.workloadEstimate === 'object' ? task.workloadEstimate : {};
-    const updated = await upsertTask({
-      ...task,
-      workloadLevel,
-      workloadEstimate: {
-        ...previousEstimate,
-        level: workloadLevel,
-        source: 'manual',
-        updatedAt: new Date().toISOString(),
-        updatedBy: currentUser.id,
-        updatedByName: currentUser.displayName || currentUser.username
-      },
-      updatedAt: new Date().toISOString()
-    });
+    const workloadGroup = taskWorkloadGroupForTask(task);
+    const projectTasks = await listTasks({ projectId: task.projectId });
+    const targetTasks = workloadGroup
+      ? projectTasks.filter(item => taskWorkloadGroupForTask(item) === workloadGroup && !isLowEffortArtAcceptanceTaskInput(item))
+      : [task];
+    const changedAt = new Date().toISOString();
+    const updatedTasks = [];
+    for (const targetTask of targetTasks.length ? targetTasks : [task]) {
+      const previousEstimate = targetTask.workloadEstimate && typeof targetTask.workloadEstimate === 'object' ? targetTask.workloadEstimate : {};
+      updatedTasks.push(await upsertTask({
+        ...targetTask,
+        workloadLevel,
+        workloadEstimate: {
+          ...previousEstimate,
+          level: workloadLevel,
+          source: 'manual',
+          groupKey: workloadGroup || '',
+          updatedAt: changedAt,
+          updatedBy: currentUser.id,
+          updatedByName: currentUser.displayName || currentUser.username
+        },
+        updatedAt: changedAt
+      }));
+    }
+    const updated = updatedTasks.find(item => item.id === task.id) || updatedTasks[0] || task;
     await writeOperationLog(req, {
       user: currentUser,
       module: 'task',
@@ -1751,17 +1763,21 @@ async function handleApi(req, res, url) {
       after: updated,
       metadata: {
         taskNo: task.taskNo || task.zentao?.id || '',
-        workloadLevel
+        workloadLevel,
+        groupKey: workloadGroup || '',
+        affectedTaskCount: updatedTasks.length,
+        affectedTaskNos: updatedTasks.map(item => item.taskNo || item.zentao?.id || '').filter(Boolean)
       },
-      description: `${currentUser.displayName || currentUser.username} 将任务「${task.displayTitle || task.title || task.taskNo || task.id}」AI评估调整为 ${workloadLevel}`
+      description: `${currentUser.displayName || currentUser.username} 将任务「${task.displayTitle || task.title || task.taskNo || task.id}」${updatedTasks.length > 1 ? `等 ${updatedTasks.length} 条同主单任务` : ''}AI评估调整为 ${workloadLevel}`
     });
     broadcastPlatformEvent('tasks.changed', {
       projectId: task.projectId || artProjectId,
       taskId: updated.id,
       taskNo: updated.taskNo || '',
-      module: 'task-workload-level'
+      module: 'task-workload-level',
+      affectedTaskIds: updatedTasks.map(item => item.id)
     });
-    sendJson(res, 200, updated);
+    sendJson(res, 200, { ...updated, updatedTasks, affectedTaskCount: updatedTasks.length, workloadGroup: workloadGroup || '' });
     return;
   }
 
@@ -1927,6 +1943,34 @@ async function handleApi(req, res, url) {
     requireProjectAccess(currentUser, task.projectId, 'developer', 'task.sync');
     if (isSgProjectTask(task)) throw new HttpError(400, 'SG 项目不需要拆单。');
     const result = await applyZentaoSplitPlan(task, body.plan || body);
+    const mainResult = Array.isArray(result.results) ? result.results.find(item => item.type === 'main') : null;
+    let updatedTask = null;
+    if (mainResult?.ok && String((body.plan || body).mainAssignee || '').trim()) {
+      const mainAssigneeAccount = String((body.plan || body).mainAssignee || '').trim();
+      const mainAssignee = defaultArtUsers.find(user => user.account === mainAssigneeAccount) || { account: mainAssigneeAccount, realname: mainResult.assignedTo || mainAssigneeAccount };
+      const changedAt = new Date().toISOString();
+      updatedTask = await upsertTask({
+        ...task,
+        developer: mainAssignee.realname || mainAssignee.account,
+        assignedTo: mainAssignee.account,
+        zentao: {
+          ...(task.zentao || {}),
+          assignedTo: mainAssignee.account,
+          assignedToName: mainAssignee.realname || mainAssignee.account,
+          assignedToRealName: mainAssignee.realname || mainAssignee.account,
+          assignSync: {
+            status: 'synced',
+            targetAccount: mainAssignee.account,
+            targetName: mainAssignee.realname || mainAssignee.account,
+            syncedAt: changedAt,
+            lastErrorAt: '',
+            lastError: ''
+          }
+        },
+        updatedAt: changedAt
+      });
+      result.updatedTask = updatedTask;
+    }
     await writeOperationLog(req, {
       user: currentUser,
       module: 'task',
@@ -1938,7 +1982,7 @@ async function handleApi(req, res, url) {
       metadata: result,
       description: `${currentUser.displayName || currentUser.username} 在工作台拆单「${task.displayTitle || task.title || task.taskNo || task.id}」`
     });
-    broadcastPlatformEvent('tasks.changed', { projectId: task.projectId || artProjectId, taskId: task.id, taskNo: task.taskNo || '', module: 'zentao-task-split' });
+    broadcastPlatformEvent('tasks.changed', { projectId: task.projectId || artProjectId, taskId: (updatedTask || task).id, taskNo: task.taskNo || '', module: 'zentao-task-split' });
     sendJson(res, 200, result);
     return;
   }
@@ -8639,6 +8683,48 @@ function platformTaskStatus(status = '', task = {}) {
 function normalizeTaskWorkloadLevelInput(value = '') {
   const text = String(value || '').trim().toUpperCase();
   return ['XS', 'S', 'M', 'L'].includes(text) ? text : '';
+}
+
+function isLowEffortArtAcceptanceTaskInput(task = {}) {
+  const titleText = [
+    task.title,
+    task.displayTitle,
+    task.name,
+    task.taskName,
+    task.taskNameAndNo,
+    task.zentao?.name,
+    task.zentao?.title,
+    task.zentao?.taskName,
+    task.zentao?.storyTitle,
+    task.zentao?.parentName
+  ].filter(Boolean).join('\n');
+  if (/(?:美术)?验收单|美术验收|验收走查|走查单|设计同步单|设计同步/.test(titleText)) return true;
+
+  const bodyText = [
+    task.summary,
+    task.requirement,
+    task.description,
+    task.type,
+    task.taskType,
+    task.zentao?.type,
+    task.zentao?.taskType
+  ].filter(Boolean).join('\n');
+  return /(?:任务类型|单据类型|流程类型|工单类型|类型)[：:\s]*(?:美术)?(?:验收|验收单|走查|走查单|设计同步|设计同步单)/.test(bodyText);
+}
+
+function taskWorkloadGroupForTask(task = {}) {
+  const project = cleanBriefPart(task.projectId || artProjectId);
+  const demand = artBriefLinkedDemand(task);
+  if (demand.id) return `demand:${project}:${demand.id}`;
+  const storyId = cleanBriefPart(task.zentao?.story || task.story || task.storyId || task.storyID);
+  if (storyId && storyId !== '0') return `story:${project}:${storyId}`;
+  const parentId = cleanBriefPart(task.zentao?.parent || task.parent || task.parentId || task.parentID);
+  if (parentId && parentId !== '0') return `parent-id:${project}:${parentId}`;
+  const parentName = cleanBriefPart(task.zentao?.parentName || task.parentName);
+  if (parentName) return `parent:${project}:${safeFileSegment(parentName)}`;
+  const storyTitle = cleanBriefPart(task.zentao?.storyTitle || task.storyTitle);
+  if (storyTitle) return `story-title:${project}:${safeFileSegment(storyTitle)}`;
+  return '';
 }
 
 function isBugLikeTaskInput(input = {}) {
