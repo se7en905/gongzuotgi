@@ -515,6 +515,8 @@
   - 直接执行任务必须记录 Skill/md 路径、Skill/md 内容快照、Figma 链接、写入方式、执行人、补充要求、创建人、领取设备、Worker 状态和执行日志。
   - 直接执行任务即使负责人或组员没有手写补充要求，也必须在 `requirement` 中保存平台生成的默认执行要求；不得让 AI档案或执行明细里的执行要求为空。
   - 直接执行状态必须区分 `待领取`、`已领取`、`执行中`、`完成`、`失败`、`阻塞`。
+  - 涉及 Figma 写入的直接执行或本机 Worker 执行，必须同时保存 `figmaWriteResult` 写入证据和写入后的最终回读/截图验收结果；只有检测到 `createdNodeIds` 或 `mutatedNodeIds`，且最后一次写入之后完成目标节点回读或截图验收，才允许判定整条执行 `完成`。
+  - 如果 Figma 已返回 `createdNodeIds` 或 `mutatedNodeIds`，但写入后最终回读、复扫或截图因 `Auth required`、OAuth 失效、权限不足、MCP 断开等原因失败，必须显示为 `阻塞` 或 `失败`，并在执行明细中明确“已有部分写入，最终验收未闭环”，不得显示为完成。
   - 平台服务器只负责任务创建、队列记录、Worker 心跳、日志回传、状态展示和权限审计。
   - 平台服务器不得保存 Figma OAuth token，不得代替组员执行 Figma 写入，不得依赖工作台管理者 admin 的本机 Figma 环境。
   - 直接执行没有平台侧“开始”按钮；启动动作只能来自被指派执行人电脑上的本机 Worker 自动领取。
@@ -543,6 +545,7 @@
   - Figma 必须走原生授权和 Figma MCP；组员登录工作台后，也必须在自己的电脑使用自己的 Figma 账号和本机 Figma MCP。
   - 如果执行人本机 Codex 不可用、Figma MCP 未配置、Figma OAuth 失效、目标 Figma 文件无编辑权限或工具列表缺少写入工具，Worker 必须停止执行并回传阻塞原因。
   - 只有 Figma 写入工具真实返回 `createdNodeIds` 或 `mutatedNodeIds`，才允许判定写入完成。
+  - Figma 写入完成不等于整条执行完成；整条执行还必须完成写入后的最终回读/截图验收。缺少最终验收证据时，执行明细必须展示为部分写入阻塞，并提示恢复执行人本机 Figma MCP 授权后继续执行。
 - Web 端 Codex 对话数据约定：
   - Web 对话入口复用普通执行权限 `run.codex.execute`，只对非 `direct-skill` 执行记录开放；直接执行仍由执行人本机 Worker 领取，不走平台对话启动。
   - 只有 Web 对话提交追加沟通时，才必须调用 `/api/runs/:id/retry` 创建新执行，再通过 `/api/runs/:id/start` 启动；美术执行台顶部按钮 `再次执行` 不得调用 `/retry`，必须复用当前记录直接调用 `/api/runs/:id/start`。
@@ -771,6 +774,7 @@
   - 如果缺少写入工具，先执行配置自检：`codex mcp list`、`codex mcp get figma-write-local`、`codex mcp get figma`。
   - 使用 `figma-write-local` 写入时，Figma Desktop 里必须运行本地插件 `/Users/se7en/Downloads/figma-plugin`（插件名 `Claude Code in Figma`），并保持插件 UI 打开；本机桥接端口为 `9530`。
   - 任何 Figma 写入脚本必须在真正调用 `use_figma` 成功返回 `createdNodeIds` 或 `mutatedNodeIds` 后，才算写入完成；仅生成本地 `figma_use_script.js` 不算完成。
+  - 当前已确认 Figma 授权失效典型错误为 `Auth required`；出现该错误时，说明执行人本机 Figma MCP OAuth 或文件权限需要恢复，不是平台服务器可以代替完成。
 - 图片生成工具规则：
   - 遇到“生成图片 / Image2 / GPT Image / image_gen / 宠物形象 / 概念图 / 参考图”等任务时，先确认当前会话工具列表里是否存在可执行的内置 `image_gen` 工具；只看到 `imagegen` 技能卡不代表内置工具已注入。
   - 如果当前会话存在内置 `image_gen` 工具，优先使用内置工具生成或编辑图片，并把最终资产移动或保存到当前项目输出目录。
