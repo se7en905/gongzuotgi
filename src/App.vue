@@ -1078,9 +1078,20 @@ export default {
       return Math.max(snapshotTotal, statsTotal);
     },
 
+    skillInventoryAwaitingServerScanCache() {
+      return this.isSkillInventoryViewActive
+        && this.skillInventoryScanCacheLoaded !== true
+        && !this.skillInventoryKeyword
+        && !this.skillInventoryMemberFilter
+        && !this.skillInventoryKindFilter
+        && this.skillInventoryPreferMine !== true
+        && this.skillInventoryStatsSnapshotReady;
+    },
+
     skillInventoryUsingFirstPageSnapshot() {
       if (!this.skillInventoryFirstPageSnapshotRows.length) return false;
       if (!this.skillInventoryContentReady) return true;
+      if (this.skillInventoryAwaitingServerScanCache && Number(this.skillInventoryPage || 1) === 1) return true;
       return !this.safeFilteredSkillInventoryRows.length
         && !this.skillInventoryVisibleRows.length
         && this.skillInventoryFirstPageSnapshotTotal > 0;
@@ -2586,7 +2597,7 @@ export default {
     },
 
     safeSkillInventoryProductStats() {
-      if (!this.skillInventoryContentReady && this.skillInventoryStatsSnapshotReady) {
+      if ((!this.skillInventoryContentReady || this.skillInventoryAwaitingServerScanCache) && this.skillInventoryStatsSnapshotReady) {
         const snapshot = this.skillInventoryProductStatsSnapshot;
         return [
           { key: 'total', label: '产物总计', value: Number(snapshot.total || 0) },
@@ -3094,7 +3105,7 @@ export default {
       const cached = this.skillInventoryProductStatsCacheGet(cacheKey);
       if (cached) return cached;
       const groupedRows = this.skillInventoryFilteredRowsByKind;
-      if (groupedRows.total.length || this.skillInventoryKeyword || this.skillInventoryMemberFilter) {
+      if (groupedRows.total.length || this.hasProjectScanProducts(this.scans) || this.skillInventoryKeyword || this.skillInventoryMemberFilter) {
         const stats = [
           { key: 'total', label: '产物总计', value: groupedRows.total.length },
           { key: 'skill', label: '技能总数', value: groupedRows.skill.length },
@@ -4802,19 +4813,36 @@ export default {
       };
     },
 
-    saveSkillInventoryFirstPageSnapshot() {
-      if (!this.skillInventoryContentReady) return false;
-      if (this.skillInventoryKeyword || this.skillInventoryMemberFilter || this.skillInventoryKindFilter || this.skillInventoryPreferMine) return false;
-      if (Number(this.skillInventoryPage || 1) !== 1) return false;
-      const rows = this.safeDisplayPagedSkillInventoryRows;
-      const total = this.safeFilteredSkillInventoryRows.length;
+    saveSkillInventoryFirstPageSnapshot(options = {}) {
+      const force = options.force === true;
+      if (!this.skillInventoryContentReady && !force) return false;
+      const pageSize = Math.max(1, Number(this.skillInventoryPageSize || 10) || 10);
+      const stats = options.stats && typeof options.stats === 'object'
+        ? options.stats
+        : (this.skillInventoryProductStatsSnapshot || null);
+      let rows = [];
+      let total = 0;
+      if (force) {
+        const sourceRows = Array.isArray(options.rows)
+          ? options.rows
+          : this.skillInventoryVisibleRows;
+        total = sourceRows.length;
+        rows = sourceRows
+          .slice(0, pageSize)
+          .map(row => this.safeDecorateSkillInventoryDisplayRow(row));
+      } else {
+        if (this.skillInventoryKeyword || this.skillInventoryMemberFilter || this.skillInventoryKindFilter || this.skillInventoryPreferMine) return false;
+        if (Number(this.skillInventoryPage || 1) !== 1) return false;
+        rows = this.safeDisplayPagedSkillInventoryRows;
+        total = this.safeFilteredSkillInventoryRows.length;
+      }
       if (!Array.isArray(rows) || !rows.length || !total) return false;
       const snapshot = {
-        rows: rows.slice(0, Math.max(1, Number(this.skillInventoryPageSize || 10) || 10)).map(row => this.skillInventorySnapshotDisplayRow(row)),
+        rows: rows.slice(0, pageSize).map(row => this.skillInventorySnapshotDisplayRow(row)),
         total,
-        page: Number(this.skillInventoryPage || 1) || 1,
-        pageSize: Number(this.skillInventoryPageSize || 10) || 10,
-        stats: this.skillInventoryProductStatsSnapshot || null,
+        page: force ? 1 : (Number(this.skillInventoryPage || 1) || 1),
+        pageSize,
+        stats,
         savedAt: new Date().toISOString()
       };
       this.skillInventoryFirstPageSnapshot = snapshot;
@@ -12043,24 +12071,12 @@ export default {
       }
       if (!Object.keys(scanMap).length) return false;
       this.replaceScansForSkillInventory(scanMap, { force: options.force === true });
-      if (options.productStats && typeof options.productStats === 'object') {
-        const current = this.skillInventoryProductStatsSnapshot || {};
-        const next = options.productStats;
-        const unchanged = Number(current.total || 0) === Number(next.total || 0)
-          && Number(current.skill || 0) === Number(next.skill || 0)
-          && Number(current.standard || 0) === Number(next.standard || 0);
-        if (!unchanged || !current.updatedAt) {
-          this.skillInventoryProductStatsSnapshot = next;
-          this.saveWorkbenchDisplayCache('skillInventoryProductStatsSnapshot', this.skillInventoryProductStatsSnapshot);
-        }
-      } else {
-        this.updateSkillInventoryProductStatsSnapshot(this.scans);
-      }
+      const statsSnapshot = this.updateSkillInventoryProductStatsSnapshot(this.scans);
       this.saveWorkbenchDisplayCache('projects', this.projects);
       if (this.hasProjectScanProducts(this.scans)) this.saveWorkbenchDisplayCache('scans', this.scans);
       else this.clearWorkbenchDisplayCacheKey('scans');
       this.ensureSkillInventoryVisibleListState();
-      this.scheduleSkillInventoryFirstPageSnapshotSave();
+      this.saveSkillInventoryFirstPageSnapshot({ force: true, stats: statsSnapshot });
       return true;
     },
 
@@ -12294,8 +12310,8 @@ export default {
       if (!Object.keys(scanMap || {}).length) return { applied: false, preservedScans: [], changeSummary: { added: 0, changed: 0, removed: 0 } };
       this.mergeScansIntoInventoryState(scanMap, { force: true });
       this.saveWorkbenchDisplayCache('scans', this.scans);
-      this.updateSkillInventoryProductStatsSnapshot(this.scans);
-      this.scheduleSkillInventoryFirstPageSnapshotSave();
+      const statsSnapshot = this.updateSkillInventoryProductStatsSnapshot(this.scans);
+      this.saveSkillInventoryFirstPageSnapshot({ force: true, stats: statsSnapshot });
       this.skillInventoryScanCacheLoaded = true;
       const activeProjectId = this.selectedProjectId && this.scans[this.selectedProjectId]
         ? this.selectedProjectId
