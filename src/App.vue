@@ -1348,7 +1348,7 @@ export default {
     },
 
     directSkillCompletedRuns() {
-      return this.directSkillRunRows.filter(run => /done|success|passed|completed|finished/i.test(String(run.status || '')));
+      return this.directSkillRunRows.filter(run => ['passed', 'completed', 'success'].includes(this.effectiveResultStatus(run)));
     },
 
     directSkillRunsByUserId() {
@@ -1360,11 +1360,12 @@ export default {
       };
       for (const run of this.directSkillRunRows) {
         const status = String(run.status || '');
+        const resultStatus = this.effectiveResultStatus(run);
         const bucket = /pending|queued/i.test(status)
           ? 'pending'
           : /claimed|running|in_progress/i.test(status)
             ? 'active'
-            : /done|success|passed|completed|finished/i.test(status)
+            : ['passed', 'completed', 'success'].includes(resultStatus)
               ? 'completed'
               : '';
         if (!bucket) continue;
@@ -19233,6 +19234,8 @@ export default {
       if (/pending|created|queued/.test(value)) return '等待本机 Worker';
       if (/claimed/.test(value)) return '已领取';
       if (/running|in_progress/.test(value)) return '本机执行中';
+      if (this.effectiveResultStatus(run) === 'failed') return '本机执行失败';
+      if (this.effectiveResultStatus(run) === 'blocked') return '本机阻塞';
       if (/failed|error/.test(value)) return '本机执行失败';
       if (/blocked/.test(value)) return '本机阻塞';
       if (/completed|done|success|passed/.test(value)) return '本机已完成';

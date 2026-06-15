@@ -487,13 +487,24 @@ async function failRunBeforeCodex(run, reason) {
       }
     ],
     currentStage: '本机 Codex 执行',
-    resultSummary: buildResultSummary('failed', -1, reason),
+    resultSummary: buildResultSummary('failed', -1, reason, {
+      required: requiresFigmaWriteEvidence(run),
+      written: false,
+      evidence: [],
+      blockerReason: reason
+    }),
     workerResult: {
       deviceId,
       hostname: os.hostname(),
       exitCode: -1,
       finalText: '',
       stderrText: reason
+    },
+    figmaWriteResult: {
+      required: requiresFigmaWriteEvidence(run),
+      written: false,
+      evidence: [],
+      blockerReason: reason
     }
   });
 }
