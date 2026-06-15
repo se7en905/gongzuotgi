@@ -781,7 +781,7 @@ export default {
       skillInventoryRowsCacheToken: '',
       skillOwnerOverrides: {},
       skillDisplayNameOverrides: {},
-      skillVersionOverrides: {},
+      skillVersionOverrides: readWorkbenchDisplayCacheValue('skillVersionOverrides', {}) || {},
       skillAliasOverrides: {},
       skillAliasHistoryOverrides: {},
       skillInventoryKindOverrides: {},
@@ -1069,7 +1069,9 @@ export default {
 
     skillInventoryFirstPageSnapshotRows() {
       const snapshot = this.skillInventoryFirstPageSnapshot;
-      return Array.isArray(snapshot?.rows) ? snapshot.rows : [];
+      return Array.isArray(snapshot?.rows)
+        ? snapshot.rows.map(row => this.skillInventorySnapshotRowWithVersionOverride(row))
+        : [];
     },
 
     skillInventoryFirstPageSnapshotTotal() {
@@ -4813,6 +4815,17 @@ export default {
       };
     },
 
+    skillInventorySnapshotRowWithVersionOverride(row = {}) {
+      const version = this.skillVersionDisplayOverrideForRow(row);
+      if (!version || row.hidden === true) return row;
+      const label = this.skillVersionShortLabel(version);
+      return {
+        ...row,
+        displayVersionLabel: label,
+        displayVersionClass: this.skillVersionClass(label)
+      };
+    },
+
     saveSkillInventoryFirstPageSnapshot(options = {}) {
       const force = options.force === true;
       if (!this.skillInventoryContentReady && !force) return false;
@@ -4863,6 +4876,12 @@ export default {
         this.skillInventoryFirstPageSnapshotSaveTimer = 0;
         this.saveSkillInventoryFirstPageSnapshot();
       }, delay);
+    },
+
+    refreshSkillInventoryConfirmedSnapshot() {
+      const statsSnapshot = this.updateSkillInventoryProductStatsSnapshot(this.scans);
+      this.saveSkillInventoryFirstPageSnapshot({ force: true, stats: statsSnapshot });
+      return statsSnapshot;
     },
 
     safeCallDisplayValue(factory, fallback = '') {
@@ -5554,7 +5573,9 @@ export default {
         });
         if (!lightRunViews.includes(this.activeView) && !aiMembersView && this.can('menu.skillList')) {
           this.applySkillAliasOverridesToScans();
+          this.saveWorkbenchDisplayCache('skillVersionOverrides', this.skillVersionOverrides);
           this.saveWorkbenchDisplayCache('scans', this.scans);
+          this.refreshSkillInventoryConfirmedSnapshot();
         }
         if (!this.platformEventSource) this.startPlatformEventSync();
       } finally {
@@ -6193,6 +6214,7 @@ export default {
         'operationLogs',
         'artProgressSummary',
         'usageCounters',
+        'skillVersionOverrides',
         'skillInventoryProductStatsSnapshot',
         'skillInventoryFirstPageSnapshot'
       ].forEach(key => this.restoreWorkbenchDisplayCacheKey(key));
@@ -6264,12 +6286,16 @@ export default {
         if (event.payload?.override) {
           this.applySkillVersionOverrideRecord(event.payload.override);
           this.applySkillVersionOverridesToScans();
+          this.saveWorkbenchDisplayCache('skillVersionOverrides', this.skillVersionOverrides);
           this.saveWorkbenchDisplayCache('scans', this.scans);
+          this.refreshSkillInventoryConfirmedSnapshot();
         }
         this.schedulePlatformRefresh('skill-version-overrides', async () => {
           await this.refreshSkillVersionOverrides();
           this.applySkillVersionOverridesToScans();
+          this.saveWorkbenchDisplayCache('skillVersionOverrides', this.skillVersionOverrides);
           this.saveWorkbenchDisplayCache('scans', this.scans);
+          this.refreshSkillInventoryConfirmedSnapshot();
         });
       }
       if (type === 'usage-counters.changed' && this.can('menu.skillList')) {
@@ -6707,6 +6733,7 @@ export default {
         this.skillAliasOverrides = aliasOverrides;
         this.skillAliasHistoryOverrides = aliasHistoryOverrides;
         this.skillInventoryKindOverrides = inventoryKindOverrides;
+        this.saveWorkbenchDisplayCache('skillVersionOverrides', this.skillVersionOverrides);
         this.clearSkillInventoryRowsCache({ keepScanSignature: true });
         return true;
       } catch {
@@ -9703,17 +9730,20 @@ export default {
 
     skillInventoryDisplayVersionLabel(row = {}) {
       if (row.hidden === true) return '1.0';
-      const cached = String(row.displayVersionLabel || row.skill?.displayVersionLabel || '').trim();
-      if (cached) return cached;
       const displayVersion = String(row.displayVersionOverride || row.skill?.displayVersionOverride || '').trim();
       if (displayVersion) return this.skillVersionShortLabel(displayVersion);
+      const cached = String(row.displayVersionLabel || row.skill?.displayVersionLabel || '').trim();
+      if (cached) return cached;
       return this.skillVersionShortLabel(row);
     },
 
     skillInventoryDisplayVersionClass(row = {}) {
       if (row.hidden === true) return 'version-hidden';
-      const cached = String(row.displayVersionClass || row.skill?.displayVersionClass || '').trim();
-      if (cached) return cached;
+      const displayVersion = String(row.displayVersionOverride || row.skill?.displayVersionOverride || '').trim();
+      if (!displayVersion) {
+        const cached = String(row.displayVersionClass || row.skill?.displayVersionClass || '').trim();
+        if (cached) return cached;
+      }
       return this.skillVersionClass(this.skillInventoryDisplayVersionLabel(row));
     },
 
@@ -12071,12 +12101,11 @@ export default {
       }
       if (!Object.keys(scanMap).length) return false;
       this.replaceScansForSkillInventory(scanMap, { force: options.force === true });
-      const statsSnapshot = this.updateSkillInventoryProductStatsSnapshot(this.scans);
       this.saveWorkbenchDisplayCache('projects', this.projects);
       if (this.hasProjectScanProducts(this.scans)) this.saveWorkbenchDisplayCache('scans', this.scans);
       else this.clearWorkbenchDisplayCacheKey('scans');
       this.ensureSkillInventoryVisibleListState();
-      this.saveSkillInventoryFirstPageSnapshot({ force: true, stats: statsSnapshot });
+      this.refreshSkillInventoryConfirmedSnapshot();
       return true;
     },
 
@@ -12310,8 +12339,7 @@ export default {
       if (!Object.keys(scanMap || {}).length) return { applied: false, preservedScans: [], changeSummary: { added: 0, changed: 0, removed: 0 } };
       this.mergeScansIntoInventoryState(scanMap, { force: true });
       this.saveWorkbenchDisplayCache('scans', this.scans);
-      const statsSnapshot = this.updateSkillInventoryProductStatsSnapshot(this.scans);
-      this.saveSkillInventoryFirstPageSnapshot({ force: true, stats: statsSnapshot });
+      this.refreshSkillInventoryConfirmedSnapshot();
       this.skillInventoryScanCacheLoaded = true;
       const activeProjectId = this.selectedProjectId && this.scans[this.selectedProjectId]
         ? this.selectedProjectId
@@ -13929,7 +13957,9 @@ export default {
       if (this.skillVersionShortLabel(row) === version) return;
       const previousDisplayOverride = this.skillVersionDisplayOverrideForRow(row);
       this.patchSkillVersionDisplayInScans(row, version);
+      this.saveWorkbenchDisplayCache('skillVersionOverrides', this.skillVersionOverrides);
       this.saveWorkbenchDisplayCache('scans', this.scans);
+      this.refreshSkillInventoryConfirmedSnapshot();
       this.loading.skillVersion = true;
       try {
         const result = await this.api('/api/skill-version', {
@@ -13950,7 +13980,9 @@ export default {
           relativePath: result.relativePath || row.relativePath,
           overrideKey: result.key || ''
         }, result.version || version);
+        this.saveWorkbenchDisplayCache('skillVersionOverrides', this.skillVersionOverrides);
         this.saveWorkbenchDisplayCache('scans', this.scans);
+        this.refreshSkillInventoryConfirmedSnapshot();
         this.refreshSkillUsageDialogForSkill({
           ...row.skill,
           ...row,
@@ -13959,7 +13991,9 @@ export default {
         ElMessage.success(`版本已更新为 ${result.version || version}`);
       } catch (error) {
         this.patchSkillVersionDisplayInScans(row, previousDisplayOverride);
+        this.saveWorkbenchDisplayCache('skillVersionOverrides', this.skillVersionOverrides);
         this.saveWorkbenchDisplayCache('scans', this.scans);
+        this.refreshSkillInventoryConfirmedSnapshot();
         ElMessage.error(this.readApiError(error) || '版本保存失败');
       } finally {
         this.loading.skillVersion = false;
