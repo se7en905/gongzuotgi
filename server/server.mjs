@@ -1415,12 +1415,12 @@ async function handleApi(req, res, url) {
       allowedProjectIds: currentUser.projectIds || [],
       canAccessAllProjects: currentUser.role === 'admin'
     });
-    if (!run) {
-      sendJson(res, 200, { run: null });
-      return;
-    }
     const worker = await upsertAgentWorker(workerInput);
     broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, module: 'agent-worker' });
+    if (!run) {
+      sendJson(res, 200, { run: null, worker });
+      return;
+    }
     await writeOperationLog(req, {
       user: currentUser,
       module: 'run',

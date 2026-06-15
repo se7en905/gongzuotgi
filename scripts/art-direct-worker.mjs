@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import os from 'node:os';
 import path from 'node:path';
-import { access, mkdir, readFile, writeFile, readdir, rm } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile, readdir, rename, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -22,6 +22,10 @@ const runStateDir = process.env.ART_WORKER_RUN_STATE_DIR || path.join(workerHome
 const offlineQueueMaxItems = Math.max(20, Number(process.env.ART_WORKER_OFFLINE_QUEUE_MAX_ITEMS || 200));
 const offlineLogChunkMaxChars = Math.max(1000, Number(process.env.ART_WORKER_OFFLINE_LOG_CHUNK_MAX_CHARS || 8000));
 const runEventQueueMaxItems = Math.max(20, Number(process.env.ART_WORKER_RUN_EVENT_QUEUE_MAX_ITEMS || 500));
+const selfUpdateEnabled = !['0', 'false', 'no'].includes(String(process.env.ART_WORKER_SELF_UPDATE || '1').toLowerCase());
+const selfUpdateIntervalMs = Math.max(300000, Number(process.env.ART_WORKER_SELF_UPDATE_INTERVAL_MS || 1800000));
+const selfUpdateUrl = process.env.ART_WORKER_SELF_UPDATE_URL || `${apiBase}/worker/art-direct-worker.mjs`;
+const selfScriptPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
 
 let cookie = '';
 let currentUser = null;
@@ -30,6 +34,9 @@ let checkingRuns = false;
 let eventSyncStarted = false;
 let lastLocalCheckAt = 0;
 let lastOfflineNoticeAt = 0;
+let lastSelfUpdateAt = 0;
+let selfUpdateRunning = false;
+let selfRestartScheduled = false;
 let offlineQueueOperation = Promise.resolve();
 let localChecks = {
   codexReady: false,
@@ -59,6 +66,7 @@ async function main() {
       await refreshLocalChecks();
       await flushOfflineQueue();
       await syncLocalRunState();
+      await checkSelfUpdate();
       await heartbeat();
       await checkAndExecuteNextRun();
     } catch (error) {
@@ -155,6 +163,67 @@ async function refreshLocalChecks(force = false) {
   return localChecks;
 }
 
+async function checkSelfUpdate(force = false) {
+  const now = Date.now();
+  if (!selfUpdateEnabled || !selfScriptPath || selfUpdateRunning || selfRestartScheduled) return false;
+  if (!force && now - lastSelfUpdateAt < selfUpdateIntervalMs) return false;
+  selfUpdateRunning = true;
+  lastSelfUpdateAt = now;
+  const tempPath = `${selfScriptPath}.next-${Date.now()}`;
+  try {
+    const latest = await fetchText(`${selfUpdateUrl}${selfUpdateUrl.includes('?') ? '&' : '?'}t=${Date.now()}`);
+    if (!isValidWorkerScript(latest)) throw new Error('服务端返回的 Worker 脚本内容不完整，已跳过自更新。');
+    const current = await readFile(selfScriptPath, 'utf8').catch(() => '');
+    if (normalizeScriptForCompare(current) === normalizeScriptForCompare(latest)) return false;
+    await writeFile(tempPath, latest, 'utf8');
+    await rename(tempPath, selfScriptPath);
+    console.log('[worker] 已自动更新 Worker 脚本，准备重启以载入新版本。');
+    scheduleSelfRestart();
+    return true;
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => {});
+    logOfflineNotice(`Worker 自更新失败，稍后重试：${error.message}`);
+    return false;
+  } finally {
+    selfUpdateRunning = false;
+  }
+}
+
+function isValidWorkerScript(text = '') {
+  const value = String(text || '');
+  return value.includes('art-direct-worker')
+    && value.includes('async function main()')
+    && value.includes('ART_WORKER_SELF_UPDATE_INTERVAL_MS')
+    && value.includes('/api/agent-runs/next');
+}
+
+function normalizeScriptForCompare(text = '') {
+  return String(text || '').replace(/\r\n/g, '\n').trim();
+}
+
+function scheduleSelfRestart() {
+  if (selfRestartScheduled) return;
+  selfRestartScheduled = true;
+  setTimeout(() => {
+    const supervised = process.env.ART_WORKER_SUPERVISED === '1';
+    if (!supervised) {
+      try {
+        const child = spawn(process.execPath, process.argv.slice(1), {
+          cwd: process.cwd(),
+          env: process.env,
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true
+        });
+        child.unref();
+      } catch (error) {
+        console.error(`[worker] 自更新后重启失败：${error.message}`);
+      }
+    }
+    process.exit(0);
+  }, 1000);
+}
+
 async function checkAndExecuteNextRun() {
   if (checkingRuns) return;
   checkingRuns = true;
@@ -171,6 +240,17 @@ async function checkAndExecuteNextRun() {
   } finally {
     checkingRuns = false;
   }
+}
+
+async function wakeForRunChange() {
+  await refreshLocalChecks(true).catch(error => {
+    console.error(`[worker] 本机自检失败，稍后重试：${error.message}`);
+    return localChecks;
+  });
+  await heartbeat(true).catch(error => {
+    logOfflineNotice(`心跳恢复失败，稍后重试：${error.message}`);
+  });
+  await checkAndExecuteNextRun();
 }
 
 function startPlatformEventSync() {
@@ -197,6 +277,10 @@ async function readPlatformEvents() {
   });
   if (!response.ok) throw new Error(`平台事件连接失败：HTTP ${response.status}`);
   if (!response.body) throw new Error('平台事件连接不可读。');
+  await heartbeat(true).catch(error => {
+    logOfflineNotice(`平台事件连接后心跳恢复失败，稍后重试：${error.message}`);
+  });
+  void checkAndExecuteNextRun();
   const decoder = new TextDecoder();
   let buffer = '';
   for await (const chunk of response.body) {
@@ -220,7 +304,7 @@ function handlePlatformEventBlock(block = '') {
   } catch {
     return;
   }
-  if (event?.type === 'runs.changed') void checkAndExecuteNextRun();
+  if (event?.type === 'runs.changed') void wakeForRunChange();
 }
 
 async function executeRun(run) {
@@ -881,6 +965,26 @@ async function fetchJson(pathname, options = {}) {
   const value = text ? JSON.parse(text) : null;
   if (!response.ok) throw new Error(`${response.status} ${value?.error || response.statusText}`);
   return options.includeRaw ? { value, raw: response } : value;
+}
+
+async function fetchText(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+  let response;
+  try {
+    response = await fetch(url, {
+      headers: cookie ? { Cookie: cookie } : {},
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error(`平台请求超时 ${requestTimeoutMs}ms：${url}`);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+  const text = await response.text();
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  return text;
 }
 
 function parseSetCookie(value = '') {

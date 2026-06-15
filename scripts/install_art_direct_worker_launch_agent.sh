@@ -7,6 +7,7 @@ PLIST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
 NODE_BIN="$(command -v node)"
 DEFAULT_CODEX_CLI="/Applications/Codex.app/Contents/Resources/codex"
 LOG_DIR="${ROOT}/logs"
+RUNNER="${ROOT}/scripts/run-art-direct-worker.sh"
 
 if [[ -z "${ART_PLATFORM_API:-}" ]]; then
   echo "缺少 ART_PLATFORM_API，例如：http://127.0.0.1:4288" >&2
@@ -30,6 +31,34 @@ if [[ ! -f "${ROOT}/scripts/art-direct-worker.mjs" ]]; then
   exit 1
 fi
 
+cat > "${RUNNER}" <<'RUNNER'
+#!/usr/bin/env bash
+set -u
+
+: "${ART_PLATFORM_API:?missing ART_PLATFORM_API}"
+: "${ART_PLATFORM_USERNAME:?missing ART_PLATFORM_USERNAME}"
+: "${ART_PLATFORM_PASSWORD:?missing ART_PLATFORM_PASSWORD}"
+: "${ART_WORKER_HOME:=${HOME}/ArtDirectWorker}"
+
+NODE_BIN="${NODE_BIN:-node}"
+WORKER="${ART_WORKER_HOME}/scripts/art-direct-worker.mjs"
+LOG_DIR="${ART_WORKER_HOME}/logs"
+mkdir -p "${ART_WORKER_HOME}/scripts" "${LOG_DIR}"
+
+export ART_WORKER_PROJECT_ROOT="${ART_WORKER_PROJECT_ROOT:-${ART_WORKER_HOME}}"
+export ART_WORKER_SUPERVISED=1
+
+while true; do
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "${ART_PLATFORM_API%/}/worker/art-direct-worker.mjs" -o "${WORKER}" \
+      || echo "[$(date -Iseconds)] worker update download failed" >> "${LOG_DIR}/art-direct-worker.${ART_PLATFORM_USERNAME}.err.log"
+  fi
+  "${NODE_BIN}" "${WORKER}"
+  sleep 5
+done
+RUNNER
+chmod +x "${RUNNER}"
+
 cat > "${PLIST}" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -42,8 +71,8 @@ cat > "${PLIST}" <<PLIST
   <string>${ROOT}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${NODE_BIN}</string>
-    <string>${ROOT}/scripts/art-direct-worker.mjs</string>
+    <string>/bin/bash</string>
+    <string>${RUNNER}</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -61,6 +90,10 @@ cat > "${PLIST}" <<PLIST
     <string>${ART_WORKER_HEARTBEAT_INTERVAL_MS:-300000}</string>
     <key>ART_WORKER_LOCAL_CHECK_INTERVAL_MS</key>
     <string>${ART_WORKER_LOCAL_CHECK_INTERVAL_MS:-2400000}</string>
+    <key>ART_WORKER_HOME</key>
+    <string>${ROOT}</string>
+    <key>NODE_BIN</key>
+    <string>${NODE_BIN}</string>
     <key>CODEX_CLI_PATH</key>
     <string>${CODEX_CLI_PATH:-${DEFAULT_CODEX_CLI}}</string>
   </dict>

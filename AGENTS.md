@@ -512,6 +512,9 @@
   - 组员电脑默认没有负责人本机的项目代码，Worker 启动命令不得依赖负责人本机路径、相对 `scripts/` 路径或整套项目代码。
   - Worker 启动命令必须通过工作台服务 URL 下载 Worker 脚本到组员自己的用户目录；默认目录为 Windows `%USERPROFILE%\ArtDirectWorker`、macOS `$HOME/ArtDirectWorker`。
   - Worker 启动命令不得包含 Codex API Key、Codex 登录 token、Figma OAuth token、Figma MCP 授权、负责人 Mac 的本机凭据或任何平台管理者密钥；命令只允许负责下载/启动 Worker、登录工作台、上报心跳、轮询和领取任务。
+  - Worker 必须支持自更新：运行中的 Worker 低频检查工作台 `/worker/art-direct-worker.mjs`，发现脚本内容变化时在本机原子替换并重启自己；自更新过程不得弹窗、抢焦点、打开浏览器、打开 Figma 或制造 Dock 闪烁。
+  - Worker 自更新只能更新组员用户目录下的 Worker 脚本本身，不得修改组员 Codex 配置、Figma MCP 配置、系统登录项之外的文件、平台账号密码或任何本机敏感凭据。
+  - `复制开机自启` 安装出来的 Windows 当前用户启动项和 macOS LaunchAgent 必须通过本机 runner 启动 Worker；runner 每次拉起 Worker 前先尝试从工作台下载最新脚本，Worker 自更新退出后必须能自动重新拉起。
   - 工作台服务更新后，组员重新复制并执行 `本机执行状态` 页面里的最新 `复制手动启动` 或 `复制开机自启` 命令，必须重新下载最新 `art-direct-worker.mjs`；不得继续沿用旧 Worker 脚本。
   - 组员推荐重新执行 `复制开机自启` 命令来更新 Worker；该流程必须覆盖同账号旧自启配置并启动最新 Worker。仅使用 `复制手动启动` 时，必须先关闭旧 Worker 终端或旧 worker 进程，避免同账号同电脑同时跑新旧两个 Worker。
   - Windows `复制开机自启` 必须使用当前用户启动项安装 Worker，不得依赖管理员权限或必须注册系统计划任务；普通组员 PowerShell 可直接执行，重复安装只覆盖同一个启动项。

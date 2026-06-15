@@ -96,8 +96,17 @@ Set-Location $(ConvertTo-PSLiteral $Root)
 `$env:ART_WORKER_POLL_INTERVAL_MS = $(ConvertTo-PSLiteral $PollInterval)
 `$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = $(ConvertTo-PSLiteral $HeartbeatInterval)
 `$env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS = $(ConvertTo-PSLiteral $LocalCheckInterval)
+`$env:ART_WORKER_SUPERVISED = '1'
 `$env:CODEX_CLI_PATH = $(ConvertTo-PSLiteral $CodexPath)
-& $(ConvertTo-PSLiteral $Node) $(ConvertTo-PSLiteral $Worker) *>> $(ConvertTo-PSLiteral (Join-Path $LogDir "art-direct-worker.$SafeUsername.log"))
+while (`$true) {
+  try {
+    Invoke-WebRequest -UseBasicParsing -Uri ((`$env:ART_PLATFORM_API).TrimEnd('/') + '/worker/art-direct-worker.mjs') -OutFile $(ConvertTo-PSLiteral $Worker) -ErrorAction Stop
+  } catch {
+    Add-Content -Path $(ConvertTo-PSLiteral (Join-Path $LogDir "art-direct-worker.$SafeUsername.log")) -Value ("[" + (Get-Date).ToString("s") + "] worker update download failed: " + `$_.Exception.Message)
+  }
+  & $(ConvertTo-PSLiteral $Node) $(ConvertTo-PSLiteral $Worker) *>> $(ConvertTo-PSLiteral (Join-Path $LogDir "art-direct-worker.$SafeUsername.log"))
+  Start-Sleep -Seconds 5
+}
 "@ | Set-Content -Path $Runner -Encoding UTF8
 
 if (-not (Test-Path $Runner)) {
