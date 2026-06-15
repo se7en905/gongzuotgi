@@ -122,7 +122,7 @@
           <div class="field-hint">{{ app.isCustomWorkflowRun ? '执行时会按当前选择顺序从前到后逐个完整执行。' : '只执行当前选择的一个 md / Skill，不自动扩展为其它流程。' }}</div>
         </ElFormItem>
       </template>
-      <ElFormItem :label="app.isBugFixRun ? '修复要求' : '给 Codex 的执行要求'"><ElInput v-model="app.runForm.requirement" type="textarea" :rows="8" :placeholder="app.isBugFixRun ? '描述复现方式、实际表现、期望结果、验证范围。' : '像在本机 Codex 对话一样描述：要处理什么、读取哪些资料、输出到哪里、验收标准、不能改动的范围。'" /></ElFormItem>
+      <ElFormItem :label="app.isBugFixRun ? '修复要求' : '给 Codex 的执行要求'" class="is-required-field"><ElInput v-model="app.runForm.requirement" type="textarea" :rows="8" :placeholder="app.isBugFixRun ? '描述复现方式、实际表现、期望结果、验证范围。' : '像在本机 Codex 对话一样描述：要处理什么、读取哪些资料、输出到哪里、验收标准、不能改动的范围。'" /></ElFormItem>
       <ElButton v-if="app.can('run.create')" type="primary" class="full-button" @click="app.createRun">{{ app.runSubmitLabel }}</ElButton>
     </ElForm>
   </ElDialog>

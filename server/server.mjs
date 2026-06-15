@@ -2280,6 +2280,7 @@ async function handleApi(req, res, url) {
       },
       description: `${currentUser.displayName || currentUser.username} 创建执行「${run.title}」`
     });
+    broadcastPlatformEvent('runs.changed', { projectId: project.id, runId: run.id, module: 'run-created' });
     sendJson(res, 201, run);
     return;
   }

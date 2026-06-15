@@ -1243,9 +1243,9 @@ export default {
 
     agentWorkerDisplayRows() {
       return [...(this.agentWorkers || [])].sort((a, b) => {
-        const onlineDiff = Number(this.directSkillWorkerOnline(b)) - Number(this.directSkillWorkerOnline(a));
-        if (onlineDiff) return onlineDiff;
-        return String(b.lastHeartbeatAt || '').localeCompare(String(a.lastHeartbeatAt || ''));
+        const userDiff = this.agentWorkerStableUserOrder(a) - this.agentWorkerStableUserOrder(b);
+        if (userDiff) return userDiff;
+        return this.agentWorkerStableLabel(a).localeCompare(this.agentWorkerStableLabel(b), 'zh-Hans-CN');
       });
     },
 
@@ -1419,13 +1419,9 @@ export default {
         });
       }
       return [...map.values()].sort((a, b) => {
-        const readyDiff = Number(b.ready) - Number(a.ready);
-        if (readyDiff) return readyDiff;
-        const onlineDiff = Number(b.online) - Number(a.online);
-        if (onlineDiff) return onlineDiff;
-        const timeDiff = String(b.worker?.lastHeartbeatAt || '').localeCompare(String(a.worker?.lastHeartbeatAt || ''));
-        if (timeDiff) return timeDiff;
-        return String(a.user?.displayName || a.user?.username || '').localeCompare(String(b.user?.displayName || b.user?.username || ''), 'zh-Hans-CN');
+        const orderDiff = this.agentWorkerStableRowOrder(a) - this.agentWorkerStableRowOrder(b);
+        if (orderDiff) return orderDiff;
+        return this.agentWorkerStableRowLabel(a).localeCompare(this.agentWorkerStableRowLabel(b), 'zh-Hans-CN');
       });
     },
 
@@ -17220,6 +17216,7 @@ export default {
     async createRun() {
       const projectId = this.runForm.projectId || this.selectedProjectId || this.projects[0]?.id || '';
       const figmaLinks = String(this.runForm.figmaLinks || '').trim();
+      const requirement = String(this.runForm.requirement || '').trim();
       const materialHints = this.normalizedRunMaterialHints();
       if (!projectId) {
         ElMessage.warning('当前没有可用项目，请先接入项目后再创建执行');
@@ -17239,6 +17236,10 @@ export default {
       }
       if (this.isCustomWorkflowRun && !materialHints.length) {
         ElMessage.warning('请按顺序选择至少一个 md / Skill');
+        return;
+      }
+      if (!requirement) {
+        ElMessage.warning(this.isBugFixRun ? '请填写修复要求' : '请填写给 Codex 的执行要求');
         return;
       }
       const primaryMaterial = materialHints[0] || '';
@@ -17264,6 +17265,7 @@ export default {
         developer: this.defaultRunDeveloperName,
         title: generatedTitle,
         figmaLinks,
+        requirement,
         stage: this.isBugFixRun ? this.runForm.stage : primaryMaterial,
         primarySkillPath: this.isBugFixRun ? this.runForm.primarySkillPath || this.runForm.stage : primaryMaterial,
         selectedMaterialHints: materialHints,
@@ -17643,6 +17645,40 @@ export default {
       return worker.deviceAlias || worker.deviceName || worker.deviceId || '未命名设备';
     },
 
+    agentWorkerStableUserOrder(worker = null) {
+      const userId = String(worker?.userId || '').trim();
+      if (!userId) return 100000;
+      const index = (this.users || []).findIndex(user => String(user.id || '').trim() === userId);
+      if (index >= 0) return index;
+      if (String(this.currentUser?.id || '').trim() === userId) return 99999;
+      return 100000;
+    },
+
+    agentWorkerStableLabel(worker = null) {
+      const userId = String(worker?.userId || '').trim();
+      const user = (this.users || []).find(item => String(item.id || '').trim() === userId)
+        || (String(this.currentUser?.id || '').trim() === userId ? this.currentUser : null);
+      return [
+        user?.displayName || user?.realname || user?.name || user?.username || worker?.userName || userId,
+        worker?.deviceAlias || worker?.deviceName || worker?.deviceId || worker?.id || ''
+      ].map(value => String(value || '').trim()).filter(Boolean).join(' ');
+    },
+
+    agentWorkerStableRowOrder(row = {}) {
+      const userId = String(row.user?.id || row.worker?.userId || '').trim();
+      const index = (this.users || []).findIndex(user => String(user.id || '').trim() === userId);
+      if (index >= 0) return index;
+      if (String(this.currentUser?.id || '').trim() === userId) return 99999;
+      return 100000;
+    },
+
+    agentWorkerStableRowLabel(row = {}) {
+      return [
+        row.user?.displayName || row.user?.realname || row.user?.name || row.user?.username || row.worker?.userName || row.worker?.userId,
+        row.worker?.deviceAlias || row.worker?.deviceName || row.worker?.deviceId || row.worker?.id || ''
+      ].map(value => String(value || '').trim()).filter(Boolean).join(' ');
+    },
+
     directSkillRunDeviceDisplayName(run = null) {
       const worker = this.directSkillWorkerForRun(run);
       if (worker) return this.directSkillWorkerDisplayName(worker);
@@ -17747,7 +17783,7 @@ export default {
 
     directSkillWorkerIssueText(worker = null) {
       if (!worker) return '未发现本机 Worker 心跳。';
-      if (!this.directSkillWorkerOnline(worker)) return 'Worker 已离线，请确认组员电脑上的 Worker 仍在运行。';
+      if (!this.directSkillWorkerOnline(worker)) return '最近心跳超时：工作台暂时收不到这台电脑的 Worker 心跳。若组员电脑仍在运行，恢复网络或下一轮心跳后会自动更新；新任务会等心跳恢复后领取。';
       const checks = worker.checks && typeof worker.checks === 'object' ? worker.checks : {};
       const messages = [];
       if (worker.codexReady !== true) messages.push(checks.codexMessage || 'Codex 未就绪，请确认组员电脑上能运行 codex --help。');
