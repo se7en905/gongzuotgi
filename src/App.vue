@@ -12717,6 +12717,12 @@ export default {
       }
       const assignee = this.directSkillAssigneeOptions.find(user => user.id === dialog.assignedToUserId) || this.currentUser || {};
       const productName = row.productDisplayName || row.productFileName || row.title || this.fileNameFromPath(skillPath) || 'AI 产物';
+      const requirement = String(dialog.requirement || '').trim() || this.defaultSkillRunRequirement({
+        materialNames: [productName],
+        materialPaths: [skillPath],
+        figmaLinks,
+        writeMode: dialog.figmaWriteMode || 'target-node'
+      });
       let primarySkillContent = this.skillContentCache[row.id] || row.preview || row.skill?.preview || this.skillPreviewText || '';
       if (!primarySkillContent || /技能内容读取失败/i.test(primarySkillContent)) {
         try {
@@ -12757,7 +12763,7 @@ export default {
             assignedToUserId: assignee.id || this.currentUser?.id || '',
             assignedToName: assignee.displayName || assignee.username || this.defaultRunDeveloperName,
             developer: assignee.displayName || assignee.username || this.defaultRunDeveloperName,
-            requirement: dialog.requirement,
+            requirement,
             sourceType: 'direct-skill',
             executionMode: 'direct-skill'
           })
@@ -17311,8 +17317,8 @@ export default {
         ElMessage.warning('请按顺序选择至少一个 md / Skill');
         return;
       }
-      if (!requirement) {
-        ElMessage.warning(this.isBugFixRun ? '请填写修复要求' : '请填写给 Codex 的执行要求');
+      if (this.isBugFixRun && !requirement) {
+        ElMessage.warning('请填写修复要求');
         return;
       }
       const primaryMaterial = materialHints[0] || '';
@@ -17345,13 +17351,19 @@ export default {
           return;
         }
       }
+      const effectiveRequirement = requirement || this.defaultSkillRunRequirement({
+        materialNames: selectedMaterialSnapshots.map(item => item.title || this.runMaterialDisplayName(item.path || item.sourceValue)),
+        materialPaths: materialHints,
+        figmaLinks,
+        writeMode: this.runForm.figmaWriteMode || 'target-node'
+      });
       const payload = {
         ...this.runForm,
         projectId,
         developer: this.defaultRunDeveloperName,
         title: generatedTitle,
         figmaLinks,
-        requirement,
+        requirement: effectiveRequirement,
         stage: this.isBugFixRun ? this.runForm.stage : primaryMaterial,
         primarySkillPath: this.isBugFixRun ? this.runForm.primarySkillPath || this.runForm.stage : primaryMaterial,
         primarySkillContent: this.isBugFixRun ? this.runForm.primarySkillContent || '' : selectedMaterialSnapshots[0]?.content || '',
@@ -18347,6 +18359,24 @@ export default {
       };
     },
 
+    defaultSkillRunRequirement({ materialNames = [], materialPaths = [], figmaLinks = '', writeMode = 'target-node' } = {}) {
+      const names = this.normalizedRunMaterialHints(materialNames).filter(Boolean);
+      const paths = this.normalizedRunMaterialHints(materialPaths).filter(Boolean);
+      const materialText = names.length
+        ? names.join('、')
+        : paths.map(item => this.runMaterialDisplayName(item) || item).filter(Boolean).join('、');
+      const pathText = paths.length ? paths.join('、') : '当前选择的 md / Skill';
+      return [
+        `请对上方填写的 Figma 链接使用${materialText ? `「${materialText}」` : '当前选择的 md / Skill'}。`,
+        `执行资料路径：${pathText}。`,
+        `Figma 目标链接：${String(figmaLinks || '').trim() || '以本次创建任务填写的 Figma 链接为准'}。`,
+        `默认操作口径：根据该 md / Skill 的要求，对该 Figma 目标进行写入、重新创建或修改；${writeMode === 'create-page' ? '如需新建页面 / Frame 则按当前写入方式处理' : '如需写入现有节点则按当前 Figma 链接中的 node-id 处理'}。`,
+        '只处理该 Figma 链接对应的目标节点、分区或页面，不扩展到无关文件、无关页面或无关设计内容。',
+        '完成后必须在最终报告里写明读取的 md / Skill、写入的 Figma 节点和人工复核点。',
+        '只有 Figma 写入工具真实返回 createdNodeIds 或 mutatedNodeIds，才允许判定完成；没有这些证据必须回传阻塞或失败原因。'
+      ].join('\n');
+    },
+
     materialHintsFromCustomWorkflow(workflow = {}) {
       return this.normalizedRunMaterialHints((workflow.stages || []).map(stage => {
         const candidates = [
@@ -18572,6 +18602,9 @@ export default {
       if (this.runRequiresFigmaWriteEvidence(run) && this.runHasFinishedAsSuccess(run) && !this.hasFigmaWriteEvidence(run)) {
         return 'failed';
       }
+      if (this.runRequiresFigmaWriteEvidence(run) && this.runHasFinishedAsSuccess(run) && this.hasFigmaWriteEvidence(run) && !this.hasFigmaPostWriteVerification(run)) {
+        return 'blocked';
+      }
       const summaryStatus = run.resultSummary?.status;
       const normalizedSummaryStatus = String(summaryStatus || '').toLowerCase();
       if (summaryStatus === 'blocked' && /conditional/i.test(run.status || '') && /无硬阻塞|无阻塞|无$/.test(run.resultSummary?.blockerReason || '')) {
@@ -18606,6 +18639,13 @@ export default {
       if (Array.isArray(result.mutatedNodeIds) && result.mutatedNodeIds.length) return true;
       if (Array.isArray(result.evidence) && result.evidence.some(Boolean)) return true;
       return run?.resultSummary?.figmaWritten === true;
+    },
+
+    hasFigmaPostWriteVerification(run = {}) {
+      const result = run?.figmaWriteResult || {};
+      if (result.verifiedAfterWrite === true) return true;
+      if (Array.isArray(result.verificationEvidence) && result.verificationEvidence.some(Boolean)) return true;
+      return run?.resultSummary?.figmaVerifiedAfterWrite === true;
     },
 
     resultStatusTitle(summary = {}, run = {}) {
@@ -18796,6 +18836,7 @@ export default {
         { label: '更新时间', value: this.directSkillRunUpdatedText(run) }
       ];
       const issueRows = [
+        this.aiExecutionArchiveIssueRow('Figma 验收', this.figmaExecutionBlockerText(run)),
         this.aiExecutionArchiveIssueRow('阻塞原因', summary.blockerReason),
         this.aiExecutionArchiveIssueRow('退出码', run.exitCode === null || run.exitCode === undefined ? '' : `Codex 退出码 ${run.exitCode}`),
         this.aiExecutionArchiveIssueRow('人工确认', summary.needsHumanReview ? '需要人工确认' : '')
@@ -18937,7 +18978,7 @@ export default {
       const isPending = /pending|created|queued/i.test(String(run.status || ''));
       const isRunning = this.isRunInProgress(run);
       const issueRows = [];
-      const blocker = String(summary.blockerReason || run.blocker?.reason || '').trim();
+      const blocker = String(this.figmaExecutionBlockerText(run) || summary.blockerReason || run.blocker?.reason || '').trim();
       if (blocker && !this.isPlaceholderResultText(blocker)) {
         issueRows.push({
           label: status === 'failed' || status === 'blocked' ? '阻塞原因' : '风险提示',
@@ -19010,6 +19051,16 @@ export default {
         rows.push({ label: 'Skill/md 数据', value: this.directSkillRunContentName(run) });
       }
       if (run.figmaLinks) rows.push({ label: 'Figma 数据', value: '已记录目标链接' });
+      if (this.runRequiresFigmaWriteEvidence(run)) {
+        rows.push({
+          label: 'Figma 写入',
+          value: this.hasFigmaWriteEvidence(run) ? '已检测到节点写入证据' : '未检测到节点写入证据'
+        });
+        rows.push({
+          label: '写入后验收',
+          value: this.hasFigmaPostWriteVerification(run) ? '已完成最终回读/截图验收' : '未完成最终回读/截图验收'
+        });
+      }
       if (summary.blockerReason && !this.isPlaceholderResultText(summary.blockerReason)) {
         rows.push({ label: '阻塞数据', value: this.humanizeRunResultText(summary.blockerReason) });
       }
@@ -19031,6 +19082,8 @@ export default {
     },
 
     resultSummaryText(summary = {}, run = {}) {
+      const figmaReason = this.figmaExecutionBlockerText(run);
+      if (figmaReason) return figmaReason;
       const logReason = this.directSkillRunLogFailureReason(run);
       if (logReason) return this.humanizeRunResultText(logReason);
       const text = String(summary.summary || '').trim();
@@ -19041,6 +19094,8 @@ export default {
     },
 
     resultReasonText(summary = {}, run = {}) {
+      const figmaReason = this.figmaExecutionBlockerText(run);
+      if (figmaReason) return figmaReason;
       const reason = String(summary.blockerReason || '').trim();
       if (reason && !this.isPlaceholderResultText(reason)) return this.humanizeRunResultText(reason);
       return this.resultStatusDescription(summary, run);
@@ -19111,6 +19166,7 @@ export default {
       const status = this.effectiveResultStatus(run);
       const nextStep = String(summary.nextStep || '').trim();
       if (nextStep && !this.isPlaceholderResultText(nextStep)) return this.humanizeRunResultText(nextStep);
+      if (this.hasPartialFigmaWrite(run)) return '下一步：让执行人恢复本机 Figma MCP 授权后继续执行，补齐最终回读、截图验收和剩余未完成项。';
       const logReason = this.directSkillRunLogFailureReason(run);
       if (logReason) return `下一步：${this.humanizeRunResultText(logReason)}`;
       const blockerReason = String(summary.blockerReason || '').trim();
@@ -19145,6 +19201,22 @@ export default {
       const matched = lines.find(line => /not inside a trusted directory|skip-git-repo-check|figma|mcp|oauth|permission|denied|error|failed|失败|阻塞|不可用/i.test(line));
       if (!matched || /日志读取失败|暂无日志/.test(matched)) return '';
       return matched.slice(0, 300);
+    },
+
+    hasPartialFigmaWrite(run = {}) {
+      return this.runRequiresFigmaWriteEvidence(run) && this.hasFigmaWriteEvidence(run) && !this.hasFigmaPostWriteVerification(run);
+    },
+
+    figmaExecutionBlockerText(run = {}) {
+      if (!this.runRequiresFigmaWriteEvidence(run)) return '';
+      if (!this.hasFigmaWriteEvidence(run)) {
+        if (!this.runHasFinishedAsSuccess(run) && this.effectiveResultStatus(run) !== 'failed') return '';
+        return '未检测到 Figma 写入证据。必须有 use_figma 返回 createdNodeIds 或 mutatedNodeIds 后，才能判定任务完成。';
+      }
+      if (this.hasFigmaPostWriteVerification(run)) return '';
+      const result = run.figmaWriteResult || {};
+      const blocker = String(result.blockerReason || run.resultSummary?.blockerReason || '').trim();
+      return blocker || 'Figma 已有部分写入，但写入后的最终回读/截图验收未闭环，不能判定整条任务完整完成。';
     },
 
     businessTaskForRun(run) {
@@ -20367,6 +20439,7 @@ export default {
           queuedForUserId: this.currentUser?.id || '',
           queuedForName: this.currentUser?.displayName || this.currentUser?.username || '',
           resultSummary: null,
+          figmaWriteResult: null,
           changeSummary: null,
           exitCode: null,
           blocker: null,

@@ -400,7 +400,7 @@ async function executeRun(run) {
   const durationMs = Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt));
   const combinedText = [finalText, rawStdoutText, stderrText].filter(Boolean).join('\n');
   const figmaWriteResult = extractFigmaWriteEvidence(combinedText, run);
-  const status = exitCode === 0 && (!figmaWriteResult.required || figmaWriteResult.written) ? 'completed' : 'failed';
+  const status = resolveWorkerFinalStatus(exitCode, figmaWriteResult);
   await enqueueRunEvent(run.id, {
     type: 'stage',
     phase: 'end',
@@ -671,7 +671,9 @@ function buildPrompt(run = {}, workspace = {}) {
     '- 必须优先使用上方平台任务资料和 Skill / md 内容快照执行，不要求组员电脑存在负责人本机项目目录。',
     '- 如果是自定义流程，必须按“执行步骤”从前到后逐个完整执行。',
     '- 只有 Figma 写入工具成功返回 createdNodeIds 或 mutatedNodeIds，才算写入完成；没有这些证据时不得报告完成。',
-    '- 最终回答必须原文写出 Figma 写入证据，例如 createdNodeIds、mutatedNodeIds 或 figmaWriteResult。',
+    '- 每次 Figma 写入后必须做回读验证；最后一次写入后必须再次回读目标节点，并尽量截图确认没有遮挡、截断、换行或漏改。',
+    '- 如果写入后最终回读、复扫或截图因为 Auth required、OAuth、权限、MCP 断开等原因失败，即使前面已经返回 mutatedNodeIds，也必须报告为阻塞，不能声称整条任务完成。',
+    '- 最终回答必须原文写出 Figma 写入证据，例如 createdNodeIds、mutatedNodeIds 或 figmaWriteResult，并明确写出“最终回读/截图验收：已完成/未完成”。',
     '',
     '## 交付',
     '',
@@ -1035,21 +1037,31 @@ function safePathSegment(value = '') {
 }
 
 function buildResultSummary(status, exitCode, finalText, figmaWriteResult = {}) {
-  const figmaBlocker = figmaWriteResult.required && !figmaWriteResult.written
+  const figmaBlocker = figmaWriteResult.required && (!figmaWriteResult.written || figmaWriteResult.partialWrite)
     ? figmaWriteResult.blockerReason || '未检测到 Figma 写入证据。'
     : '';
   const failureReason = status === 'completed' ? '' : figmaBlocker || extractFailureReason(finalText) || `Codex 退出码：${exitCode}`;
+  const completedSummary = figmaWriteResult.required
+    ? '本机直接执行已完整完成，已检测到 Figma 写入证据和写入后的回读/截图验收证据。'
+    : '本机直接执行已完成。';
+  const failedSummary = figmaWriteResult.partialWrite
+    ? 'Figma 已有部分写入，但写入后的最终回读/截图验收未闭环，请恢复授权后继续执行。'
+    : '本机直接执行失败，请查看阻塞原因和原始日志。';
   return {
     status,
     statusText: status,
     summary: status === 'completed'
-      ? '本机直接执行已完成，已检测到 Figma 写入证据。'
-      : '本机直接执行失败，请查看阻塞原因和原始日志。',
+      ? completedSummary
+      : failedSummary,
     blockerReason: failureReason,
     needsHumanReview: true,
     validationCommands: ['codex exec --json'],
     artifacts: figmaWriteResult.evidence?.length ? figmaWriteResult.evidence : [],
     figmaWritten: figmaWriteResult.written === true,
+    figmaVerifiedAfterWrite: figmaWriteResult.verifiedAfterWrite === true,
+    nextStep: status === 'blocked'
+      ? '恢复执行人本机 Figma MCP 授权后继续执行，优先补齐最终回读、截图验收和剩余未完成项。'
+      : '',
     finalText: String(finalText || '').slice(-4000),
     parsedAt: new Date().toISOString()
   };
@@ -1059,29 +1071,67 @@ function requiresFigmaWriteEvidence(run = {}) {
   return Boolean(String(run.figmaLinks || '').trim());
 }
 
+function resolveWorkerFinalStatus(exitCode, figmaWriteResult = {}) {
+  if (Number(exitCode) !== 0) return 'failed';
+  if (figmaWriteResult.required && !figmaWriteResult.written) return 'failed';
+  if (figmaWriteResult.required && figmaWriteResult.partialWrite) return 'blocked';
+  return 'completed';
+}
+
 function extractFigmaWriteEvidence(text = '', run = {}) {
   const required = requiresFigmaWriteEvidence(run);
   const source = String(text || '');
-  const createdNodeIds = extractArrayLikeValues(source, 'createdNodeIds');
-  const mutatedNodeIds = extractArrayLikeValues(source, 'mutatedNodeIds');
+  const toolEvents = extractFigmaToolEvents(source);
+  const createdSet = new Set(extractArrayLikeValues(source, 'createdNodeIds'));
+  const mutatedSet = new Set(extractArrayLikeValues(source, 'mutatedNodeIds'));
   const evidence = [];
-  const lines = source.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  let lastWriteOrder = -1;
+  for (const event of toolEvents) {
+    event.createdNodeIds.forEach(id => createdSet.add(id));
+    event.mutatedNodeIds.forEach(id => mutatedSet.add(id));
+    if (event.createdNodeIds.length || event.mutatedNodeIds.length) {
+      lastWriteOrder = Math.max(lastWriteOrder, event.order);
+      evidence.push(formatFigmaWriteEvidence(event));
+    }
+  }
+  const lines = source.split(/\r?\n/).map((line, index) => ({ line: line.trim(), index })).filter(item => item.line);
   for (const line of lines) {
-    if (!/createdNodeIds|mutatedNodeIds|figmaWriteResult|use_figma/i.test(line)) continue;
-    if (/未检测|没有|无写入|缺少|失败|error|failed|blocked|阻塞|不可用/i.test(line) && !/createdNodeIds|mutatedNodeIds/.test(line)) continue;
-    evidence.push(line.slice(0, 500));
+    if (!/createdNodeIds|mutatedNodeIds|figmaWriteResult|use_figma/i.test(line.line)) continue;
+    if (/未检测|没有|无写入|缺少|失败|error|failed|blocked|阻塞|不可用/i.test(line.line) && !/createdNodeIds|mutatedNodeIds/.test(line.line)) continue;
+    evidence.push(line.line.slice(0, 500));
     if (evidence.length >= 8) break;
   }
+  const createdNodeIds = [...createdSet].slice(0, 80);
+  const mutatedNodeIds = [...mutatedSet].slice(0, 120);
   const written = createdNodeIds.length > 0 || mutatedNodeIds.length > 0 || evidence.some(line => /figmaWriteResult.*written["']?\s*[:=]\s*true/i.test(line));
+  const postWriteVerificationRequired = Boolean(required && written);
+  const postWriteBlockers = postWriteVerificationRequired
+    ? extractPostWriteFigmaBlockers(source, toolEvents, lastWriteOrder)
+    : [];
+  const verificationEvidence = postWriteVerificationRequired
+    ? extractPostWriteVerificationEvidence(source, toolEvents, lastWriteOrder)
+    : [];
+  const verifiedAfterWrite = postWriteVerificationRequired
+    ? verificationEvidence.length > 0 && postWriteBlockers.length === 0
+    : false;
+  const partialWrite = Boolean(postWriteVerificationRequired && !verifiedAfterWrite);
+  const blockerReason = required && !written
+    ? 'Codex 进程结束，但未检测到 Figma 写入证据。必须有 use_figma 返回 createdNodeIds 或 mutatedNodeIds 后才算完成。'
+    : partialWrite
+      ? (postWriteBlockers[0] || 'Figma 已写入，但写入后未检测到最终回读或截图验收证据，不能判定整条任务完成。')
+      : '';
   return {
     required,
     written: required ? written : false,
     createdNodeIds,
     mutatedNodeIds,
     evidence,
-    blockerReason: required && !written
-      ? 'Codex 进程结束，但未检测到 Figma 写入证据。必须有 use_figma 返回 createdNodeIds 或 mutatedNodeIds 后才算完成。'
-      : ''
+    postWriteVerificationRequired,
+    verifiedAfterWrite,
+    verificationEvidence,
+    postWriteBlockers,
+    partialWrite,
+    blockerReason
   };
 }
 
@@ -1093,17 +1143,163 @@ function extractArrayLikeValues(text = '', field = '') {
     String(match[1] || '')
       .split(/,|\s/)
       .map(item => item.replace(/["'`]/g, '').trim())
-      .filter(item => /^[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)?$/.test(item))
+      .filter(isLikelyFigmaNodeId)
       .forEach(item => values.add(item));
     match = pattern.exec(text);
   }
-  const singlePattern = new RegExp(`${field}[^\\n:=]*[:=]\\s*["']?([A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)?)`, 'gi');
+  const singlePattern = new RegExp(`${field}[^\\n:=]*[:=]\\s*["']?([A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)?(?:;[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)?)*)`, 'gi');
   match = singlePattern.exec(text);
   while (match) {
-    if (match[1]) values.add(match[1]);
+    if (match[1] && isLikelyFigmaNodeId(match[1])) values.add(match[1]);
     match = singlePattern.exec(text);
   }
   return [...values].slice(0, 50);
+}
+
+function isLikelyFigmaNodeId(value = '') {
+  const text = String(value || '').trim();
+  return text.includes(':') && /^[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)(?:;[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+))*$/.test(text);
+}
+
+function extractFigmaToolEvents(text = '') {
+  const events = [];
+  String(text || '').split(/\r?\n/).forEach((line, index) => {
+    let event = null;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      return;
+    }
+    const item = event?.item || {};
+    if (item.type !== 'mcp_tool_call') return;
+    const server = String(item.server || '').trim();
+    const tool = String(item.tool || '').trim();
+    if (!/figma/i.test(`${server} ${tool}`)) return;
+    const resultText = figmaToolResultText(item.result);
+    const errorText = figmaToolErrorText(item.error);
+    const createdNodeIds = [
+      ...extractArrayLikeValues(resultText, 'createdNodeIds'),
+      ...extractNodeIdsFromJsonText(resultText, 'createdNodeIds')
+    ].filter(isLikelyFigmaNodeId);
+    const mutatedNodeIds = [
+      ...extractArrayLikeValues(resultText, 'mutatedNodeIds'),
+      ...extractNodeIdsFromJsonText(resultText, 'mutatedNodeIds')
+    ].filter(isLikelyFigmaNodeId);
+    events.push({
+      order: index,
+      server,
+      tool,
+      description: String(item.arguments?.description || '').trim(),
+      status: String(item.status || '').trim(),
+      success: item.status === 'completed' && !item.error,
+      errorText,
+      resultText,
+      createdNodeIds: [...new Set(createdNodeIds)],
+      mutatedNodeIds: [...new Set(mutatedNodeIds)]
+    });
+  });
+  return events;
+}
+
+function figmaToolResultText(result = null) {
+  if (!result || typeof result !== 'object') return '';
+  const chunks = [];
+  const content = Array.isArray(result.content) ? result.content : [];
+  for (const item of content) {
+    if (item?.type === 'text' && item.text) chunks.push(String(item.text));
+  }
+  if (typeof result === 'string') chunks.push(result);
+  return chunks.join('\n').slice(0, 20000);
+}
+
+function figmaToolErrorText(error = null) {
+  if (!error) return '';
+  if (typeof error === 'string') return error;
+  return String(error.message || error.error || JSON.stringify(error)).trim();
+}
+
+function extractNodeIdsFromJsonText(text = '', field = '') {
+  const values = new Set();
+  const candidates = String(text || '').split(/\r?\n/).map(item => item.trim()).filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      collectNodeIdsFromValue(JSON.parse(candidate), field, values);
+    } catch {
+      // Ignore non-JSON text chunks; regex extraction already handles them.
+    }
+  }
+  return [...values];
+}
+
+function collectNodeIdsFromValue(value, field, values) {
+  if (Array.isArray(value)) {
+    value.forEach(item => collectNodeIdsFromValue(item, field, values));
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const [key, child] of Object.entries(value)) {
+    if (key === field) {
+      const list = Array.isArray(child) ? child : [child];
+      list.map(item => String(item || '').trim()).filter(isLikelyFigmaNodeId).forEach(item => values.add(item));
+    } else {
+      collectNodeIdsFromValue(child, field, values);
+    }
+  }
+}
+
+function formatFigmaWriteEvidence(event = {}) {
+  const ids = [
+    event.createdNodeIds.length ? `createdNodeIds=${event.createdNodeIds.join(',')}` : '',
+    event.mutatedNodeIds.length ? `mutatedNodeIds=${event.mutatedNodeIds.join(',')}` : ''
+  ].filter(Boolean).join('；');
+  return `${event.tool || 'figma'} 写入成功：${ids}`.slice(0, 500);
+}
+
+function extractPostWriteFigmaBlockers(source = '', toolEvents = [], lastWriteOrder = -1) {
+  if (lastWriteOrder < 0) return [];
+  const blockers = [];
+  for (const event of toolEvents) {
+    if (event.order <= lastWriteOrder || event.success) continue;
+    const reason = event.errorText || event.resultText;
+    if (!reason) continue;
+    blockers.push(`Figma 写入后 ${event.tool || 'MCP'} 验证失败：${compactReason(reason)}`);
+  }
+  const lines = String(source || '').split(/\r?\n/);
+  for (let index = Math.max(lastWriteOrder + 1, 0); index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (!line) continue;
+    if (!/(Auth required|OAuth|permission|denied|Transport send error|tool call failed|figma\/(?:use_figma|get_screenshot)|Figma MCP|最终.*(?:失败|阻塞|未完成)|回读.*(?:失败|阻塞|未完成)|截图.*(?:失败|阻塞|未完成)|复扫.*(?:失败|阻塞|未完成))/i.test(line)) continue;
+    blockers.push(compactReason(line));
+    if (blockers.length >= 5) break;
+  }
+  return [...new Set(blockers)].slice(0, 5);
+}
+
+function extractPostWriteVerificationEvidence(source = '', toolEvents = [], lastWriteOrder = -1) {
+  if (lastWriteOrder < 0) return [];
+  const evidence = [];
+  for (const event of toolEvents) {
+    if (event.order <= lastWriteOrder || !event.success) continue;
+    if (event.tool === 'get_screenshot' || /截图|screenshot/i.test(event.description)) {
+      evidence.push(`写入后截图验收成功：${event.tool}`);
+      continue;
+    }
+    if (event.tool === 'use_figma' && /回读|复扫|验证|验收|检查|read|verify|validation/i.test(event.description)) {
+      evidence.push(`写入后回读验收成功：${event.description || event.tool}`);
+    }
+  }
+  const lines = String(source || '').split(/\r?\n/);
+  for (let index = Math.max(lastWriteOrder + 1, 0); index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (!line || /失败|阻塞|未完成|Auth required|error|failed|blocked/i.test(line)) continue;
+    if (/最终.*(?:回读|截图|验证|验收).*(?:完成|通过|成功)|(?:回读|截图|验证|验收).*已完成/i.test(line)) evidence.push(compactReason(line));
+    if (evidence.length >= 5) break;
+  }
+  return [...new Set(evidence)].slice(0, 5);
+}
+
+function compactReason(text = '') {
+  return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 300);
 }
 
 function extractFailureReason(text = '') {

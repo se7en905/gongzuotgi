@@ -1235,6 +1235,7 @@ export async function queueRunForLocalWorker(id, input = {}) {
     primarySkillContent: existing.primarySkillContent || materialSnapshot,
     blocker: null,
     resultSummary: null,
+    figmaWriteResult: null,
     strictCheck: null,
     exitCode: null,
     pid: null,
@@ -3533,32 +3534,54 @@ function hasFigmaWriteEvidence(run = {}) {
   return false;
 }
 
+function hasFigmaPostWriteVerification(run = {}) {
+  const result = run.figmaWriteResult && typeof run.figmaWriteResult === 'object' ? run.figmaWriteResult : {};
+  if (!result.written && !hasFigmaWriteEvidence(run)) return false;
+  if (result.verifiedAfterWrite === true) return true;
+  if (Array.isArray(result.verificationEvidence) && result.verificationEvidence.some(Boolean)) return true;
+  if (run.resultSummary?.figmaVerifiedAfterWrite === true) return true;
+  return false;
+}
+
 function guardFigmaWriteCompletion(run = {}) {
   if (!runRequiresFigmaWriteEvidence(run)) return run;
   const status = cleanString(run.status).toLowerCase();
-  if (!/completed|done|success|passed/.test(status) || hasFigmaWriteEvidence(run)) return run;
-  const blockerReason = 'Codex 进程结束，但平台未检测到 Figma 写入证据。必须有 use_figma 返回 createdNodeIds 或 mutatedNodeIds 后才算完成。';
+  if (!/completed|done|success|passed/.test(status)) return run;
+  const hasWriteEvidence = hasFigmaWriteEvidence(run);
+  const hasVerification = hasFigmaPostWriteVerification(run);
+  if (hasWriteEvidence && hasVerification) return run;
+  const blockerReason = hasWriteEvidence
+    ? (run.figmaWriteResult?.blockerReason || 'Figma 已有写入证据，但写入后的最终回读/截图验收未闭环，本次不能判定完整完成。')
+    : 'Codex 进程结束，但平台未检测到 Figma 写入证据。必须有 use_figma 返回 createdNodeIds 或 mutatedNodeIds 后才算完成。';
   return {
     ...run,
-    status: 'failed',
-    workerStatus: 'failed',
+    status: hasWriteEvidence ? 'blocked' : 'failed',
+    workerStatus: hasWriteEvidence ? 'blocked' : 'failed',
     blocker: {
       ...(run.blocker && typeof run.blocker === 'object' ? run.blocker : {}),
       reason: blockerReason
     },
     figmaWriteResult: {
       ...(run.figmaWriteResult && typeof run.figmaWriteResult === 'object' ? run.figmaWriteResult : {}),
-      written: false,
+      written: hasWriteEvidence,
       required: true,
+      partialWrite: hasWriteEvidence,
       blockerReason
     },
     resultSummary: {
       ...(run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {}),
-      status: 'failed',
-      statusText: 'failed',
-      summary: '本机 Codex 已结束，但未检测到 Figma 真实写入证据，本次不能判定完成。',
+      status: hasWriteEvidence ? 'blocked' : 'failed',
+      statusText: hasWriteEvidence ? 'blocked' : 'failed',
+      summary: hasWriteEvidence
+        ? 'Figma 已有部分写入，但最终回读/截图验收未闭环，本次不能判定完整完成。'
+        : '本机 Codex 已结束，但未检测到 Figma 真实写入证据，本次不能判定完成。',
       blockerReason,
-      needsHumanReview: true
+      needsHumanReview: true,
+      figmaWritten: hasWriteEvidence,
+      figmaVerifiedAfterWrite: hasVerification,
+      nextStep: hasWriteEvidence
+        ? '恢复执行人本机 Figma MCP 授权后继续执行，优先补齐最终回读、截图验收和剩余未完成项。'
+        : '检查执行人本机 Figma MCP 写入工具和授权后重新执行。'
     }
   };
 }
