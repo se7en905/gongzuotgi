@@ -2263,6 +2263,10 @@ async function handleApi(req, res, url) {
       return;
     }
     requireProjectAccess(currentUser, project.id, 'developer', 'api.runs.execute');
+    validateFigmaRunTarget(body);
+    if (body.executionMode === 'single-skill' || body.executionMode === 'custom-workflow' || normalizeRunMaterialSnapshotsForRequest(body.selectedMaterialSnapshots).length) {
+      validateSkillSnapshotForRun(body, { requireSnapshot: true });
+    }
     const run = await createRun({ ...body, createdBy: currentUser.id, ownerUserId: currentUser.id });
     await writeOperationLog(req, {
       user: currentUser,
@@ -2571,12 +2575,49 @@ function buildDirectSkillRequirement(body = {}) {
   ].filter(Boolean).join('\n');
 }
 
+function normalizeRunMaterialSnapshotsForRequest(input = []) {
+  return Array.isArray(input)
+    ? input.map(item => ({
+      path: String(item?.path || item?.relativePath || item?.sourceValue || '').trim(),
+      title: String(item?.title || item?.name || '').trim(),
+      kind: String(item?.kind || item?.inventoryKind || '').trim(),
+      content: String(item?.content || '').trim()
+    })).filter(item => item.content)
+    : [];
+}
+
+function isUsableSkillContent(value = '') {
+  const text = String(value || '').trim();
+  return text.length >= 20 && !/技能内容读取失败|文件读取失败|cannot find path|no such file/i.test(text);
+}
+
+function validateFigmaRunTarget(body = {}) {
+  const figmaLinks = String(body.figmaLinks || body.figmaUrl || '').trim();
+  if (!figmaLinks) throw new HttpError(400, '请先填写 Figma 链接。');
+  if (!/figma\.com\/(design|file|proto|board|slides|make)\//i.test(figmaLinks)) {
+    throw new HttpError(400, 'Figma 链接必须是有效的 figma.com 文件、Frame、分区或页面链接。');
+  }
+  if (String(body.figmaWriteMode || 'target-node') !== 'create-page' && !/node-id=|[?&]node_id=/i.test(figmaLinks)) {
+    throw new HttpError(400, '写入指定节点时，请粘贴包含 node-id 的 Figma Frame / 分区链接。');
+  }
+}
+
+function validateSkillSnapshotForRun(body = {}, { requireSnapshot = false } = {}) {
+  const primarySkillPath = String(body.primarySkillPath || body.skillPath || body.stage || '').trim();
+  const primarySkillContent = String(body.primarySkillContent || body.skillContent || '').trim();
+  const snapshots = normalizeRunMaterialSnapshotsForRequest(body.selectedMaterialSnapshots);
+  if (!primarySkillPath) throw new HttpError(400, '请先选择要执行的 Skill 或 md。');
+  if (requireSnapshot && !isUsableSkillContent(primarySkillContent) && !snapshots.some(item => isUsableSkillContent(item.content))) {
+    throw new HttpError(400, '未读取到可执行的 Skill / md 内容快照，不能创建执行。请重新选择 Git 仓库里的 md / Skill。');
+  }
+}
+
 async function createDirectSkillRunFromBody(req, project, body = {}, currentUser = {}) {
   const figmaLinks = String(body.figmaLinks || body.figmaUrl || '').trim();
   const primarySkillPath = String(body.primarySkillPath || body.skillPath || body.stage || '').trim();
   const primarySkillContent = String(body.primarySkillContent || body.skillContent || '').trim().slice(0, 60000);
-  if (!figmaLinks) throw new HttpError(400, '请先填写 Figma 链接。');
-  if (!primarySkillPath) throw new HttpError(400, '请先选择要执行的 Skill 或 md。');
+  validateFigmaRunTarget(body);
+  validateSkillSnapshotForRun(body, { requireSnapshot: true });
   const assigneeUserId = String(body.assignedToUserId || body.assigneeUserId || currentUser.id || '').trim();
   const assigneeName = String(body.assignedToName || body.assigneeName || body.developer || currentUser.displayName || currentUser.username || '').trim();
   const run = await createRun({

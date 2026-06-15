@@ -931,9 +931,11 @@ export async function createRun(input) {
     figmaLinks: input.figmaLinks || '',
     showdocHints: input.showdocHints || '',
     selectedMaterialHints: normalizeLineList(input.selectedMaterialHints),
+    selectedMaterialSnapshots: normalizeRunMaterialSnapshots(input.selectedMaterialSnapshots),
     productName: input.productName || '',
     sourceTitle: input.sourceTitle || '',
     primarySkillPath: input.primarySkillPath || input.skillPath || input.stage || '',
+    primarySkillTitle: input.primarySkillTitle || '',
     primarySkillContent: input.primarySkillContent || input.skillContent || '',
     figmaWriteMode: input.figmaWriteMode || '',
     assignedToUserId: input.assignedToUserId || input.assigneeUserId || '',
@@ -1116,7 +1118,7 @@ export async function updateAgentRunFromWorker(runId, input = {}) {
   if (input.logPath) patch.logPath = input.logPath;
   if (input.promptPath) patch.promptPath = input.promptPath;
   if (input.artifactRoot) patch.artifactRoot = input.artifactRoot;
-  runs[index] = { ...existing, ...patch };
+  runs[index] = guardFigmaWriteCompletion({ ...existing, ...patch });
   await writeJson(paths.runs, runs);
   return hydrateRunStages(runs[index]);
 }
@@ -1413,6 +1415,7 @@ async function buildRunMaterial(project = {}, run = {}, task = {}) {
   const linkedTask = Boolean(run.taskId || task.id);
   const figmaItems = parseLineItems(run.figmaLinks);
   const specSkillItems = parseLineItems(run.showdocHints);
+  const materialSnapshots = Array.isArray(run.selectedMaterialSnapshots) ? run.selectedMaterialSnapshots : [];
   const themes = await detectProjectThemes(project);
   const themeStrategy = inferThemeStrategy(project, run, figmaItems, themes);
   const requirementText = String(run.requirement || task.requirement || task.summary || '').trim();
@@ -1445,8 +1448,11 @@ async function buildRunMaterial(project = {}, run = {}, task = {}) {
     '',
     `- 是否提供线索：${specSkillItems.length ? '有' : '待确认'}`,
     `- 规范 / Skill 线索：${specSkillItems.length ? '见下表' : '待补充'}`,
+    `- 已下发内容快照：${materialSnapshots.length ? `${materialSnapshots.length} 份` : (run.primarySkillContent ? '1 份' : '无')}`,
     '',
     buildSpecSkillTable(specSkillItems),
+    '',
+    buildMaterialSnapshotTable(materialSnapshots, run),
     '',
     '## 美术执行约束',
     '',
@@ -1511,6 +1517,27 @@ function buildSpecSkillTable(items = []) {
   return [
     '| 编号 | 类型 | 规范 md / Skill / 关键词 | 读取状态 | 验证状态 | 说明 |',
     '| --- | --- | --- | --- | --- | --- |',
+    ...rows
+  ].join('\n');
+}
+
+function buildMaterialSnapshotTable(snapshots = [], run = {}) {
+  const items = snapshots.length
+    ? snapshots
+    : (run.primarySkillContent ? [{
+      path: run.primarySkillPath || run.stage || '主执行 Skill / md',
+      title: run.primarySkillTitle || run.primarySkillPath || run.stage || '主执行 Skill / md',
+      content: run.primarySkillContent
+    }] : []);
+  const rows = items.length ? items.map((item, index) => {
+    const contentLength = String(item.content || '').length;
+    return `| C-${String(index + 1).padStart(3, '0')} | ${escapeTableCell(item.title || item.path || item.sourceValue || '未命名')} | ${escapeTableCell(item.path || item.sourceValue || '')} | ${contentLength ? `${contentLength} 字符` : '无'} |`;
+  }) : ['| C-001 | 未下发 |  | 无 |'];
+  return [
+    '### 已下发 Skill / md 内容快照',
+    '',
+    '| 编号 | 名称 | 本机落地路径 | 内容长度 |',
+    '| --- | --- | --- | --- |',
     ...rows
   ].join('\n');
 }
@@ -2388,6 +2415,27 @@ function normalizeRunCodexRequest(input = {}) {
     requestStandard: String(input.requestStandard || '').trim().slice(0, 2000),
     source: String(input.source || '').trim().slice(0, 80)
   };
+}
+
+function normalizeRunMaterialSnapshots(input = []) {
+  const source = Array.isArray(input) ? input : [];
+  const seen = new Set();
+  const snapshots = [];
+  for (const item of source) {
+    if (!item || typeof item !== 'object') continue;
+    const snapshot = {
+      path: cleanString(item.path || item.relativePath || item.sourceValue).replaceAll('\\', '/').replace(/^\/+/, '').slice(0, 500),
+      sourceValue: cleanString(item.sourceValue || item.path || item.relativePath).slice(0, 500),
+      title: cleanString(item.title || item.name).slice(0, 200),
+      kind: cleanString(item.kind || item.inventoryKind).slice(0, 40),
+      content: String(item.content || '').trim().slice(0, 60000)
+    };
+    const key = snapshot.path || snapshot.sourceValue || snapshot.title;
+    if (!key || !snapshot.content || seen.has(key)) continue;
+    seen.add(key);
+    snapshots.push(snapshot);
+  }
+  return snapshots;
 }
 
 function codexKeyFingerprint(value = '') {
@@ -3470,6 +3518,51 @@ function normalizeWorkerRunStatus(value = '') {
   return status || 'running';
 }
 
+function runRequiresFigmaWriteEvidence(run = {}) {
+  return Boolean(cleanString(run.figmaLinks))
+    && (isWorkerExecutableRun(run) || run.executionMode === 'single-skill' || run.workflow === 'art-single-skill' || run.workflow === 'custom-workflow')
+    && !['cancelled', 'canceled'].includes(cleanString(run.status).toLowerCase());
+}
+
+function hasFigmaWriteEvidence(run = {}) {
+  const result = run.figmaWriteResult && typeof run.figmaWriteResult === 'object' ? run.figmaWriteResult : {};
+  if (result.written === true) return true;
+  if (Array.isArray(result.createdNodeIds) && result.createdNodeIds.length) return true;
+  if (Array.isArray(result.mutatedNodeIds) && result.mutatedNodeIds.length) return true;
+  if (Array.isArray(result.evidence) && result.evidence.some(Boolean)) return true;
+  return false;
+}
+
+function guardFigmaWriteCompletion(run = {}) {
+  if (!runRequiresFigmaWriteEvidence(run)) return run;
+  const status = cleanString(run.status).toLowerCase();
+  if (!/completed|done|success|passed/.test(status) || hasFigmaWriteEvidence(run)) return run;
+  const blockerReason = 'Codex 进程结束，但平台未检测到 Figma 写入证据。必须有 use_figma 返回 createdNodeIds 或 mutatedNodeIds 后才算完成。';
+  return {
+    ...run,
+    status: 'failed',
+    workerStatus: 'failed',
+    blocker: {
+      ...(run.blocker && typeof run.blocker === 'object' ? run.blocker : {}),
+      reason: blockerReason
+    },
+    figmaWriteResult: {
+      ...(run.figmaWriteResult && typeof run.figmaWriteResult === 'object' ? run.figmaWriteResult : {}),
+      written: false,
+      required: true,
+      blockerReason
+    },
+    resultSummary: {
+      ...(run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {}),
+      status: 'failed',
+      statusText: 'failed',
+      summary: '本机 Codex 已结束，但未检测到 Figma 真实写入证据，本次不能判定完成。',
+      blockerReason,
+      needsHumanReview: true
+    }
+  };
+}
+
 function normalizeAgentRunEvent(input = {}) {
   if (!input || typeof input !== 'object') return null;
   const id = cleanString(input.id || input.eventId);
@@ -3489,7 +3582,7 @@ function normalizeAgentRunEvent(input = {}) {
 function mergeAgentRunStatusEvent(run = {}, event = {}) {
   const status = normalizeWorkerRunStatus(event.status || run.status);
   const timingPatch = normalizeWorkerTimingPatch(event, run);
-  return {
+  return guardFigmaWriteCompletion({
     ...run,
     status,
     workerStatus: status,
@@ -3500,7 +3593,7 @@ function mergeAgentRunStatusEvent(run = {}, event = {}) {
     workerResult: event.workerResult ?? run.workerResult,
     figmaWriteResult: event.figmaWriteResult ?? run.figmaWriteResult,
     ...timingPatch
-  };
+  });
 }
 
 function mergeAgentRunStageEvent(run = {}, event = {}) {

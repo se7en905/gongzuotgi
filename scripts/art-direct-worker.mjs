@@ -333,8 +333,15 @@ async function executeRun(run) {
     currentStage: '本机 Codex 执行'
   });
 
-  const prompt = buildPrompt(run);
-  const cwd = await resolveExecutionCwd(run);
+  let workspace = null;
+  try {
+    workspace = await prepareRunWorkspace(run);
+  } catch (error) {
+    await failRunBeforeCodex(run, `本机执行资料准备失败：${error.message}`);
+    return;
+  }
+  const prompt = buildPrompt(run, workspace);
+  const cwd = workspace.cwd;
   const cwdExists = await pathExists(cwd);
   if (!cwdExists) {
     await failRunBeforeCodex(run, `执行目录不存在：${cwd}`);
@@ -351,6 +358,7 @@ async function executeRun(run) {
     '-'
   ];
   let finalText = '';
+  let rawStdoutText = '';
   let stderrText = '';
   let child = null;
   try {
@@ -367,6 +375,8 @@ async function executeRun(run) {
   });
   child.stdout.on('data', chunk => {
     const text = chunk.toString();
+    rawStdoutText += text;
+    if (rawStdoutText.length > 200000) rawStdoutText = rawStdoutText.slice(-200000);
     finalText += collectReadableJsonl(text);
     void safeAppendRunLog(run.id, text);
     process.stdout.write(text);
@@ -383,10 +393,14 @@ async function executeRun(run) {
     stderrText += `\nCodex 输入失败：${error.message}\n`;
   }
 
+  const heartbeatTimer = startExecutionHeartbeat(run.id);
   const exitCode = await waitForChild(child);
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
   const finishedAt = new Date().toISOString();
   const durationMs = Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt));
-  const status = exitCode === 0 ? 'completed' : 'failed';
+  const combinedText = [finalText, rawStdoutText, stderrText].filter(Boolean).join('\n');
+  const figmaWriteResult = extractFigmaWriteEvidence(combinedText, run);
+  const status = exitCode === 0 && (!figmaWriteResult.required || figmaWriteResult.written) ? 'completed' : 'failed';
   await enqueueRunEvent(run.id, {
     type: 'stage',
     phase: 'end',
@@ -417,14 +431,18 @@ async function executeRun(run) {
         durationMs
       }
     ],
-    resultSummary: buildResultSummary(status, exitCode, [finalText, stderrText].filter(Boolean).join('\n')),
+    resultSummary: buildResultSummary(status, exitCode, combinedText, figmaWriteResult),
     workerResult: {
       deviceId,
       hostname: os.hostname(),
       exitCode,
+      cwd,
+      materialPath: workspace.materialPath,
+      snapshotPaths: workspace.snapshotPaths,
       finalText: finalText.slice(-8000),
       stderrText: stderrText.slice(-8000)
-    }
+    },
+    figmaWriteResult
   });
   console.log(`[worker] 执行结束：${run.title} (${status})`);
 }
@@ -480,7 +498,115 @@ async function failRunBeforeCodex(run, reason) {
   });
 }
 
-function buildPrompt(run = {}) {
+async function prepareRunWorkspace(run = {}) {
+  const cwd = runWorkspacePath(run.id);
+  await mkdir(cwd, { recursive: true });
+  const snapshots = normalizeRunMaterialSnapshots(run);
+  if (!snapshots.length && run.primarySkillPath && run.primarySkillContent) {
+    snapshots.push({
+      path: run.primarySkillPath,
+      title: run.primarySkillTitle || run.primarySkillPath,
+      content: run.primarySkillContent
+    });
+  }
+  const snapshotPaths = [];
+  for (const snapshot of snapshots) {
+    const relativePath = safeRelativePath(snapshot.path || snapshot.sourceValue || snapshot.title || `materials/${snapshotPaths.length + 1}.md`);
+    if (!relativePath) continue;
+    const targetPath = path.join(cwd, relativePath);
+    await mkdir(path.dirname(targetPath), { recursive: true });
+    await writeFile(targetPath, String(snapshot.content || '').trim(), 'utf8');
+    snapshotPaths.push(relativePath);
+  }
+  const materialPath = path.join(cwd, '任务资料.md');
+  await writeFile(materialPath, buildLocalTaskMaterial(run, snapshots, snapshotPaths), 'utf8');
+  if (run.primarySkillPath && !snapshotPaths.includes(safeRelativePath(run.primarySkillPath))) {
+    const primaryPath = safeRelativePath(run.primarySkillPath);
+    if (primaryPath && run.primarySkillContent) {
+      const targetPath = path.join(cwd, primaryPath);
+      await mkdir(path.dirname(targetPath), { recursive: true });
+      await writeFile(targetPath, String(run.primarySkillContent || '').trim(), 'utf8');
+      snapshotPaths.unshift(primaryPath);
+    }
+  }
+  if (requiresFigmaWriteEvidence(run) && !snapshotPaths.length) {
+    throw new Error('平台未下发可用 Skill / md 内容快照。');
+  }
+  return { cwd, materialPath, snapshotPaths };
+}
+
+function normalizeRunMaterialSnapshots(run = {}) {
+  const input = Array.isArray(run.selectedMaterialSnapshots) ? run.selectedMaterialSnapshots : [];
+  return input
+    .map(item => ({
+      path: String(item?.path || item?.relativePath || item?.sourceValue || '').trim(),
+      sourceValue: String(item?.sourceValue || item?.path || item?.relativePath || '').trim(),
+      title: String(item?.title || item?.name || '').trim(),
+      content: String(item?.content || '').trim()
+    }))
+    .filter(item => item.content);
+}
+
+function buildLocalTaskMaterial(run = {}, snapshots = [], snapshotPaths = []) {
+  return [
+    '# 美术工作台本机执行资料',
+    '',
+    `- runId: ${run.id || ''}`,
+    `- 标题: ${run.title || ''}`,
+    `- Figma 链接: ${run.figmaLinks || ''}`,
+    `- Figma 写入方式: ${run.figmaWriteMode || 'target-node'}`,
+    `- 主执行 Skill / md: ${run.primarySkillPath || run.stage || ''}`,
+    `- 执行人: ${run.queuedForName || run.assignedToName || run.developer || ''}`,
+    '',
+    '## 已落地 Skill / md 快照',
+    '',
+    snapshotPaths.length
+      ? snapshotPaths.map((item, index) => `${index + 1}. ${item}`).join('\n')
+      : '- 未落地，必须回传阻塞原因。',
+    '',
+    '## 给 Codex 的执行要求',
+    '',
+    run.requirement || '',
+    '',
+    '## 快照摘要',
+    '',
+    snapshots.length
+      ? snapshots.map((item, index) => `- ${index + 1}. ${item.title || item.path || item.sourceValue || snapshotPaths[index] || '未命名'}：${String(item.content || '').length} 字符`).join('\n')
+      : '- 无'
+  ].join('\n');
+}
+
+function runWorkspacePath(runId = '') {
+  return path.join(runStateDir, safePathSegment(runId), 'workspace');
+}
+
+function safeRelativePath(value = '') {
+  const text = String(value || '').replace(/\\/g, '/').replace(/^\/+/, '').trim();
+  if (!text || text.includes('\0')) return '';
+  const normalized = path.posix.normalize(text);
+  if (!normalized || normalized === '.' || normalized.startsWith('../') || normalized === '..' || path.posix.isAbsolute(normalized)) return '';
+  return normalized;
+}
+
+function startExecutionHeartbeat(runId = '') {
+  const intervalMs = Math.max(30000, Math.min(heartbeatIntervalMs, 60000));
+  return setInterval(() => {
+    void heartbeat(true).catch(error => {
+      logOfflineNotice(`执行中心跳回传失败，稍后重试：${error.message}`);
+    });
+    if (runId) {
+      void enqueueRunEvent(runId, {
+        type: 'status',
+        status: 'running',
+        workerStatus: 'running',
+        currentStage: '本机 Codex 执行中',
+        at: new Date().toISOString()
+      }).catch(() => {});
+    }
+  }, intervalMs);
+}
+
+function buildPrompt(run = {}, workspace = {}) {
   const stages = Array.isArray(run.stages) ? run.stages.filter(stage => stage?.name || stage?.description || stage?.doneCriteria) : [];
   const stageText = stages.length
     ? stages.map((stage, index) => [
@@ -502,7 +628,9 @@ function buildPrompt(run = {}) {
     `- 主执行 Skill / md: ${run.primarySkillPath || run.stage || ''}`,
     `- Figma 链接: ${run.figmaLinks || ''}`,
     `- 写入方式: ${run.figmaWriteMode || 'target-node'}`,
-    `- 资料路径: ${run.materialPath || ''}`,
+    `- 本机任务资料: ${workspace.materialPath || '任务资料.md'}`,
+    `- 本机执行目录: ${workspace.cwd || ''}`,
+    `- 本机已落地 Skill / md: ${(workspace.snapshotPaths || []).join('、') || '无'}`,
     `- 平台产物目录记录: ${run.artifactRoot || ''}`,
     `- 排队给: ${run.queuedForName || run.assignedToName || run.developer || currentUser?.displayName || currentUser?.username || ''}`,
     '',
@@ -512,7 +640,12 @@ function buildPrompt(run = {}) {
     '',
     '## 平台任务资料 / Skill / md 内容快照',
     '',
-    run.primarySkillContent || '平台未提供 Skill / md 内容快照。若本机无法读取任务中的路径线索，必须停止并回传阻塞原因。',
+    [
+      `请先读取本机任务资料：${workspace.materialPath || '任务资料.md'}`,
+      ...(workspace.snapshotPaths || []).map(item => `请读取并执行：${item}`),
+      '',
+      run.primarySkillContent || '平台未提供主 Skill / md 内容快照。若本机无法读取任务中的路径线索，必须停止并回传阻塞原因。'
+    ].join('\n'),
     '',
     '## 执行要求',
     '',
@@ -526,7 +659,8 @@ function buildPrompt(run = {}) {
     '- 如果当前 Codex 工具列表缺少 Figma 写入工具，或者 Figma OAuth 失效，必须停止并说明阻塞原因。',
     '- 必须优先使用上方平台任务资料和 Skill / md 内容快照执行，不要求组员电脑存在负责人本机项目目录。',
     '- 如果是自定义流程，必须按“执行步骤”从前到后逐个完整执行。',
-    '- 只有 Figma 写入工具成功返回 createdNodeIds 或 mutatedNodeIds，才算写入完成。',
+    '- 只有 Figma 写入工具成功返回 createdNodeIds 或 mutatedNodeIds，才算写入完成；没有这些证据时不得报告完成。',
+    '- 最终回答必须原文写出 Figma 写入证据，例如 createdNodeIds、mutatedNodeIds 或 figmaWriteResult。',
     '',
     '## 交付',
     '',
@@ -889,19 +1023,76 @@ function safePathSegment(value = '') {
     .slice(0, 120) || 'run';
 }
 
-function buildResultSummary(status, exitCode, finalText) {
-  const failureReason = status === 'completed' ? '' : extractFailureReason(finalText) || `Codex 退出码：${exitCode}`;
+function buildResultSummary(status, exitCode, finalText, figmaWriteResult = {}) {
+  const figmaBlocker = figmaWriteResult.required && !figmaWriteResult.written
+    ? figmaWriteResult.blockerReason || '未检测到 Figma 写入证据。'
+    : '';
+  const failureReason = status === 'completed' ? '' : figmaBlocker || extractFailureReason(finalText) || `Codex 退出码：${exitCode}`;
   return {
     status,
     statusText: status,
-    summary: status === 'completed' ? '本机直接执行已完成，具体 Figma 写入结果请查看执行日志和报告。' : '本机直接执行失败，请查看阻塞原因和原始日志。',
+    summary: status === 'completed'
+      ? '本机直接执行已完成，已检测到 Figma 写入证据。'
+      : '本机直接执行失败，请查看阻塞原因和原始日志。',
     blockerReason: failureReason,
     needsHumanReview: true,
     validationCommands: ['codex exec --json'],
-    artifacts: [],
+    artifacts: figmaWriteResult.evidence?.length ? figmaWriteResult.evidence : [],
+    figmaWritten: figmaWriteResult.written === true,
     finalText: String(finalText || '').slice(-4000),
     parsedAt: new Date().toISOString()
   };
+}
+
+function requiresFigmaWriteEvidence(run = {}) {
+  return Boolean(String(run.figmaLinks || '').trim());
+}
+
+function extractFigmaWriteEvidence(text = '', run = {}) {
+  const required = requiresFigmaWriteEvidence(run);
+  const source = String(text || '');
+  const createdNodeIds = extractArrayLikeValues(source, 'createdNodeIds');
+  const mutatedNodeIds = extractArrayLikeValues(source, 'mutatedNodeIds');
+  const evidence = [];
+  const lines = source.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  for (const line of lines) {
+    if (!/createdNodeIds|mutatedNodeIds|figmaWriteResult|use_figma/i.test(line)) continue;
+    if (/未检测|没有|无写入|缺少|失败|error|failed|blocked|阻塞|不可用/i.test(line) && !/createdNodeIds|mutatedNodeIds/.test(line)) continue;
+    evidence.push(line.slice(0, 500));
+    if (evidence.length >= 8) break;
+  }
+  const written = createdNodeIds.length > 0 || mutatedNodeIds.length > 0 || evidence.some(line => /figmaWriteResult.*written["']?\s*[:=]\s*true/i.test(line));
+  return {
+    required,
+    written: required ? written : false,
+    createdNodeIds,
+    mutatedNodeIds,
+    evidence,
+    blockerReason: required && !written
+      ? 'Codex 进程结束，但未检测到 Figma 写入证据。必须有 use_figma 返回 createdNodeIds 或 mutatedNodeIds 后才算完成。'
+      : ''
+  };
+}
+
+function extractArrayLikeValues(text = '', field = '') {
+  const values = new Set();
+  const pattern = new RegExp(`${field}[^\\n\\[]*\\[([^\\]]*)\\]`, 'gi');
+  let match = pattern.exec(text);
+  while (match) {
+    String(match[1] || '')
+      .split(/,|\s/)
+      .map(item => item.replace(/["'`]/g, '').trim())
+      .filter(item => /^[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)?$/.test(item))
+      .forEach(item => values.add(item));
+    match = pattern.exec(text);
+  }
+  const singlePattern = new RegExp(`${field}[^\\n:=]*[:=]\\s*["']?([A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)?)`, 'gi');
+  match = singlePattern.exec(text);
+  while (match) {
+    if (match[1]) values.add(match[1]);
+    match = singlePattern.exec(text);
+  }
+  return [...values].slice(0, 50);
 }
 
 function extractFailureReason(text = '') {

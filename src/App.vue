@@ -1652,7 +1652,8 @@ export default {
             value: path || skill.id,
             label: `${kind === 'skill' ? 'Skill' : isMd ? 'md' : '资料'} · ${skill.title || fileName || skill.id}`,
             subtitle: path || skill.id,
-            kind
+            kind,
+            skill
           };
         })
         .filter(Boolean);
@@ -12715,7 +12716,20 @@ export default {
       }
       const assignee = this.directSkillAssigneeOptions.find(user => user.id === dialog.assignedToUserId) || this.currentUser || {};
       const productName = row.productDisplayName || row.productFileName || row.title || this.fileNameFromPath(skillPath) || 'AI 产物';
-      const primarySkillContent = this.skillContentCache[row.id] || row.preview || row.skill?.preview || this.skillPreviewText || '';
+      let primarySkillContent = this.skillContentCache[row.id] || row.preview || row.skill?.preview || this.skillPreviewText || '';
+      if (!primarySkillContent || /技能内容读取失败/i.test(primarySkillContent)) {
+        try {
+          const snapshot = await this.loadRunMaterialSnapshot(skillPath, projectId);
+          primarySkillContent = snapshot?.content || '';
+        } catch (error) {
+          ElMessage.error(this.readApiError(error) || error.message || 'Skill / md 内容读取失败，不能创建直接执行');
+          return;
+        }
+      }
+      if (!primarySkillContent || /技能内容读取失败/i.test(primarySkillContent)) {
+        ElMessage.warning('当前 Skill / md 内容快照不可用，不能创建直接执行');
+        return;
+      }
       dialog.submitting = true;
       try {
         const run = await this.api('/api/runs', {
@@ -12727,8 +12741,16 @@ export default {
             sourceTitle: row.title || row.productDisplayName || row.productFileName || '',
             primarySkillPath: skillPath,
             primarySkillContent,
+            primarySkillTitle: productName,
             stage: skillPath,
             selectedMaterialHints: [skillPath],
+            selectedMaterialSnapshots: [{
+              path: skillPath,
+              sourceValue: skillPath,
+              title: productName,
+              kind: row.skillInventoryKind || row.skill?.inventoryKind || '',
+              content: primarySkillContent
+            }],
             figmaLinks,
             figmaWriteMode: dialog.figmaWriteMode || 'target-node',
             assignedToUserId: assignee.id || this.currentUser?.id || '',
@@ -17309,6 +17331,19 @@ export default {
       const selectedTemplate = this.isCustomWorkflowRun && this.runForm.customWorkflowId
         ? this.customWorkflows.find(item => item.id === this.runForm.customWorkflowId)
         : null;
+      let selectedMaterialSnapshots = [];
+      if (!this.isBugFixRun && materialHints.length) {
+        try {
+          selectedMaterialSnapshots = await this.loadRunMaterialSnapshots(materialHints, projectId);
+        } catch (error) {
+          ElMessage.error(this.readApiError(error) || error.message || 'Skill / md 内容读取失败，不能创建执行');
+          return;
+        }
+        if (selectedMaterialSnapshots.length !== materialHints.length) {
+          ElMessage.error('Skill / md 内容快照不完整，不能创建执行');
+          return;
+        }
+      }
       const payload = {
         ...this.runForm,
         projectId,
@@ -17318,7 +17353,10 @@ export default {
         requirement,
         stage: this.isBugFixRun ? this.runForm.stage : primaryMaterial,
         primarySkillPath: this.isBugFixRun ? this.runForm.primarySkillPath || this.runForm.stage : primaryMaterial,
+        primarySkillContent: this.isBugFixRun ? this.runForm.primarySkillContent || '' : selectedMaterialSnapshots[0]?.content || '',
+        primarySkillTitle: this.isBugFixRun ? '' : selectedMaterialSnapshots[0]?.title || '',
         selectedMaterialHints: materialHints,
+        selectedMaterialSnapshots,
         showdocHints: materialHints.join('\n'),
         customWorkflowId: this.isCustomWorkflowRun ? (selectedTemplate?.id || '') : this.runForm.customWorkflowId,
         customWorkflowName: this.isCustomWorkflowRun ? (selectedTemplate?.name || generatedTitle) : this.runForm.customWorkflowName,
@@ -18218,6 +18256,70 @@ export default {
       return this.currentProjectExecutionMaterialOptions.find(item => item.value === key) || null;
     },
 
+    materialSkillForValue(value = '', projectId = this.runForm.projectId || this.selectedProjectId || this.projects[0]?.id || '') {
+      const key = String(value || '').trim();
+      if (!key) return null;
+      const scan = this.scans[projectId] || null;
+      const skills = Array.isArray(scan?.skills) ? scan.skills : [];
+      return skills.find(skill => {
+        const candidates = [
+          skill.id,
+          skill.path,
+          skill.relativePath,
+          skill.git?.relativePath
+        ].map(item => String(item || '').replaceAll('\\', '/').replace(/^\/+/, '').trim()).filter(Boolean);
+        return candidates.includes(key);
+      }) || null;
+    },
+
+    async loadRunMaterialSnapshot(value = '', projectId = this.runForm.projectId || this.selectedProjectId || this.projects[0]?.id || '') {
+      const key = String(value || '').trim();
+      if (!key) return null;
+      const option = this.materialOptionForValue(key);
+      const skill = option?.skill || this.materialSkillForValue(key, projectId);
+      const relativePath = String(skill?.git?.relativePath || skill?.relativePath || skill?.path || key || '')
+        .replaceAll('\\', '/')
+        .replace(/^\/+/, '')
+        .trim();
+      const title = option?.label?.replace(/^(Skill|md|资料)\s*·\s*/, '').trim()
+        || skill?.title
+        || this.meaningfulNameFromPath(relativePath)
+        || this.fileNameFromPath(relativePath)
+        || key;
+      let content = '';
+      if (skill?.inventoryKind === 'directory' || option?.kind === 'directory') {
+        content = String(skill?.preview || `产物目录：${title}\n路径：${relativePath || key}`).trim();
+      } else if ((skill?.directoryProduct || skill?.skillPath) && skill?.preview) {
+        content = String(skill.preview || '').trim();
+      } else if (projectId && relativePath) {
+        const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/file-preview?file=${encodeURIComponent(relativePath)}`);
+        if (!response.ok) throw new Error(`文件读取失败：${response.status}`);
+        content = String(await response.text()).trim();
+      } else if (skill) {
+        content = String(await this.loadSkillContent(skill)).trim();
+      }
+      const fallback = String(skill?.preview || '').trim();
+      if (!content && fallback) content = fallback;
+      if (!content || /技能内容读取失败|文件读取失败/i.test(content)) {
+        throw new Error(`Skill / md 内容读取失败：${relativePath || key}`);
+      }
+      return {
+        path: relativePath || key,
+        sourceValue: key,
+        title,
+        kind: option?.kind || this.skillInventoryKind(skill || {}),
+        content
+      };
+    },
+
+    async loadRunMaterialSnapshots(values = [], projectId = this.runForm.projectId || this.selectedProjectId || this.projects[0]?.id || '') {
+      const snapshots = [];
+      for (const value of this.normalizedRunMaterialHints(values)) {
+        snapshots.push(await this.loadRunMaterialSnapshot(value, projectId));
+      }
+      return snapshots;
+    },
+
     runMaterialDisplayName(value = '') {
       const key = String(value || '').trim();
       if (!key) return '';
@@ -18466,6 +18568,9 @@ export default {
     },
 
     effectiveResultStatus(run = {}) {
+      if (this.runRequiresFigmaWriteEvidence(run) && this.runHasFinishedAsSuccess(run) && !this.hasFigmaWriteEvidence(run)) {
+        return 'failed';
+      }
       const summaryStatus = run.resultSummary?.status;
       const normalizedSummaryStatus = String(summaryStatus || '').toLowerCase();
       if (summaryStatus === 'blocked' && /conditional/i.test(run.status || '') && /无硬阻塞|无阻塞|无$/.test(run.resultSummary?.blockerReason || '')) {
@@ -18481,6 +18586,25 @@ export default {
       if (/failed|error/i.test(run.status || '')) return 'failed';
       if (/blocked/i.test(run.status || '')) return 'blocked';
       return summaryStatus || 'unknown';
+    },
+
+    runRequiresFigmaWriteEvidence(run = {}) {
+      return Boolean(String(run?.figmaLinks || '').trim())
+        && (this.isLocalWorkerRun(run) || this.isSkillOrMdFocusedRun(run) || run.executionMode === 'single-skill' || run.workflow === 'art-single-skill' || run.workflow === 'custom-workflow');
+    },
+
+    runHasFinishedAsSuccess(run = {}) {
+      const raw = `${run?.status || ''} ${run?.workerStatus || ''} ${run?.resultSummary?.status || ''}`.toLowerCase();
+      return /done|success|passed|completed|finished/.test(raw);
+    },
+
+    hasFigmaWriteEvidence(run = {}) {
+      const result = run?.figmaWriteResult || {};
+      if (result.written === true) return true;
+      if (Array.isArray(result.createdNodeIds) && result.createdNodeIds.length) return true;
+      if (Array.isArray(result.mutatedNodeIds) && result.mutatedNodeIds.length) return true;
+      if (Array.isArray(result.evidence) && result.evidence.some(Boolean)) return true;
+      return run?.resultSummary?.figmaWritten === true;
     },
 
     resultStatusTitle(summary = {}, run = {}) {
