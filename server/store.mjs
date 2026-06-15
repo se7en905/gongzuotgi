@@ -1906,7 +1906,8 @@ function findTaskIndex(tasks = [], task = {}) {
 }
 
 function mergeTask(previous = {}, next = {}, updatedAt = new Date().toISOString()) {
-  return {
+  const preserveManualWorkload = hasManualTaskWorkload(previous) && !hasManualTaskWorkload(next);
+  const merged = {
     ...previous,
     ...next,
     id: taskIdFor(next.projectId || previous.projectId, next.taskNo || previous.taskNo, next.title || previous.title),
@@ -1915,6 +1916,18 @@ function mergeTask(previous = {}, next = {}, updatedAt = new Date().toISOString(
     archivedAt: next.isCurrent === false ? previous.archivedAt || next.archivedAt : next.archivedAt || '',
     updatedAt
   };
+  if (preserveManualWorkload) {
+    merged.workloadLevel = previous.workloadLevel || previous.workloadEstimate?.level || '';
+    merged.workloadEstimate = previous.workloadEstimate || null;
+  }
+  return merged;
+}
+
+function hasManualTaskWorkload(task = {}) {
+  return Boolean(
+    normalizeTaskWorkloadLevel(task.workloadLevel || task.workloadEstimate?.level)
+    && (!task.workloadEstimate || task.workloadEstimate.source === 'manual')
+  );
 }
 
 function taskIdentityKey(task = {}) {

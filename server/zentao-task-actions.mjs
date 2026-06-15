@@ -63,7 +63,7 @@ export async function buildZentaoSplitPlan(task = {}) {
   const children = [];
 
   if (/入口图标|入口图|入口icon|新增子游戏|新增小游戏|新增游戏/i.test(text)) {
-    children.push(childRow(withTaskSuffix(`【制作单】${baseName || title}`, '-2'), 'yushengwei', deadline, executionId, parentTaskId, 0, artTemplate));
+    children.push(childRow(withTaskSuffix(`【制作单】${baseName || title}`, '-2'), 'yushengwei', deadline, executionId, parentTaskId, 0, artTemplate, task, detail));
   } else if (/走查/i.test(text) || /【\s*(?:美术)?验收单\s*】|美术验收/i.test(text)) {
     [
       ['【验收单】', '-白', 'lanhj'],
@@ -72,18 +72,18 @@ export async function buildZentaoSplitPlan(task = {}) {
       ['【验收单】', '-10', 'lilh'],
       ['【验收单】', '-2主套', 'huangjianrong']
     ].forEach(([prefix, suffix, account], index) => {
-      children.push(childRow(`${prefix}${baseName || title}${suffix}`, account, deadline, executionId, parentTaskId, index, artTemplate));
+      children.push(childRow(`${prefix}${baseName || title}${suffix}`, account, deadline, executionId, parentTaskId, index, artTemplate, task, detail));
     });
   } else if (/web5?|web/i.test(text)) {
-    children.push(childRow(`【制作单】${baseName || title}-2`, 'huangjianrong', deadline, executionId, parentTaskId, 0, artTemplate));
+    children.push(childRow(`【制作单】${baseName || title}-2`, 'huangjianrong', deadline, executionId, parentTaskId, 0, artTemplate, task, detail));
     if (cocosTemplate) {
       const cocosDeadline = validDate(cocosTemplate?.deadline || deadline);
       const cocosExecutionId = executionIdOf(cocosTemplate || artTemplate || detail, task);
-      children.push(childRow(`【制作单】${baseName || title}-15`, 'zhangzb', cocosDeadline, cocosExecutionId, parentTaskId, 1, cocosTemplate || artTemplate));
+      children.push(childRow(`【制作单】${baseName || title}-15`, 'zhangzb', cocosDeadline, cocosExecutionId, parentTaskId, 1, cocosTemplate || artTemplate, task, detail));
     }
     mainComment = splitMainCommentForTask(text);
   } else {
-    children.push(childRow(withTaskSuffix(`【制作单】${baseName || title}`, '-2'), main.account, deadline, executionId, parentTaskId, 0, artTemplate));
+    children.push(childRow(withTaskSuffix(`【制作单】${baseName || title}`, '-2'), main.account, deadline, executionId, parentTaskId, 0, artTemplate, task, detail));
   }
 
   return {
@@ -1096,14 +1096,16 @@ function executionIdOf(detail = {}, task = {}) {
   );
 }
 
-function childRow(name, assignedTo, deadline, executionId, parent, index, templateTask = {}) {
+function childRow(name, assignedTo, deadline, executionId, parent, index, templateTask = {}, task = {}, detail = {}) {
+  const templateEstimate = firstValue(templateTask?.estimate, templateTask?.left, 0);
+  const estimate = Number(templateEstimate) > 0 ? templateEstimate : taskWorkloadAssignHour(task, detail);
   return {
     id: `child-${index + 1}`,
     enabled: true,
     name: normalizeTaskCreateTitle(name),
     assignedTo,
     deadline,
-    estimate: firstValue(templateTask?.estimate, templateTask?.left, 0),
+    estimate,
     executionId,
     parent,
     templateTaskId: String(templateTask?.id || templateTask?.taskID || '').trim()

@@ -1727,9 +1727,11 @@ async function handleApi(req, res, url) {
     if (!workloadLevel) throw new HttpError(400, '任务量级只能选择 XS、S、M、L。');
     const before = task;
     const workloadGroup = taskWorkloadGroupForTask(task);
-    const projectTasks = await listTasks({ projectId: task.projectId });
+    const storedProjectTasks = await listTasks({ projectId: task.projectId });
+    const snapshotProjectTasks = await listArtSnapshotTasks(task.projectId || artProjectId).catch(() => []);
+    const projectTasks = mergeArtSnapshotRows(snapshotProjectTasks, storedProjectTasks);
     const targetTasks = workloadGroup
-      ? projectTasks.filter(item => taskWorkloadGroupForTask(item) === workloadGroup && !isLowEffortArtAcceptanceTaskInput(item))
+      ? projectTasks.filter(item => taskWorkloadGroupForTask(item) === workloadGroup && isWorkbenchArtTask(item) && !isLowEffortArtAcceptanceTaskInput(item))
       : [task];
     const changedAt = new Date().toISOString();
     const updatedTasks = [];
@@ -8378,7 +8380,7 @@ function mergeLiveAndSnapshotRow(stored = {}, snapshot = {}) {
   const liveIsNewer = storedTime && (!snapshotTime || storedTime >= snapshotTime);
   const primary = liveIsNewer ? stored : snapshot;
   const secondary = liveIsNewer ? snapshot : stored;
-  return {
+  const merged = {
     ...secondary,
     ...primary,
     id: stored.id || snapshot.id,
@@ -8394,6 +8396,18 @@ function mergeLiveAndSnapshotRow(stored = {}, snapshot = {}) {
       ...(primary.zentao || {})
     }
   };
+  if (hasManualTaskWorkloadOverride(stored) && !hasManualTaskWorkloadOverride(snapshot)) {
+    merged.workloadLevel = stored.workloadLevel || stored.workloadEstimate?.level || '';
+    merged.workloadEstimate = stored.workloadEstimate || null;
+  }
+  return merged;
+}
+
+function hasManualTaskWorkloadOverride(task = {}) {
+  return Boolean(
+    normalizeTaskWorkloadLevelInput(task.workloadLevel || task.workloadEstimate?.level)
+    && (!task.workloadEstimate || task.workloadEstimate.source === 'manual')
+  );
 }
 
 function comparableRowTime(row = {}) {
@@ -8725,6 +8739,23 @@ function taskWorkloadGroupForTask(task = {}) {
   const storyTitle = cleanBriefPart(task.zentao?.storyTitle || task.storyTitle);
   if (storyTitle) return `story-title:${project}:${safeFileSegment(storyTitle)}`;
   return '';
+}
+
+function isWorkbenchArtTask(task = {}) {
+  const artAccounts = new Set(defaultArtUsers.map(user => user.account));
+  const artNames = new Set(defaultArtUsers.map(user => user.realname).filter(Boolean));
+  const accountFields = [
+    task.assignedTo,
+    task.zentao?.assignedTo
+  ].map(accountName).filter(Boolean);
+  if (accountFields.some(account => artAccounts.has(account))) return true;
+  const nameFields = [
+    task.developer,
+    task.assignedToName,
+    task.zentao?.assignedToName,
+    task.zentao?.assignedToRealName
+  ].map(value => String(value || '').trim()).filter(Boolean);
+  return nameFields.some(name => artNames.has(name));
 }
 
 function isBugLikeTaskInput(input = {}) {
