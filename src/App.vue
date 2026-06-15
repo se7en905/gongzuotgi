@@ -17594,6 +17594,13 @@ export default {
       return worker;
     },
 
+    currentUserOnlineWorker() {
+      const currentUserId = String(this.currentUser?.id || '').trim();
+      if (!currentUserId) return null;
+      const worker = this.agentWorkersByUserId.get(currentUserId) || null;
+      return worker && this.directSkillWorkerOnline(worker) ? worker : null;
+    },
+
     directSkillWorkerForUser(user = null) {
       const userId = String(user?.id || '').trim();
       if (!userId) return null;
@@ -17730,6 +17737,17 @@ export default {
       return `${this.directSkillWorkerDisplayName(worker)} · ${online ? '在线' : '离线'} · ${codex} · ${figma}`;
     },
 
+    directSkillWorkerIssueText(worker = null) {
+      if (!worker) return '未发现本机 Worker 心跳。';
+      if (!this.directSkillWorkerOnline(worker)) return 'Worker 已离线，请确认组员电脑上的 Worker 仍在运行。';
+      const checks = worker.checks && typeof worker.checks === 'object' ? worker.checks : {};
+      const messages = [];
+      if (worker.codexReady !== true) messages.push(checks.codexMessage || 'Codex 未就绪，请确认组员电脑上能运行 codex --help。');
+      if (worker.figmaMcpReady !== true) messages.push(checks.figmaMessage || 'Figma MCP 未就绪，请确认组员电脑上的 Codex 已完成 Figma MCP 授权。');
+      if (!messages.length) return 'Worker 已在线并可自动领取。';
+      return messages.join('；');
+    },
+
     isDirectSkillClaimedRun(run = null) {
       return Boolean(this.isLocalWorkerRun(run) && (run?.claimedAt || run?.startedAt || run?.claimedByDeviceId));
     },
@@ -17750,9 +17768,16 @@ export default {
       const worker = this.directSkillWorkerForRun(run);
       const online = this.directSkillWorkerOnline(worker);
       if (/pending|queued|created/.test(status)) {
+        if (online && (worker?.codexReady !== true || worker?.figmaMcpReady !== true)) {
+          return {
+            label: '等待本机自检',
+            detail: `Worker 已在线，待 Codex / Figma MCP 自检通过后自动领取。${this.directSkillWorkerIssueText(worker)}`,
+            tone: 'warning'
+          };
+        }
         return {
           label: '待本机领取',
-          detail: '执行人启动 Worker 后自动领取。',
+          detail: online ? 'Worker 在线，自检通过后会自动领取。' : '执行人启动 Worker 后自动领取。',
           tone: 'muted'
         };
       }
@@ -20100,8 +20125,9 @@ export default {
         ElMessage.info('当前任务已排队，等待本机 Worker 领取');
         return;
       }
-      if (!this.currentUserReadyWorker()) {
-        ElMessage.warning('当前账号本机 Worker 未在线或 Codex/Figma MCP 未就绪，请先在本机执行状态页启动本机 Worker。');
+      const onlineWorker = this.currentUserOnlineWorker();
+      if (!onlineWorker) {
+        ElMessage.warning('当前账号本机 Worker 未在线，请确认本机执行状态页已有该账号的 Worker 心跳。');
         return;
       }
       if (this.startConfirm.submitting) return;
@@ -20123,7 +20149,10 @@ export default {
           blocker: null,
           cancelledBy: ''
         });
-        this.logText = mode === 'resume' ? '继续执行已排队，等待当前账号本机 Worker 领取...' : '执行已排队，等待当前账号本机 Worker 领取...';
+        const waitingText = this.currentUserReadyWorker()
+          ? '等待当前账号本机 Worker 领取...'
+          : `等待当前账号本机 Worker 自检通过后领取：${this.directSkillWorkerIssueText(onlineWorker)}`;
+        this.logText = mode === 'resume' ? `继续执行已排队，${waitingText}` : `执行已排队，${waitingText}`;
         this.runLogCollapse = [];
         this.runLogDrawerVisible = false;
         await this.api(`/api/runs/${encodeURIComponent(runId)}/start`, {

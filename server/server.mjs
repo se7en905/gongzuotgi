@@ -2331,9 +2331,9 @@ async function handleApi(req, res, url) {
     if (run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill') {
       throw new HttpError(409, '直接执行任务只能由执行人本机 Worker 领取，不能在平台服务器启动。');
     }
-    const readyWorker = await getReadyLocalWorkerForUser(currentUser.id);
-    if (!readyWorker) {
-      throw new HttpError(409, '当前账号本机 Worker 未在线或 Codex/Figma MCP 未就绪，请先在本机执行状态页启动本机 Worker。');
+    const onlineWorker = await getOnlineLocalWorkerForUser(currentUser.id);
+    if (!onlineWorker) {
+      throw new HttpError(409, '当前账号本机 Worker 未在线，请确认本机执行状态页已有该账号的 Worker 心跳。');
     }
     const startMode = ['resume', 'restart'].includes(String(body.mode || '').trim()) ? String(body.mode).trim() : 'start';
     const queued = await queueRunForLocalWorker(run.id, {
@@ -2564,6 +2564,17 @@ async function getReadyLocalWorkerForUser(userId = '') {
       && worker.codexReady === true
       && worker.figmaMcpReady === true
     );
+  }) || null;
+}
+
+async function getOnlineLocalWorkerForUser(userId = '') {
+  const id = String(userId || '').trim();
+  if (!id) return null;
+  const workers = await listAgentWorkers({ userId: id });
+  const now = Date.now();
+  return workers.find(worker => {
+    const last = Date.parse(worker.lastHeartbeatAt || '');
+    return Boolean(last && now - last < 600000);
   }) || null;
 }
 

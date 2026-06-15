@@ -112,6 +112,7 @@
           <div><span>执行中</span><strong>{{ row.activeRuns.length }}</strong></div>
           <div><span>已完成</span><strong>{{ row.completedRuns.length }}</strong></div>
         </div>
+        <p v-if="row.worker && !row.ready" class="agent-worker-issue">{{ app.directSkillWorkerIssueText(row.worker) }}</p>
       </article>
       <div v-if="!app.agentWorkerHeartbeatRows.length" class="empty-block">暂无可查看的 Worker 信息。组员具备执行权限并启动本机 Worker 后会显示在这里。</div>
     </div>
@@ -374,6 +375,17 @@ export default {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+}
+
+.agent-worker-issue {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(245, 158, 11, 0.24);
+  border-radius: 6px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .agent-heartbeat-badge {
