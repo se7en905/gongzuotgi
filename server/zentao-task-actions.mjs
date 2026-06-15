@@ -245,8 +245,9 @@ function taskAssignBodyFromForm(html = '', detail = {}, task = {}, updates = {})
   ensureFormValue(body, 'env', detail.env || task.zentao?.env || '');
   ensureFormValue(body, 'estStarted', validDate(detail.estStarted || task.zentao?.estStarted || ''));
   setFormValue(body, 'deadline', validDate(detail.deadline || task.deadline || task.zentao?.deadline || body.get('deadline')));
-  setFormValue(body, 'estimate', classicRequiredHour(firstValue(detail.estimate, task.estimate, task.zentao?.estimate, body.get('estimate'), 0), fallbackHour));
-  setFormValue(body, 'left', classicRequiredHour(firstValue(detail.left, task.zentao?.left, body.get('left'), 0), fallbackHour));
+  const workHours = assignTaskWorkHours(detail, task, body, fallbackHour);
+  setFormValue(body, 'estimate', workHours.estimate);
+  setFormValue(body, 'left', workHours.left);
   ensureFormValue(body, 'relatedModules', detail.relatedModules || task.zentao?.relatedModules || '');
   setFormValue(body, 'status', detail.status || task.zentaoStatus || task.zentao?.originalStatus || body.get('status') || 'wait');
   return body;
@@ -921,6 +922,40 @@ function classicRequiredHour(value, fallbackHour = '4') {
   const text = String(value ?? '').trim();
   if (!text || Number(text) <= 0) return String(fallbackHour || '4');
   return text;
+}
+
+function assignTaskWorkHours(detail = {}, task = {}, body = new URLSearchParams(), fallbackHour = '4') {
+  const estimate = firstValue(detail.estimate, task.estimate, task.zentao?.estimate, body.get('estimate'), 0);
+  const left = firstValue(detail.left, task.zentao?.left, body.get('left'), 0);
+  if (hasMemberEditedWorkHours(detail, task)) {
+    return {
+      estimate: classicRequiredHour(estimate, fallbackHour),
+      left: classicRequiredHour(left, fallbackHour)
+    };
+  }
+  const hour = String(fallbackHour || '4');
+  return {
+    estimate: hour,
+    left: hour
+  };
+}
+
+function hasMemberEditedWorkHours(detail = {}, task = {}) {
+  const estimate = numberValue(firstValue(detail.estimate, task.estimate, task.zentao?.estimate, 0));
+  const left = numberValue(firstValue(detail.left, task.zentao?.left, 0));
+  const consumed = numberValue(firstValue(detail.consumed, task.consumed, task.zentao?.consumed, 0));
+  if (consumed > 0) return true;
+  if (estimate > 0 && left > 0 && Math.abs(estimate - left) > 0.001) return true;
+  const lastEditedBy = String(firstValue(detail.lastEditedBy, task.zentao?.lastEditedBy, '') || '').trim();
+  const lastEditedDate = String(firstValue(detail.lastEditedDate, task.zentao?.lastEditedDate, '') || '').trim();
+  const assignedDate = String(firstValue(detail.assignedDate, task.zentao?.assignedDate, '') || '').trim();
+  if (lastEditedBy && lastEditedDate && (!assignedDate || Date.parse(lastEditedDate) > Date.parse(assignedDate))) return true;
+  return false;
+}
+
+function numberValue(value) {
+  const number = Number(String(value ?? '').trim());
+  return Number.isFinite(number) ? number : 0;
 }
 
 function taskWorkloadAssignHour(task = {}, detail = {}) {
