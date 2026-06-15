@@ -1746,10 +1746,27 @@ function normalizeTask(input) {
     summary: input.summary || '',
     issues: input.issues || '',
     requirement: input.requirement || '',
+    workloadLevel: normalizeTaskWorkloadLevel(input.workloadLevel || input.workloadEstimate?.level || input.zentao?.workloadLevel || input.zentao?.workloadEstimate?.level),
+    workloadEstimate: normalizeTaskWorkloadEstimate(input.workloadEstimate || input.zentao?.workloadEstimate),
     stageChecks: normalizeStageChecks(input.stageChecks || []),
     zentao: input.zentao || {},
     createdAt: input.createdAt || now,
     updatedAt: input.updatedAt || now
+  };
+}
+
+function normalizeTaskWorkloadLevel(value = '') {
+  const text = String(value || '').trim().toUpperCase();
+  return ['XS', 'S', 'M', 'L'].includes(text) ? text : '';
+}
+
+function normalizeTaskWorkloadEstimate(input = null) {
+  if (!input || typeof input !== 'object') return null;
+  const level = normalizeTaskWorkloadLevel(input.level);
+  if (!level) return null;
+  return {
+    ...input,
+    level
   };
 }
 

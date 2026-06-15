@@ -11,6 +11,12 @@ export const artAssigneeOptions = [
 ];
 
 const WEB_SKIN_SPLIT_MAIN_COMMENT = '此单为10-12-白依据';
+const WORKLOAD_ASSIGN_HOURS = {
+  XS: '2',
+  S: '4',
+  M: '8',
+  L: '14'
+};
 
 export async function assignZentaoTask(task = {}, assignee = {}, options = {}) {
   const taskId = zentaoTaskId(task);
@@ -230,6 +236,7 @@ function taskAssignBodyFromForm(html = '', detail = {}, task = {}, updates = {})
   const body = formBodyFromHtml(formHtml || html);
   const uid = String(html.match(/\bvar\s+kuid\s*=\s*['"]([^'"]+)['"]/)?.[1] || '').trim();
   const assignedTo = String(updates.assignedTo || accountName(detail.assignedTo) || '').trim();
+  const fallbackHour = taskWorkloadAssignHour(task, detail);
 
   if (uid) setFormValue(body, 'uid', uid);
   setFormValue(body, 'assignedTo', assignedTo);
@@ -238,8 +245,8 @@ function taskAssignBodyFromForm(html = '', detail = {}, task = {}, updates = {})
   ensureFormValue(body, 'env', detail.env || task.zentao?.env || '');
   ensureFormValue(body, 'estStarted', validDate(detail.estStarted || task.zentao?.estStarted || ''));
   setFormValue(body, 'deadline', validDate(detail.deadline || task.deadline || task.zentao?.deadline || body.get('deadline')));
-  setFormValue(body, 'estimate', classicRequiredHour(firstValue(detail.estimate, task.estimate, task.zentao?.estimate, body.get('estimate'), 0)));
-  setFormValue(body, 'left', classicRequiredHour(firstValue(detail.left, task.zentao?.left, body.get('left'), 0)));
+  setFormValue(body, 'estimate', classicRequiredHour(firstValue(detail.estimate, task.estimate, task.zentao?.estimate, body.get('estimate'), 0), fallbackHour));
+  setFormValue(body, 'left', classicRequiredHour(firstValue(detail.left, task.zentao?.left, body.get('left'), 0), fallbackHour));
   ensureFormValue(body, 'relatedModules', detail.relatedModules || task.zentao?.relatedModules || '');
   setFormValue(body, 'status', detail.status || task.zentaoStatus || task.zentao?.originalStatus || body.get('status') || 'wait');
   return body;
@@ -910,10 +917,91 @@ function classicHour(value) {
   return text;
 }
 
-function classicRequiredHour(value) {
+function classicRequiredHour(value, fallbackHour = '4') {
   const text = String(value ?? '').trim();
-  if (!text || Number(text) <= 0) return '1';
+  if (!text || Number(text) <= 0) return String(fallbackHour || '4');
   return text;
+}
+
+function taskWorkloadAssignHour(task = {}, detail = {}) {
+  const level = taskWorkloadLevel(task, detail);
+  return WORKLOAD_ASSIGN_HOURS[level] || WORKLOAD_ASSIGN_HOURS.S;
+}
+
+function taskWorkloadLevel(task = {}, detail = {}) {
+  const candidates = [
+    task.workloadLevel,
+    task.workloadEstimate?.level,
+    task.zentao?.workloadLevel,
+    task.zentao?.workloadEstimate?.level,
+    detail.workloadLevel,
+    detail.workloadEstimate?.level
+  ];
+  const explicit = candidates.map(normalizeWorkloadLevel).find(Boolean);
+  return explicit || inferTaskWorkloadLevelForAssign(task, detail);
+}
+
+function normalizeWorkloadLevel(value = '') {
+  const text = String(value || '').trim().toUpperCase();
+  if (['XS', 'S', 'M', 'L'].includes(text)) return text;
+  if (/小小单|微型|极小|很小/.test(text)) return 'XS';
+  if (/小单|轻量|简单/.test(text)) return 'S';
+  if (/中单|中等|标准/.test(text)) return 'M';
+  if (/大单|大型|复杂|完整/.test(text)) return 'L';
+  return '';
+}
+
+function inferTaskWorkloadLevelForAssign(task = {}, detail = {}) {
+  const text = [
+    detail.name,
+    detail.title,
+    detail.desc,
+    detail.description,
+    detail.storyTitle,
+    task.title,
+    task.displayTitle,
+    task.requirement,
+    task.description,
+    task.summary,
+    task.targetPage,
+    task.figmaLinks,
+    task.showdocHints,
+    task.zentao?.desc,
+    task.zentao?.description,
+    task.zentao?.requirement,
+    task.zentao?.storyTitle
+  ].filter(Boolean).join('\n');
+  let score = 1;
+  const add = points => {
+    score += points;
+  };
+
+  if (/web5|多主题|theme_\d|多版|多端|兼容|适配/i.test(text)) add(2);
+  if (/接口|api|showdoc|联调|后台配置|配置控制|保存顺序|firebase|sdk/i.test(text)) add(2);
+  if (/登录|绑定|密码|验证码|手机号|邮箱|人脸|cpf|账户|account/i.test(text)) add(3);
+  if (/支付|充值|提现|钱包|余额|资金/i.test(text)) add(3);
+  if (/新页面|新增页面|新模块|完整流程|全流程|详情页|子页面/i.test(text)) add(2);
+  if (/figma|设计稿|还原|视觉|样式统一|皮肤|自定义入口|悬浮入口|弹窗/i.test(text)) add(1);
+  if (/文案|翻译|多语言|颜色|间距|字号|图标|展示隐藏|显示隐藏/i.test(text)) add(1);
+  if (/优化|调整|修改|支持|自定义/i.test(text)) add(1);
+
+  const figmaCount = countMatches(task.figmaLinks || text, /figma\.com/ig);
+  const showdocCount = countMatches(task.showdocHints || text, /showdoc|page_id|item_id|cat_id/ig);
+  if (figmaCount > 1) add(1);
+  if (showdocCount > 1) add(1);
+
+  const isTinyChange = score <= 3
+    && /文案|翻译|多语言|颜色|间距|字号|图标|展示隐藏|显示隐藏|展示|隐藏/i.test(text)
+    && !/接口|api|showdoc|联调|登录|绑定|验证码|人脸|支付|充值|提现|钱包|新页面|新增页面|新模块|完整流程|全流程|sdk|firebase/i.test(text);
+
+  if (isTinyChange) return 'XS';
+  if (score >= 7) return 'L';
+  if (score >= 4) return 'M';
+  return 'S';
+}
+
+function countMatches(text = '', pattern) {
+  return String(text || '').match(pattern)?.length || 0;
 }
 
 function stripHtml(value = '') {

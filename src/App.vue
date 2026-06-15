@@ -1968,7 +1968,13 @@ export default {
         const platformStatus = this.platformStatusForTask(latestRun, relatedReviews);
         const quality = this.taskQualityMetrics(task, relatedRuns, platformStatus);
         const isLowEffortAcceptance = isLowEffortArtAcceptanceTask(task);
-        const workloadEstimate = isLowEffortAcceptance ? null : inferTaskWorkloadLevel(task, project);
+        const savedWorkloadLevel = normalizeWorkloadLevel(task.workloadLevel || task.workloadEstimate?.level || task.zentao?.workloadLevel || task.zentao?.workloadEstimate?.level);
+        const inferredWorkloadEstimate = isLowEffortAcceptance ? null : inferTaskWorkloadLevel(task, project);
+        const workloadEstimate = isLowEffortAcceptance
+          ? null
+          : savedWorkloadLevel
+            ? { ...(inferredWorkloadEstimate || {}), ...(task.workloadEstimate || {}), level: savedWorkloadLevel }
+            : inferredWorkloadEstimate;
         return {
           ...task,
           displayTitle: this.taskDisplayTitle(task),
@@ -1986,6 +1992,7 @@ export default {
           latestRun,
           platformStatus,
           quality,
+          workloadLevel: workloadEstimate?.level || '',
           workloadEstimate
         };
       });
@@ -21978,6 +21985,11 @@ function levelForWorkflow(workflow) {
 
 function normalizeWorkflowId(workflow = '') {
   return workflow;
+}
+
+function normalizeWorkloadLevel(value = '') {
+  const text = String(value || '').trim().toUpperCase();
+  return ['XS', 'S', 'M', 'L'].includes(text) ? text : '';
 }
 
 function inferTaskWorkloadLevel(task = {}, project = {}) {
