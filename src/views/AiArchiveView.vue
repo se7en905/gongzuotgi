@@ -177,6 +177,14 @@
       </section>
 
       <section class="ai-archive-detail-section">
+        <h4>给 Codex 的执行要求</h4>
+        <div v-if="app.aiExecutionArchiveDetailStats.requirementText" class="ai-archive-requirement-text">
+          {{ app.aiExecutionArchiveDetailStats.requirementText }}
+        </div>
+        <p v-else>创建任务时未填写额外执行要求。</p>
+      </section>
+
+      <section class="ai-archive-detail-section">
         <h4>执行环境</h4>
         <div class="ai-archive-detail-grid">
           <div v-for="item in app.aiExecutionArchiveDetailStats.environmentRows" :key="item.label">
@@ -531,6 +539,20 @@ export default {
 
 .ai-archive-next-action {
   color: var(--text) !important;
+}
+
+.ai-archive-requirement-text {
+  max-height: 260px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--soft-card);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .ai-archive-detail-grid,

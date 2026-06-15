@@ -718,6 +718,7 @@ export default {
         { label: '浅色模式', value: 'light' }
       ],
       projects: [],
+      projectsCatalogLoaded: false,
       customWorkflows: [],
       applyingRunWorkflowTemplate: false,
       businessTasks: readWorkbenchDisplayCacheArray('businessTasks'),
@@ -5173,7 +5174,10 @@ export default {
         if ((!this.roles.length || !this.permissionCatalog.length) && !this.loading.roles) this.refreshRoles().catch(() => {});
       }
       if (view === 'runs') {
+        this.restoreWorkbenchDisplayCacheKeyIfEmpty('projects');
+        this.restoreWorkbenchDisplayCacheKeyIfEmpty('scans');
         this.restoreWorkbenchDisplayCacheKey('artProgressEvents');
+        if (!this.projects.length && !this.loading.projects) this.refreshProjects().catch(() => {});
         if (!this.loading.runs) this.refreshRuns({ background: !dirty }).catch(() => {});
         if ((!this.agentWorkers.length || dirty) && !this.loading.agentWorkers) this.refreshAgentWorkers({ background: !dirty }).catch(() => {});
         if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
@@ -6581,6 +6585,7 @@ export default {
           const preservedScan = existingScans[project.id] || previous.scan || null;
           return preservedScan ? { ...project, scan: preservedScan } : project;
         });
+        this.projectsCatalogLoaded = true;
         this.mergeScansIntoInventoryState(existingScans);
         this.saveWorkbenchDisplayCache('projects', this.projects);
         if (this.selectedProjectId && !this.projects.some(project => project.id === this.selectedProjectId)) {
@@ -11986,6 +11991,7 @@ export default {
         const preservedScan = existingScans[project.id] || project.scan || null;
         return preservedScan ? { ...project, scan: preservedScan } : project;
       });
+      this.projectsCatalogLoaded = true;
       this.saveWorkbenchDisplayCache('projects', this.projects);
       if (!this.selectedProjectId && this.projects[0]) this.selectedProjectId = this.projects[0].id;
     },
@@ -17459,6 +17465,8 @@ export default {
     isRunSourceDeleted(run = null) {
       const projectId = String(run?.projectId || '').trim();
       if (!projectId) return false;
+      if (this.loading.projects) return false;
+      if (!this.projectsCatalogLoaded) return false;
       return !this.projects.some(project => String(project.id || '').trim() === projectId);
     },
 
@@ -18542,6 +18550,7 @@ export default {
         .map((value, index) => ({ key: `artifact-${index}`, value: this.readableArchiveValue(value) }));
       const changeRows = this.aiExecutionArchiveChangeRows(run);
       const dataRows = this.aiExecutionArchiveDataRows(run, { stageRows, validationRows, artifactRows, changeRows });
+      const requirementText = this.aiExecutionArchiveRequirementText(run);
       const resultStatus = this.effectiveResultStatus(run);
       const hasRunSuccess = this.isAiExecutionArchiveClosedRun(run) || this.isAiExecutionArchiveReviewRun(run);
       const hasRunFailure = this.isAiExecutionArchiveReworkRun(run);
@@ -18597,10 +18606,16 @@ export default {
         targetRows,
         environmentRows,
         issueRows,
+        requirementText,
         resultTitle: this.aiExecutionArchiveResultTitle(run),
         resultText: this.aiExecutionArchiveResultText(run),
         nextAction: this.aiExecutionArchiveNextActionText(run)
       };
+    },
+
+    aiExecutionArchiveRequirementText(run = {}) {
+      const text = String(run.requirement || '').trim();
+      return text && !this.isPlaceholderResultText(text) ? text : '';
     },
 
     aiExecutionArchiveResultTitle(run = {}) {
@@ -20125,11 +20140,6 @@ export default {
         ElMessage.info('当前任务已排队，等待本机 Worker 领取');
         return;
       }
-      const onlineWorker = this.currentUserOnlineWorker();
-      if (!onlineWorker) {
-        ElMessage.warning('当前账号本机 Worker 未在线，请确认本机执行状态页已有该账号的 Worker 心跳。');
-        return;
-      }
       if (this.startConfirm.submitting) return;
       this.startConfirm.submitting = true;
       const sourceRun = this.selectedRun;
@@ -20149,9 +20159,12 @@ export default {
           blocker: null,
           cancelledBy: ''
         });
+        const onlineWorker = this.currentUserOnlineWorker();
         const waitingText = this.currentUserReadyWorker()
           ? '等待当前账号本机 Worker 领取...'
-          : `等待当前账号本机 Worker 自检通过后领取：${this.directSkillWorkerIssueText(onlineWorker)}`;
+          : onlineWorker
+            ? `等待当前账号本机 Worker 自检通过后领取：${this.directSkillWorkerIssueText(onlineWorker)}`
+            : '等待当前账号本机 Worker 上线并自检通过后领取...';
         this.logText = mode === 'resume' ? `继续执行已排队，${waitingText}` : `执行已排队，${waitingText}`;
         this.runLogCollapse = [];
         this.runLogDrawerVisible = false;
