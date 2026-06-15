@@ -163,12 +163,35 @@
           <ElTag :type="app.bugPriorityTagType(row.pri || row.priority || row.zentao?.pri)" effect="plain">P{{ row.pri || row.priority || row.zentao?.pri || '-' }}</ElTag>
         </template>
       </ElTableColumn>
+      <ElTableColumn label="AI评估" min-width="132" align="center">
+        <template #default="{ row }">
+          <ElTooltip
+            :content="app.workloadEstimateText(row.workloadEstimate)"
+            placement="top"
+            effect="dark"
+            :show-after="180"
+          >
+            <ElSelect
+              v-if="app.isPlatformAdmin"
+              :model-value="row.workloadLevel || row.workloadEstimate?.level || 'S'"
+              size="small"
+              class="task-workload-select"
+              :disabled="app.loading.taskWorkload"
+              @click.stop
+              @change="value => app.saveTaskWorkloadLevel(row, value)"
+            >
+              <ElOption v-for="option in app.taskWorkloadLevelOptions" :key="option.value" :label="option.label" :value="option.value" />
+            </ElSelect>
+            <span v-else class="task-workload-pill">{{ row.workloadLevel || row.workloadEstimate?.level || 'S' }}</span>
+          </ElTooltip>
+        </template>
+      </ElTableColumn>
       <ElTableColumn label="预计工时" min-width="110">
         <template #default="{ row }">
           {{ row.zentao?.estimate ?? row.estimate ?? '-' }}
         </template>
       </ElTableColumn>
-      <ElTableColumn label="截止时间" min-width="120">
+      <ElTableColumn label="截止时间" min-width="136">
         <template #default="{ row }">
           <span :class="['deadline-cell', app.deadlineState(row.deadline || row.zentao?.deadline)]">{{ row.deadline || row.zentao?.deadline || '-' }}</span>
         </template>
@@ -217,7 +240,7 @@
           <ElTag :type="app.bugStatusTagType(row.status)">{{ app.bugStatusLabel(row.status) }}</ElTag>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="截止时间" min-width="120">
+      <ElTableColumn label="截止时间" min-width="136">
         <template #default="{ row }">
           <span :class="['deadline-cell', app.deadlineState(row.deadline)]">{{ row.deadline || '-' }}</span>
         </template>
@@ -266,6 +289,20 @@
           <article>
             <span>处理状态</span>
             <strong>{{ app.taskProcessingStatus(app.selectedBusinessTask) }}</strong>
+          </article>
+          <article class="task-processing-workload">
+            <span>AI评估</span>
+            <ElSelect
+              v-if="app.isPlatformAdmin"
+              :model-value="app.selectedBusinessTask.workloadLevel || app.selectedBusinessTask.workloadEstimate?.level || 'S'"
+              size="small"
+              class="task-workload-select"
+              :disabled="app.loading.taskWorkload"
+              @change="value => app.saveTaskWorkloadLevel(app.selectedBusinessTask, value)"
+            >
+              <ElOption v-for="option in app.taskWorkloadLevelOptions" :key="option.value" :label="option.label" :value="option.value" />
+            </ElSelect>
+            <strong v-else class="task-workload-pill">{{ app.selectedBusinessTask.workloadLevel || app.selectedBusinessTask.workloadEstimate?.level || 'S' }}</strong>
           </article>
         </div>
         <section class="task-processing-block">
@@ -513,7 +550,7 @@ export default {
 
   .task-processing-meta {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 8px;
 
     article {
@@ -540,6 +577,57 @@ export default {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+  }
+
+  .task-processing-workload {
+    :deep(.el-select) {
+      width: 100%;
+    }
+  }
+
+  .task-workload-select {
+    width: 72px;
+
+    :deep(.el-select__wrapper) {
+      min-height: 30px;
+      border-radius: 999px;
+      overflow: hidden;
+      font-weight: 820;
+      box-shadow: none;
+      background: #f6f8fb;
+    }
+
+    :deep(.el-select__wrapper.is-focused) {
+      box-shadow: 0 0 0 1px var(--brand) inset;
+    }
+
+    :deep(.el-select__selection),
+    :deep(.el-select__selected-item),
+    :deep(.el-select__placeholder) {
+      color: var(--heading);
+      font-weight: 860;
+      justify-content: center;
+    }
+
+    :deep(.el-select__suffix) {
+      margin-left: 2px;
+      color: var(--muted);
+    }
+  }
+
+  .task-workload-pill {
+    align-items: center;
+    display: inline-flex;
+    justify-content: center;
+    min-width: 48px;
+    min-height: 30px;
+    padding: 0 12px;
+    border-radius: 999px;
+    background: #f6f8fb;
+    color: var(--heading);
+    font-size: 13px;
+    font-weight: 860;
+    line-height: 1;
   }
 
   .task-processing-block {

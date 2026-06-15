@@ -2565,6 +2565,9 @@ button {
   color: var(--muted);
   font-size: 13px;
   font-weight: 780;
+  display: inline-block;
+  white-space: nowrap;
+  word-break: keep-all;
 }
 
 .deadline-cell.overdue {

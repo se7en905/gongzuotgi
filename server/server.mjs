@@ -1717,6 +1717,54 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  const taskPatch = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
+  if (req.method === 'PATCH' && taskPatch) {
+    const body = await readBody(req);
+    const task = await requireTaskLike(taskPatch[1]);
+    requireProjectAccess(currentUser, task.projectId, 'admin', 'task.sync');
+    const workloadLevel = normalizeTaskWorkloadLevelInput(body.workloadLevel || body.workloadEstimate?.level);
+    if (!workloadLevel) throw new HttpError(400, '任务量级只能选择 XS、S、M、L。');
+    const before = task;
+    const previousEstimate = task.workloadEstimate && typeof task.workloadEstimate === 'object' ? task.workloadEstimate : {};
+    const updated = await upsertTask({
+      ...task,
+      workloadLevel,
+      workloadEstimate: {
+        ...previousEstimate,
+        level: workloadLevel,
+        source: 'manual',
+        updatedAt: new Date().toISOString(),
+        updatedBy: currentUser.id,
+        updatedByName: currentUser.displayName || currentUser.username
+      },
+      updatedAt: new Date().toISOString()
+    });
+    await writeOperationLog(req, {
+      user: currentUser,
+      module: 'task',
+      action: 'UPDATE_TASK_WORKLOAD_LEVEL',
+      actionName: '调整任务量级',
+      targetType: 'task',
+      targetId: task.id,
+      targetName: task.displayTitle || task.title || task.taskNo || task.id,
+      before,
+      after: updated,
+      metadata: {
+        taskNo: task.taskNo || task.zentao?.id || '',
+        workloadLevel
+      },
+      description: `${currentUser.displayName || currentUser.username} 将任务「${task.displayTitle || task.title || task.taskNo || task.id}」AI评估调整为 ${workloadLevel}`
+    });
+    broadcastPlatformEvent('tasks.changed', {
+      projectId: task.projectId || artProjectId,
+      taskId: updated.id,
+      taskNo: updated.taskNo || '',
+      module: 'task-workload-level'
+    });
+    sendJson(res, 200, updated);
+    return;
+  }
+
   const taskDelete = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
   if (req.method === 'DELETE' && taskDelete) {
     const task = await requireTaskLike(taskDelete[1]);
@@ -8586,6 +8634,11 @@ function platformTaskStatus(status = '', task = {}) {
   if (/doing|进行/.test(value)) return 'in_progress';
   if (/pause|cancel|暂停|取消/.test(value)) return 'blocked';
   return 'pending';
+}
+
+function normalizeTaskWorkloadLevelInput(value = '') {
+  const text = String(value || '').trim().toUpperCase();
+  return ['XS', 'S', 'M', 'L'].includes(text) ? text : '';
 }
 
 function isBugLikeTaskInput(input = {}) {

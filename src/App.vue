@@ -909,6 +909,7 @@ export default {
         skillVersion: false,
         folderScan: false,
         taskAssign: false,
+        taskWorkload: false,
         taskSplit: false
       },
       runDrawer: false,
@@ -936,6 +937,12 @@ export default {
       taskCenterModeOptions: [
         { label: '任务大厅', value: 'task' },
         { label: 'Bug大厅', value: 'bug' }
+      ],
+      taskWorkloadLevelOptions: [
+        { label: 'XS', value: 'XS' },
+        { label: 'S', value: 'S' },
+        { label: 'M', value: 'M' },
+        { label: 'L', value: 'L' }
       ],
       preserveMetricOnModeSwitch: false,
       preservePersonFilterOnModeSwitch: false,
@@ -15893,6 +15900,34 @@ export default {
       if (index >= 0) this.businessTasks.splice(index, 1, { ...this.businessTasks[index], ...updated });
       else this.businessTasks.unshift(updated);
       this.bumpTaskCenterRevision();
+    },
+
+    async saveTaskWorkloadLevel(task = {}, level = '') {
+      if (!this.isPlatformAdmin) {
+        ElMessage.warning('只有管理员可以更改 AI评估');
+        return;
+      }
+      const taskKey = this.taskOperationKey(task);
+      const nextLevel = normalizeWorkloadLevel(level);
+      if (!taskKey || !nextLevel) return;
+      const currentLevel = normalizeWorkloadLevel(task.workloadLevel || task.workloadEstimate?.level);
+      if (currentLevel === nextLevel) return;
+      try {
+        this.loading.taskWorkload = true;
+        const updated = await this.api(`/api/tasks/${encodeURIComponent(taskKey)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ workloadLevel: nextLevel })
+        });
+        this.applyUpdatedBusinessTask(updated);
+        if (this.selectedBusinessTaskId === task.id || this.taskOperationKey(this.selectedBusinessTask || {}) === taskKey) {
+          this.selectedBusinessTaskId = updated.id || task.id || this.selectedBusinessTaskId;
+        }
+        ElMessage.success(`AI评估已改为 ${nextLevel}`);
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || 'AI评估保存失败');
+      } finally {
+        this.loading.taskWorkload = false;
+      }
     },
 
     removeDeletedTaskFromLocalState(task = {}) {
