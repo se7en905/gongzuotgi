@@ -230,8 +230,10 @@
   - 美术执行台里的普通执行记录，负责人或组员点击 `发起执行`、`继续执行`、`重新执行` 时，必须排队给当前点击账号的本机 Worker 领取执行；不得再由工作台服务器或负责人 Mac 直接启动 Codex 跑普通执行。
   - 美术执行台启动普通执行的核心目的，是避免组员操作时消耗负责人 Mac 上的 Codex key、token、Figma OAuth 或 Figma MCP 授权；平台不得回退到负责人 Mac、本机服务器或平台侧 Codex/Figma 凭据执行。
   - 谁点击启动，就必须使用谁自己电脑上的 Codex CLI 登录态、Codex key/token、Figma MCP、Figma OAuth 和 Figma 文件权限；执行失败也只能提示该操作人补齐本机授权，不得自动改用负责人 Mac 的授权兜底。
-  - 普通执行排队给本机 Worker 前，必须确认当前账号有在线且 Codex/Figma MCP 都就绪的 Worker；未就绪时必须明确提示先启动本机 Worker，不得让任务静默进入无人领取的排队状态。
-  - 美术执行台里创建任务并点击启动时，如果当前账号 Worker 在线、Codex 就绪、Figma MCP 就绪，必须视为可以进入真实本机执行闭环；任务应由该账号本机 Worker 领取、运行 Codex、操作 Figma 链接并回传日志、状态、耗时和阻塞原因。
+  - 普通执行点击启动时只负责把当前执行记录排队给当前点击账号；不得因为该账号 Worker 当场未在线、Codex 未就绪或 Figma MCP 未就绪而拒绝排队，也不得要求已经按最新命令启动过 Worker 的组员重复执行命令。
+  - `/api/runs/:id/start` 启动普通执行时只能把当前 `run` 置为待领取/排队状态，并写入 `queuedForUserId` 为当前点击账号；不得由平台服务器、负责人 Mac 或工作台管理者 admin 的本机环境启动 Codex。
+  - 当前账号 Worker 未在线或本机能力未就绪时，前端必须明确显示等待当前账号 Worker 上线、等待 Codex/Figma MCP 自检通过或等待领取；不得提示改用负责人 Mac 代跑，不得让负责人误判为已经在服务器执行。
+  - 任务排队后，只有对应账号的本机 Worker 带 `codex.exec` 和 `figma.mcp.write` 能力调用 `/api/agent-runs/next` 时，才允许真正领取并进入本机执行；领取时必须再次校验当前账号、本机能力、项目权限和执行记录分配关系。
   - 本机 Worker 领取普通美术执行时必须按 `queuedForUserId`、`assignedToUserId` 或 `ownerUserId` 限制账号，其他账号 Worker 不得抢领；同一账号多台电脑同时开 Worker 时，只能按账号绑定由先轮询到的本机 Worker 领取。
   - 普通执行进入本机 Worker 队列后，状态必须显示为 `等待本机 Worker`、`已领取` 或 `本机执行中` 等负责人可判断的口径，并在右侧展示执行人本机状态、领取设备、最近心跳和 Codex/Figma MCP 就绪情况。
   - 本机 Worker 执行普通美术任务时，必须优先使用平台下发的任务资料、阶段列表、Figma 链接和 Skill/md 快照；不得要求组员电脑必须存在负责人 Mac 上的项目目录。若本机无法读取必要路径或 Figma 权限不足，必须回传阻塞原因。
@@ -311,6 +313,7 @@
 - 美术执行台和 AI档案数据刷新规则：
   - `runs` 执行记录是动态队列数据，不等同于库存扫描缓存。
   - 进入美术执行台、`/agent-workers` 或 `AI档案` 时，必须轻量刷新 `/api/runs`，不能因为本地 `runs` 缓存已有数据就跳过后端刷新。
+  - 进入 `/runs` 或刷新美术执行台时，必须先恢复或轻量加载项目目录/扫描源缓存；只有服务端项目目录已经确认加载完成后，才允许把执行记录判定为 `来源已删除`。不得因为前端本地 `projects` 尚未恢复、页面刚刷新或还没点进产物界面，就误显示 `来源已删除`。
   - 轻量刷新执行记录不得触发库存扫描、Git 拉取、本地路径扫描或共享盘扫描。
   - 进入任务中心或恢复任务中心视图时，必须轻量刷新 `/api/tasks`、`/api/bugs` 和任务验收记录；接口失败或临时返回空时保留当前展示和浏览器缓存，不得用空结果覆盖上次同步任务数字。
   - 刷新后如果当前选中的执行记录已经被后端删除，必须自动切到最新可见执行记录或清空选择，不能继续显示本地旧记录。
@@ -508,6 +511,7 @@
   - 组员本机 Worker 必须使用执行人自己的 Codex CLI、Figma MCP、Figma OAuth 和 Figma 文件权限。
   - 组员电脑默认没有负责人本机的项目代码，Worker 启动命令不得依赖负责人本机路径、相对 `scripts/` 路径或整套项目代码。
   - Worker 启动命令必须通过工作台服务 URL 下载 Worker 脚本到组员自己的用户目录；默认目录为 Windows `%USERPROFILE%\ArtDirectWorker`、macOS `$HOME/ArtDirectWorker`。
+  - Worker 启动命令不得包含 Codex API Key、Codex 登录 token、Figma OAuth token、Figma MCP 授权、负责人 Mac 的本机凭据或任何平台管理者密钥；命令只允许负责下载/启动 Worker、登录工作台、上报心跳、轮询和领取任务。
   - 工作台服务更新后，组员重新复制并执行 `本机执行状态` 页面里的最新 `复制手动启动` 或 `复制开机自启` 命令，必须重新下载最新 `art-direct-worker.mjs`；不得继续沿用旧 Worker 脚本。
   - 组员推荐重新执行 `复制开机自启` 命令来更新 Worker；该流程必须覆盖同账号旧自启配置并启动最新 Worker。仅使用 `复制手动启动` 时，必须先关闭旧 Worker 终端或旧 worker 进程，避免同账号同电脑同时跑新旧两个 Worker。
   - Windows `复制开机自启` 必须使用当前用户启动项安装 Worker，不得依赖管理员权限或必须注册系统计划任务；普通组员 PowerShell 可直接执行，重复安装只覆盖同一个启动项。
@@ -538,6 +542,7 @@
   - Worker 心跳写入 `agent-workers` 数据，至少包含执行人、设备、最近心跳、Codex 是否就绪、Figma MCP 是否就绪、能力标记和检查消息。
   - Worker 登录平台成功后必须先上报一次基础心跳，再执行 Codex/Figma MCP 自检；不得因为本机 Codex 或 Figma MCP 自检卡住而让工作台一直显示“无心跳”。
   - Worker 的 Codex/Figma MCP 自检必须设置超时，默认 15 秒左右；超时只标记对应能力未就绪并写入检查消息，不得阻塞基础心跳上报和页面状态展示。
+  - Worker 的 Codex/Figma MCP 自检必须在执行人自己的电脑上执行，例如检查本机 `codex --help` 和 `codex mcp list`；这些检查只决定该 Worker 是否具备领取执行的能力，不得把自检失败扩大成账号离线或工作台不可用。
   - Worker 空闲状态必须低打扰运行：不得弹窗、不得调用会抢焦点的 GUI、不得打开浏览器或 Figma 窗口、不得造成 Dock 闪烁；轮询只能做后台 Node 请求和必要本机命令检查。
   - Worker 默认任务轮询和心跳兜底间隔为 5 分钟；Codex/Figma MCP 本机自检默认间隔为 40 分钟，即 `ART_WORKER_LOCAL_CHECK_INTERVAL_MS=2400000`。除非负责人明确要求，复制命令、开机自启脚本和 Worker 默认值都必须保持该低打扰配置。
   - Worker 必须在真正领取任务、恢复本机未完成任务或执行结束时才启动较重的 Codex 子进程；空轮询不得每轮重复启动 Codex/Figma 检查进程。
