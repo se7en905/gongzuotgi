@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import os from 'node:os';
 import path from 'node:path';
-import { access, mkdir, readFile, writeFile, readdir, rename, rm } from 'node:fs/promises';
+import { access, appendFile, mkdir, readFile, writeFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -19,9 +19,12 @@ const codexPath = resolveCodexPath();
 const defaultProjectRoot = process.env.ART_WORKER_PROJECT_ROOT || workerHome || process.cwd();
 const offlineQueuePath = process.env.ART_WORKER_OFFLINE_QUEUE_PATH || path.join(workerHome, 'state', 'offline-run-updates.json');
 const runStateDir = process.env.ART_WORKER_RUN_STATE_DIR || path.join(workerHome, 'state', 'runs');
+const workerLockPath = process.env.ART_WORKER_LOCK_PATH || path.join(workerHome, 'state', 'worker.lock');
 const offlineQueueMaxItems = Math.max(20, Number(process.env.ART_WORKER_OFFLINE_QUEUE_MAX_ITEMS || 200));
 const offlineLogChunkMaxChars = Math.max(1000, Number(process.env.ART_WORKER_OFFLINE_LOG_CHUNK_MAX_CHARS || 8000));
 const runEventQueueMaxItems = Math.max(20, Number(process.env.ART_WORKER_RUN_EVENT_QUEUE_MAX_ITEMS || 500));
+const fullLogSyncMaxChars = Math.max(20000, Number(process.env.ART_WORKER_FULL_LOG_SYNC_MAX_CHARS || 180000));
+const onlineHeartbeatGraceMs = Math.max(180000, Number(process.env.ART_WORKER_ONLINE_GRACE_MS || 720000));
 const selfUpdateEnabled = !['0', 'false', 'no'].includes(String(process.env.ART_WORKER_SELF_UPDATE || '1').toLowerCase());
 const selfUpdateIntervalMs = Math.max(300000, Number(process.env.ART_WORKER_SELF_UPDATE_INTERVAL_MS || 1800000));
 const selfUpdateUrl = process.env.ART_WORKER_SELF_UPDATE_URL || `${apiBase}/worker/art-direct-worker.mjs`;
@@ -37,6 +40,9 @@ let lastOfflineNoticeAt = 0;
 let lastSelfUpdateAt = 0;
 let selfUpdateRunning = false;
 let selfRestartScheduled = false;
+let workerStartedAt = new Date().toISOString();
+let currentRunId = '';
+let lockOwned = false;
 let offlineQueueOperation = Promise.resolve();
 let localChecks = {
   codexReady: false,
@@ -51,6 +57,7 @@ main().catch(error => {
 });
 
 async function main() {
+  await acquireWorkerLock();
   await mkdir(runStateDir, { recursive: true });
   await waitForLogin();
   console.log(`[worker] 已登录 ${apiBase}，当前账号：${currentUser?.displayName || currentUser?.username || username}`);
@@ -121,6 +128,7 @@ async function heartbeat(force = false) {
 }
 
 async function claimNextRun() {
+  await refreshLocalChecks(true);
   if (!localChecks.codexReady || !localChecks.figmaMcpReady) return null;
   const result = await fetchJson('/api/agent-runs/next', {
     method: 'POST',
@@ -130,6 +138,7 @@ async function claimNextRun() {
 }
 
 async function claimRecoverableRun(runId = '') {
+  await refreshLocalChecks(true);
   if (!localChecks.codexReady || !localChecks.figmaMcpReady) return null;
   const result = await fetchJson('/api/agent-runs/recover', {
     method: 'POST',
@@ -232,7 +241,12 @@ async function checkAndExecuteNextRun() {
     while (true) {
       const run = await claimLocalRecoverableRun() || await claimNextRun();
       if (!run) break;
-      await executeRun(run);
+      currentRunId = run.id || '';
+      try {
+        await executeRun(run);
+      } finally {
+        currentRunId = '';
+      }
       await flushOfflineQueue();
       await syncLocalRunState();
       await heartbeat(true);
@@ -325,7 +339,9 @@ async function executeRun(run) {
   runState.status = 'running';
   runState.finishedAt = '';
   runState.durationMs = 0;
+  runState.localLogPath = runLogPath(run.id);
   await writeRunState(run.id, runState);
+  await appendLocalRunLog(run.id, `\n[worker] ${resume ? '恢复' : '领取'}本机执行：${run.title} (${run.id})\n`);
   console.log(`[worker] ${resume ? '恢复' : '领取'}本机执行：${run.title} (${run.id})`);
   await enqueueRunEvent(run.id, {
     type: 'stage',
@@ -351,6 +367,7 @@ async function executeRun(run) {
   }
   const prompt = buildPrompt(run, workspace);
   const cwd = workspace.cwd;
+  await appendLocalRunLog(run.id, `\n[worker] 执行目录：${cwd}\n[worker] 本机日志：${runLogPath(run.id)}\n`);
   const cwdExists = await pathExists(cwd);
   if (!cwdExists) {
     await failRunBeforeCodex(run, `执行目录不存在：${cwd}`);
@@ -387,12 +404,14 @@ async function executeRun(run) {
     rawStdoutText += text;
     if (rawStdoutText.length > 200000) rawStdoutText = rawStdoutText.slice(-200000);
     finalText += collectReadableJsonl(text);
+    void appendLocalRunLog(run.id, text);
     void safeAppendRunLog(run.id, text);
     process.stdout.write(text);
   });
   child.stderr.on('data', chunk => {
     const text = chunk.toString();
     stderrText += text;
+    void appendLocalRunLog(run.id, text);
     void safeAppendRunLog(run.id, text);
     process.stderr.write(text);
   });
@@ -410,6 +429,11 @@ async function executeRun(run) {
   const combinedText = [finalText, rawStdoutText, stderrText].filter(Boolean).join('\n');
   const figmaWriteResult = extractFigmaWriteEvidence(combinedText, run);
   const status = resolveWorkerFinalStatus(exitCode, figmaWriteResult);
+  const localLogInfo = await localRunLogInfo(run.id);
+  const localLogText = await readLocalRunLogForSync(run.id);
+  if (localLogText) {
+    await safeAppendRunLog(run.id, `\n\n[worker local full log ${finishedAt}]\n${localLogText}\n[/worker local full log]\n`);
+  }
   await enqueueRunEvent(run.id, {
     type: 'stage',
     phase: 'end',
@@ -448,11 +472,17 @@ async function executeRun(run) {
       cwd,
       materialPath: workspace.materialPath,
       snapshotPaths: workspace.snapshotPaths,
+      localLogPath: localLogInfo.path,
+      localLogSize: localLogInfo.size,
+      localLogSyncedChars: localLogText.length,
       finalText: finalText.slice(-8000),
       stderrText: stderrText.slice(-8000)
     },
+    workerLocalLogPath: localLogInfo.path,
+    workerLocalLogSize: localLogInfo.size,
     figmaWriteResult
   });
+  await appendLocalRunLog(run.id, `\n[worker] 执行结束：${run.title} (${status})\n`);
   console.log(`[worker] 执行结束：${run.title} (${status})`);
 }
 
@@ -467,7 +497,9 @@ async function failRunBeforeCodex(run, reason) {
   runState.finishedAt = finishedAt;
   runState.durationMs = durationMs;
   runState.status = 'failed';
+  runState.localLogPath = runLogPath(run.id);
   await writeRunState(run.id, runState);
+  await appendLocalRunLog(run.id, `\n[worker blocked] ${reason}\n`);
   await enqueueRunEvent(run.id, {
     type: 'stage',
     phase: 'end',
@@ -506,9 +538,11 @@ async function failRunBeforeCodex(run, reason) {
       deviceId,
       hostname: os.hostname(),
       exitCode: -1,
+      localLogPath: runLogPath(run.id),
       finalText: '',
       stderrText: reason
     },
+    workerLocalLogPath: runLogPath(run.id),
     figmaWriteResult: {
       required: requiresFigmaWriteEvidence(run),
       written: false,
@@ -712,6 +746,14 @@ function workerPayload() {
     deviceName: deviceId,
     hostname: os.hostname(),
     platform: os.platform(),
+    pid: process.pid,
+    workerStartedAt,
+    currentRunId,
+    workerHome,
+    runStateDir,
+    heartbeatIntervalMs,
+    pollIntervalMs,
+    onlineGraceMs: onlineHeartbeatGraceMs,
     capabilities: [
       localChecks.codexReady ? 'codex.exec' : '',
       localChecks.figmaMcpReady ? 'figma.mcp.write' : ''
@@ -808,18 +850,21 @@ async function updateRunStatus(runId, body) {
 
 async function safeAppendRunLog(runId, chunk) {
   if (!chunk) return;
-  try {
-    await fetchJson(`/api/agent-runs/${encodeURIComponent(runId)}/log`, {
-      method: 'POST',
-      body: { chunk }
-    });
-  } catch (error) {
-    await enqueueRunEvent(runId, {
-      type: 'log',
-      at: new Date().toISOString(),
-      chunk: String(chunk).slice(-offlineLogChunkMaxChars)
-    });
-    logOfflineNotice(`日志回传失败，已暂存在本机：${error.message}`);
+  const parts = splitLogChunk(String(chunk), Math.min(offlineLogChunkMaxChars, 18000));
+  for (const part of parts) {
+    try {
+      await fetchJson(`/api/agent-runs/${encodeURIComponent(runId)}/log`, {
+        method: 'POST',
+        body: { chunk: part }
+      });
+    } catch (error) {
+      await enqueueRunEvent(runId, {
+        type: 'log',
+        at: new Date().toISOString(),
+        chunk: part
+      });
+      logOfflineNotice(`日志回传失败，已暂存在本机：${error.message}`);
+    }
   }
 }
 
@@ -899,6 +944,17 @@ function withOfflineQueueLock(task) {
   return offlineQueueOperation;
 }
 
+function splitLogChunk(text = '', maxChars = 8000) {
+  const value = String(text || '');
+  const size = Math.max(1000, Number(maxChars || 8000));
+  if (value.length <= size) return value ? [value] : [];
+  const chunks = [];
+  for (let index = 0; index < value.length; index += size) {
+    chunks.push(value.slice(index, index + size));
+  }
+  return chunks;
+}
+
 function logOfflineNotice(message) {
   const now = Date.now();
   if (now - lastOfflineNoticeAt < 30000) return;
@@ -952,6 +1008,39 @@ async function writeRunState(runId, state = {}) {
     updatedAt: new Date().toISOString()
   };
   await writeFile(runStatePath(runId), JSON.stringify(next, null, 2), 'utf8');
+}
+
+async function appendLocalRunLog(runId = '', chunk = '') {
+  if (!runId || !chunk) return;
+  const target = runLogPath(runId);
+  await mkdir(path.dirname(target), { recursive: true });
+  await appendFile(target, chunk, 'utf8').catch(error => {
+    console.error(`[worker] 本机日志写入失败：${error.message}`);
+  });
+}
+
+async function localRunLogInfo(runId = '') {
+  const target = runLogPath(runId);
+  try {
+    const info = await stat(target);
+    return { path: target, size: info.size };
+  } catch {
+    return { path: target, size: 0 };
+  }
+}
+
+async function readLocalRunLogForSync(runId = '') {
+  const target = runLogPath(runId);
+  try {
+    const text = await readFile(target, 'utf8');
+    if (text.length <= fullLogSyncMaxChars) return text;
+    return [
+      `[worker] 本机完整日志过长，平台只补传最后 ${fullLogSyncMaxChars} 字符。完整日志仍保留在执行人电脑：${target}`,
+      text.slice(-fullLogSyncMaxChars)
+    ].join('\n');
+  } catch {
+    return '';
+  }
 }
 
 async function enqueueRunEvent(runId, event = {}) {
@@ -1046,6 +1135,74 @@ async function removeRunState(runId) {
 
 function runStatePath(runId) {
   return path.join(runStateDir, safePathSegment(runId), 'state.json');
+}
+
+function runLogPath(runId) {
+  return path.join(runStateDir, safePathSegment(runId), 'worker-full.log');
+}
+
+async function acquireWorkerLock() {
+  await mkdir(path.dirname(workerLockPath), { recursive: true });
+  while (true) {
+    const payload = {
+      pid: process.pid,
+      deviceId,
+      username,
+      hostname: os.hostname(),
+      workerHome,
+      startedAt: workerStartedAt
+    };
+    try {
+      await writeFile(workerLockPath, JSON.stringify(payload, null, 2), { flag: 'wx' });
+      lockOwned = true;
+      registerLockCleanup();
+      return;
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      const existing = await readWorkerLock();
+      if (!existing?.pid || !isProcessAlive(existing.pid)) {
+        await rm(workerLockPath, { force: true }).catch(() => {});
+        continue;
+      }
+      console.error(`[worker] 已有本机 Worker 正在运行：pid=${existing.pid}，device=${existing.deviceId || deviceId}。当前进程等待锁释放，避免重复领取任务。`);
+      await sleep(60000);
+    }
+  }
+}
+
+async function readWorkerLock() {
+  try {
+    const text = await readFile(workerLockPath, 'utf8');
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function isProcessAlive(pid) {
+  const value = Number(pid || 0);
+  if (!value || value === process.pid) return false;
+  try {
+    process.kill(value, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
+}
+
+function registerLockCleanup() {
+  const cleanup = () => {
+    if (!lockOwned) return;
+    lockOwned = false;
+    void rm(workerLockPath, { force: true });
+  };
+  process.once('exit', cleanup);
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.once(signal, () => {
+      cleanup();
+      process.exit(0);
+    });
+  }
 }
 
 function safePathSegment(value = '') {

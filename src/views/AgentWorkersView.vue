@@ -87,7 +87,7 @@
       </div>
     </template>
     <div class="agent-worker-list">
-      <article v-for="row in app.agentWorkerHeartbeatRows" :key="row.user.id || row.worker?.id || row.worker?.deviceId" :class="['agent-worker-card', { online: row.online, ready: row.ready, blocked: !row.ready }]">
+      <article v-for="row in app.agentWorkerHeartbeatRows" :key="row.user.id || row.worker?.id || row.worker?.deviceId" :class="['agent-worker-card', { online: row.online, ready: row.ready, blocked: !row.ready, syncing: row.runningWhileDisconnected }]">
         <div class="agent-worker-card-head">
           <div>
             <strong>{{ row.user.displayName || row.user.username || row.worker?.userName || '未命名组员' }}</strong>
@@ -101,10 +101,11 @@
               <path class="agent-heartbeat-trail" d="M2 22 C14 22, 18 14, 29 15 C39 16, 43 22, 52 22 C61 22, 63 7, 71 7 C80 7, 82 22, 91 22 C101 22, 104 17, 110 17" />
               <path class="agent-heartbeat-draw" d="M2 22 C14 22, 18 14, 29 15 C39 16, 43 22, 52 22 C61 22, 63 7, 71 7 C80 7, 82 22, 91 22 C101 22, 104 17, 110 17" />
             </svg>
-            <span v-else>{{ row.online ? '不可执行' : '无心跳' }}</span>
+            <span v-else>{{ row.runningWhileDisconnected ? '待补传' : row.online ? '不可执行' : row.installed ? '离线' : '未安装' }}</span>
           </div>
         </div>
         <div class="agent-worker-state-grid">
+          <div><span>状态</span><strong>{{ app.directSkillMemberReadyLabel(row) }}</strong></div>
           <div><span>Codex</span><strong>{{ row.codexReady ? '已就绪' : '未就绪' }}</strong></div>
           <div><span>Figma MCP</span><strong>{{ row.figmaMcpReady ? '已就绪' : '未就绪' }}</strong></div>
           <div><span>最近心跳</span><strong>{{ app.directSkillWorkerLastSeenText(row.worker) }}</strong></div>

@@ -1077,10 +1077,13 @@ export async function claimRecoverableAgentRun(input = {}) {
   const candidateIndex = runs.findIndex(run => (!runId || cleanString(run.id) === runId) && isRecoverableAgentRun(run, userId, deviceId, { allowedProjectIds, canAccessAllProjects }));
   if (candidateIndex === -1) return null;
   const existing = runs[candidateIndex];
+  const existingStatus = normalizeWorkerRunStatus(existing.status || existing.workerStatus || '');
+  const alreadyRunning = Boolean(existing.startedAt || /running|in_progress/i.test(`${existingStatus} ${existing.workerStatus || ''}`));
+  const nextStatus = alreadyRunning ? 'running' : 'claimed';
   const run = {
     ...existing,
-    status: 'claimed',
-    workerStatus: 'claimed',
+    status: nextStatus,
+    workerStatus: nextStatus,
     assignedToUserId: existing.assignedToUserId || userId,
     queuedForUserId: existing.queuedForUserId || userId,
     claimedByDeviceId: existing.claimedByDeviceId || deviceId,
@@ -3630,6 +3633,9 @@ function normalizeAgentWorker(input = {}) {
   const id = [userId, deviceId].filter(Boolean).join(':') || cleanString(input.id) || randomUUID();
   const capabilities = normalizeLineList(input.capabilities);
   const checks = input.checks && typeof input.checks === 'object' ? input.checks : {};
+  const heartbeatIntervalMs = Math.max(0, Number(input.heartbeatIntervalMs || 0));
+  const pollIntervalMs = Math.max(0, Number(input.pollIntervalMs || 0));
+  const onlineGraceMs = Math.max(0, Number(input.onlineGraceMs || 0));
   return {
     id,
     userId,
@@ -3644,6 +3650,13 @@ function normalizeAgentWorker(input = {}) {
     capabilities,
     checks,
     currentRunId: cleanString(input.currentRunId),
+    pid: Number(input.pid || 0) || 0,
+    workerStartedAt: cleanString(input.workerStartedAt),
+    workerHome: cleanString(input.workerHome),
+    runStateDir: cleanString(input.runStateDir),
+    heartbeatIntervalMs,
+    pollIntervalMs,
+    onlineGraceMs,
     status: cleanString(input.status || 'online'),
     lastHeartbeatAt: cleanString(input.lastHeartbeatAt || now),
     createdAt: cleanString(input.createdAt || now),

@@ -1387,10 +1387,14 @@ export default {
           const worker = this.directSkillWorkerForUser(user);
           const online = this.directSkillWorkerOnline(worker);
           const runGroups = this.directSkillRunsForUser(user);
+          const installed = Boolean(worker?.id || worker?.deviceId || worker?.lastHeartbeatAt);
+          const runningWhileDisconnected = !online && runGroups.active.length > 0;
           return {
             user,
             worker,
+            installed,
             online,
+            runningWhileDisconnected,
             pendingRuns: runGroups.pending,
             activeRuns: runGroups.active,
             completedRuns: runGroups.completed,
@@ -1420,13 +1424,17 @@ export default {
           role: matchedUser?.role || ''
         };
         const online = this.directSkillWorkerOnline(worker);
+        const runGroups = userId ? this.directSkillRunsForUser(user) : { pending: [], active: [], completed: [] };
+        const runningWhileDisconnected = !online && runGroups.active.length > 0;
         map.set(key, {
           user,
           worker,
+          installed: Boolean(worker?.id || worker?.deviceId || worker?.lastHeartbeatAt),
           online,
-          pendingRuns: userId ? this.directSkillRunsForUser(user).pending : [],
-          activeRuns: userId ? this.directSkillRunsForUser(user).active : [],
-          completedRuns: userId ? this.directSkillRunsForUser(user).completed : [],
+          runningWhileDisconnected,
+          pendingRuns: runGroups.pending,
+          activeRuns: runGroups.active,
+          completedRuns: runGroups.completed,
           codexReady: worker?.codexReady === true,
           figmaMcpReady: worker?.figmaMcpReady === true,
           ready: online && worker?.codexReady === true && worker?.figmaMcpReady === true
@@ -17900,7 +17908,8 @@ export default {
 
     directSkillMemberReadyLabel(row = {}) {
       if (row.ready) return '可自动领取';
-      if (!row.worker) return '未启动 Worker';
+      if (row.runningWhileDisconnected) return '本机执行中，等待补传';
+      if (!row.worker) return '未安装 Worker';
       if (!row.online) return 'Worker 离线';
       if (!row.codexReady) return 'Codex 未就绪';
       if (!row.figmaMcpReady) return 'Figma MCP 未就绪';
@@ -17909,6 +17918,7 @@ export default {
 
     directSkillMemberReadyTagType(row = {}) {
       if (row.ready) return 'success';
+      if (row.runningWhileDisconnected) return 'warning';
       if (!row.worker || !row.online) return 'info';
       return 'warning';
     },
@@ -17916,7 +17926,10 @@ export default {
     directSkillWorkerOnline(worker = null) {
       if (!worker?.lastHeartbeatAt) return false;
       const last = Date.parse(worker.lastHeartbeatAt);
-      return Boolean(last && Date.now() - last < 2400000);
+      const heartbeat = Math.max(Number(worker.heartbeatIntervalMs || 0), 60000);
+      const grace = Math.max(Number(worker.onlineGraceMs || 0), heartbeat * 3, 180000);
+      const maxGrace = Math.min(grace, 900000);
+      return Boolean(last && Date.now() - last < maxGrace);
     },
 
     directSkillWorkerStatusText(run = null) {
@@ -17929,8 +17942,8 @@ export default {
     },
 
     directSkillWorkerIssueText(worker = null) {
-      if (!worker) return '未发现本机 Worker 心跳。';
-      if (!this.directSkillWorkerOnline(worker)) return '最近心跳超时：工作台暂时收不到这台电脑的 Worker 心跳。若组员电脑仍在运行，恢复网络或下一轮心跳后会自动更新；新任务会等心跳恢复后领取。';
+      if (!worker) return '未发现本机 Worker 安装或心跳记录。';
+      if (!this.directSkillWorkerOnline(worker)) return '最近心跳超时：工作台暂时收不到这台电脑的 Worker 心跳。若本机已有执行在跑，Codex / Figma 会继续在组员电脑执行，恢复网络后补回日志和状态；新任务会等心跳恢复后领取。';
       const checks = worker.checks && typeof worker.checks === 'object' ? worker.checks : {};
       const messages = [];
       if (worker.codexReady !== true) messages.push(checks.codexMessage || 'Codex 未就绪，请确认组员电脑上能运行 codex --help。');
@@ -17947,6 +17960,7 @@ export default {
       const worker = this.directSkillWorkerForRun(run);
       if (this.isDirectSkillWorkerReady(worker)) return '正在启动本机执行';
       if (worker && this.directSkillWorkerOnline(worker)) return '待本机自检';
+      if (worker?.lastHeartbeatAt) return '待本机恢复在线';
       return '待本机上线';
     },
 
@@ -17957,6 +17971,9 @@ export default {
       }
       if (worker && this.directSkillWorkerOnline(worker)) {
         return `Worker 已在线，待本机 Codex / Figma MCP 自检通过后自动领取。${this.directSkillWorkerIssueText(worker)}`;
+      }
+      if (worker?.lastHeartbeatAt) {
+        return '这台电脑曾启动过 Worker，但当前心跳已超时。若本机已有执行在跑，会继续操作并在恢复网络后补回；未领取的新任务会等 Worker 恢复在线后自动领取。';
       }
       return '执行人本机 Worker 上线后会自动领取。';
     },
@@ -18007,8 +18024,8 @@ export default {
       }
       if (/claimed|running|in_progress/.test(status)) {
         return {
-          label: online ? '本机执行中' : '等待同步',
-          detail: online ? 'Worker 在线，执行状态会持续回传。' : 'Worker 离线或平台暂不可达，本机执行数据会在恢复后补回。',
+          label: online ? '本机执行中' : '断联执行中',
+          detail: online ? 'Worker 在线，执行状态会持续回传。' : '平台暂时收不到 Worker 心跳；已领取的本机 Codex / Figma 操作不会因此中断，恢复网络后会补回日志和状态。',
           tone: online ? 'running' : 'warning'
         };
       }
@@ -19421,9 +19438,10 @@ export default {
     directSkillRunStatusLabel(run = null) {
       if (!run) return '待判定';
       const value = String(run.status || '').toLowerCase();
+      const workerValue = String(run.workerStatus || '').toLowerCase();
       if (/pending|created|queued/.test(value)) return this.directSkillQueuedRunLabel(run);
+      if (/running|in_progress/.test(`${value} ${workerValue}`) || (run.startedAt && /claimed/.test(value))) return '本机执行中';
       if (/claimed/.test(value)) return '已领取';
-      if (/running|in_progress/.test(value)) return '本机执行中';
       if (this.hasPartialFigmaWrite(run)) return '部分写入';
       if (this.effectiveResultStatus(run) === 'failed') return '本机执行失败';
       if (this.effectiveResultStatus(run) === 'blocked') return '本机阻塞';
