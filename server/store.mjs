@@ -1233,7 +1233,7 @@ export async function queueRunForLocalWorker(id, input = {}) {
     claimedAt: '',
     startedBy: queuedForUserId || existing.startedBy || '',
     startMode: input.startMode || existing.startMode || 'start',
-    currentStage: '本机领取中',
+    currentStage: '正在启动本机执行',
     primarySkillContent: existing.primarySkillContent || materialSnapshot,
     blocker: null,
     resultSummary: null,

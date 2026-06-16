@@ -82,7 +82,7 @@
         <div class="agent-worker-toolbar">
           <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" type="primary" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, false)">复制手动启动</ElButton>
           <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, true)">复制开机自启</ElButton>
-          <ElButton plain :loading="app.loading.agentWorkers || app.loading.runs" @click="app.refreshAgentWorkers(); app.refreshRuns()">刷新状态</ElButton>
+          <ElButton plain :loading="app.loading.agentWorkers || app.loading.runs" @click="app.refreshAgentWorkerStatusView">刷新状态</ElButton>
         </div>
       </div>
     </template>

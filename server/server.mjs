@@ -2281,7 +2281,7 @@ async function handleApi(req, res, url) {
       executionHost: body.executionHost || 'local-worker',
       workerExecution: true,
       workerStatus: body.workerStatus || 'queued',
-      currentStage: body.currentStage || '本机领取中'
+      currentStage: body.currentStage || '正在启动本机执行'
     });
     await writeOperationLog(req, {
       user: currentUser,

@@ -8628,8 +8628,9 @@ export default {
     async refreshRuns(options = {}) {
       const refresh = this.requestRefreshKey('runs', { background: options.background === true, minInterval: options.minInterval ?? 6000 });
       if (refresh.skip) return refresh.promise || this.runs;
+      const silent = options.background === true || options.silent === true;
       const request = (async () => {
-        this.loading.runs = true;
+        if (!silent) this.loading.runs = true;
         try {
           this.runs = await this.api('/api/runs');
           this.saveWorkbenchDisplayCache('runs', this.runs);
@@ -8644,7 +8645,7 @@ export default {
           }
           return this.runs;
         } finally {
-          this.loading.runs = false;
+          if (!silent) this.loading.runs = false;
         }
       })();
       return this.trackRefreshRequest('runs', request);
@@ -8654,8 +8655,9 @@ export default {
       if (!this.can('api.agentWorkers.read')) return;
       const refresh = this.requestRefreshKey('agentWorkers', { background: options.background === true, minInterval: options.minInterval ?? 8000 });
       if (refresh.skip) return refresh.promise || this.agentWorkers;
+      const silent = options.background === true || options.silent === true;
       const request = (async () => {
-        this.loading.agentWorkers = true;
+        if (!silent) this.loading.agentWorkers = true;
         try {
           this.agentWorkers = await this.api('/api/agent-workers');
           return this.agentWorkers;
@@ -8663,10 +8665,17 @@ export default {
           console.warn('本机 Worker 状态读取失败', error);
           return this.agentWorkers;
         } finally {
-          this.loading.agentWorkers = false;
+          if (!silent) this.loading.agentWorkers = false;
         }
       })();
       return this.trackRefreshRequest('agentWorkers', request);
+    },
+
+    async refreshAgentWorkerStatusView() {
+      await Promise.allSettled([
+        this.refreshAgentWorkers({ minInterval: 0 }),
+        this.refreshRuns({ minInterval: 0 })
+      ]);
     },
 
     resetAiExecutionArchiveFilters() {
@@ -17936,7 +17945,7 @@ export default {
 
     directSkillQueuedRunLabel(run = null) {
       const worker = this.directSkillWorkerForRun(run);
-      if (this.isDirectSkillWorkerReady(worker)) return '本机领取中';
+      if (this.isDirectSkillWorkerReady(worker)) return '正在启动本机执行';
       if (worker && this.directSkillWorkerOnline(worker)) return '待本机自检';
       return '待本机上线';
     },
@@ -17978,7 +17987,7 @@ export default {
       if (/pending|queued|created/.test(status)) {
         if (this.isDirectSkillWorkerReady(worker)) {
           return {
-            label: '本机领取中',
+            label: '正在启动本机执行',
             detail: this.directSkillQueuedRunDetail(run),
             tone: 'running'
           };
@@ -19395,7 +19404,7 @@ export default {
       if (/conditional/.test(value)) return '有条件通过';
       if (/claimed/.test(value)) return '已领取';
       if (/running|in_progress/.test(value)) return '执行中';
-      if (/queued/.test(value)) return '待本机领取';
+      if (/queued/.test(value)) return '正在启动本机执行';
       if (/pending|created/.test(value)) return '待启动';
       if (/done|success|passed|completed/.test(value)) return '已完成';
       if (/failed|error/.test(value)) return '执行失败';
