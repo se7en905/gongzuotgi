@@ -1435,17 +1435,17 @@ function formatFigmaWriteEvidence(event = {}) {
 function extractPostWriteFigmaBlockers(source = '', toolEvents = [], lastWriteOrder = -1) {
   if (lastWriteOrder < 0) return [];
   const blockers = [];
+  const effectiveLastWriteOrder = findEffectiveLastFigmaWriteOrder(source, toolEvents, lastWriteOrder);
   for (const event of toolEvents) {
-    if (event.order <= lastWriteOrder || event.success) continue;
+    if (event.order <= effectiveLastWriteOrder || event.success) continue;
     const reason = event.errorText || event.resultText;
     if (!reason) continue;
     blockers.push(`Figma 写入后 ${event.tool || 'MCP'} 验证失败：${compactReason(reason)}`);
   }
   const lines = String(source || '').split(/\r?\n/);
-  for (let index = Math.max(lastWriteOrder + 1, 0); index < lines.length; index += 1) {
+  for (let index = Math.max(effectiveLastWriteOrder + 1, 0); index < lines.length; index += 1) {
     for (const line of figmaEvidenceLineTexts(lines[index])) {
-      if (!/(Auth required|OAuth|permission|denied|Transport send error|tool call failed|figma\/(?:use_figma|get_screenshot)|Figma MCP|最终.*(?:失败|阻塞|未完成)|回读.*(?:失败|阻塞|未完成)|截图.*(?:失败|阻塞|未完成)|复扫.*(?:失败|阻塞|未完成))/i.test(line)) continue;
-      if (isNegatedFigmaBlockerLine(line)) continue;
+      if (!isFigmaPostWriteBlockerLine(line)) continue;
       blockers.push(compactReason(line));
       if (blockers.length >= 5) break;
     }
@@ -1457,8 +1457,9 @@ function extractPostWriteFigmaBlockers(source = '', toolEvents = [], lastWriteOr
 function extractPostWriteVerificationEvidence(source = '', toolEvents = [], lastWriteOrder = -1) {
   if (lastWriteOrder < 0) return [];
   const evidence = [];
+  const effectiveLastWriteOrder = findEffectiveLastFigmaWriteOrder(source, toolEvents, lastWriteOrder);
   for (const event of toolEvents) {
-    if (event.order <= lastWriteOrder || !event.success) continue;
+    if (event.order <= effectiveLastWriteOrder || !event.success) continue;
     if (event.tool === 'get_screenshot' || /截图|screenshot/i.test(event.description)) {
       evidence.push(`写入后截图验收成功：${event.tool}`);
       continue;
@@ -1468,21 +1469,73 @@ function extractPostWriteVerificationEvidence(source = '', toolEvents = [], last
     }
   }
   const lines = String(source || '').split(/\r?\n/);
-  for (let index = Math.max(lastWriteOrder + 1, 0); index < lines.length; index += 1) {
+  for (let index = Math.max(effectiveLastWriteOrder + 1, 0); index < lines.length; index += 1) {
     for (const line of figmaEvidenceLineTexts(lines[index])) {
-      if (/失败|阻塞|未完成|Auth required|error|failed|blocked/i.test(line)) continue;
-      if (/最终.*(?:回读|截图|验证|验收).*(?:完成|通过|成功)|(?:回读|截图|验证|验收).*已完成/i.test(line)) evidence.push(compactReason(line));
+      if (isFigmaVerificationSuccessLine(line)) evidence.push(compactReason(line));
       if (evidence.length >= 5) break;
     }
     if (evidence.length >= 5) break;
   }
+  if (!evidence.length) {
+    const firstWriteOrder = findFirstFigmaWriteOrder(source, toolEvents, lastWriteOrder);
+    if (firstWriteOrder >= 0 && firstWriteOrder < effectiveLastWriteOrder) {
+      for (let index = firstWriteOrder + 1; index < lines.length; index += 1) {
+        for (const line of figmaEvidenceLineTexts(lines[index])) {
+          if (isFigmaVerificationSuccessLine(line)) evidence.push(compactReason(line));
+          if (evidence.length >= 5) break;
+        }
+        if (evidence.length >= 5) break;
+      }
+    }
+  }
   return [...new Set(evidence)].slice(0, 5);
+}
+
+function findEffectiveLastFigmaWriteOrder(source = '', toolEvents = [], fallbackOrder = -1) {
+  const toolWriteOrders = toolEvents
+    .filter(event => event.createdNodeIds.length || event.mutatedNodeIds.length)
+    .map(event => event.order);
+  if (toolWriteOrders.length) return Math.max(...toolWriteOrders);
+  return fallbackOrder;
+}
+
+function findFirstFigmaWriteOrder(source = '', toolEvents = [], fallbackOrder = -1) {
+  const toolWriteOrders = toolEvents
+    .filter(event => event.createdNodeIds.length || event.mutatedNodeIds.length)
+    .map(event => event.order);
+  if (toolWriteOrders.length) return Math.min(...toolWriteOrders);
+  const lines = String(source || '').split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    if (/createdNodeIds|mutatedNodeIds/i.test(lines[index] || '')) return index;
+  }
+  return fallbackOrder;
 }
 
 function isNegatedFigmaBlockerLine(line = '') {
   const text = compactReason(line);
   if (!text) return false;
   return /阻塞原因\s*[:：]\s*(无|没有|未发现)|无最终阻塞|无硬阻塞|无阻塞|没有阻塞|未发现阻塞|不构成阻塞|不作为阻塞/i.test(text);
+}
+
+function isNonBlockingFigmaNoteLine(line = '') {
+  const text = compactReason(line);
+  if (!text) return false;
+  return /(?:Figma MCP|MCP|截图工具).*(?:截图已生成|截图.*返回|内联截图|可见)|(?:shell|curl|本机).*(?:无法|不能).*(?:下载|解析|保存).*(?:figma\.com|截图|图片|本地)|(?:平台产物目录|产物目录|报告).*(?:不可写|只可读|未能落盘|不能落盘)/i.test(text);
+}
+
+function isFigmaPostWriteBlockerLine(line = '') {
+  const text = compactReason(line);
+  if (!text || isNegatedFigmaBlockerLine(text) || isNonBlockingFigmaNoteLine(text)) return false;
+  if (/Auth required|OAuth|permission|denied|Transport send error|tool call failed/i.test(text)) return true;
+  if (/(?:最终|回读|截图|验证|验收|复扫).{0,120}(?:失败|阻塞|未完成|不可用|无权限|没有权限)/i.test(text)) return true;
+  if (/Figma MCP.{0,120}(?:失败|阻塞|未完成|不可用|Auth required|OAuth|permission|denied|Transport send error|tool call failed)/i.test(text)) return true;
+  return false;
+}
+
+function isFigmaVerificationSuccessLine(line = '') {
+  const text = compactReason(line);
+  if (!text || isFigmaPostWriteBlockerLine(text)) return false;
+  return /最终.*(?:回读|截图|验证|验收).*(?:完成|通过|成功|已完成|已生成|已返回|已保存|已验证)|(?:回读|截图|视觉|复核|验证|验收).*(?:完成|通过|成功|已完成|已生成|已返回|已保存|已验证|可见|确认)|(?:已回读|回读确认|截图复核已通过|视觉复核通过|内联截图可见|截图工具.*返回|MCP.*截图.*已生成|未见换行、遮挡、截断|画面无空白|无明显(?:遮挡|错位|截断|异常换行)|同类复扫.*(?:未发现|清零|无残留))/i.test(text);
 }
 
 function figmaEvidenceLineTexts(line = '') {

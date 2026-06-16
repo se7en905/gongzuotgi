@@ -1864,8 +1864,7 @@ function extractPostWriteBlockersFromLog(text = '') {
   const blockers = [];
   for (let index = lastWriteIndex + 1; index < lines.length; index += 1) {
     const line = lines[index];
-    if (!/(Auth required|OAuth|permission|denied|Transport send error|tool call failed|figma\/(?:use_figma|get_screenshot)|Figma MCP|最终.*(?:失败|阻塞|未完成)|回读.*(?:失败|阻塞|未完成)|截图.*(?:失败|阻塞|未完成)|复扫.*(?:失败|阻塞|未完成))/i.test(line)) continue;
-    if (isNegatedFigmaBlockerLine(line)) continue;
+    if (!isFigmaPostWriteBlockerLine(line)) continue;
     blockers.push(`Figma 写入后验收失败：${compactEvidenceReason(line)}`);
     if (blockers.length >= 5) break;
   }
@@ -1879,17 +1878,39 @@ function extractPostWriteVerificationFromLog(text = '') {
   const evidence = [];
   for (let index = lastWriteIndex + 1; index < lines.length; index += 1) {
     const line = lines[index];
-    if (!line || /失败|阻塞|未完成|Auth required|error|failed|blocked/i.test(line)) continue;
-    if (/最终.*(?:回读|截图|验证|验收).*(?:完成|通过|成功)|(?:回读|截图|验证|验收).*已完成|未见换行、遮挡、截断/i.test(line)) {
+    if (isFigmaVerificationSuccessLine(line)) {
       evidence.push(compactEvidenceReason(line));
     }
     if (evidence.length >= 5) break;
+  }
+  if (!evidence.length) {
+    const firstWriteIndex = findFirstFigmaWriteLineIndex(lines);
+    if (firstWriteIndex >= 0 && firstWriteIndex < lastWriteIndex) {
+      for (let index = firstWriteIndex + 1; index < lines.length; index += 1) {
+        const line = lines[index];
+        if (isFigmaVerificationSuccessLine(line)) evidence.push(compactEvidenceReason(line));
+        if (evidence.length >= 5) break;
+      }
+    }
   }
   return [...new Set(evidence)].slice(0, 5);
 }
 
 function findLastFigmaWriteLineIndex(lines = []) {
   for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (/^__FIGMA_WRITE_EVENT__\b/.test(lines[index] || '')) return index;
+  }
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (/createdNodeIds|mutatedNodeIds/i.test(lines[index] || '')) return index;
+  }
+  return -1;
+}
+
+function findFirstFigmaWriteLineIndex(lines = []) {
+  for (let index = 0; index < lines.length; index += 1) {
+    if (/^__FIGMA_WRITE_EVENT__\b/.test(lines[index] || '')) return index;
+  }
+  for (let index = 0; index < lines.length; index += 1) {
     if (/createdNodeIds|mutatedNodeIds/i.test(lines[index] || '')) return index;
   }
   return -1;
@@ -1899,6 +1920,27 @@ function isNegatedFigmaBlockerLine(line = '') {
   const text = compactEvidenceReason(line);
   if (!text) return false;
   return /阻塞原因\s*[:：]\s*(无|没有|未发现)|无最终阻塞|无硬阻塞|无阻塞|没有阻塞|未发现阻塞|不构成阻塞|不作为阻塞/i.test(text);
+}
+
+function isNonBlockingFigmaNoteLine(line = '') {
+  const text = compactEvidenceReason(line);
+  if (!text) return false;
+  return /(?:Figma MCP|MCP|截图工具).*(?:截图已生成|截图.*返回|内联截图|可见)|(?:shell|curl|本机).*(?:无法|不能).*(?:下载|解析|保存).*(?:figma\.com|截图|图片|本地)|(?:平台产物目录|产物目录|报告).*(?:不可写|只可读|未能落盘|不能落盘)/i.test(text);
+}
+
+function isFigmaPostWriteBlockerLine(line = '') {
+  const text = compactEvidenceReason(line);
+  if (!text || isNegatedFigmaBlockerLine(text) || isNonBlockingFigmaNoteLine(text)) return false;
+  if (/Auth required|OAuth|permission|denied|Transport send error|tool call failed/i.test(text)) return true;
+  if (/(?:最终|回读|截图|验证|验收|复扫).{0,120}(?:失败|阻塞|未完成|不可用|无权限|没有权限)/i.test(text)) return true;
+  if (/Figma MCP.{0,120}(?:失败|阻塞|未完成|不可用|Auth required|OAuth|permission|denied|Transport send error|tool call failed)/i.test(text)) return true;
+  return false;
+}
+
+function isFigmaVerificationSuccessLine(line = '') {
+  const text = compactEvidenceReason(line);
+  if (!text || isFigmaPostWriteBlockerLine(text)) return false;
+  return /最终.*(?:回读|截图|验证|验收).*(?:完成|通过|成功|已完成|已生成|已返回|已保存|已验证)|(?:回读|截图|视觉|复核|验证|验收).*(?:完成|通过|成功|已完成|已生成|已返回|已保存|已验证|可见|确认)|(?:已回读|回读确认|截图复核已通过|视觉复核通过|内联截图可见|截图工具.*返回|MCP.*截图.*已生成|未见换行、遮挡、截断|画面无空白|无明显(?:遮挡|错位|截断|异常换行)|同类复扫.*(?:未发现|清零|无残留))/i.test(text);
 }
 
 function figmaLogEvidenceLineTexts(line = '') {
@@ -1917,7 +1959,13 @@ function figmaLogEvidenceLineText(line = '') {
     if (item.type === 'command_execution') return '';
     if (item.type === 'agent_message') return String(item.text || '').trim();
     if (item.type === 'mcp_tool_call') {
-      if (item.status === 'completed' && !item.error) return '';
+      if (item.status === 'completed' && !item.error) {
+        const resultText = figmaLogToolResultText(item.result);
+        if (/figma/i.test(`${item.server || ''} ${item.tool || ''}`) && /createdNodeIds|mutatedNodeIds/i.test(resultText)) {
+          return `__FIGMA_WRITE_EVENT__ ${item.tool || 'use_figma'} ${item.arguments?.description || ''} ${resultText}`.trim();
+        }
+        return '';
+      }
       return [
         item.server,
         item.tool,
@@ -1928,6 +1976,17 @@ function figmaLogEvidenceLineText(line = '') {
   } catch {
     return trimmed;
   }
+}
+
+function figmaLogToolResultText(result = null) {
+  if (!result || typeof result !== 'object') return '';
+  const chunks = [];
+  const content = Array.isArray(result.content) ? result.content : [];
+  for (const item of content) {
+    if (item?.type === 'text' && item.text) chunks.push(String(item.text));
+  }
+  if (typeof result === 'string') chunks.push(result);
+  return chunks.join('\n').slice(0, 20000);
 }
 
 function compactEvidenceReason(text = '') {
@@ -3886,6 +3945,9 @@ function isFigmaWriteEvidenceText(value = '') {
 function hasFigmaPostWriteVerification(run = {}) {
   const result = run.figmaWriteResult && typeof run.figmaWriteResult === 'object' ? run.figmaWriteResult : {};
   if (!result.written && !hasFigmaWriteEvidence(run)) return false;
+  if (result.partialWrite === true) return false;
+  if (Array.isArray(result.postWriteBlockers) && result.postWriteBlockers.length) return false;
+  if (cleanString(result.blockerReason)) return false;
   if (result.verifiedAfterWrite === true) return true;
   if (Array.isArray(result.verificationEvidence) && result.verificationEvidence.some(Boolean)) return true;
   if (run.resultSummary?.figmaVerifiedAfterWrite === true) return true;

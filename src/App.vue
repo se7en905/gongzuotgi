@@ -18771,6 +18771,9 @@ export default {
 
     hasFigmaPostWriteVerification(run = {}) {
       const result = run?.figmaWriteResult || {};
+      if (result.partialWrite === true) return false;
+      if (Array.isArray(result.postWriteBlockers) && result.postWriteBlockers.length) return false;
+      if (String(result.blockerReason || '').trim()) return false;
       if (result.verifiedAfterWrite === true) return true;
       if (Array.isArray(result.verificationEvidence) && result.verificationEvidence.some(Boolean)) return true;
       return run?.resultSummary?.figmaVerifiedAfterWrite === true;
