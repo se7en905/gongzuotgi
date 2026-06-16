@@ -14,8 +14,8 @@ const heartbeatIntervalMs = Math.max(60000, Number(process.env.ART_WORKER_HEARTB
 const localCheckTimeoutMs = Math.max(5000, Number(process.env.ART_WORKER_CHECK_TIMEOUT_MS || 15000));
 const localCheckIntervalMs = Math.max(60000, Number(process.env.ART_WORKER_LOCAL_CHECK_INTERVAL_MS || 2400000));
 const requestTimeoutMs = Math.max(5000, Number(process.env.ART_WORKER_API_TIMEOUT_MS || 15000));
-const codexPath = process.env.CODEX_CLI_PATH || 'codex';
 const workerHome = process.env.ART_WORKER_HOME || path.join(os.homedir(), 'ArtDirectWorker');
+const codexPath = resolveCodexPath();
 const defaultProjectRoot = process.env.ART_WORKER_PROJECT_ROOT || workerHome || process.cwd();
 const offlineQueuePath = process.env.ART_WORKER_OFFLINE_QUEUE_PATH || path.join(workerHome, 'state', 'offline-run-updates.json');
 const runStateDir = process.env.ART_WORKER_RUN_STATE_DIR || path.join(workerHome, 'state', 'runs');
@@ -711,6 +711,17 @@ function workerPayload() {
     figmaMcpReady: localChecks.figmaMcpReady,
     checks: localChecks
   };
+}
+
+function resolveCodexPath() {
+  const configured = String(process.env.CODEX_CLI_PATH || '').trim();
+  if (configured && !/\\WindowsApps\\/i.test(configured)) return configured;
+  if (configured && /\\WindowsApps\\/i.test(configured)) {
+    console.error('[worker] 已忽略 WindowsApps Codex 应用别名路径，改用真实 Codex CLI 候选路径。');
+  }
+  const windowsBundled = path.join(workerHome, 'node_modules', '@openai', 'codex-win32-x64', 'vendor', 'x86_64-pc-windows-msvc', 'bin', 'codex.exe');
+  if (os.platform() === 'win32') return windowsBundled;
+  return 'codex';
 }
 
 function workerStageName(run = {}) {

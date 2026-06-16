@@ -48,6 +48,9 @@
           <span v-if="app.runReferenceCount(run)" class="run-action-chip reference">
             md 引用 {{ app.runReferenceCount(run) }}
           </span>
+          <span v-if="app.isCurrentAccountRunExecutor(run)" class="run-action-chip current-account">
+            {{ app.currentAccountRunExecutorTag(run) }}
+          </span>
           <span v-if="app.isRunSourceDeleted(run)" class="run-action-chip source-deleted">来源已删除</span>
           <span v-if="run.id === app.selectedRunId" class="run-action-chip current-detail">当前明细</span>
         </div>
@@ -257,7 +260,8 @@
         >
           {{ app.directSkillRunSyncBadge(app.selectedRun).label }}
         </span>
-        <span v-if="app.isDirectSkillFailedRun(app.selectedRun)">该任务已由执行人本机 Worker 自动领取后执行失败；请点击右上角日志图标查看具体原因。</span>
+        <span v-if="app.isDirectSkillPartialWriteRun(app.selectedRun)">Figma 已有真实改动，但最终回读/截图验收未闭环；请让执行人恢复本机 Figma MCP 授权后继续执行。</span>
+        <span v-else-if="app.isDirectSkillFailedRun(app.selectedRun)">该任务已由执行人本机 Worker 自动领取后执行失败；请点击右上角日志图标查看具体原因。</span>
         <span v-else-if="!app.directSkillWorkerForRun(app.selectedRun)">执行人需要启动本机 Worker 后，任务才会从“待领取”变为“已领取 / 执行中”。</span>
         <span v-else-if="app.directSkillWorkerForRun(app.selectedRun)?.codexReady !== true || app.directSkillWorkerForRun(app.selectedRun)?.figmaMcpReady !== true">Worker 已在线，任务会先排队；待本机 Codex / Figma MCP 自检通过后自动领取。{{ app.directSkillWorkerIssueText(app.directSkillWorkerForRun(app.selectedRun)) }}</span>
         <span v-else>{{ app.directSkillRunSyncBadge(app.selectedRun).detail || '本机 Worker 会把 Codex 日志和执行结果回传到当前执行记录。' }}</span>
@@ -1092,6 +1096,12 @@ export default {
       border-color: rgba(99, 102, 241, 0.24);
       background: rgba(99, 102, 241, 0.08);
       color: #4338ca;
+    }
+
+    &.current-account {
+      border-color: rgba(14, 165, 233, 0.3);
+      background: rgba(14, 165, 233, 0.1);
+      color: #0369a1;
     }
 
     &.source-deleted {

@@ -17743,6 +17743,34 @@ export default {
       return Boolean(userId && this.directSkillRunUserIds(run).includes(userId));
     },
 
+    isCurrentAccountRunExecutor(run = null) {
+      if (!run) return false;
+      const currentUserId = String(this.currentUser?.id || '').trim();
+      const executorIds = [
+        run.queuedForUserId,
+        run.assignedToUserId,
+        run.startedBy
+      ].map(value => String(value || '').trim()).filter(Boolean);
+      if (currentUserId && executorIds.includes(currentUserId)) return true;
+      const claimedDevice = String(run.claimedByDeviceId || '').trim();
+      if (currentUserId && claimedDevice) {
+        const worker = this.agentWorkersByDeviceId.get(claimedDevice);
+        if (String(worker?.userId || '').trim() === currentUserId) return true;
+      }
+      if (executorIds.length) return false;
+      const currentNames = this.currentAccountPersonNames;
+      return [
+        run.queuedForName,
+        run.assignedToName,
+        run.developer
+      ].some(name => currentNames.some(person => samePerson(person, name)));
+    },
+
+    currentAccountRunExecutorTag(run = null) {
+      if (!this.isCurrentAccountRunExecutor(run)) return '';
+      return '当前账号执行';
+    },
+
     directSkillWorkerDisplayName(worker = null) {
       if (!worker) return '未启动 Worker';
       return worker.deviceAlias || worker.deviceName || worker.deviceId || '未命名设备';
@@ -17900,7 +17928,11 @@ export default {
     },
 
     isDirectSkillFailedRun(run = null) {
-      return Boolean(this.isLocalWorkerRun(run) && /failed|error/i.test(String(run?.status || run?.workerStatus || '')));
+      return Boolean(this.isLocalWorkerRun(run) && ['failed', 'blocked'].includes(this.effectiveResultStatus(run)));
+    },
+
+    isDirectSkillPartialWriteRun(run = null) {
+      return Boolean(this.isLocalWorkerRun(run) && this.hasPartialFigmaWrite(run));
     },
 
     hasWorkerDurationEvidence(run = null) {
@@ -18122,7 +18154,10 @@ export default {
           'if (-not (Test-Path "$root\\scripts\\art-direct-worker.mjs")) { throw "Worker 下载失败，请确认工作台地址可访问" }',
           '$node = Get-Command node -ErrorAction SilentlyContinue; if (-not $node) { throw "缺少 Node.js 20 或以上版本" }',
           '$nodeVersion = & $node.Source -p "process.versions.node"; if ([int]($nodeVersion.Split(".")[0]) -lt 20) { throw "Node.js 版本过低：$nodeVersion" }',
-          '$codex = Get-Command codex -ErrorAction SilentlyContinue; if (-not $codex) { throw "缺少 Codex CLI，请先确认本机 PowerShell 可运行 codex --help" }; $env:CODEX_CLI_PATH = $codex.Source',
+          '$codexCandidates = @("$root\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe") + ((Get-Command codex -All -ErrorAction SilentlyContinue) | ForEach-Object { $_.Source })',
+          '$codex = $codexCandidates | Where-Object { $_ -and ($_ -notmatch "\\\\WindowsApps\\\\") -and (Test-Path $_ -PathType Leaf) } | Select-Object -First 1',
+          'if (-not $codex) { throw "缺少可用于后台 Worker 的真实 Codex CLI。WindowsApps 应用别名不能用于后台自检；请安装 Codex CLI 或配置 CODEX_CLI_PATH 为真实 codex.exe 路径。" }',
+          '$env:CODEX_CLI_PATH = $codex',
           '$env:ART_PLATFORM_API = ' + this.powershellQuote(apiBase),
           '$env:ART_PLATFORM_USERNAME = ' + this.powershellQuote(username || '组员账号'),
           '$env:ART_PLATFORM_PASSWORD = ' + this.powershellQuote(safePassword),
@@ -18616,6 +18651,7 @@ export default {
         success: '成功',
         done: '已完成',
         conditional_pass: '有条件通过',
+        partial_write: '部分写入',
         failed: '失败',
         blocked: '阻塞',
         skipped: '跳过',
@@ -18624,11 +18660,9 @@ export default {
     },
 
     effectiveResultStatus(run = {}) {
+      if (this.hasPartialFigmaWrite(run)) return 'partial_write';
       if (this.runRequiresFigmaWriteEvidence(run) && this.runHasFinishedAsSuccess(run) && !this.hasFigmaWriteEvidence(run)) {
         return 'failed';
-      }
-      if (this.runRequiresFigmaWriteEvidence(run) && this.runHasFinishedAsSuccess(run) && this.hasFigmaWriteEvidence(run) && !this.hasFigmaPostWriteVerification(run)) {
-        return 'blocked';
       }
       const summaryStatus = run.resultSummary?.status;
       const normalizedSummaryStatus = String(summaryStatus || '').toLowerCase();
@@ -18678,6 +18712,7 @@ export default {
       const label = this.resultStatusLabel(status);
       if (status === 'passed') return '可进入验收';
       if (status === 'conditional_pass') return '已完成，需人工确认';
+      if (status === 'partial_write') return '部分写入，验收未闭环';
       if (status === 'blocked') return '不可交付，先处理阻塞';
       if (status === 'failed') return '执行失败，需重新处理';
       if (status === 'skipped') return '有阶段跳过，确认范围';
@@ -18688,6 +18723,7 @@ export default {
       const status = this.effectiveResultStatus({ ...run, resultSummary: summary });
       if (status === 'passed') return '未识别到阻塞项，当前执行结果可以继续进入验收。';
       if (status === 'conditional_pass') return '本次执行已产出变更和报告，但仍有接口字段、运行态截图或人工复核项需要确认。';
+      if (status === 'partial_write') return 'Figma 已检测到真实写入，但最后一次写入后的回读或截图验收未闭环，不能按完整完成处理。';
       if (status === 'blocked') return '识别到阻塞项，继续执行前需要先解决对应问题。';
       if (status === 'failed') return '执行过程中出现失败，需要查看日志或变更内容定位原因。';
       if (status === 'skipped') return '部分阶段未执行，建议确认是否符合本次任务范围。';
@@ -18698,6 +18734,7 @@ export default {
       const status = this.effectiveResultStatus(run);
       const raw = `${run.status || ''} ${run.workerStatus || ''} ${run.resultSummary?.status || ''}`.toLowerCase();
       if (/rework|返工/.test(raw)) return 'rework';
+      if (status === 'partial_write') return 'review';
       if (['failed', 'blocked'].includes(status) || /failed|error|blocked|失败|阻塞/.test(raw)) return 'rework';
       if (['conditional_pass', 'skipped'].includes(status) || run.resultSummary?.needsHumanReview === true) return 'review';
       if (['passed', 'completed', 'success'].includes(status) || /done|success|passed|completed|finished/.test(raw)) return 'closed';
@@ -18841,8 +18878,8 @@ export default {
         + (summary.blockerReason && !this.isPlaceholderResultText(summary.blockerReason) ? 1 : 0)
         + (summary.finalText && !this.isPlaceholderResultText(summary.finalText) ? 1 : 0);
       const summaryCards = [
-        { label: '成功数量', value: successCount, hint: resultStatus === 'unknown' ? '按阶段和状态推导' : this.resultStatusLabel(resultStatus), tone: failedCount ? 'warning' : 'success' },
-        { label: '失败数量', value: failedCount, hint: failedCount ? '含失败或阻塞阶段' : '未记录失败', tone: failedCount ? 'danger' : 'success' },
+        { label: '成功数量', value: successCount, hint: resultStatus === 'unknown' ? '按阶段和状态推导' : this.resultStatusLabel(resultStatus), tone: resultStatus === 'partial_write' ? 'warning' : failedCount ? 'warning' : 'success' },
+        { label: '失败数量', value: resultStatus === 'partial_write' ? 0 : failedCount, hint: resultStatus === 'partial_write' ? '不是纯失败，缺最终验收' : failedCount ? '含失败或阻塞阶段' : '未记录失败', tone: resultStatus === 'partial_write' ? 'warning' : failedCount ? 'danger' : 'success' },
         { label: '扫描点', value: scanPointCount, hint: '阶段 / 验证 / 变更 / 证据', tone: scanPointCount ? 'primary' : 'muted' },
         { label: '数据类', value: dataRows.length, hint: dataRows.map(item => item.label).slice(0, 3).join(' / ') || '暂无结构化数据', tone: dataRows.length ? 'primary' : 'muted' }
       ];
@@ -18897,6 +18934,7 @@ export default {
 
     aiExecutionArchiveResultTitle(run = {}) {
       const status = this.effectiveResultStatus(run);
+      if (status === 'partial_write') return '已写入，最终验收未闭环';
       if (this.isAiExecutionArchiveReworkRun(run)) return '需要返工或重新处理';
       if (status === 'passed') return '已完成，等待验收确认';
       if (status === 'conditional_pass') return '已产出结果，需要人工确认';
@@ -18907,6 +18945,9 @@ export default {
 
     aiExecutionArchiveResultText(run = {}) {
       const summary = run.resultSummary || {};
+      if (this.hasPartialFigmaWrite(run)) {
+        return this.figmaExecutionBlockerText(run) || 'Figma 已有真实写入，但最后一次写入后的最终回读/截图验收未闭环。';
+      }
       if (this.isAiExecutionArchiveReworkRun(run)) {
         const reason = String(summary.blockerReason || '').trim();
         return reason && !this.isPlaceholderResultText(reason)
@@ -18922,6 +18963,7 @@ export default {
     },
 
     aiExecutionArchiveNextActionText(run = {}) {
+      if (this.hasPartialFigmaWrite(run)) return '建议：让执行人恢复本机 Figma MCP 授权后继续执行，补齐最终回读、截图验收和剩余未完成项。';
       if (this.isAiExecutionArchiveReworkRun(run)) return '建议：先处理阻塞原因，再重新发起直接执行。';
       if (this.isAiExecutionArchiveReviewRun(run)) return '建议：打开 Figma 和执行结果，完成人工验收确认。';
       if (this.isAiExecutionArchiveClosedRun(run)) return '建议：进入业务任务验收，确认是否闭环。';
@@ -18976,8 +19018,8 @@ export default {
       return {
         ...detail,
         summaryCards: [
-          { label: '成功数量', value: successCount, hint: successCount ? this.resultStatusLabel(resultStatus) : '尚未记录成功', tone: failedCount ? 'warning' : successCount ? 'success' : 'muted' },
-          { label: '失败数量', value: failedCount, hint: failedCount ? '含失败或阻塞' : '未记录失败', tone: failedCount ? 'danger' : 'success' },
+          { label: '成功数量', value: successCount, hint: successCount ? this.resultStatusLabel(resultStatus) : '尚未记录成功', tone: resultStatus === 'partial_write' ? 'warning' : failedCount ? 'warning' : successCount ? 'success' : 'muted' },
+          { label: '失败数量', value: resultStatus === 'partial_write' ? 0 : failedCount, hint: resultStatus === 'partial_write' ? '不是纯失败，缺最终验收' : failedCount ? '含失败或阻塞' : '未记录失败', tone: resultStatus === 'partial_write' ? 'warning' : failedCount ? 'danger' : 'success' },
           { label: '扫描点', value: scanPointCount, hint: '对象 / Figma / 阶段 / 证据', tone: scanPointCount ? 'primary' : 'muted' },
           { label: '数据类', value: detail.dataRows.length, hint: detail.dataRows.map(item => item.label).slice(0, 3).join(' / ') || '暂无结构化数据', tone: detail.dataRows.length ? 'primary' : 'muted' }
         ],
@@ -19059,6 +19101,7 @@ export default {
       const resultStatus = this.effectiveResultStatus(run);
       if (resultStatus === 'passed') return 'completed';
       if (resultStatus === 'conditional_pass') return 'conditional';
+      if (resultStatus === 'partial_write') return 'blocked';
       if (resultStatus === 'failed') return 'failed';
       if (resultStatus === 'blocked') return 'blocked';
       if (resultStatus === 'skipped') return 'skipped';
@@ -19190,8 +19233,8 @@ export default {
       const summary = run.resultSummary || {};
       const status = this.effectiveResultStatus(run);
       const nextStep = String(summary.nextStep || '').trim();
-      if (nextStep && !this.isPlaceholderResultText(nextStep)) return this.humanizeRunResultText(nextStep);
       if (this.hasPartialFigmaWrite(run)) return '下一步：让执行人恢复本机 Figma MCP 授权后继续执行，补齐最终回读、截图验收和剩余未完成项。';
+      if (nextStep && !this.isPlaceholderResultText(nextStep)) return this.humanizeRunResultText(nextStep);
       const logReason = this.directSkillRunLogFailureReason(run);
       if (logReason) return `下一步：${this.humanizeRunResultText(logReason)}`;
       const blockerReason = String(summary.blockerReason || '').trim();
@@ -19331,6 +19374,7 @@ export default {
       if (/pending|created|queued/.test(value)) return '等待本机 Worker';
       if (/claimed/.test(value)) return '已领取';
       if (/running|in_progress/.test(value)) return '本机执行中';
+      if (this.hasPartialFigmaWrite(run)) return '部分写入';
       if (this.effectiveResultStatus(run) === 'failed') return '本机执行失败';
       if (this.effectiveResultStatus(run) === 'blocked') return '本机阻塞';
       if (/failed|error/.test(value)) return '本机执行失败';
@@ -20011,6 +20055,7 @@ export default {
       if (!run) return '等待启动';
       if (this.isDirectSkillRun(run) && String(run.status || '').toLowerCase() === 'pending') return '等待执行人本机 Worker 领取';
       if (this.isDirectSkillRun(run) && String(run.status || '').toLowerCase() === 'claimed') return '执行人本机已领取';
+      if (this.hasPartialFigmaWrite(run)) return 'Figma 已部分写入，最终验收未闭环';
       if (this.isDirectSkillFailedRun(run)) return '本机 Worker 已自动领取后执行失败';
       if (!this.isRunInProgress(run)) {
         const statusText = String(run.status || '').toLowerCase();
@@ -21493,7 +21538,7 @@ export default {
     runTagType(status = '') {
       if (/running/.test(status)) return 'primary';
       if (/done|success|passed/.test(status)) return 'success';
-      if (/conditional|有条件/.test(status)) return 'warning';
+      if (/partial_write|conditional|有条件/.test(status)) return 'warning';
       if (/blocked|failed|cancelled|阻塞/.test(status)) return 'danger';
       return 'info';
     },
@@ -21501,7 +21546,7 @@ export default {
     resultSummaryClass(status = '') {
       const value = String(status || '').toLowerCase();
       if (/blocked|failed|cancelled|阻塞/.test(value)) return 'is-danger';
-      if (/conditional|有条件/.test(value)) return 'is-warning';
+      if (/partial_write|conditional|有条件/.test(value)) return 'is-warning';
       if (/done|success|passed/.test(value)) return 'is-success';
       return 'is-info';
     },

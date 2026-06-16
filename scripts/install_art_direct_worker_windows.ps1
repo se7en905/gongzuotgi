@@ -18,6 +18,32 @@ function ConvertTo-WindowsArgument([string]$Value) {
   return '"' + $Value + '"'
 }
 
+function Test-UsableCodexCliPath([string]$PathValue) {
+  if (-not $PathValue) { return $false }
+  if ($PathValue -match '\\WindowsApps\\') { return $false }
+  if (-not (Test-Path -LiteralPath $PathValue -PathType Leaf)) { return $false }
+  return $true
+}
+
+function Resolve-CodexCliPath([string]$PreferredPath, [string]$WorkerRoot) {
+  $Candidates = New-Object System.Collections.Generic.List[string]
+  if ($PreferredPath -and $PreferredPath -ne 'codex') {
+    $Candidates.Add($PreferredPath)
+  }
+  $Candidates.Add((Join-Path $WorkerRoot 'node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\bin\codex.exe'))
+  $Commands = Get-Command codex -All -ErrorAction SilentlyContinue
+  foreach ($Command in $Commands) {
+    if ($Command.Source) { $Candidates.Add($Command.Source) }
+    if ($Command.Path) { $Candidates.Add($Command.Path) }
+  }
+  foreach ($Candidate in ($Candidates | Select-Object -Unique)) {
+    if (Test-UsableCodexCliPath $Candidate) {
+      return $Candidate
+    }
+  }
+  throw 'Missing usable Codex CLI. WindowsApps app aliases cannot be used by the background Worker. Install Codex CLI or provide CODEX_CLI_PATH as a real codex.exe path, then run the startup command again.'
+}
+
 if (-not $Api) { throw 'Missing ART_PLATFORM_API, for example: http://platform-server-ip:4288' }
 if (-not $Username) { throw 'Missing ART_PLATFORM_USERNAME' }
 if (-not $Password) { throw 'Missing ART_PLATFORM_PASSWORD' }
@@ -54,12 +80,6 @@ if ($NodeMajor -lt 20) {
   throw "Node.js version is too old: $NodeVersionText. Install Node.js 20 or newer."
 }
 
-$CodexCommand = Get-Command $CodexPath -ErrorAction SilentlyContinue
-if (-not $CodexCommand) {
-  throw 'Missing Codex CLI. Confirm codex --help works on this computer, then run the startup command again.'
-}
-$CodexPath = $CodexCommand.Source
-
 $SafeUsername = ($Username -replace '[\\/:*?"<>|]', '_')
 $TaskName = "ArtDirectWorker-$SafeUsername"
 $LogDir = Join-Path $Root 'logs'
@@ -75,6 +95,8 @@ $LegacyStartupCommand = Join-Path $StartupDir "$TaskName.cmd"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $Root 'scripts') | Out-Null
 New-Item -ItemType Directory -Force -Path $StartupDir | Out-Null
+
+$CodexPath = Resolve-CodexCliPath $CodexPath $Root
 
 Get-ChildItem -Path $StartupDir -Filter 'ArtDirectWorker-*.lnk' -ErrorAction SilentlyContinue |
   Where-Object { $_.FullName -ne $StartupShortcut } |

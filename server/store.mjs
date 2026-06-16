@@ -69,6 +69,7 @@ const mysqlConfigs = new Map([
 const useMysqlStore = process.env.AWP_USE_MYSQL === '1';
 const retentionDays = Math.max(1, Number(process.env.AWP_DATA_RETENTION_DAYS || 2) || 2);
 const retentionEnabled = process.env.AWP_DATA_RETENTION_ENABLED !== '0';
+const runFigmaLogEvidenceCache = new Map();
 const retentionPaths = new Set([
   paths.aiFlowRecords,
   paths.operationLogs,
@@ -764,7 +765,8 @@ export async function ensureTaskForRun(input) {
 export async function listRuns() {
   const runs = await readJson(paths.runs, []);
   const hydratedRuns = await Promise.all(runs.map(hydrateRunStages));
-  return hydratedRuns.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  const enrichedRuns = await Promise.all(hydratedRuns.map(enrichRunWithFigmaLogEvidence));
+  return enrichedRuns.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
 export async function getCodexConfig() {
@@ -890,7 +892,7 @@ export function redactCodexConfig(config = {}) {
 export async function getRun(id) {
   const runs = await readJson(paths.runs, []);
   const run = runs.find(item => item.id === id) || null;
-  return hydrateRunStages(run);
+  return enrichRunWithFigmaLogEvidence(await hydrateRunStages(run));
 }
 
 export async function createRun(input) {
@@ -1653,6 +1655,179 @@ async function hydrateRunStages(run) {
     stages: updatedStages,
     currentStage: run.currentStage && isFinishedRun(run.status) ? null : run.currentStage
   };
+}
+
+async function enrichRunWithFigmaLogEvidence(run) {
+  if (!run || !shouldDeriveFigmaEvidenceFromLog(run)) return run;
+  const evidence = await deriveFigmaLogEvidence(run);
+  if (!evidence?.written) return run;
+  const blockerReason = evidence.blockerReason || 'Figma 已有部分写入，但写入后的最终回读/截图验收未闭环，不能判定整条任务完整完成。';
+  return guardFigmaWriteCompletion({
+    ...run,
+    figmaWriteResult: {
+      required: true,
+      written: true,
+      createdNodeIds: evidence.createdNodeIds,
+      mutatedNodeIds: evidence.mutatedNodeIds,
+      evidence: evidence.evidence,
+      postWriteVerificationRequired: true,
+      verifiedAfterWrite: evidence.verifiedAfterWrite,
+      verificationEvidence: evidence.verificationEvidence,
+      postWriteBlockers: evidence.postWriteBlockers,
+      partialWrite: !evidence.verifiedAfterWrite,
+      blockerReason: evidence.verifiedAfterWrite ? '' : blockerReason,
+      derivedFromLog: true
+    },
+    resultSummary: {
+      ...(run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {}),
+      figmaWritten: true,
+      figmaVerifiedAfterWrite: evidence.verifiedAfterWrite,
+      status: evidence.verifiedAfterWrite ? (run.resultSummary?.status || run.status) : 'blocked',
+      statusText: evidence.verifiedAfterWrite ? (run.resultSummary?.statusText || run.status) : 'blocked',
+      summary: evidence.verifiedAfterWrite
+        ? (run.resultSummary?.summary || '本机直接执行已完成，并从日志识别到 Figma 写入和写入后验收证据。')
+        : 'Figma 已有部分写入，但最终回读/截图验收未闭环，本次不能判定完整完成。',
+      blockerReason: evidence.verifiedAfterWrite ? (run.resultSummary?.blockerReason || '') : blockerReason,
+      needsHumanReview: true
+    }
+  });
+}
+
+function shouldDeriveFigmaEvidenceFromLog(run = {}) {
+  if (!runRequiresFigmaWriteEvidence(run)) return false;
+  if (!isFinishedRun(run.status) && !isFinishedRun(run.workerStatus)) return false;
+  if (hasFigmaWriteEvidence(run)) return false;
+  return Boolean(cleanString(run.logPath) || cleanString(run.id));
+}
+
+async function deriveFigmaLogEvidence(run = {}) {
+  const logPath = cleanString(run.logPath) || (run.id ? path.join(getRunWorkspace(run.id), 'run.log') : '');
+  if (!logPath) return null;
+  const stat = await fs.stat(logPath).catch(() => null);
+  if (!stat?.isFile()) return null;
+  const cacheKey = `${logPath}:${stat.size}:${stat.mtimeMs}`;
+  if (runFigmaLogEvidenceCache.has(cacheKey)) return runFigmaLogEvidenceCache.get(cacheKey);
+  const maxBytes = 512 * 1024;
+  const handle = await fs.open(logPath, 'r').catch(() => null);
+  if (!handle) return null;
+  try {
+    const start = stat.size > maxBytes ? stat.size - maxBytes : 0;
+    const length = stat.size - start;
+    const buffer = Buffer.alloc(length);
+    await handle.read(buffer, 0, length, start);
+    const evidence = parseFigmaLogEvidence(buffer.toString('utf8'));
+    runFigmaLogEvidenceCache.set(cacheKey, evidence);
+    if (runFigmaLogEvidenceCache.size > 200) {
+      const firstKey = runFigmaLogEvidenceCache.keys().next().value;
+      runFigmaLogEvidenceCache.delete(firstKey);
+    }
+    return evidence;
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
+function parseFigmaLogEvidence(text = '') {
+  const source = String(text || '');
+  const createdNodeIds = extractFigmaNodeIdsFromLog(source, 'createdNodeIds').slice(0, 80);
+  const mutatedNodeIds = extractFigmaNodeIdsFromLog(source, 'mutatedNodeIds').slice(0, 120);
+  const written = createdNodeIds.length > 0 || mutatedNodeIds.length > 0;
+  const evidence = [];
+  if (createdNodeIds.length) evidence.push(`日志识别到 createdNodeIds：${createdNodeIds.slice(0, 12).join('、')}`);
+  if (mutatedNodeIds.length) evidence.push(`日志识别到 mutatedNodeIds：${mutatedNodeIds.slice(0, 12).join('、')}`);
+  const postWriteBlockers = written ? extractPostWriteBlockersFromLog(source) : [];
+  if (written && !postWriteBlockers.length && /Auth required/i.test(source)) {
+    postWriteBlockers.push('Figma 写入后验收失败：Auth required，执行人本机 Figma MCP OAuth 或文件权限需要恢复。');
+  }
+  const verificationEvidence = written ? extractPostWriteVerificationFromLog(source) : [];
+  const verifiedAfterWrite = Boolean(written && verificationEvidence.length && !postWriteBlockers.length);
+  const blockerReason = !written
+    ? ''
+    : verifiedAfterWrite
+      ? ''
+      : postWriteBlockers[0] || 'Figma 已写入，但日志里未检测到最后一次写入后的最终回读或截图验收证据。';
+  return {
+    written,
+    createdNodeIds,
+    mutatedNodeIds,
+    evidence,
+    verifiedAfterWrite,
+    verificationEvidence,
+    postWriteBlockers,
+    blockerReason
+  };
+}
+
+function extractFigmaNodeIdsFromLog(text = '', field = '') {
+  const values = new Set();
+  const source = String(text || '');
+  const arrayPattern = new RegExp(`"${field}"\\s*:\\s*\\[([^\\]]*)\\]`, 'gi');
+  let match = arrayPattern.exec(source);
+  while (match) {
+    String(match[1] || '')
+      .split(/,|\s/)
+      .map(item => item.replace(/[\\"'`]/g, '').trim())
+      .filter(isLikelyFigmaNodeId)
+      .forEach(item => values.add(item));
+    match = arrayPattern.exec(source);
+  }
+  const loosePattern = new RegExp(`${field}[^\\n\\[]*\\[([^\\]]*)\\]`, 'gi');
+  match = loosePattern.exec(source);
+  while (match) {
+    String(match[1] || '')
+      .split(/,|\s/)
+      .map(item => item.replace(/[\\"'`]/g, '').trim())
+      .filter(isLikelyFigmaNodeId)
+      .forEach(item => values.add(item));
+    match = loosePattern.exec(source);
+  }
+  return [...values];
+}
+
+function isLikelyFigmaNodeId(value = '') {
+  const text = String(value || '').trim();
+  return text.includes(':') && /^[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)(?:;[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+))*$/.test(text);
+}
+
+function extractPostWriteBlockersFromLog(text = '') {
+  const lines = String(text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const lastWriteIndex = findLastFigmaWriteLineIndex(lines);
+  if (lastWriteIndex < 0) return [];
+  const blockers = [];
+  for (let index = lastWriteIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!/(Auth required|OAuth|permission|denied|Transport send error|tool call failed|figma\/(?:use_figma|get_screenshot)|Figma MCP|最终.*(?:失败|阻塞|未完成)|回读.*(?:失败|阻塞|未完成)|截图.*(?:失败|阻塞|未完成)|复扫.*(?:失败|阻塞|未完成))/i.test(line)) continue;
+    blockers.push(`Figma 写入后验收失败：${compactEvidenceReason(line)}`);
+    if (blockers.length >= 5) break;
+  }
+  return [...new Set(blockers)].slice(0, 5);
+}
+
+function extractPostWriteVerificationFromLog(text = '') {
+  const lines = String(text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const lastWriteIndex = findLastFigmaWriteLineIndex(lines);
+  if (lastWriteIndex < 0) return [];
+  const evidence = [];
+  for (let index = lastWriteIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line || /失败|阻塞|未完成|Auth required|error|failed|blocked/i.test(line)) continue;
+    if (/最终.*(?:回读|截图|验证|验收).*(?:完成|通过|成功)|(?:回读|截图|验证|验收).*已完成|未见换行、遮挡、截断/i.test(line)) {
+      evidence.push(compactEvidenceReason(line));
+    }
+    if (evidence.length >= 5) break;
+  }
+  return [...new Set(evidence)].slice(0, 5);
+}
+
+function findLastFigmaWriteLineIndex(lines = []) {
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (/createdNodeIds|mutatedNodeIds/i.test(lines[index] || '')) return index;
+  }
+  return -1;
+}
+
+function compactEvidenceReason(text = '') {
+  return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 300);
 }
 
 function isFinishedRun(status = '') {
