@@ -522,6 +522,11 @@
   - 如果 Figma 已返回 `createdNodeIds` 或 `mutatedNodeIds`，但写入后最终回读、复扫或截图因 `Auth required`、OAuth 失效、权限不足、MCP 断开等原因失败，必须显示为 `阻塞` 或 `失败`，并在执行明细中明确“已有部分写入，最终验收未闭环”，不得显示为完成。
   - 工作台状态文案必须区分 `本机执行失败` 和 `部分写入 / 验收阻塞`：只要日志或结构化字段能证明已有 `createdNodeIds` 或 `mutatedNodeIds`，但最终回读/截图未闭环，就不得在列表、执行台、AI档案明细或统计卡里普通显示为纯失败；必须让负责人一眼看出“Figma 已真实改动，剩余问题是验收闭环/授权阻塞”。
   - 历史执行记录如果缺少结构化 `figmaWriteResult`，平台可以只读该 run 的尾部 `run.log` 派生展示态，识别 `createdNodeIds`、`mutatedNodeIds`、`Auth required` 等证据；该派生只用于展示和判定提示，不得自动改写历史执行事实、不得把未最终验收的任务改成完成。
+  - Figma 执行状态解析必须优先以结构化 `figmaWriteResult`、真实 `use_figma` 工具返回和写入后的回读/截图工具结果为准；最终报告里复述 `createdNodeIds`、`mutatedNodeIds` 或阶段报告 diff，不得被当作新的“最后一次写入”事件。
+  - Figma 写入后阻塞解析必须识别否定语义：`无最终阻塞`、`无硬阻塞`、`无阻塞`、`未发现阻塞`、`不构成阻塞`、`不作为阻塞` 等文本不得作为真实 blocker。
+  - Figma 写入后截图解析必须区分“Figma MCP 截图已生成”和“本机 shell/curl 无法下载临时 figma.com 图片”：后者只代表本机下载环境受限，不得单独作为 Figma 验收失败或本机阻塞。
+  - Figma 写入后验收证据必须来自实际执行结果，例如目标节点回读确认、截图工具返回、视觉复核通过、同类复扫清零、`最终回读/截图验收：已完成` 等；Skill/md 规范说明、操作要求、模板文案里的“必须回读/已验证/成功标准”等文本不得作为实际验收证据。
+  - 只要 `figmaWriteResult.partialWrite === true`、`postWriteBlockers` 非空或 `blockerReason` 非空，就必须优先判为 `部分写入 / 验收阻塞`；不得因为早期存在一次回读成功或截图成功就把整条执行显示为完成。
   - 平台服务器只负责任务创建、队列记录、Worker 心跳、日志回传、状态展示和权限审计。
   - 平台服务器不得保存 Figma OAuth token，不得代替组员执行 Figma 写入，不得依赖工作台管理者 admin 的本机 Figma 环境。
   - 直接执行没有平台侧“开始”按钮；启动动作只能来自被指派执行人电脑上的本机 Worker 自动领取。
