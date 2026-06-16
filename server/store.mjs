@@ -1177,28 +1177,25 @@ export async function applyAgentRunEvents(runId, input = {}) {
 
   let next = { ...existing };
   let logChunks = [];
-  let hasRunEventMaterial = false;
   for (const event of newEvents) {
     knownIds.add(event.id);
     if (event.type === 'log') {
       if (event.chunk) logChunks.push(event.chunk);
       continue;
     }
-    const beforeEventRun = next;
     if (event.type === 'status') {
       next = mergeAgentRunStatusEvent(next, event);
-      if (hasWorkerRunMaterialChange(beforeEventRun, next)) hasRunEventMaterial = true;
       continue;
     }
     if (event.type === 'stage') {
       next = mergeAgentRunStageEvent(next, event);
-      if (hasWorkerRunMaterialChange(beforeEventRun, next)) hasRunEventMaterial = true;
       continue;
     }
   }
   const now = new Date().toISOString();
   for (const chunk of logChunks) await appendRunLog(runId, chunk);
   if (logChunks.length) await ensureRunLogPath(runId);
+  const hasRunEventMaterial = hasWorkerRunMaterialChange(existing, next);
   const nextEventIds = hasRunEventMaterial ? [...knownIds].slice(-500) : (Array.isArray(existing.workerEventIds) ? existing.workerEventIds : []);
   const eventIdsChanged = stableWorkerRunValue(existing.workerEventIds || []) !== stableWorkerRunValue(nextEventIds);
   if (!hasRunEventMaterial && !eventIdsChanged) {
@@ -3929,7 +3926,7 @@ function mergeAgentRunStageEvent(run = {}, event = {}) {
   const index = findRunStageIndex(stages, stageName);
   const eventAt = cleanString(event.at);
   const previous = stages[index] || { no: index + 1, name: stageName };
-  const startedAt = event.startedAt || (event.phase === 'start' ? eventAt : previous.startedAt || '');
+  const startedAt = event.startedAt || previous.startedAt || (event.phase === 'start' ? eventAt : '');
   const finishedAt = event.finishedAt || (event.phase === 'end' || /completed|failed|blocked|cancelled/.test(status) ? eventAt : previous.finishedAt || '');
   const durationMs = normalizeDurationMs(event.durationMs, startedAt, finishedAt, previous.durationMs);
   stages[index] = {
@@ -3943,8 +3940,16 @@ function mergeAgentRunStageEvent(run = {}, event = {}) {
   return {
     ...run,
     stages,
-    currentStage: /running|in_progress/.test(status) ? stageName : run.currentStage
+    currentStage: /running|in_progress/.test(status) ? resolveWorkerStageEventCurrentStage(run.currentStage, stageName) : run.currentStage
   };
+}
+
+function resolveWorkerStageEventCurrentStage(currentStage = '', stageName = '') {
+  const current = normalizeWorkerStageName(currentStage);
+  const next = normalizeWorkerStageName(stageName);
+  if (!current || /等待本机 Worker 领取|正在启动本机执行|待启动|待领取/.test(current)) return next || current;
+  if (current === '本机 Codex 执行') return current;
+  return current || next;
 }
 
 function normalizeWorkerTimingPatch(input = {}, existing = {}) {
