@@ -1465,20 +1465,25 @@ async function handleApi(req, res, url) {
     }
     const worker = await upsertAgentWorker(workerInput);
     broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, module: 'agent-worker' });
+    const { _changed, ...stableRun } = run;
+    if (run._changed === false) {
+      sendJson(res, 200, { run: stableRun, worker });
+      return;
+    }
     await writeOperationLog(req, {
       user: currentUser,
       module: 'run',
-      action: run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill' ? 'RECOVER_DIRECT_SKILL_RUN' : 'RECOVER_LOCAL_WORKER_RUN',
-      actionName: run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill' ? '恢复本机直接执行' : '恢复本机美术执行',
+      action: stableRun.sourceType === 'direct-skill' || stableRun.executionMode === 'direct-skill' ? 'RECOVER_DIRECT_SKILL_RUN' : 'RECOVER_LOCAL_WORKER_RUN',
+      actionName: stableRun.sourceType === 'direct-skill' || stableRun.executionMode === 'direct-skill' ? '恢复本机直接执行' : '恢复本机美术执行',
       targetType: 'run',
-      targetId: run.id,
-      targetName: run.title,
-      after: run,
+      targetId: stableRun.id,
+      targetName: stableRun.title,
+      after: stableRun,
       metadata: { deviceId: worker.deviceId, capabilities: worker.capabilities },
-      description: `${currentUser.displayName || currentUser.username} 的本机 Worker 恢复${run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill' ? '直接执行' : '美术执行'}「${run.title}」`
+      description: `${currentUser.displayName || currentUser.username} 的本机 Worker 恢复${stableRun.sourceType === 'direct-skill' || stableRun.executionMode === 'direct-skill' ? '直接执行' : '美术执行'}「${stableRun.title}」`
     });
-    broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, module: 'agent-run-recover' });
-    sendJson(res, 200, { run, worker });
+    broadcastPlatformEvent('runs.changed', { projectId: stableRun.projectId, runId: stableRun.id, module: 'agent-run-recover' });
+    sendJson(res, 200, { run: stableRun, worker });
     return;
   }
 
@@ -1505,6 +1510,11 @@ async function handleApi(req, res, url) {
     ensureWorkerCanUpdateRun(currentUser, run);
     const body = await readBody(req).catch(() => ({}));
     const updated = await updateAgentRunFromWorker(run.id, body);
+    const { _changed, ...stableUpdated } = updated || {};
+    if (updated?._changed === false) {
+      sendJson(res, 200, stableUpdated);
+      return;
+    }
     const workerRunKind = run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill' ? '直接执行' : '美术执行';
     await writeOperationLog(req, {
       user: currentUser,
@@ -1515,7 +1525,7 @@ async function handleApi(req, res, url) {
       targetId: run.id,
       targetName: run.title,
       before: run,
-      after: updated,
+      after: stableUpdated,
       metadata: {
         status: body.status || body.workerStatus || '',
         figmaWritten: body.figmaWriteResult?.written === true || body.resultSummary?.figmaWritten === true
@@ -1523,7 +1533,7 @@ async function handleApi(req, res, url) {
       description: `${currentUser.displayName || currentUser.username} 回传${workerRunKind}「${run.title}」状态：${body.status || body.workerStatus || 'running'}`
     });
     broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, module: 'agent-run-status' });
-    sendJson(res, 200, updated);
+    sendJson(res, 200, stableUpdated);
     return;
   }
 
@@ -1534,8 +1544,13 @@ async function handleApi(req, res, url) {
     ensureWorkerCanUpdateRun(currentUser, run);
     const body = await readBody(req).catch(() => ({}));
     const updated = await applyAgentRunEvents(run.id, body);
+    const { _changed, ...stableUpdated } = updated || {};
+    if (updated?._changed === false) {
+      sendJson(res, 200, stableUpdated || run);
+      return;
+    }
     broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, module: 'agent-run-offline-sync' });
-    sendJson(res, 200, updated || run);
+    sendJson(res, 200, stableUpdated || run);
     return;
   }
 

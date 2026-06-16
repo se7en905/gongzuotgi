@@ -96,7 +96,7 @@
       <ElTableColumn label="状态" width="110">
         <template #default="{ row }">
           <div class="ai-archive-status-stack">
-            <ElTag size="small" :type="app.runTagType(row.status)">{{ app.directSkillRunStatusLabel(row) || app.runStatusLabel(row.status) }}</ElTag>
+            <ElTag size="small" :type="app.runTagType(app.runDisplayStatusValue(row))">{{ app.directSkillRunStatusLabel(row) || app.runStatusLabel(app.runDisplayStatusValue(row)) }}</ElTag>
             <ElTag v-if="app.isRunSourceDeleted(row)" size="small" type="warning">来源已删除</ElTag>
           </div>
         </template>

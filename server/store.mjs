@@ -1077,25 +1077,48 @@ export async function claimRecoverableAgentRun(input = {}) {
   const candidateIndex = runs.findIndex(run => (!runId || cleanString(run.id) === runId) && isRecoverableAgentRun(run, userId, deviceId, { allowedProjectIds, canAccessAllProjects }));
   if (candidateIndex === -1) return null;
   const existing = runs[candidateIndex];
-  const existingStatus = normalizeWorkerRunStatus(existing.status || existing.workerStatus || '');
-  const alreadyRunning = Boolean(existing.startedAt || /running|in_progress/i.test(`${existingStatus} ${existing.workerStatus || ''}`));
+  const alreadyRunning = isWorkerRunStarted(existing);
   const nextStatus = alreadyRunning ? 'running' : 'claimed';
+  const nextClaimedByDeviceId = existing.claimedByDeviceId || deviceId;
+  const nextClaimedAt = existing.claimedAt || now;
+  const nextStartedBy = existing.startedBy || userId;
+  const nextQueuedForUserId = existing.queuedForUserId || userId;
+  const statusUnchanged = existing.status === nextStatus
+    && existing.workerStatus === nextStatus
+    && existing.claimedByDeviceId === nextClaimedByDeviceId
+    && existing.claimedAt === nextClaimedAt
+    && existing.queuedForUserId === nextQueuedForUserId
+    && existing.startedBy === nextStartedBy;
+  if (statusUnchanged) {
+    const hydrated = await hydrateRunStages({
+      ...existing,
+      _changed: false
+    });
+    return {
+      ...hydrated,
+      _changed: false
+    };
+  }
   const run = {
     ...existing,
     status: nextStatus,
     workerStatus: nextStatus,
     assignedToUserId: existing.assignedToUserId || userId,
-    queuedForUserId: existing.queuedForUserId || userId,
-    claimedByDeviceId: existing.claimedByDeviceId || deviceId,
-    claimedAt: existing.claimedAt || now,
+    queuedForUserId: nextQueuedForUserId,
+    claimedByDeviceId: nextClaimedByDeviceId,
+    claimedAt: nextClaimedAt,
     resumedAt: now,
-    startedBy: existing.startedBy || userId,
+    startedBy: nextStartedBy,
     workerCapabilities: capabilities,
     updatedAt: now
   };
   runs[candidateIndex] = run;
   await writeJson(paths.runs, runs);
-  return hydrateRunStages(run);
+  const hydrated = await hydrateRunStages(run);
+  return {
+    ...hydrated,
+    _changed: true
+  };
 }
 
 export async function updateAgentRunFromWorker(runId, input = {}) {
@@ -1105,9 +1128,10 @@ export async function updateAgentRunFromWorker(runId, input = {}) {
   const now = new Date().toISOString();
   const existing = runs[index];
   const timingPatch = normalizeWorkerTimingPatch(input, existing);
+  const nextStatus = resolveWorkerRunStatusTransition(existing, input.status || input.workerStatus || existing.status);
   const patch = {
-    workerStatus: input.workerStatus || input.status || existing.workerStatus || '',
-    status: normalizeWorkerRunStatus(input.status || input.workerStatus || existing.status),
+    workerStatus: nextStatus,
+    status: nextStatus,
     currentStage: input.currentStage ?? existing.currentStage,
     blocker: input.blocker ?? existing.blocker,
     resultSummary: input.resultSummary ?? existing.resultSummary,
@@ -1120,12 +1144,25 @@ export async function updateAgentRunFromWorker(runId, input = {}) {
   };
   if (input.pid !== undefined) patch.pid = input.pid;
   if (input.startedAt) patch.startedAt = input.startedAt;
+  if (patch.currentStage !== undefined) patch.currentStage = normalizeWorkerStageName(patch.currentStage);
   if (input.logPath) patch.logPath = input.logPath;
   if (input.promptPath) patch.promptPath = input.promptPath;
   if (input.artifactRoot) patch.artifactRoot = input.artifactRoot;
-  runs[index] = guardFigmaWriteCompletion({ ...existing, ...patch });
+  const nextRun = guardFigmaWriteCompletion({ ...existing, ...patch });
+  if (!hasWorkerRunMaterialChange(existing, nextRun)) {
+    const hydrated = await hydrateRunStages(existing);
+    return {
+      ...hydrated,
+      _changed: false
+    };
+  }
+  runs[index] = nextRun;
   await writeJson(paths.runs, runs);
-  return hydrateRunStages(runs[index]);
+  const hydrated = await hydrateRunStages(runs[index]);
+  return {
+    ...hydrated,
+    _changed: true
+  };
 }
 
 export async function applyAgentRunEvents(runId, input = {}) {
@@ -1140,32 +1177,49 @@ export async function applyAgentRunEvents(runId, input = {}) {
 
   let next = { ...existing };
   let logChunks = [];
+  let hasRunEventMaterial = false;
   for (const event of newEvents) {
     knownIds.add(event.id);
     if (event.type === 'log') {
       if (event.chunk) logChunks.push(event.chunk);
       continue;
     }
+    const beforeEventRun = next;
     if (event.type === 'status') {
       next = mergeAgentRunStatusEvent(next, event);
+      if (hasWorkerRunMaterialChange(beforeEventRun, next)) hasRunEventMaterial = true;
       continue;
     }
     if (event.type === 'stage') {
       next = mergeAgentRunStageEvent(next, event);
+      if (hasWorkerRunMaterialChange(beforeEventRun, next)) hasRunEventMaterial = true;
       continue;
     }
   }
   const now = new Date().toISOString();
+  for (const chunk of logChunks) await appendRunLog(runId, chunk);
+  if (logChunks.length) await ensureRunLogPath(runId);
+  const nextEventIds = hasRunEventMaterial ? [...knownIds].slice(-500) : (Array.isArray(existing.workerEventIds) ? existing.workerEventIds : []);
+  const eventIdsChanged = stableWorkerRunValue(existing.workerEventIds || []) !== stableWorkerRunValue(nextEventIds);
+  if (!hasRunEventMaterial && !eventIdsChanged) {
+    const hydrated = await hydrateRunStages(existing);
+    return {
+      ...hydrated,
+      _changed: false
+    };
+  }
   next = {
     ...next,
-    workerEventIds: [...knownIds].slice(-500),
-    updatedAt: now
+    workerEventIds: nextEventIds,
+    updatedAt: hasRunEventMaterial ? now : existing.updatedAt
   };
   runs[index] = next;
   await writeJson(paths.runs, runs);
-  for (const chunk of logChunks) await appendRunLog(runId, chunk);
-  if (logChunks.length) await ensureRunLogPath(runId);
-  return hydrateRunStages(next);
+  const hydrated = await hydrateRunStages(next);
+  return {
+    ...hydrated,
+    _changed: hasRunEventMaterial
+  };
 }
 
 export async function listMissingRunIds(runIds = []) {
@@ -3707,6 +3761,60 @@ function normalizeWorkerRunStatus(value = '') {
   return status || 'running';
 }
 
+function isFinalWorkerRunStatus(status = '') {
+  return /completed|blocked|failed|cancelled|canceled/i.test(String(status || ''));
+}
+
+function isWorkerRunStarted(run = {}) {
+  return Boolean(run.startedAt || /running|in_progress/i.test(`${run.status || ''} ${run.workerStatus || ''}`));
+}
+
+function resolveWorkerRunStatusTransition(run = {}, incoming = '') {
+  const current = normalizeWorkerRunStatus(run.status || run.workerStatus || '');
+  const next = normalizeWorkerRunStatus(incoming || current);
+  if (isFinalWorkerRunStatus(current)) return current;
+  if (isWorkerRunStarted(run) && /claimed|pending|queued|created/.test(next)) return 'running';
+  return next;
+}
+
+function hasWorkerRunMaterialChange(existing = {}, nextRun = {}) {
+  const keys = [
+    'status',
+    'workerStatus',
+    'currentStage',
+    'startedAt',
+    'finishedAt',
+    'exitCode',
+    'blocker',
+    'resultSummary',
+    'workerResult',
+    'figmaWriteResult',
+    'workerLocalLogPath',
+    'workerLocalLogSize',
+    'logPath',
+    'promptPath',
+    'artifactRoot',
+    'stages'
+  ];
+  return keys.some(key => stableWorkerRunValue(existing[key]) !== stableWorkerRunValue(nextRun[key]));
+}
+
+function stableWorkerRunValue(value) {
+  if (value === undefined) return '';
+  if (value === null) return 'null';
+  if (typeof value !== 'object') return String(value);
+  return JSON.stringify(sortObjectKeys(value));
+}
+
+function sortObjectKeys(value) {
+  if (Array.isArray(value)) return value.map(sortObjectKeys);
+  if (!value || typeof value !== 'object') return value;
+  return Object.keys(value).sort().reduce((result, key) => {
+    result[key] = sortObjectKeys(value[key]);
+    return result;
+  }, {});
+}
+
 function runRequiresFigmaWriteEvidence(run = {}) {
   return Boolean(cleanString(run.figmaLinks))
     && (isWorkerExecutableRun(run) || run.executionMode === 'single-skill' || run.workflow === 'art-single-skill' || run.workflow === 'custom-workflow')
@@ -3790,14 +3898,20 @@ function normalizeAgentRunEvent(input = {}) {
   };
 }
 
+function normalizeWorkerStageName(value = '') {
+  const text = cleanString(value);
+  if (text === '本机 Codex 执行中') return '本机 Codex 执行';
+  return text;
+}
+
 function mergeAgentRunStatusEvent(run = {}, event = {}) {
-  const status = normalizeWorkerRunStatus(event.status || run.status);
+  const status = resolveWorkerRunStatusTransition(run, event.status || run.status);
   const timingPatch = normalizeWorkerTimingPatch(event, run);
   return guardFigmaWriteCompletion({
     ...run,
     status,
     workerStatus: status,
-    currentStage: event.currentStage ?? run.currentStage,
+    currentStage: normalizeWorkerStageName(event.currentStage ?? run.currentStage),
     blocker: event.blocker ?? run.blocker,
     resultSummary: event.resultSummary ?? run.resultSummary,
     exitCode: event.exitCode ?? run.exitCode,
@@ -3808,7 +3922,7 @@ function mergeAgentRunStatusEvent(run = {}, event = {}) {
 }
 
 function mergeAgentRunStageEvent(run = {}, event = {}) {
-  const stageName = event.stageName;
+  const stageName = normalizeWorkerStageName(event.stageName);
   if (!stageName) return run;
   const status = normalizeWorkerRunStatus(event.status || (event.phase === 'end' ? 'completed' : 'running'));
   const stages = normalizeRunStagesForWorkerEvents(run.stages, stageName);

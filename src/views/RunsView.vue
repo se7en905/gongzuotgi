@@ -23,7 +23,7 @@
         v-for="run in app.runs"
         :key="run.id"
         class="run-item"
-        :class="[app.runStatusClass(run.status), { active: run.id === app.selectedRunId }]"
+        :class="[app.runStatusClass(app.runDisplayStatusValue(run)), { active: run.id === app.selectedRunId }]"
         :aria-current="run.id === app.selectedRunId ? 'true' : undefined"
         @click="app.selectRunFromList(run)"
       >
@@ -271,7 +271,7 @@
         <span>开始执行：{{ app.formatDateTime(app.selectedRun.startedAt) || '-' }}</span>
         <span v-if="app.selectedRun.exitCode !== null && app.selectedRun.exitCode !== undefined">Codex 退出码：{{ app.selectedRun.exitCode }}</span>
       </div>
-      <div v-if="app.selectedRun.status === 'pending'" class="run-worker-command-box">
+      <div v-if="/pending|created/i.test(app.runDisplayStatusValue(app.selectedRun))" class="run-worker-command-box">
         <div>
           <strong>当前不显示平台“开始”按钮</strong>
           <span>直接执行必须由 {{ app.selectedRun.assignedToName || app.selectedRun.developer || '执行人' }} 的电脑启动 Worker 后自动领取，确保使用本人 Figma 账号和本机 Figma MCP。</span>

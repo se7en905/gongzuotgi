@@ -1340,11 +1340,11 @@ export default {
     },
 
     directSkillPendingRuns() {
-      return this.directSkillRunRows.filter(run => /pending|queued/i.test(String(run.status || '')));
+      return this.directSkillRunRows.filter(run => /pending|queued/i.test(this.runDisplayStatusValue(run)));
     },
 
     directSkillActiveRuns() {
-      return this.directSkillRunRows.filter(run => /claimed|running|in_progress/i.test(String(run.status || '')));
+      return this.directSkillRunRows.filter(run => /claimed|running|in_progress/i.test(this.runDisplayStatusValue(run)));
     },
 
     directSkillCompletedRuns() {
@@ -1359,7 +1359,7 @@ export default {
         return map.get(userId);
       };
       for (const run of this.directSkillRunRows) {
-        const status = String(run.status || '');
+        const status = this.runDisplayStatusValue(run);
         const resultStatus = this.effectiveResultStatus(run);
         const bucket = /pending|queued/i.test(status)
           ? 'pending'
@@ -13416,7 +13416,7 @@ export default {
 
     isRunUsageLikeSkillInventoryRow(run = {}) {
       if (!run || typeof run !== 'object') return false;
-      const status = String(run.status || run.workerStatus || run.platformStatus || '').trim().toLowerCase();
+      const status = (this.isLocalWorkerRun(run) ? this.runDisplayStatusValue(run) : String(run.status || run.workerStatus || run.platformStatus || '')).trim().toLowerCase();
       if (/cancel|canceled|cancelled|pending|queued|draft|deleted|void/.test(status)) return false;
       const values = [
         run.primarySkillPath,
@@ -17569,17 +17569,17 @@ export default {
       if (!run) return false;
       if (run.logPath || run.promptPath || run.pid || run.exitCode !== null && run.exitCode !== undefined) return true;
       if (run.resultSummary || run.changeSummary?.collectedAt) return true;
-      return /running|conditional|passed|completed|done|failed|blocked|cancelled|canceled/i.test(String(run.status || ''));
+      return /running|conditional|passed|completed|done|failed|blocked|cancelled|canceled/i.test(this.runDisplayStatusValue(run));
     },
 
     canResumeRun(run = null) {
       if (!run || this.isDirectSkillRun(run) || this.isRunInProgress(run)) return false;
       if (this.isRunSourceDeleted(run)) return false;
-      return /cancelled|canceled|blocked|failed/i.test(String(run.status || ''));
+      return /cancelled|canceled|blocked|failed/i.test(this.runDisplayStatusValue(run));
     },
 
     isRunInProgress(run = null) {
-      return /running|in_progress|claimed/i.test(String(run?.status || ''));
+      return /running|in_progress|claimed/i.test(this.runDisplayStatusValue(run));
     },
 
     isRunWaitingForLocalWorker(run = null) {
@@ -17998,7 +17998,7 @@ export default {
 
     directSkillRunSyncBadge(run = null) {
       if (!this.isLocalWorkerRun(run)) return { label: '', detail: '', tone: 'muted' };
-      const status = String(run?.status || run?.workerStatus || '').toLowerCase();
+      const status = this.runDisplayStatusValue(run);
       const worker = this.directSkillWorkerForRun(run);
       const online = this.directSkillWorkerOnline(worker);
       if (/pending|queued|created/.test(status)) {
@@ -18726,9 +18726,10 @@ export default {
       if (this.runRequiresFigmaWriteEvidence(run) && this.runHasFinishedAsSuccess(run) && !this.hasFigmaWriteEvidence(run)) {
         return 'failed';
       }
+      const displayStatus = this.runDisplayStatusValue(run);
       const summaryStatus = run.resultSummary?.status;
       const normalizedSummaryStatus = String(summaryStatus || '').toLowerCase();
-      if (summaryStatus === 'blocked' && /conditional/i.test(run.status || '') && /无硬阻塞|无阻塞|无$/.test(run.resultSummary?.blockerReason || '')) {
+      if (summaryStatus === 'blocked' && /conditional/i.test(displayStatus) && /无硬阻塞|无阻塞|无$/.test(run.resultSummary?.blockerReason || '')) {
         return 'conditional_pass';
       }
       if (/completed|done|success|passed/.test(normalizedSummaryStatus)) return 'passed';
@@ -18736,10 +18737,10 @@ export default {
       if (/blocked/.test(normalizedSummaryStatus)) return 'blocked';
       if (/conditional/.test(normalizedSummaryStatus)) return 'conditional_pass';
       if (summaryStatus && !/unknown/.test(summaryStatus)) return summaryStatus;
-      if (/conditional/i.test(run.status || '')) return 'conditional_pass';
-      if (/done|success|passed|completed/i.test(run.status || '')) return 'passed';
-      if (/failed|error/i.test(run.status || '')) return 'failed';
-      if (/blocked/i.test(run.status || '')) return 'blocked';
+      if (/conditional/i.test(displayStatus)) return 'conditional_pass';
+      if (/done|success|passed|completed/i.test(displayStatus)) return 'passed';
+      if (/failed|error/i.test(displayStatus)) return 'failed';
+      if (/blocked/i.test(displayStatus)) return 'blocked';
       return summaryStatus || 'unknown';
     },
 
@@ -18794,7 +18795,7 @@ export default {
 
     aiExecutionArchiveStatusBucket(run = {}) {
       const status = this.effectiveResultStatus(run);
-      const raw = `${run.status || ''} ${run.workerStatus || ''} ${run.resultSummary?.status || ''}`.toLowerCase();
+      const raw = `${this.runDisplayStatusValue(run)} ${run.workerStatus || ''} ${run.resultSummary?.status || ''}`.toLowerCase();
       if (/rework|返工/.test(raw)) return 'rework';
       if (status === 'partial_write') return 'review';
       if (['failed', 'blocked'].includes(status) || /failed|error|blocked|失败|阻塞/.test(raw)) return 'rework';
@@ -18825,7 +18826,7 @@ export default {
         .filter(run => !runId || String(run.id || '') === runId)
         .filter(run => !projectId || String(run.projectId || '') === projectId)
         .filter(run => !sourceType || run.sourceType === sourceType || run.executionMode === sourceType)
-        .filter(run => !status || String(run.status || '') === status)
+        .filter(run => !status || this.runDisplayStatusValue(run) === status)
         .filter(run => this.aiExecutionArchiveRunMatchesBucket(run, archiveBucket))
         .filter(run => {
           if (!userId) return true;
@@ -18851,7 +18852,7 @@ export default {
             run.developer,
             run.figmaLinks,
             run.requirement,
-            run.status
+            this.runDisplayStatusLabel(run)
           ].map(value => String(value || '').toLowerCase()).join(' ').includes(keyword);
         })
         .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
@@ -19000,8 +19001,9 @@ export default {
       if (this.isAiExecutionArchiveReworkRun(run)) return '需要返工或重新处理';
       if (status === 'passed') return '已完成，等待验收确认';
       if (status === 'conditional_pass') return '已产出结果，需要人工确认';
-      if (/pending|queued/i.test(String(run.status || ''))) return this.directSkillQueuedRunLabel(run);
-      if (/claimed|running|in_progress/i.test(String(run.status || ''))) return '执行人本机正在处理';
+      const displayStatus = this.runDisplayStatusValue(run);
+      if (/pending|queued/i.test(displayStatus)) return this.directSkillQueuedRunLabel(run);
+      if (/claimed|running|in_progress/i.test(displayStatus)) return '执行人本机正在处理';
       return this.resultStatusTitle(run.resultSummary || {}, run);
     },
 
@@ -19029,8 +19031,9 @@ export default {
       if (this.isAiExecutionArchiveReworkRun(run)) return '建议：先处理阻塞原因，再重新发起直接执行。';
       if (this.isAiExecutionArchiveReviewRun(run)) return '建议：打开 Figma 和执行结果，完成人工验收确认。';
       if (this.isAiExecutionArchiveClosedRun(run)) return '建议：进入业务任务验收，确认是否闭环。';
-      if (/pending|queued/i.test(String(run.status || ''))) return '建议：确认执行人电脑 Worker、Codex 和 Figma MCP 是否就绪。';
-      if (/claimed|running|in_progress/i.test(String(run.status || ''))) return '建议：查看本机 Worker 回传结果。';
+      const displayStatus = this.runDisplayStatusValue(run);
+      if (/pending|queued/i.test(displayStatus)) return '建议：确认执行人电脑 Worker、Codex 和 Figma MCP 是否就绪。';
+      if (/claimed|running|in_progress/i.test(displayStatus)) return '建议：查看本机 Worker 回传结果。';
       return this.resultNextActionText(run);
     },
 
@@ -19057,7 +19060,7 @@ export default {
         return acc;
       }, { success: 0, failed: 0, review: 0 });
       const resultStatus = this.effectiveResultStatus(run);
-      const rawStatus = String(run.status || '').toLowerCase();
+      const rawStatus = this.runDisplayStatusValue(run);
       const isFinished = /done|success|passed|completed|finished|failed|error|blocked/.test(rawStatus);
       const finalSuccess = isFinished && ['passed', 'conditional_pass', 'completed', 'success'].includes(resultStatus) ? 1 : 0;
       const finalFailure = isFinished && ['failed', 'blocked'].includes(resultStatus) ? 1 : 0;
@@ -19104,7 +19107,7 @@ export default {
         : this.aiExecutionArchiveDetailMetrics(run);
       const summary = run.resultSummary || {};
       const status = this.effectiveResultStatus(run);
-      const isPending = /pending|created|queued/i.test(String(run.status || ''));
+      const isPending = /pending|created|queued/i.test(this.runDisplayStatusValue(run));
       const isRunning = this.isRunInProgress(run);
       const issueRows = [];
       const blocker = String(this.figmaExecutionBlockerText(run) || summary.blockerReason || run.blocker?.reason || '').trim();
@@ -19435,9 +19438,28 @@ export default {
       return this.runStatusLabel(run?.status);
     },
 
+    runDisplayStatusValue(run = null) {
+      if (!run) return '';
+      const value = String(run.status || '').toLowerCase();
+      const workerValue = String(run.workerStatus || '').toLowerCase();
+      if (this.isLocalWorkerRun(run)) {
+        if (/completed|done|success|passed|blocked|failed|error|cancelled|canceled/.test(workerValue)) return workerValue;
+        if (/completed|done|success|passed|blocked|failed|error|cancelled|canceled/.test(value)) return value;
+        if (/running|in_progress/.test(`${value} ${workerValue}`)) return 'running';
+        if (run.startedAt && /claimed|pending|queued|created/.test(`${value} ${workerValue}`)) return 'running';
+        if (/claimed/.test(`${value} ${workerValue}`)) return 'claimed';
+        if (/queued|pending|created/.test(`${value} ${workerValue}`)) return value || workerValue;
+      }
+      return value || workerValue;
+    },
+
+    runRawStatusText(run = null) {
+      return `${this.runDisplayStatusValue(run)} ${run?.workerStatus || ''} ${run?.status || ''}`.trim().toLowerCase();
+    },
+
     directSkillRunStatusLabel(run = null) {
       if (!run) return '待判定';
-      const value = String(run.status || '').toLowerCase();
+      const value = this.runDisplayStatusValue(run);
       const workerValue = String(run.workerStatus || '').toLowerCase();
       if (/pending|created|queued/.test(value)) return this.directSkillQueuedRunLabel(run);
       if (/running|in_progress/.test(`${value} ${workerValue}`) || (run.startedAt && /claimed/.test(value))) return '本机执行中';
@@ -19562,7 +19584,7 @@ export default {
 
     directSkillRunDisplayStages(run = null) {
       if (!run) return [];
-      const status = String(run.status || '').toLowerCase();
+      const status = this.runDisplayStatusValue(run);
       const isPending = /pending|created|queued/.test(status) || !status;
       const isClaimed = Boolean(run.claimedAt || run.claimedByDeviceId || /claimed|running|in_progress|done|success|passed|completed|failed|error|blocked/.test(status));
       const isRunning = /claimed|running|in_progress/.test(status);
@@ -19609,7 +19631,7 @@ export default {
       const displayStages = this.selectedRun?.id === run.id ? this.selectedRunDisplayStages : this.displayRunStages(run);
       const isDirect = this.isDirectSkillRun(run);
       const actualStages = displayStages.length ? displayStages : isDirect ? this.directSkillRunDisplayStages(run) : [];
-      const statusText = String(run.status || '').toLowerCase();
+      const statusText = this.runDisplayStatusValue(run);
       const isPending = /pending|created|queued/.test(statusText) || !statusText;
       const isRunning = this.isRunInProgress(run) || /claimed/.test(statusText);
       const isFailed = /failed|error|blocked/.test(`${statusText} ${run.workerStatus || ''}`);
@@ -20052,13 +20074,13 @@ export default {
 
     isCurrentRunStage(stage, index) {
       const run = this.selectedRun;
-      if (!run || !/running|in_progress/i.test(run.status || '')) return false;
+      if (!run || !/running|in_progress/i.test(this.runDisplayStatusValue(run))) return false;
       const currentIndex = this.currentRunStageIndex(run);
       return currentIndex >= 0 ? index === currentIndex : index === Math.max(this.activeRunStage - 1, 0);
     },
 
     isCurrentRunStageFromDisplayStages(stages = [], index = -1, run = null) {
-      if (!run || !/running|in_progress/i.test(run.status || '')) return false;
+      if (!run || !/running|in_progress/i.test(this.runDisplayStatusValue(run))) return false;
       const currentIndex = this.currentRunStageIndex(run);
       if (currentIndex >= 0) return index === currentIndex;
       const active = stages.findIndex(stage => /running|in_progress/i.test(stage.status || ''));
@@ -20121,12 +20143,13 @@ export default {
 
     currentRunStageText(run = null) {
       if (!run) return '等待启动';
-      if (this.isLocalWorkerRun(run) && /pending|created|queued/i.test(String(run.status || ''))) return this.directSkillQueuedRunLabel(run);
-      if (this.isDirectSkillRun(run) && String(run.status || '').toLowerCase() === 'claimed') return '执行人本机已领取';
+      const status = this.runDisplayStatusValue(run);
+      if (this.isLocalWorkerRun(run) && /pending|created|queued/i.test(status)) return this.directSkillQueuedRunLabel(run);
+      if (this.isLocalWorkerRun(run) && /claimed/.test(status)) return run.startedAt ? '本机 Codex 执行' : '执行人本机已领取';
       if (this.hasPartialFigmaWrite(run)) return 'Figma 已部分写入，最终验收未闭环';
       if (this.isDirectSkillFailedRun(run)) return '本机 Worker 已自动领取后执行失败';
       if (!this.isRunInProgress(run)) {
-        const statusText = String(run.status || '').toLowerCase();
+        const statusText = status;
         if (/cancelled|canceled/.test(statusText)) return '已中断，可继续执行';
         if (/blocked/.test(statusText)) return '已阻塞，可继续执行';
         if (/failed|error/.test(statusText)) return '执行失败，可继续执行';

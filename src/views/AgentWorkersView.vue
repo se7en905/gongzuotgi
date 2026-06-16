@@ -146,7 +146,7 @@
       </ElTableColumn>
       <ElTableColumn label="状态" width="110">
         <template #default="{ row }">
-          <ElTag size="small" :type="app.runTagType(row.status)">{{ app.directSkillRunStatusLabel(row) }}</ElTag>
+          <ElTag size="small" :type="app.runTagType(app.runDisplayStatusValue(row))">{{ app.directSkillRunStatusLabel(row) }}</ElTag>
         </template>
       </ElTableColumn>
       <ElTableColumn label="领取设备" min-width="150">
