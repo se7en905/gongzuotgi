@@ -426,11 +426,11 @@ async function executeRun(run) {
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   const finishedAt = new Date().toISOString();
   const durationMs = Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt));
-  const combinedText = [finalText, rawStdoutText, stderrText].filter(Boolean).join('\n');
-  const figmaWriteResult = extractFigmaWriteEvidence(combinedText, run);
-  const status = resolveWorkerFinalStatus(exitCode, figmaWriteResult);
   const localLogInfo = await localRunLogInfo(run.id);
   const localLogText = await readLocalRunLogForSync(run.id);
+  const combinedText = [finalText, rawStdoutText, localLogText, stderrText].filter(Boolean).join('\n');
+  const figmaWriteResult = extractFigmaWriteEvidence(combinedText, run);
+  const status = resolveWorkerFinalStatus(exitCode, figmaWriteResult);
   if (localLogText) {
     await safeAppendRunLog(run.id, `\n\n[worker local full log ${finishedAt}]\n${localLogText}\n[/worker local full log]\n`);
   }
@@ -1443,10 +1443,11 @@ function extractPostWriteFigmaBlockers(source = '', toolEvents = [], lastWriteOr
   }
   const lines = String(source || '').split(/\r?\n/);
   for (let index = Math.max(lastWriteOrder + 1, 0); index < lines.length; index += 1) {
-    const line = lines[index].trim();
-    if (!line) continue;
-    if (!/(Auth required|OAuth|permission|denied|Transport send error|tool call failed|figma\/(?:use_figma|get_screenshot)|Figma MCP|最终.*(?:失败|阻塞|未完成)|回读.*(?:失败|阻塞|未完成)|截图.*(?:失败|阻塞|未完成)|复扫.*(?:失败|阻塞|未完成))/i.test(line)) continue;
-    blockers.push(compactReason(line));
+    for (const line of figmaEvidenceLineTexts(lines[index])) {
+      if (!/(Auth required|OAuth|permission|denied|Transport send error|tool call failed|figma\/(?:use_figma|get_screenshot)|Figma MCP|最终.*(?:失败|阻塞|未完成)|回读.*(?:失败|阻塞|未完成)|截图.*(?:失败|阻塞|未完成)|复扫.*(?:失败|阻塞|未完成))/i.test(line)) continue;
+      blockers.push(compactReason(line));
+      if (blockers.length >= 5) break;
+    }
     if (blockers.length >= 5) break;
   }
   return [...new Set(blockers)].slice(0, 5);
@@ -1467,12 +1468,44 @@ function extractPostWriteVerificationEvidence(source = '', toolEvents = [], last
   }
   const lines = String(source || '').split(/\r?\n/);
   for (let index = Math.max(lastWriteOrder + 1, 0); index < lines.length; index += 1) {
-    const line = lines[index].trim();
-    if (!line || /失败|阻塞|未完成|Auth required|error|failed|blocked/i.test(line)) continue;
-    if (/最终.*(?:回读|截图|验证|验收).*(?:完成|通过|成功)|(?:回读|截图|验证|验收).*已完成/i.test(line)) evidence.push(compactReason(line));
+    for (const line of figmaEvidenceLineTexts(lines[index])) {
+      if (/失败|阻塞|未完成|Auth required|error|failed|blocked/i.test(line)) continue;
+      if (/最终.*(?:回读|截图|验证|验收).*(?:完成|通过|成功)|(?:回读|截图|验证|验收).*已完成/i.test(line)) evidence.push(compactReason(line));
+      if (evidence.length >= 5) break;
+    }
     if (evidence.length >= 5) break;
   }
   return [...new Set(evidence)].slice(0, 5);
+}
+
+function figmaEvidenceLineTexts(line = '') {
+  return figmaEvidenceLineText(line)
+    .split(/\r?\n/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function figmaEvidenceLineText(line = '') {
+  const trimmed = String(line || '').trim();
+  if (!trimmed) return '';
+  try {
+    const event = JSON.parse(trimmed);
+    const item = event?.item || {};
+    if (item.type === 'command_execution') return '';
+    if (item.type === 'agent_message') return String(item.text || '').trim();
+    if (item.type === 'mcp_tool_call') {
+      if (item.status === 'completed' && !item.error) return '';
+      return [
+        item.server,
+        item.tool,
+        figmaToolErrorText(item.error),
+        figmaToolResultText(item.result)
+      ].filter(Boolean).join(' ');
+    }
+    return String(event.message || event.text || event.delta || '').trim();
+  } catch {
+    return trimmed;
+  }
 }
 
 function compactReason(text = '') {

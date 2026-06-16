@@ -1716,8 +1716,21 @@ async function enrichRunWithFigmaLogEvidence(run) {
   const evidence = await deriveFigmaLogEvidence(run);
   if (!evidence?.written) return run;
   const blockerReason = evidence.blockerReason || 'Figma 已有部分写入，但写入后的最终回读/截图验收未闭环，不能判定整条任务完整完成。';
+  const restoredStatus = evidence.verifiedAfterWrite && Number(run.exitCode) === 0 ? 'completed' : (run.status || 'blocked');
+  const restoredWorkerStatus = evidence.verifiedAfterWrite && Number(run.exitCode) === 0 ? 'completed' : (run.workerStatus || restoredStatus);
+  const restoredStages = Array.isArray(run.stages)
+    ? run.stages.map(stage => ({
+      ...stage,
+      status: evidence.verifiedAfterWrite && Number(run.exitCode) === 0 && /failed|blocked|error/i.test(cleanString(stage.status))
+        ? 'completed'
+        : stage.status
+    }))
+    : run.stages;
   return guardFigmaWriteCompletion({
     ...run,
+    status: restoredStatus,
+    workerStatus: restoredWorkerStatus,
+    stages: restoredStages,
     figmaWriteResult: {
       required: true,
       written: true,
@@ -1736,12 +1749,12 @@ async function enrichRunWithFigmaLogEvidence(run) {
       ...(run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {}),
       figmaWritten: true,
       figmaVerifiedAfterWrite: evidence.verifiedAfterWrite,
-      status: evidence.verifiedAfterWrite ? (run.resultSummary?.status || run.status) : 'blocked',
-      statusText: evidence.verifiedAfterWrite ? (run.resultSummary?.statusText || run.status) : 'blocked',
+      status: evidence.verifiedAfterWrite ? 'completed' : 'blocked',
+      statusText: evidence.verifiedAfterWrite ? 'completed' : 'blocked',
       summary: evidence.verifiedAfterWrite
-        ? (run.resultSummary?.summary || '本机直接执行已完成，并从日志识别到 Figma 写入和写入后验收证据。')
+        ? '本机直接执行已完成，并从日志识别到 Figma 写入和写入后验收证据。'
         : 'Figma 已有部分写入，但最终回读/截图验收未闭环，本次不能判定完整完成。',
-      blockerReason: evidence.verifiedAfterWrite ? (run.resultSummary?.blockerReason || '') : blockerReason,
+      blockerReason: evidence.verifiedAfterWrite ? '' : blockerReason,
       needsHumanReview: true
     }
   });
@@ -1844,7 +1857,7 @@ function isLikelyFigmaNodeId(value = '') {
 }
 
 function extractPostWriteBlockersFromLog(text = '') {
-  const lines = String(text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const lines = String(text || '').split(/\r?\n/).flatMap(figmaLogEvidenceLineTexts);
   const lastWriteIndex = findLastFigmaWriteLineIndex(lines);
   if (lastWriteIndex < 0) return [];
   const blockers = [];
@@ -1858,7 +1871,7 @@ function extractPostWriteBlockersFromLog(text = '') {
 }
 
 function extractPostWriteVerificationFromLog(text = '') {
-  const lines = String(text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const lines = String(text || '').split(/\r?\n/).flatMap(figmaLogEvidenceLineTexts);
   const lastWriteIndex = findLastFigmaWriteLineIndex(lines);
   if (lastWriteIndex < 0) return [];
   const evidence = [];
@@ -1878,6 +1891,35 @@ function findLastFigmaWriteLineIndex(lines = []) {
     if (/createdNodeIds|mutatedNodeIds/i.test(lines[index] || '')) return index;
   }
   return -1;
+}
+
+function figmaLogEvidenceLineTexts(line = '') {
+  return figmaLogEvidenceLineText(line)
+    .split(/\r?\n/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function figmaLogEvidenceLineText(line = '') {
+  const trimmed = String(line || '').trim();
+  if (!trimmed) return '';
+  try {
+    const event = JSON.parse(trimmed);
+    const item = event?.item || {};
+    if (item.type === 'command_execution') return '';
+    if (item.type === 'agent_message') return String(item.text || '').trim();
+    if (item.type === 'mcp_tool_call') {
+      if (item.status === 'completed' && !item.error) return '';
+      return [
+        item.server,
+        item.tool,
+        compactEvidenceReason(JSON.stringify(item.error || item.result || ''))
+      ].filter(Boolean).join(' ');
+    }
+    return String(event.message || event.text || event.delta || '').trim();
+  } catch {
+    return trimmed;
+  }
 }
 
 function compactEvidenceReason(text = '') {
@@ -3823,8 +3865,14 @@ function hasFigmaWriteEvidence(run = {}) {
   if (result.written === true) return true;
   if (Array.isArray(result.createdNodeIds) && result.createdNodeIds.length) return true;
   if (Array.isArray(result.mutatedNodeIds) && result.mutatedNodeIds.length) return true;
-  if (Array.isArray(result.evidence) && result.evidence.some(Boolean)) return true;
+  if (Array.isArray(result.evidence) && result.evidence.some(isFigmaWriteEvidenceText)) return true;
   return false;
+}
+
+function isFigmaWriteEvidenceText(value = '') {
+  const text = cleanString(value);
+  if (!text) return false;
+  return /createdNodeIds|mutatedNodeIds|figmaWriteResult.*written["']?\s*[:=]\s*true|use_figma\s+写入成功|日志识别到\s*(?:createdNodeIds|mutatedNodeIds)/i.test(text);
 }
 
 function hasFigmaPostWriteVerification(run = {}) {

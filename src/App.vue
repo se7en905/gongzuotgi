@@ -18759,8 +18759,14 @@ export default {
       if (result.written === true) return true;
       if (Array.isArray(result.createdNodeIds) && result.createdNodeIds.length) return true;
       if (Array.isArray(result.mutatedNodeIds) && result.mutatedNodeIds.length) return true;
-      if (Array.isArray(result.evidence) && result.evidence.some(Boolean)) return true;
+      if (Array.isArray(result.evidence) && result.evidence.some(item => this.isFigmaWriteEvidenceText(item))) return true;
       return run?.resultSummary?.figmaWritten === true;
+    },
+
+    isFigmaWriteEvidenceText(value = '') {
+      const text = String(value || '').trim();
+      if (!text) return false;
+      return /createdNodeIds|mutatedNodeIds|figmaWriteResult.*written["']?\s*[:=]\s*true|use_figma\s+写入成功|日志识别到\s*(?:createdNodeIds|mutatedNodeIds)/i.test(text);
     },
 
     hasFigmaPostWriteVerification(run = {}) {
