@@ -1282,7 +1282,7 @@ export default {
 
     directSkillRunRows() {
       return (this.runs || [])
-        .filter(run => this.isDirectSkillRun(run))
+        .filter(run => this.isLocalWorkerRun(run))
         .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
     },
 
@@ -1586,9 +1586,9 @@ export default {
     },
 
     selectedRunActionLabel() {
-      if (this.isDirectSkillRun(this.selectedRun)) return this.selectedRun?.status === 'pending' ? '等待 Worker 自动领取' : '本机执行';
+      if (this.isDirectSkillRun(this.selectedRun)) return /pending|created|queued/i.test(String(this.selectedRun?.status || '')) ? this.directSkillQueuedRunLabel(this.selectedRun) : '本机执行';
       if (this.isRunSourceDeleted(this.selectedRun)) return '来源已删除';
-      if (this.isRunWaitingForLocalWorker(this.selectedRun)) return '等待本机 Worker';
+      if (this.isRunWaitingForLocalWorker(this.selectedRun)) return this.directSkillQueuedRunLabel(this.selectedRun);
       if (this.isRunInProgress(this.selectedRun)) return this.isLocalWorkerRun(this.selectedRun) ? '本机执行中' : '执行中';
       if (this.canResumeRun(this.selectedRun)) return '继续执行';
       return this.hasRunExecuted(this.selectedRun) ? '再次执行' : '发起执行';
@@ -17363,6 +17363,12 @@ export default {
         ...this.runForm,
         projectId,
         developer: this.defaultRunDeveloperName,
+        assignedToUserId: this.currentUser?.id || '',
+        assignedToName: this.defaultRunDeveloperName,
+        queuedForUserId: this.currentUser?.id || '',
+        queuedForName: this.defaultRunDeveloperName,
+        executionHost: 'local-worker',
+        workerExecution: true,
         title: generatedTitle,
         figmaLinks,
         requirement: effectiveRequirement,
@@ -17723,6 +17729,7 @@ export default {
     directSkillRunUserIds(run = null) {
       if (!run) return [];
       const ids = [
+        run.queuedForUserId,
         run.assignedToUserId,
         run.ownerUserId,
         run.startedBy,
@@ -17900,7 +17907,7 @@ export default {
     directSkillWorkerOnline(worker = null) {
       if (!worker?.lastHeartbeatAt) return false;
       const last = Date.parse(worker.lastHeartbeatAt);
-      return Boolean(last && Date.now() - last < 600000);
+      return Boolean(last && Date.now() - last < 2400000);
     },
 
     directSkillWorkerStatusText(run = null) {
@@ -17921,6 +17928,28 @@ export default {
       if (worker.figmaMcpReady !== true) messages.push(checks.figmaMessage || 'Figma MCP 未就绪，请确认组员电脑上的 Codex 已完成 Figma MCP 授权。');
       if (!messages.length) return 'Worker 已在线并可自动领取。';
       return messages.join('；');
+    },
+
+    isDirectSkillWorkerReady(worker = null) {
+      return Boolean(worker && this.directSkillWorkerOnline(worker) && worker.codexReady === true && worker.figmaMcpReady === true);
+    },
+
+    directSkillQueuedRunLabel(run = null) {
+      const worker = this.directSkillWorkerForRun(run);
+      if (this.isDirectSkillWorkerReady(worker)) return '本机领取中';
+      if (worker && this.directSkillWorkerOnline(worker)) return '待本机自检';
+      return '待本机上线';
+    },
+
+    directSkillQueuedRunDetail(run = null) {
+      const worker = this.directSkillWorkerForRun(run);
+      if (this.isDirectSkillWorkerReady(worker)) {
+        return '已向执行人本机 Worker 发送定向唤醒，Worker 会立即心跳并领取；5 分钟轮询只作为事件断线兜底。';
+      }
+      if (worker && this.directSkillWorkerOnline(worker)) {
+        return `Worker 已在线，待本机 Codex / Figma MCP 自检通过后自动领取。${this.directSkillWorkerIssueText(worker)}`;
+      }
+      return '执行人本机 Worker 上线后会自动领取。';
     },
 
     isDirectSkillClaimedRun(run = null) {
@@ -17947,16 +17976,23 @@ export default {
       const worker = this.directSkillWorkerForRun(run);
       const online = this.directSkillWorkerOnline(worker);
       if (/pending|queued|created/.test(status)) {
+        if (this.isDirectSkillWorkerReady(worker)) {
+          return {
+            label: '本机领取中',
+            detail: this.directSkillQueuedRunDetail(run),
+            tone: 'running'
+          };
+        }
         if (online && (worker?.codexReady !== true || worker?.figmaMcpReady !== true)) {
           return {
-            label: '等待本机自检',
-            detail: `Worker 已在线，待 Codex / Figma MCP 自检通过后自动领取。${this.directSkillWorkerIssueText(worker)}`,
+            label: '待本机自检',
+            detail: this.directSkillQueuedRunDetail(run),
             tone: 'warning'
           };
         }
         return {
-          label: '待本机领取',
-          detail: online ? 'Worker 在线，自检通过后会自动领取。' : '执行人启动 Worker 后自动领取。',
+          label: '待本机上线',
+          detail: this.directSkillQueuedRunDetail(run),
           tone: 'muted'
         };
       }
@@ -18938,7 +18974,7 @@ export default {
       if (this.isAiExecutionArchiveReworkRun(run)) return '需要返工或重新处理';
       if (status === 'passed') return '已完成，等待验收确认';
       if (status === 'conditional_pass') return '已产出结果，需要人工确认';
-      if (/pending|queued/i.test(String(run.status || ''))) return '等待执行人本机 Worker 领取';
+      if (/pending|queued/i.test(String(run.status || ''))) return this.directSkillQueuedRunLabel(run);
       if (/claimed|running|in_progress/i.test(String(run.status || ''))) return '执行人本机正在处理';
       return this.resultStatusTitle(run.resultSummary || {}, run);
     },
@@ -18968,7 +19004,7 @@ export default {
       if (this.isAiExecutionArchiveReviewRun(run)) return '建议：打开 Figma 和执行结果，完成人工验收确认。';
       if (this.isAiExecutionArchiveClosedRun(run)) return '建议：进入业务任务验收，确认是否闭环。';
       if (/pending|queued/i.test(String(run.status || ''))) return '建议：确认执行人电脑 Worker、Codex 和 Figma MCP 是否就绪。';
-      if (/claimed|running|in_progress/i.test(String(run.status || ''))) return '建议：等待本机 Worker 回传结果。';
+      if (/claimed|running|in_progress/i.test(String(run.status || ''))) return '建议：查看本机 Worker 回传结果。';
       return this.resultNextActionText(run);
     },
 
@@ -19011,7 +19047,7 @@ export default {
         + (summary.finalText && !this.isPlaceholderResultText(summary.finalText) ? 1 : 0);
       let issueRows = detail.issueRows;
       if (/pending|queued|created/i.test(rawStatus)) {
-        issueRows = [{ label: '当前等待', value: '等待执行人本机 Worker 自动领取。', tone: 'muted' }];
+        issueRows = [{ label: '当前状态', value: this.directSkillQueuedRunDetail(run), tone: this.isDirectSkillWorkerReady(this.directSkillWorkerForRun(run)) ? 'primary' : 'muted' }];
       } else if (/claimed|running|in_progress/i.test(rawStatus)) {
         issueRows = [{ label: '当前处理', value: '执行人本机 Worker 正在处理，等待结果回传。', tone: 'muted' }];
       }
@@ -19053,7 +19089,11 @@ export default {
           tone: status === 'failed' || status === 'blocked' ? 'danger' : 'warning'
         });
       } else if (isPending) {
-        issueRows.push({ label: '当前等待', value: this.isDirectSkillRun(run) ? '等待执行人本机 Worker 自动领取。' : '等待负责人点击启动执行。', tone: 'muted' });
+        issueRows.push({
+          label: '当前状态',
+          value: this.isLocalWorkerRun(run) ? this.directSkillQueuedRunDetail(run) : '等待负责人点击启动执行。',
+          tone: this.isLocalWorkerRun(run) && this.isDirectSkillWorkerReady(this.directSkillWorkerForRun(run)) ? 'primary' : 'muted'
+        });
       } else if (isRunning) {
         issueRows.push({ label: '当前处理', value: 'Codex 正在按当前步骤执行，等待结果回传。', tone: 'muted' });
       } else {
@@ -19355,7 +19395,8 @@ export default {
       if (/conditional/.test(value)) return '有条件通过';
       if (/claimed/.test(value)) return '已领取';
       if (/running|in_progress/.test(value)) return '执行中';
-      if (/pending|created|queued/.test(value)) return '待启动';
+      if (/queued/.test(value)) return '待本机领取';
+      if (/pending|created/.test(value)) return '待启动';
       if (/done|success|passed|completed/.test(value)) return '已完成';
       if (/failed|error/.test(value)) return '执行失败';
       if (/blocked/.test(value)) return '已阻塞';
@@ -19371,7 +19412,7 @@ export default {
     directSkillRunStatusLabel(run = null) {
       if (!run) return '待判定';
       const value = String(run.status || '').toLowerCase();
-      if (/pending|created|queued/.test(value)) return '等待本机 Worker';
+      if (/pending|created|queued/.test(value)) return this.directSkillQueuedRunLabel(run);
       if (/claimed/.test(value)) return '已领取';
       if (/running|in_progress/.test(value)) return '本机执行中';
       if (this.hasPartialFigmaWrite(run)) return '部分写入';
@@ -20053,7 +20094,7 @@ export default {
 
     currentRunStageText(run = null) {
       if (!run) return '等待启动';
-      if (this.isDirectSkillRun(run) && String(run.status || '').toLowerCase() === 'pending') return '等待执行人本机 Worker 领取';
+      if (this.isLocalWorkerRun(run) && /pending|created|queued/i.test(String(run.status || ''))) return this.directSkillQueuedRunLabel(run);
       if (this.isDirectSkillRun(run) && String(run.status || '').toLowerCase() === 'claimed') return '执行人本机已领取';
       if (this.hasPartialFigmaWrite(run)) return 'Figma 已部分写入，最终验收未闭环';
       if (this.isDirectSkillFailedRun(run)) return '本机 Worker 已自动领取后执行失败';
@@ -20454,7 +20495,7 @@ export default {
         return;
       }
       if (this.isRunWaitingForLocalWorker(this.selectedRun)) {
-        ElMessage.info('当前任务已排队，等待本机 Worker 领取');
+        ElMessage.info(this.directSkillQueuedRunDetail(this.selectedRun));
         return;
       }
       const mode = this.canResumeRun(this.selectedRun) ? 'resume' : this.hasRunExecuted(this.selectedRun) ? 'restart' : 'start';
@@ -20472,7 +20513,7 @@ export default {
         return;
       }
       if (this.isRunWaitingForLocalWorker(this.selectedRun)) {
-        ElMessage.info('当前任务已排队，等待本机 Worker 领取');
+        ElMessage.info(this.directSkillQueuedRunDetail(this.selectedRun));
         return;
       }
       return this.confirmStartRun('restart');
@@ -20492,7 +20533,7 @@ export default {
       }
       if (this.isRunWaitingForLocalWorker(this.selectedRun)) {
         this.startConfirm.visible = false;
-        ElMessage.info('当前任务已排队，等待本机 Worker 领取');
+        ElMessage.info(this.directSkillQueuedRunDetail(this.selectedRun));
         return;
       }
       if (this.startConfirm.submitting) return;
@@ -20517,10 +20558,10 @@ export default {
         });
         const onlineWorker = this.currentUserOnlineWorker();
         const waitingText = this.currentUserReadyWorker()
-          ? '等待当前账号本机 Worker 领取...'
+          ? '已唤醒当前账号本机 Worker，正在领取...'
           : onlineWorker
-            ? `等待当前账号本机 Worker 自检通过后领取：${this.directSkillWorkerIssueText(onlineWorker)}`
-            : '等待当前账号本机 Worker 上线并自检通过后领取...';
+            ? `当前账号本机 Worker 在线，待自检通过后领取：${this.directSkillWorkerIssueText(onlineWorker)}`
+            : '当前账号本机 Worker 上线后自动领取...';
         this.logText = mode === 'resume' ? `继续执行已排队，${waitingText}` : `执行已排队，${waitingText}`;
         this.runLogCollapse = [];
         this.runLogDrawerVisible = false;

@@ -242,8 +242,9 @@ async function checkAndExecuteNextRun() {
   }
 }
 
-async function wakeForRunChange() {
-  await refreshLocalChecks(true).catch(error => {
+async function wakeForRunChange(event = null) {
+  if (!shouldWakeForRunEvent(event)) return;
+  await refreshLocalChecks(false).catch(error => {
     console.error(`[worker] 本机自检失败，稍后重试：${error.message}`);
     return localChecks;
   });
@@ -304,7 +305,15 @@ function handlePlatformEventBlock(block = '') {
   } catch {
     return;
   }
-  if (event?.type === 'runs.changed') void wakeForRunChange();
+  if (event?.type === 'runs.changed') void wakeForRunChange(event);
+}
+
+function shouldWakeForRunEvent(event = null) {
+  if (!event || event.type !== 'runs.changed') return false;
+  const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
+  const targetUserId = String(payload.targetUserId || payload.queuedForUserId || payload.assignedToUserId || '').trim();
+  if (targetUserId && targetUserId !== String(currentUser?.id || '').trim()) return false;
+  return payload.wakeWorker === true || !targetUserId;
 }
 
 async function executeRun(run) {

@@ -2267,7 +2267,22 @@ async function handleApi(req, res, url) {
     if (body.executionMode === 'single-skill' || body.executionMode === 'custom-workflow' || normalizeRunMaterialSnapshotsForRequest(body.selectedMaterialSnapshots).length) {
       validateSkillSnapshotForRun(body, { requireSnapshot: true });
     }
-    const run = await createRun({ ...body, createdBy: currentUser.id, ownerUserId: currentUser.id });
+    const currentUserName = currentUser.displayName || currentUser.username || currentUser.id;
+    const now = new Date().toISOString();
+    const run = await createRun({
+      ...body,
+      createdBy: currentUser.id,
+      ownerUserId: currentUser.id,
+      assignedToUserId: body.assignedToUserId || body.assigneeUserId || currentUser.id,
+      assignedToName: body.assignedToName || body.assigneeName || body.developer || currentUserName,
+      queuedForUserId: body.queuedForUserId || body.assignedToUserId || body.assigneeUserId || currentUser.id,
+      queuedForName: body.queuedForName || body.assignedToName || body.assigneeName || body.developer || currentUserName,
+      queuedAt: body.queuedAt || now,
+      executionHost: body.executionHost || 'local-worker',
+      workerExecution: true,
+      workerStatus: body.workerStatus || 'queued',
+      currentStage: body.currentStage || '本机领取中'
+    });
     await writeOperationLog(req, {
       user: currentUser,
       module: 'run',
@@ -2284,7 +2299,13 @@ async function handleApi(req, res, url) {
       },
       description: `${currentUser.displayName || currentUser.username} 创建执行「${run.title}」`
     });
-    broadcastPlatformEvent('runs.changed', { projectId: project.id, runId: run.id, module: 'run-created' });
+    broadcastPlatformEvent('runs.changed', {
+      projectId: project.id,
+      runId: run.id,
+      module: 'run-created',
+      targetUserId: run.queuedForUserId || run.assignedToUserId || run.ownerUserId || currentUser.id,
+      wakeWorker: true
+    });
     sendJson(res, 201, run);
     return;
   }
@@ -2355,7 +2376,13 @@ async function handleApi(req, res, url) {
       metadata: { executionHost: 'local-worker', queuedForUserId: currentUser.id, startMode },
       description: `${currentUser.displayName || currentUser.username} 将执行「${run.title}」排队到本人本机 Worker`
     });
-    broadcastPlatformEvent('runs.changed', { projectId: project.id, runId: run.id, module: 'local-worker-run' });
+    broadcastPlatformEvent('runs.changed', {
+      projectId: project.id,
+      runId: run.id,
+      module: 'local-worker-run',
+      targetUserId: queued.queuedForUserId || queued.assignedToUserId || queued.ownerUserId || currentUser.id,
+      wakeWorker: true
+    });
     sendJson(res, 200, queued);
     return;
   }
@@ -2663,7 +2690,13 @@ async function createDirectSkillRunFromBody(req, project, body = {}, currentUser
     },
     description: `${currentUser.displayName || currentUser.username} 创建直接执行「${run.title}」，指派给 ${assigneeName || assigneeUserId || '未指定成员'}`
   });
-  broadcastPlatformEvent('runs.changed', { projectId: project.id, runId: run.id, module: 'direct-skill-run' });
+  broadcastPlatformEvent('runs.changed', {
+    projectId: project.id,
+    runId: run.id,
+    module: 'direct-skill-run',
+    targetUserId: run.queuedForUserId || run.assignedToUserId || run.ownerUserId || assigneeUserId || currentUser.id,
+    wakeWorker: true
+  });
   return run;
 }
 
@@ -2810,6 +2843,8 @@ function sendPlatformEvent(client, eventName, payload = {}) {
 
 function canReceivePlatformEvent(client, event = {}) {
   const type = event.type || '';
+  const targetUserId = String(event.payload?.targetUserId || '').trim();
+  if (targetUserId && targetUserId !== String(client.userId || '').trim()) return false;
   if (type === 'skill-validations.changed') return client.permissions.has('menu.skillList');
   if (type === 'art-progress-events.changed') return client.permissions.has('menu.skillList');
   if (type === 'art-project-sheet.changed') return client.permissions.has('menu.skillList');
