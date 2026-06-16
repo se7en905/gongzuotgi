@@ -12717,7 +12717,8 @@ export default {
       }
       const assignee = this.directSkillAssigneeOptions.find(user => user.id === dialog.assignedToUserId) || this.currentUser || {};
       const productName = row.productDisplayName || row.productFileName || row.title || this.fileNameFromPath(skillPath) || 'AI 产物';
-      const requirement = String(dialog.requirement || '').trim() || this.defaultSkillRunRequirement({
+      const requirement = this.ensureFigmaTargetInRunRequirement({
+        requirement: String(dialog.requirement || '').trim(),
         materialNames: [productName],
         materialPaths: [skillPath],
         figmaLinks,
@@ -17351,7 +17352,8 @@ export default {
           return;
         }
       }
-      const effectiveRequirement = requirement || this.defaultSkillRunRequirement({
+      const effectiveRequirement = this.ensureFigmaTargetInRunRequirement({
+        requirement,
         materialNames: selectedMaterialSnapshots.map(item => item.title || this.runMaterialDisplayName(item.path || item.sourceValue)),
         materialPaths: materialHints,
         figmaLinks,
@@ -18375,6 +18377,29 @@ export default {
         '完成后必须在最终报告里写明读取的 md / Skill、写入的 Figma 节点和人工复核点。',
         '只有 Figma 写入工具真实返回 createdNodeIds 或 mutatedNodeIds，才允许判定完成；没有这些证据必须回传阻塞或失败原因。'
       ].join('\n');
+    },
+
+    ensureFigmaTargetInRunRequirement({ requirement = '', materialNames = [], materialPaths = [], figmaLinks = '', writeMode = 'target-node' } = {}) {
+      const text = String(requirement || '').trim();
+      if (!text) return this.defaultSkillRunRequirement({ materialNames, materialPaths, figmaLinks, writeMode });
+      const figmaText = String(figmaLinks || '').trim();
+      if (!figmaText || this.requirementContainsFigmaLink(text)) return text;
+      const names = this.normalizedRunMaterialHints(materialNames).filter(Boolean);
+      const paths = this.normalizedRunMaterialHints(materialPaths).filter(Boolean);
+      const materialText = names.length
+        ? names.join('、')
+        : paths.map(item => this.runMaterialDisplayName(item) || item).filter(Boolean).join('、');
+      return [
+        '## Figma 目标绑定',
+        `本次执行要求未单独写 Figma 链接，默认必须对上方填写的 Figma 链接进行操作：${figmaText}`,
+        `请使用${materialText ? `「${materialText}」` : '当前选择的 md / Skill'}处理该 Figma 目标，可按技能要求写入、修改、重新设计或重新创建，但不得扩展到无关页面、无关文件或无关设计内容。`,
+        '',
+        text
+      ].join('\n');
+    },
+
+    requirementContainsFigmaLink(text = '') {
+      return /https?:\/\/(?:www\.)?figma\.com\/(?:design|file|board|slides)\//i.test(String(text || ''));
     },
 
     materialHintsFromCustomWorkflow(workflow = {}) {

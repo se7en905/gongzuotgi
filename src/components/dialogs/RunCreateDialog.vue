@@ -122,7 +122,7 @@
           <div class="field-hint">{{ app.isCustomWorkflowRun ? '执行时会按当前选择顺序从前到后逐个完整执行。' : '只执行当前选择的一个 md / Skill，不自动扩展为其它流程。' }}</div>
         </ElFormItem>
       </template>
-      <ElFormItem :label="app.isBugFixRun ? '修复要求' : '给 Codex 的执行要求'" :class="{ 'is-required-field': app.isBugFixRun }"><ElInput v-model="app.runForm.requirement" type="textarea" :rows="8" :placeholder="app.isBugFixRun ? '描述复现方式、实际表现、期望结果、验证范围。' : '可补充验收标准或不能改动的范围；不填则默认对上方 Figma 链接使用当前 md / Skill，按技能要求写入、重新创建或修改。'" /></ElFormItem>
+      <ElFormItem :label="app.isBugFixRun ? '修复要求' : '给 Codex 的执行要求'" :class="{ 'is-required-field': app.isBugFixRun }"><ElInput v-model="app.runForm.requirement" type="textarea" :rows="8" :placeholder="app.isBugFixRun ? '描述复现方式、实际表现、期望结果、验证范围。' : '可补充验收标准或不能改动的范围；不填或未写 Figma 链接时，默认对上方 Figma 链接使用当前 md / Skill，按技能要求写入、重新创建、重新设计或修改。'" /></ElFormItem>
       <ElButton v-if="app.can('run.create')" type="primary" class="full-button" @click="app.createRun">{{ app.runSubmitLabel }}</ElButton>
     </ElForm>
   </ElDialog>
