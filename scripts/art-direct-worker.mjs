@@ -1445,6 +1445,7 @@ function extractPostWriteFigmaBlockers(source = '', toolEvents = [], lastWriteOr
   for (let index = Math.max(lastWriteOrder + 1, 0); index < lines.length; index += 1) {
     for (const line of figmaEvidenceLineTexts(lines[index])) {
       if (!/(Auth required|OAuth|permission|denied|Transport send error|tool call failed|figma\/(?:use_figma|get_screenshot)|Figma MCP|最终.*(?:失败|阻塞|未完成)|回读.*(?:失败|阻塞|未完成)|截图.*(?:失败|阻塞|未完成)|复扫.*(?:失败|阻塞|未完成))/i.test(line)) continue;
+      if (isNegatedFigmaBlockerLine(line)) continue;
       blockers.push(compactReason(line));
       if (blockers.length >= 5) break;
     }
@@ -1476,6 +1477,12 @@ function extractPostWriteVerificationEvidence(source = '', toolEvents = [], last
     if (evidence.length >= 5) break;
   }
   return [...new Set(evidence)].slice(0, 5);
+}
+
+function isNegatedFigmaBlockerLine(line = '') {
+  const text = compactReason(line);
+  if (!text) return false;
+  return /阻塞原因\s*[:：]\s*(无|没有|未发现)|无最终阻塞|无硬阻塞|无阻塞|没有阻塞|未发现阻塞|不构成阻塞|不作为阻塞/i.test(text);
 }
 
 function figmaEvidenceLineTexts(line = '') {

@@ -1763,7 +1763,8 @@ async function enrichRunWithFigmaLogEvidence(run) {
 function shouldDeriveFigmaEvidenceFromLog(run = {}) {
   if (!runRequiresFigmaWriteEvidence(run)) return false;
   if (!isFinishedRun(run.status) && !isFinishedRun(run.workerStatus)) return false;
-  if (hasFigmaWriteEvidence(run)) return false;
+  const result = run.figmaWriteResult && typeof run.figmaWriteResult === 'object' ? run.figmaWriteResult : {};
+  if (hasFigmaWriteEvidence(run) && !(result.partialWrite === true || cleanString(run.status).toLowerCase() === 'blocked' || cleanString(run.workerStatus).toLowerCase() === 'blocked')) return false;
   return Boolean(cleanString(run.logPath) || cleanString(run.id));
 }
 
@@ -1864,6 +1865,7 @@ function extractPostWriteBlockersFromLog(text = '') {
   for (let index = lastWriteIndex + 1; index < lines.length; index += 1) {
     const line = lines[index];
     if (!/(Auth required|OAuth|permission|denied|Transport send error|tool call failed|figma\/(?:use_figma|get_screenshot)|Figma MCP|最终.*(?:失败|阻塞|未完成)|回读.*(?:失败|阻塞|未完成)|截图.*(?:失败|阻塞|未完成)|复扫.*(?:失败|阻塞|未完成))/i.test(line)) continue;
+    if (isNegatedFigmaBlockerLine(line)) continue;
     blockers.push(`Figma 写入后验收失败：${compactEvidenceReason(line)}`);
     if (blockers.length >= 5) break;
   }
@@ -1891,6 +1893,12 @@ function findLastFigmaWriteLineIndex(lines = []) {
     if (/createdNodeIds|mutatedNodeIds/i.test(lines[index] || '')) return index;
   }
   return -1;
+}
+
+function isNegatedFigmaBlockerLine(line = '') {
+  const text = compactEvidenceReason(line);
+  if (!text) return false;
+  return /阻塞原因\s*[:：]\s*(无|没有|未发现)|无最终阻塞|无硬阻塞|无阻塞|没有阻塞|未发现阻塞|不构成阻塞|不作为阻塞/i.test(text);
 }
 
 function figmaLogEvidenceLineTexts(line = '') {
