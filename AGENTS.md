@@ -482,6 +482,7 @@
   - 工作台按钮操作名称如果命中产物名称或任一调用别名，且该操作产生了真实生成、真实执行、复用成功或调用结果，也必须增加该产物调用次数；正向验证回填代表成员已实际使用并验证产物，应计入调用次数；单纯打开页面、刷新库存、扫描、保存展示、保存别名、研究沉淀、Worker 领取、排队、运行中回传、取消和删除都不得计入调用次数。
   - 调用别名匹配必须忽略大小写，并对空格、横线、下划线、中英文标点做统一标准化。
   - 调用次数归属必须绑定稳定产物键、产物原名、展示名称、当前别名和隐藏历史别名；负责人改别名后，旧累计调用次数不得丢失。
+  - 调用次数桶必须绑定当前库存真实产物身份：只允许命中 `project-scan-cache.json`、`skill-version-overrides.json` 中可还原到具体 Skill/md/规范/文件夹产物的名称、路径、展示名或别名；任务标题、Figma URL、脚本名、通用 md 文件名、自然语言长句、运行摘要、节点 ID 和 `art_department_*` 等非库存身份不得建桶或作为 alias 留存。
   - 同一次上报同时命中产物名、旧别名和新别名时，必须按事件唯一键去重，不得重复累计。
   - `usage-counters.json` 是累计调用次数事实来源；两天清理原始明细时只删除短期原始明细，不得删除或重置累计桶。
   - 删除 AI档案、操作日志、清理原始上报明细、构建前端、刷新页面或切换账号，都不得导致已累计调用次数减少。
@@ -496,7 +497,7 @@
   - 执行调用次数累计必须读取 run 中的 `productName`、`sourceTitle`、`primarySkillPath`、`stage`、`selectedMaterialHints`、`materials`、`referenceItems` 等字段，命中产物名、展示名、文件名、路径和别名；不得只依赖操作日志标题。
   - `CREATE_RUN`、`START_RUN`、`RETRY_RUN`、`CLAIM_LOCAL_WORKER_RUN`、`QUEUE_RUN_LOCAL_WORKER`、`UPDATE_LOCAL_WORKER_RUN` 等操作日志只作为审计和状态线索，默认不得直接补成调用次数；只有结构化 `metadata.countAsSkillUsage === true` 或 `metadata.countAsProductUsage === true` 且不是显式 false 时，才允许作为真实调用补计数线索，并必须使用事件唯一键去重。
   - `usage-counters.json` 中 `count` 是混合证据总量，不等于调用次数；前端调用次数必须优先读取 `usageCount` 和 `usagePeople`，并用 `usageEventKeys` 对同一真实事件在产物名、路径、当前别名、历史别名、标题桶之间的重复命中去重。正向验证回填应作为 `usageCount` 事件写入，负向/待判断验证不得写入 `usageCount`；不得把 `count`、`researchSyncCount`、`validationCount` 或 `people` 当调用次数展示。
-  - `/api/usage-counters` 返回的累计桶必须带当前调用次数口径版本，例如 `logicVersion: usage-only-v5-strong-evidence-compact`；前端只允许恢复同口径版本的浏览器缓存，旧口径本地缓存必须丢弃并重新读取服务端，避免旧 `count` 或旧 `usageCount` 在刷新页面时回流。
+  - `/api/usage-counters` 返回的累计桶必须带当前调用次数口径版本，例如 `logicVersion: usage-only-v6-inventory-bound-targets`；前端只允许恢复同口径版本的浏览器缓存，旧口径本地缓存必须丢弃并重新读取服务端，避免旧 `count` 或旧 `usageCount` 在刷新页面时回流。
   - AI产物清单首屏快照不得作为调用次数和有效占比的事实来源；快照只保留行结构、版本、贡献人和质量分等展示兜底，展示调用次数时必须重新按当前 `usageCounters.usageCount/usagePeople/usageEventKeys` 装饰。无法命中新口径累计桶时只能显示 `0` 或作废横线，不得回退扫描缓存里的 `row.usageCount`、`skill.usageCount`、旧 `displayUsageCount` 或 `count`。
   - 成员调用明细只能在去重后的真实调用总数内分配；同一事件同时出现中文姓名、账号、别名、路径或多个桶时，只能绑定一个主使用人并累计一次，不得因成员字段重复或别名重叠把总次数放大。
   - 执行调用次数写入成功后必须广播 `usage-counters.changed`；客户端只刷新 `/api/usage-counters`，不得触发库存扫描、Git 拉取、本地路径读取或共享盘读取。

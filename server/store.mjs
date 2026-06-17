@@ -4088,6 +4088,7 @@ async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCount
     if (buckets[key]) continue;
     const sourceSet = item.sources instanceof Set ? item.sources : new Set();
     const canCreateHistoricalBucket = sourceSet.has('skill-validation')
+      || (inventoryIdentity?.keys instanceof Set && inventoryIdentity.keys.has(key) && sourceSet.has('run'))
       || (key === taskArtBriefUsageCounterKey && sourceSet.has('task-art-brief'));
     if (!canCreateHistoricalBucket) continue;
     const usageEventKeys = [...(item.usageEventKeys || [])];
@@ -4271,12 +4272,28 @@ function normalizeUsageBucketAliases(bucket = {}) {
   const aliases = rawAliases
     .map(cleanString)
     .filter(Boolean)
-    .filter(value => isInventoryUsageIdentityValue(value) || usageCounterKey(value) === bucket.key)
+    .filter(value => isCleanUsageBucketAlias(value, bucket.key))
     .filter((value, index, array) => array.findIndex(item => usageCounterKey(item) === usageCounterKey(value)) === index)
     .slice(-50);
   const changed = JSON.stringify(rawAliases) !== JSON.stringify(aliases);
   bucket.aliases = aliases;
   return changed;
+}
+
+function isCleanUsageBucketAlias(value = '', bucketKey = '') {
+  const text = cleanString(value).replace(/\\/g, '/');
+  if (!text) return false;
+  if (!isStrongUsageTargetValue(text)) return false;
+  if (looksLikeTaskOrProjectIdentifier(text)) return false;
+  if (looksLikeUrlTarget(text)) return false;
+  if (looksLikePlatformScriptTarget(text)) return false;
+  if (looksLikeLongUsageSummaryTarget(text)) return false;
+  const key = usageCounterKey(text);
+  if (!key) return false;
+  if (key !== bucketKey && !isInventoryUsageIdentityValue(text)) return false;
+  const parts = text.split('/').filter(Boolean);
+  if (parts.length >= 3 && !looksLikePrimaryArtifactTarget(text)) return false;
+  return true;
 }
 
 function mergeUsageCounterBucket(target = {}, source = {}) {
@@ -4287,7 +4304,7 @@ function mergeUsageCounterBucket(target = {}, source = {}) {
   target.aliases = [...(Array.isArray(target.aliases) ? target.aliases : []), source.target, ...(Array.isArray(source.aliases) ? source.aliases : [])]
     .map(cleanString)
     .filter(Boolean)
-    .filter(value => isInventoryUsageIdentityValue(value) || usageCounterKey(value) === target.key)
+    .filter(value => isCleanUsageBucketAlias(value, target.key))
     .filter((value, index, array) => array.findIndex(item => usageCounterKey(item) === usageCounterKey(value)) === index)
     .slice(-80);
   target.eventKeys = [...(Array.isArray(target.eventKeys) ? target.eventKeys : []), ...(Array.isArray(source.eventKeys) ? source.eventKeys : [])]
@@ -4443,7 +4460,7 @@ async function historicalUsageBucketRebuildMap(inventoryIdentity = null) {
     if (!isUsageLikeRun(run)) continue;
     const at = cleanString(run.startedAt || run.createdAt);
     const owners = usageOwnersFromRun(run);
-    const eventKey = usageEventKey(run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill' ? 'direct-skill-run' : 'run', run.id || run.primarySkillPath || run.stage || run.title, at);
+    const eventKey = usageEventKey('run-usage', run.id || run.primarySkillPath || run.stage || run.title, '');
     const values = runUsageTargetValues(run);
     for (const target of values.flatMap(usageTargetCandidates)) addTarget(target, owners, eventKey, at, 'run');
   }
@@ -4499,11 +4516,11 @@ function applyHistoricalUsageBucketRebuild(bucket = {}, rebuildMap = new Map()) 
     if (item.lastAt) lastAt = lastAt ? (String(lastAt).localeCompare(String(item.lastAt)) >= 0 ? lastAt : item.lastAt) : item.lastAt;
   }
   rebuiltUsageCount = Math.max(0, rebuiltUsageCount);
-  const usageCount = Math.max(existingUsageCount, rebuiltUsageCount);
   const usageEventKeyList = [
     ...(Array.isArray(bucket.usageEventKeys) ? bucket.usageEventKeys.map(cleanString).filter(Boolean) : []),
     ...usageEventKeys
   ].filter((eventKey, index, array) => array.indexOf(eventKey) === index);
+  const usageCount = Math.max(existingUsageCount, rebuiltUsageCount, usageEventKeyList.length);
   const nextUsagePeople = mergeHistoricalUsagePeople(existingUsagePeople, usagePeople, usageCount);
   const changed = Number(bucket.usageCount || 0) !== usageCount
     || JSON.stringify(bucket.usagePeople || {}) !== JSON.stringify(nextUsagePeople)
@@ -4812,6 +4829,14 @@ function normalizeUsageBucketTotals(bucket = {}) {
   }
   const usageTotal = Object.values(usagePeople).reduce((sum, value) => sum + Number(value || 0), 0);
   let usageCount = Math.max(0, Math.round(Number(bucket.usageCount || 0)));
+  const usageEventKeyCount = Array.isArray(bucket.usageEventKeys)
+    ? bucket.usageEventKeys.map(cleanString).filter(Boolean).filter((value, index, array) => array.indexOf(value) === index).length
+    : 0;
+  if (usageEventKeyCount > usageCount) {
+    usageCount = usageEventKeyCount;
+    bucket.usageCount = usageCount;
+    changed = true;
+  }
   if (usageCount <= 0) {
     if (usageCount !== 0 || usageTotal !== 0 || Object.keys(bucket.usagePeople || {}).length) changed = true;
     bucket.usageCount = 0;
@@ -4981,6 +5006,7 @@ async function updateUsageCounters(targets = []) {
     ]
       .map(cleanString)
       .filter(Boolean)
+      .filter(value => isCleanUsageBucketAlias(value, key))
       .filter((value, index, array) => array.findIndex(item => usageCounterKey(item) === usageCounterKey(value)) === index)
       .slice(-50);
     bucket.count = Number(bucket.count || 0) + Number(target.count || 1);
@@ -5161,7 +5187,7 @@ function usageTargetsFromRun(run = {}, options = {}) {
     at,
     source,
     kind: 'usage',
-    eventKey: usageEventKey(source, run.id || run.primarySkillPath || run.stage || run.title, at)
+    eventKey: usageEventKey('run-usage', run.id || run.primarySkillPath || run.stage || run.title, '')
   });
 }
 
@@ -5169,7 +5195,7 @@ function isUsageLikeRun(run = {}) {
   if (!run || typeof run !== 'object') return false;
   const status = cleanString(run.status || run.workerStatus || run.platformStatus).toLowerCase();
   if (/cancel|canceled|cancelled|pending|queued|draft|deleted|void|running|claim|start/.test(status)) return false;
-  if (!/completed|done|success|passed|conditional_pass|finished/.test(status)) return false;
+  if (!/completed|done|success|passed|conditional_pass|finished|blocked|failed/.test(status)) return false;
   if (run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill') return true;
   if (normalizeWorkflowId(run.workflow || '') === 'art-single-skill') return true;
   if (cleanString(run.executionMode) === 'single-skill') return true;
@@ -5503,7 +5529,7 @@ function artProgressEventMergeKey(input = {}) {
 }
 
 function usageCounterKey(value = '') {
-  const text = cleanUsageTargetLabel(value)
+  const text = usageCounterKeySourceText(value)
     .replace(/\\/g, '/')
     .split('/')
     .filter(Boolean)
@@ -5513,6 +5539,15 @@ function usageCounterKey(value = '') {
     .replace(/[_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '') || '';
   if (!text || text.length < 3 || isGenericUsageTarget(text) || isTechnicalUsageTarget(text)) return '';
   return text;
+}
+
+function usageCounterKeySourceText(value = '') {
+  const raw = cleanUsageTargetLabel(value).replace(/\\/g, '/');
+  const parts = raw.split('/').map(part => cleanString(part)).filter(Boolean);
+  if (parts.length >= 2 && /^SKILL\.md$/i.test(parts[parts.length - 1])) {
+    return parts[parts.length - 2] || raw;
+  }
+  return raw;
 }
 
 function normalizeAgentWorker(input = {}) {

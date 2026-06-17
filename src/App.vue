@@ -541,7 +541,7 @@ const RUN_LOG_RENDER_MAX_CHARS = 80 * 1024;
 const RUN_LOG_RENDER_MAX_LINES = 400;
 const RUN_LOG_LINE_MAX_CHARS = 2400;
 const SKILL_AUDIT_RULE_VERSION = '9-dimension-v2-fulltext';
-const USAGE_COUNTER_LOGIC_VERSION = 'usage-only-v5-strong-evidence-compact';
+const USAGE_COUNTER_LOGIC_VERSION = 'usage-only-v6-inventory-bound-targets';
 const LARGE_WORKBENCH_DISPLAY_CACHE_KEYS = new Set([
   'aiMembersSnapshot',
   'aiMembersBoardHtmlSnapshot',
@@ -569,6 +569,17 @@ function readWorkbenchDisplayCacheValue(key = '', fallback = null) {
   } catch {
     return fallback;
   }
+}
+
+function readCurrentUsageCountersDisplayCache() {
+  const payload = readWorkbenchDisplayCacheValue('usageCounters', null);
+  return payload
+    && typeof payload === 'object'
+    && payload.logicVersion === USAGE_COUNTER_LOGIC_VERSION
+    && payload.buckets
+    && typeof payload.buckets === 'object'
+    ? payload
+    : null;
 }
 
 function readWorkbenchDisplayCacheArray(key = '') {
@@ -708,7 +719,7 @@ export default {
       artProgressLifecycleLogRows: [],
       artProgressOperationLogRows: [],
       taskArtBriefUsageLogs: [],
-      usageCounters: null,
+      usageCounters: readCurrentUsageCountersDisplayCache(),
       artProgressLogDialog: false,
       artProgressLogType: 'operation',
       artProgressPage: 1,
@@ -1119,6 +1130,13 @@ export default {
 
     skillInventoryUsingFirstPageSnapshot() {
       if (!this.skillInventoryFirstPageSnapshotRows.length) return false;
+      if (this.isSkillInventoryViewActive
+        && Number(this.skillInventoryPage || 1) === 1
+        && !this.skillInventoryKeyword
+        && !this.skillInventoryMemberFilter
+        && !this.skillInventoryKindFilter
+        && this.skillInventoryPreferMine !== true
+        && !this.usageCountersReadyForSkillInventory()) return true;
       if (!this.skillInventoryContentReady) return true;
       if (this.skillInventoryAwaitingServerScanCache && Number(this.skillInventoryPage || 1) === 1) return true;
       return !this.safeFilteredSkillInventoryRows.length
@@ -4877,8 +4895,8 @@ export default {
         hidden: row.hidden === true,
         displayVersionLabel: row.displayVersionLabel || '1.0',
         displayVersionClass: row.displayVersionClass || '',
-        displayUsageCount: row.hidden === true ? '-' : 0,
-        displayUsageRate: '-',
+        displayUsageCount: row.hidden === true ? '-' : (row.displayUsageCount ?? 0),
+        displayUsageRate: row.displayUsageRate || '-',
         displayQualityScore: row.displayQualityScore ?? null,
         displayQualityClass: row.displayQualityClass || '',
         displayQualityText: row.displayQualityText || '',
@@ -4903,6 +4921,7 @@ export default {
 
     skillInventorySnapshotRowWithLiveStats(row = {}) {
       if (!row || row.hidden === true) return row;
+      if (!this.usageCountersReadyForSkillInventory()) return row;
       const liveRow = this.skillInventoryRows.find(item => {
         const leftKey = this.skillInventoryDedupeKey(item);
         const rightKey = this.skillInventoryDedupeKey(row);
@@ -4933,6 +4952,7 @@ export default {
     saveSkillInventoryFirstPageSnapshot(options = {}) {
       const force = options.force === true;
       if (!this.skillInventoryContentReady && !force) return false;
+      if (!this.usageCountersReadyForSkillInventory()) return false;
       const pageSize = Math.max(1, Number(this.skillInventoryPageSize || 10) || 10);
       const stats = options.stats && typeof options.stats === 'object'
         ? options.stats
@@ -5344,7 +5364,7 @@ export default {
       }
       if (view === 'maintenance-center') {
         if (this.isPlatformAdmin && !this.loading.maintenance) this.refreshMaintenanceOverview().catch(() => {});
-        if (this.isPlatformAdmin && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
+        if (this.isPlatformAdmin && this.maintenanceForm.type === 'runs') this.ensureMaintenanceUserOptions();
       }
     },
 
@@ -9213,12 +9233,20 @@ export default {
       };
       this.maintenancePreview = null;
       this.maintenancePreviewPayloadKey = '';
+      if (type === 'runs') this.ensureMaintenanceUserOptions();
     },
 
     resetMaintenanceFilters() {
       this.maintenanceForm.filters = emptyMaintenanceFilters();
       this.maintenancePreview = null;
       this.maintenancePreviewPayloadKey = '';
+    },
+
+    ensureMaintenanceUserOptions() {
+      if (!this.isPlatformAdmin || this.users.length || this.loading.users) return;
+      if (this.can('api.users.manage')) {
+        this.refreshUsers().catch(() => {});
+      }
     },
 
     maintenancePayload() {
@@ -10103,17 +10131,18 @@ export default {
       const memberCounts = this.skillInventoryHistoricalUsageMemberCounts(historical, {
         usageOnly: true
       });
+      const usageCountersReady = this.usageCountersReadyForSkillInventory();
       const currentLogs = this.skillUsageLogs(row);
       const currentUsageLogs = currentLogs.filter(item => this.skillUsageLogCountsAsCall(item));
-      const hasUsageHistorical = this.hasUsageCounterUsageStats(historical);
+      const hasUsageHistorical = usageCountersReady && this.hasUsageCounterUsageStats(historical);
       const supplementalLogs = hasUsageHistorical ? [] : currentUsageLogs;
-      supplementalLogs.forEach(item => {
+      if (usageCountersReady) supplementalLogs.forEach(item => {
         this.addSkillInventoryUsageMemberCount(memberCounts, item.person, 1);
       });
       const people = new Set([...memberCounts.keys()]);
       const usageCount = hasUsageHistorical
         ? Math.max(0, Math.round(Number(historical.usageCount || 0)))
-        : this.skillInventoryUsageMemberCountTotal(memberCounts);
+        : (usageCountersReady ? this.skillInventoryUsageMemberCountTotal(memberCounts) : this.skillInventorySnapshotUsageCountForRow(row));
       const count = usageCount;
       const coverage = this.skillUsageCoverageStats(row, currentUsageLogs, { historicalPeople: people });
       const rate = coverage.rate;
@@ -10128,6 +10157,30 @@ export default {
         validationCount: 0,
         researchSyncCount: 0
       };
+    },
+
+    usageCountersReadyForSkillInventory() {
+      return this.isCurrentUsageCountersPayload(this.usageCounters) && this.hasUsageCounterBuckets();
+    },
+
+    skillInventorySnapshotUsageCountForRow(row = {}) {
+      if (row.hidden === true) return 0;
+      const matched = this.skillInventoryFirstPageSnapshotRowFor(row);
+      const value = matched ? matched.displayUsageCount : row.displayUsageCount;
+      return Math.max(0, Math.round(Number(value || 0)));
+    },
+
+    skillInventoryFirstPageSnapshotRowFor(row = {}) {
+      const rows = Array.isArray(this.skillInventoryFirstPageSnapshot?.rows) ? this.skillInventoryFirstPageSnapshot.rows : [];
+      if (!rows.length) return null;
+      const rowKey = this.skillInventoryDedupeKey(row);
+      const rowUid = String(row.uid || row.id || '').trim();
+      return rows.find(item => {
+        const itemKey = this.skillInventoryDedupeKey(item);
+        if (rowKey && itemKey && rowKey === itemKey) return true;
+        const itemUid = String(item.uid || item.id || '').trim();
+        return Boolean(rowUid && itemUid && rowUid === itemUid);
+      }) || null;
     },
 
     isExcludedSkillVersionUsagePerson(person = '') {
@@ -10309,30 +10362,26 @@ export default {
         if (!this.usageBucketMatchesRowTime(bucket, row, connectedAt)) return;
         seen.add(normalizedKey);
         const usageEventKeys = Array.isArray(bucket.usageEventKeys) ? bucket.usageEventKeys.filter(Boolean) : [];
-        const countableKeys = usageEventKeys;
-        const newEventKeys = countableKeys.filter(eventKey => !seenEventKeys.has(eventKey));
-        const eventRatio = countableKeys.length ? newEventKeys.length / countableKeys.length : 1;
+        const bucketUsageTotal = this.usageCounterBucketCountableTotal(bucket);
+        const hasCompleteUsageEventKeys = bucketUsageTotal > 0 && usageEventKeys.length >= bucketUsageTotal;
+        const newEventKeys = usageEventKeys.filter(eventKey => !seenEventKeys.has(eventKey));
+        const eventRatio = hasCompleteUsageEventKeys && usageEventKeys.length ? newEventKeys.length / usageEventKeys.length : 1;
         if (!eventRatio) return;
-        countableKeys.forEach(eventKey => seenEventKeys.add(eventKey));
+        usageEventKeys.forEach(eventKey => seenEventKeys.add(eventKey));
         const newUsageEventKeys = usageEventKeys.filter(eventKey => !seenUsageEventKeys.has(eventKey));
         usageEventKeys.forEach(eventKey => seenUsageEventKeys.add(eventKey));
-        const applyCount = value => Math.round(Number(value || 0) * eventRatio);
         const bucketUsagePeople = bucket.usagePeople && typeof bucket.usagePeople === 'object'
           ? bucket.usagePeople
           : {};
-        const bucketTotalLimit = applyCount(this.usageCounterBucketCountableTotal(bucket));
-        const bucketUsageTotal = applyCount(bucket.usageCount || 0);
-        const usageEventRatio = usageEventKeys.length ? (newUsageEventKeys.length / usageEventKeys.length) : eventRatio;
-        const bucketUsageLimit = usageEventKeys.length ? Math.round(bucketUsageTotal * usageEventRatio) : bucketUsageTotal;
+        const usageEventRatio = hasCompleteUsageEventKeys && usageEventKeys.length ? (newUsageEventKeys.length / usageEventKeys.length) : eventRatio;
+        const bucketUsageLimit = hasCompleteUsageEventKeys ? Math.round(bucketUsageTotal * usageEventRatio) : bucketUsageTotal;
+        const bucketTotalLimit = bucketUsageLimit;
         const peopleLimit = bucketTotalLimit;
         const usagePersonRatio = usageEventKeys.length ? usageEventRatio : eventRatio;
         applyPersonCounts(usagePeople, bucketUsagePeople, usagePersonRatio, bucketUsageLimit || Infinity);
         applyPersonCounts(people, bucket.people || {}, eventRatio, peopleLimit || Infinity);
-        const bucketUsageCount = bucketUsageLimit > 0
-          ? bucketUsageLimit
-          : Object.values(bucketUsagePeople).reduce((sum, value) => sum + applyCount(value), 0);
-        count += bucketUsageCount;
-        usageCount += bucketUsageCount;
+        count += bucketUsageLimit;
+        usageCount += bucketUsageLimit;
       };
       keys.forEach(key => {
         const normalizedKey = this.normalizeUsageMatchText(key).replace(/\.(md|markdown)$/i, '');
