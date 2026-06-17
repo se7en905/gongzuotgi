@@ -259,6 +259,12 @@
   - `重新执行` 必须作为独立次级操作保留，只在负责人明确点击时才清空旧日志、重置阶段和结果，从第一步重新跑；不得把 `继续执行` 和 `重新执行` 混成同一个按钮。
   - `继续执行` 不等于恢复已被 kill 的 Codex 进程内存；它必须通过读取已有产物、阶段报告、旧日志尾部和当前 Figma 状态来续跑，避免重复创建已完成节点或重复执行已完成步骤。
   - 每条美术执行记录必须长期保留 `startedAt`、`finishedAt`、`durationMs`、`stages[].startedAt`、`stages[].finishedAt`、`stages[].durationMs` 和必要阶段状态；除非负责人通过对应业务删除入口明确删除该执行记录，否则刷新、切页、操作日志删除、AI档案筛选或轻量恢复都不得清空这些字段。
+  - 本机执行状态不得只看 `claimedAt`、`startedAt` 或 `status=running` 判定为真实执行。必须结合 Worker 心跳 `currentRunId`、服务端 `run.log`、`workerLocalLogPath/workerLocalLogSize`、`workerResult`、`resultSummary`、`figmaWriteResult`、产物目录和最近真实活动时间共同判断。
+  - Worker 已领取并回传 running，但长时间没有 Codex stdout/stderr、没有最终状态、没有 Figma 写入证据，且领取设备在线但 `currentRunId` 已为空或不等于该执行时，平台必须判为 `本机回传失联` / `本机阻塞`，不得继续显示普通 `本机执行中`。
+  - 日志抽屉没有 `run.log` 时必须返回可读诊断，说明领取设备、领取时间、开始时间、最近状态回传、本机日志路径和阻塞原因；不得只显示“暂无关键执行日志”让负责人误判为仍在正常实时接收。
+  - Worker 自更新后必须先退出或重启，不得在已安排自更新重启的同一轮继续领取或恢复新任务，避免刚领取就退出造成空日志 running。
+  - Worker 恢复旧 `running` 记录必须有本机未完成快照和可恢复证据；如果本机日志只有 Worker 启动提示、没有任何非 `[worker]` 的 Codex 输出，且已超过无输出阈值，必须清理本机旧状态并交给平台判阻塞或由负责人明确继续执行，不得反复恢复同一条旧任务。
+  - Worker 启动 Codex 后必须尽早回传本机日志路径和日志大小；如果 Codex 长时间没有任何 stdout/stderr 输出，必须超时终止并回传失败/阻塞摘要，不得无限保持 running。
   - 美术执行台右侧 `执行步骤明细` 必须展示累计执行耗时和每步阶段耗时；累计耗时显示在模块右上角，每步下方按上下布局展示状态和耗时，例如 `已完成`、`00:00:00`。已有真实耗时不得因刷新、读取阶段报告、恢复历史记录或界面重算变成 `00:00:00`。
   - 中断、继续执行和重新执行都不得无故丢失已有阶段耗时。`继续执行` 只能从未完成阶段追加或更新耗时；`重新执行` 只有在负责人明确点击重跑时才允许重置运行态和阶段状态，但仍不得丢失原始 Figma 链接、补充要求、执行对象、执行模式和上下文线索。
   - 美术执行台右侧任务明细必须使用统一基础结构：顶部标题和操作按钮、`执行步骤明细`、结果明细模块、执行对象、执行环境、问题提示、下一步操作和 `查看档案` 入口。不同执行类型只能在这套基础结构后面新增补充模块，不得替换成另一套主展示。
@@ -672,6 +678,7 @@
   - `PATCH /api/agent-workers/:id/alias`：本人修改 Worker 设备花名。
   - `/api/agent-runs/next`：Worker 自动领取直接执行。
   - `/api/agent-runs/recover`：Worker 只按执行人本机已有未完成快照恢复同设备直接执行；不得无本机快照恢复旧 `running` 记录。
+  - `/api/agent-runs/:id/status` 必须保存 Worker 回传的 `workerLocalLogPath`、`workerLocalLogSize` 和 `workerResult.localLogPath/localLogSize`，不得丢弃本机日志证据。
   - `/api/agent-runs/:id/sync`：Worker 批量补传离线日志、状态和阶段耗时事件；必须按 `runId + eventId` 幂等更新原执行记录。
   - `/api/agent-runs/missing`：Worker 上报本机仍保留的 `runId` 列表，平台只返回已经不存在的执行记录 ID，用于执行人本机清理缓存；不得作为长期删除墓碑写入无限增长数据。
   - `/api/agent-runs/:id/log`：Worker 回传执行日志。

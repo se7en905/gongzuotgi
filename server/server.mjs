@@ -2516,7 +2516,7 @@ async function handleApi(req, res, url) {
     await requireRunViewAccess(currentUser, run);
     const fallbackLogPath = path.join(paths.workspaceDir, run.id, 'run.log');
     const tailBytes = clampNumber(url.searchParams.get('tailBytes'), 16 * 1024, 1024 * 1024, defaultRunLogTailBytes);
-    await serveRunLog(res, run.logPath || fallbackLogPath, currentUser, { tailBytes });
+    await serveRunLog(res, run.logPath || fallbackLogPath, currentUser, { tailBytes, run });
     return;
   }
 
@@ -5694,6 +5694,15 @@ async function serveRunLog(res, file, currentUser, options = {}) {
   try {
     stat = await fs.stat(abs);
   } catch {
+    if (options.run && shouldReturnRunLogDiagnostic(options.run)) {
+      res.writeHead(200, {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'X-Run-Log-Bytes': '0',
+        'X-Run-Log-Diagnostic': '1'
+      });
+      res.end(buildRunLogDiagnostic(options.run));
+      return;
+    }
     sendJson(res, 404, { error: '日志文件不存在。', code: 'ENOENT' });
     return;
   }
@@ -5721,6 +5730,29 @@ async function serveRunLog(res, file, currentUser, options = {}) {
   } finally {
     await handle.close();
   }
+}
+
+function shouldReturnRunLogDiagnostic(run = {}) {
+  const status = `${run.status || ''} ${run.workerStatus || ''} ${run.resultSummary?.status || ''}`.toLowerCase();
+  return /blocked|failed|running|claimed|in_progress/.test(status);
+}
+
+function buildRunLogDiagnostic(run = {}) {
+  const status = `${run.status || ''}${run.workerStatus ? ` / ${run.workerStatus}` : ''}`.trim() || '未知';
+  const blockerReason = run.resultSummary?.blockerReason || run.blocker?.reason || '';
+  return [
+    '[platform] 未找到服务端 run.log。',
+    `执行记录：${run.title || run.id || '未命名'}`,
+    `当前状态：${status}`,
+    `领取设备：${run.claimedByDeviceId || '未领取'}`,
+    `领取时间：${run.claimedAt || '无'}`,
+    `开始时间：${run.startedAt || '无'}`,
+    `最近状态回传：${run.updatedAt || '无'}`,
+    run.workerLocalLogPath ? `执行人本机日志路径：${run.workerLocalLogPath}` : '执行人本机日志路径：未回传',
+    blockerReason ? `阻塞原因：${blockerReason}` : '',
+    '',
+    '说明：这代表平台没有收到 Codex stdout/stderr 或 Worker 补传的日志内容，不能按“已真实执行完成”判断。'
+  ].filter(Boolean).join('\n');
 }
 
 async function serveRunFilePreview(res, project, file, version = 'current') {

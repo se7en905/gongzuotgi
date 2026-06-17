@@ -70,6 +70,7 @@ const useMysqlStore = process.env.AWP_USE_MYSQL === '1';
 const retentionDays = Math.max(1, Number(process.env.AWP_DATA_RETENTION_DAYS || 2) || 2);
 const retentionEnabled = process.env.AWP_DATA_RETENTION_ENABLED !== '0';
 const runFigmaLogEvidenceCache = new Map();
+const staleLocalWorkerRunMs = Math.max(10 * 60 * 1000, Number(process.env.AWP_STALE_LOCAL_WORKER_RUN_MS || 20 * 60 * 1000));
 const retentionPaths = new Set([
   paths.aiFlowRecords,
   paths.operationLogs,
@@ -763,7 +764,7 @@ export async function ensureTaskForRun(input) {
 }
 
 export async function listRuns() {
-  const runs = await readJson(paths.runs, []);
+  const runs = await reconcileStaleLocalWorkerRuns();
   const hydratedRuns = await Promise.all(runs.map(hydrateRunStages));
   const enrichedRuns = await Promise.all(hydratedRuns.map(enrichRunWithFigmaLogEvidence));
   return enrichedRuns.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -890,7 +891,7 @@ export function redactCodexConfig(config = {}) {
 }
 
 export async function getRun(id) {
-  const runs = await readJson(paths.runs, []);
+  const runs = await reconcileStaleLocalWorkerRuns();
   const run = runs.find(item => item.id === id) || null;
   return enrichRunWithFigmaLogEvidence(await hydrateRunStages(run));
 }
@@ -1127,6 +1128,13 @@ export async function updateAgentRunFromWorker(runId, input = {}) {
   if (index === -1) return null;
   const now = new Date().toISOString();
   const existing = runs[index];
+  if (isFinalWorkerRunStatus(existing.status || existing.workerStatus) && !isFinalWorkerRunStatus(input.status || input.workerStatus)) {
+    const hydrated = await hydrateRunStages(existing);
+    return {
+      ...hydrated,
+      _changed: false
+    };
+  }
   const timingPatch = normalizeWorkerTimingPatch(input, existing);
   const nextStatus = resolveWorkerRunStatusTransition(existing, input.status || input.workerStatus || existing.status);
   const patch = {
@@ -1148,6 +1156,10 @@ export async function updateAgentRunFromWorker(runId, input = {}) {
   if (input.logPath) patch.logPath = input.logPath;
   if (input.promptPath) patch.promptPath = input.promptPath;
   if (input.artifactRoot) patch.artifactRoot = input.artifactRoot;
+  const workerLocalLogPath = cleanString(input.workerLocalLogPath || input.workerResult?.localLogPath);
+  if (workerLocalLogPath) patch.workerLocalLogPath = workerLocalLogPath;
+  const workerLocalLogSize = Number(input.workerLocalLogSize ?? input.workerResult?.localLogSize);
+  if (Number.isFinite(workerLocalLogSize) && workerLocalLogSize >= 0) patch.workerLocalLogSize = workerLocalLogSize;
   const nextRun = guardFigmaWriteCompletion({ ...existing, ...patch });
   if (!hasWorkerRunMaterialChange(existing, nextRun)) {
     const hydrated = await hydrateRunStages(existing);
@@ -1709,6 +1721,227 @@ async function hydrateRunStages(run) {
     stages: updatedStages,
     currentStage: run.currentStage && isFinishedRun(run.status) ? null : run.currentStage
   };
+}
+
+async function reconcileStaleLocalWorkerRuns() {
+  const runs = await readJson(paths.runs, []);
+  const workers = await readJson(paths.agentWorkers, []);
+  const workerByDevice = new Map(workers.map(worker => [cleanString(worker.deviceId), worker]));
+  const now = new Date();
+  let changed = false;
+  const nextRuns = [];
+  for (const run of Array.isArray(runs) ? runs : []) {
+    if (await shouldMarkLocalWorkerRunStale(run, workerByDevice, now)) {
+      nextRuns.push(markLocalWorkerRunStale(run, workerByDevice.get(cleanString(run.claimedByDeviceId)), now));
+      changed = true;
+    } else if (run.localWorkerStale === true && /当前已空闲/.test(cleanString(run.resultSummary?.summary))) {
+      nextRuns.push(normalizeLocalWorkerStaleSummary(run, now));
+      changed = true;
+    } else {
+      nextRuns.push(run);
+    }
+  }
+  if (changed) await writeJson(paths.runs, nextRuns);
+  return nextRuns;
+}
+
+async function shouldMarkLocalWorkerRunStale(run = {}, workerByDevice = new Map(), now = new Date()) {
+  if (!isWorkerExecutableRun(run)) return false;
+  if (!isActiveWorkerRun(run)) return false;
+  if (!cleanString(run.claimedByDeviceId) || !cleanString(run.startedAt || run.claimedAt)) return false;
+  const hasCodexOutput = await hasServerCodexOutput(run);
+  const lastActivityMs = hasCodexOutput
+    ? await localWorkerRunLastActivityMs(run)
+    : localWorkerRunStartedMs(run);
+  if (!lastActivityMs || now.getTime() - lastActivityMs < staleLocalWorkerRunMs) return false;
+  const worker = workerByDevice.get(cleanString(run.claimedByDeviceId));
+  if (!isAgentWorkerOnline(worker, now)) return false;
+  const workerCurrentRunId = cleanString(worker.currentRunId);
+  const workerStillReportsThisRun = workerCurrentRunId && workerCurrentRunId === cleanString(run.id);
+  if (workerStillReportsThisRun && hasCodexOutput) return false;
+  return true;
+}
+
+function normalizeLocalWorkerStaleSummary(run = {}, now = new Date()) {
+  return {
+    ...run,
+    resultSummary: {
+      ...(run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {}),
+      summary: '本机 Worker 领取后长期未回传可验证的 Codex 输出、最终状态或产物结果，平台判定为本机回传失联。'
+    },
+    updatedAt: run.updatedAt || now.toISOString()
+  };
+}
+
+function markLocalWorkerRunStale(run = {}, worker = null, now = new Date()) {
+  const detectedAt = now.toISOString();
+  const lastActivityAt = cleanString(run.updatedAt || run.startedAt || run.claimedAt || run.createdAt) || detectedAt;
+  const finishedAt = lastActivityAt;
+  const startedAt = cleanString(run.startedAt || run.claimedAt || run.createdAt);
+  const durationMs = normalizeDurationMs(run.durationMs, startedAt, finishedAt, run.durationMs);
+  const reason = [
+    'Worker 已领取并回传 running，但长时间没有可验证的 Codex 输出、最终状态或产物结果。',
+    worker ? `领取设备最近心跳在线，currentRunId 为「${cleanString(worker.currentRunId) || '空'}」。` : '',
+    '平台已判定为本机回传失联，不再按普通执行中展示。'
+  ].filter(Boolean).join(' ');
+  const stages = Array.isArray(run.stages)
+    ? run.stages.map(stage => {
+      const status = cleanString(stage.status).toLowerCase();
+      if (!/running|in_progress|claimed|pending|queued|created/.test(status)) return stage;
+      return {
+        ...stage,
+        status: 'blocked',
+        finishedAt: stage.finishedAt || finishedAt,
+        durationMs: normalizeDurationMs(stage.durationMs, stage.startedAt || startedAt, stage.finishedAt || finishedAt, stage.durationMs)
+      };
+    })
+    : run.stages;
+  return {
+    ...run,
+    status: 'blocked',
+    workerStatus: 'blocked',
+    finishedAt,
+    ...(durationMs > 0 ? { durationMs, durationEstimated: true } : {}),
+    currentStage: '本机回传失联',
+    blocker: {
+      ...(run.blocker && typeof run.blocker === 'object' ? run.blocker : {}),
+      reason,
+      staleDetectedAt: detectedAt,
+      lastWorkerHeartbeatAt: cleanString(worker?.lastHeartbeatAt),
+      workerCurrentRunId: cleanString(worker?.currentRunId)
+    },
+    resultSummary: {
+      ...(run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {}),
+      status: 'blocked',
+      statusText: 'blocked',
+      summary: '本机 Worker 领取后长期未回传可验证的 Codex 输出、最终状态或产物结果，平台判定为本机回传失联。',
+      blockerReason: reason,
+      needsHumanReview: true,
+      nextStep: '请执行人检查本机 Codex 是否曾启动、Worker 本机 state/runs 日志是否存在；确认后使用继续执行或重新执行，不要按本次记录视为已完成。',
+      parsedAt: detectedAt
+    },
+    figmaWriteResult: {
+      ...(run.figmaWriteResult && typeof run.figmaWriteResult === 'object' ? run.figmaWriteResult : {}),
+      required: runRequiresFigmaWriteEvidence(run),
+      written: false,
+      evidence: [],
+      blockerReason: reason
+    },
+    stages,
+    localWorkerStale: true,
+    localWorkerStaleDetectedAt: detectedAt,
+    updatedAt: detectedAt
+  };
+}
+
+function isActiveWorkerRun(run = {}) {
+  const status = `${run.status || ''} ${run.workerStatus || ''}`;
+  return /running|claimed|in_progress/i.test(status) && !/completed|failed|blocked|cancelled|canceled|done|success|passed/i.test(status);
+}
+
+function isAgentWorkerOnline(worker = null, now = new Date()) {
+  if (!worker?.lastHeartbeatAt) return false;
+  const lastHeartbeatMs = Date.parse(worker.lastHeartbeatAt);
+  if (!lastHeartbeatMs) return false;
+  const heartbeat = Math.max(Number(worker.heartbeatIntervalMs || 0), 60000);
+  const grace = Math.min(Math.max(Number(worker.onlineGraceMs || 0), heartbeat * 3, 180000), 900000);
+  return now.getTime() - lastHeartbeatMs < grace;
+}
+
+async function localWorkerRunLastActivityMs(run = {}) {
+  const candidates = [
+    Date.parse(run.updatedAt || ''),
+    Date.parse(run.startedAt || ''),
+    Date.parse(run.claimedAt || ''),
+    Date.parse(run.createdAt || ''),
+    await fileMtimeMs(cleanString(run.logPath)),
+    run.id ? await fileMtimeMs(path.join(getRunWorkspace(run.id), 'run.log')) : 0,
+    await artifactRootMtimeMs(run.artifactRoot)
+  ].filter(value => Number.isFinite(value) && value > 0);
+  return candidates.length ? Math.max(...candidates) : 0;
+}
+
+function localWorkerRunStartedMs(run = {}) {
+  const candidates = [
+    Date.parse(run.startedAt || ''),
+    Date.parse(run.claimedAt || ''),
+    Date.parse(run.createdAt || '')
+  ].filter(value => Number.isFinite(value) && value > 0);
+  return candidates.length ? Math.min(...candidates) : 0;
+}
+
+async function hasServerCodexOutput(run = {}) {
+  const logPaths = [
+    cleanString(run.logPath),
+    run.id ? path.join(getRunWorkspace(run.id), 'run.log') : ''
+  ].filter(Boolean);
+  for (const file of [...new Set(logPaths)]) {
+    const text = await readTextTail(file, 30000).catch(() => '');
+    if (text
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
+      .some(line => !line.startsWith('[worker]'))) return true;
+  }
+  return false;
+}
+
+async function readTextTail(file = '', maxChars = 30000) {
+  const target = cleanString(file);
+  if (!target) return '';
+  const info = await fs.stat(target);
+  if (!info.isFile() || info.size <= 0) return '';
+  const size = Math.min(info.size, Math.max(1000, Number(maxChars || 30000)));
+  const handle = await fs.open(target, 'r');
+  try {
+    const buffer = Buffer.alloc(size);
+    await handle.read(buffer, 0, size, info.size - size);
+    return buffer.toString('utf8');
+  } finally {
+    await handle.close();
+  }
+}
+
+async function fileMtimeMs(file = '') {
+  const target = cleanString(file);
+  if (!target) return 0;
+  try {
+    const info = await fs.stat(target);
+    return info.isFile() && info.size > 0 ? info.mtimeMs : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function artifactRootMtimeMs(rootDir = '') {
+  const rootPath = cleanString(rootDir);
+  if (!rootPath) return 0;
+  return artifactDirMtimeMs(rootPath, 0);
+}
+
+async function artifactDirMtimeMs(dir = '', depth = 0) {
+  if (depth > 3) return 0;
+  let entries = [];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  let latest = 0;
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      latest = Math.max(latest, await artifactDirMtimeMs(full, depth + 1));
+      continue;
+    }
+    if (!entry.isFile() || entry.name === '资料.md') continue;
+    try {
+      const info = await fs.stat(full);
+      if (info.size > 0) latest = Math.max(latest, info.mtimeMs);
+    } catch {
+    }
+  }
+  return latest;
 }
 
 async function enrichRunWithFigmaLogEvidence(run) {

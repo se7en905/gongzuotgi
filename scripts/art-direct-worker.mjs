@@ -14,6 +14,8 @@ const heartbeatIntervalMs = Math.max(60000, Number(process.env.ART_WORKER_HEARTB
 const localCheckTimeoutMs = Math.max(5000, Number(process.env.ART_WORKER_CHECK_TIMEOUT_MS || 15000));
 const localCheckIntervalMs = Math.max(60000, Number(process.env.ART_WORKER_LOCAL_CHECK_INTERVAL_MS || 2400000));
 const requestTimeoutMs = Math.max(5000, Number(process.env.ART_WORKER_API_TIMEOUT_MS || 15000));
+const codexNoOutputTimeoutMs = Math.max(5 * 60 * 1000, Number(process.env.ART_WORKER_CODEX_NO_OUTPUT_TIMEOUT_MS || 15 * 60 * 1000));
+const codexMaxRunMs = Math.max(codexNoOutputTimeoutMs, Number(process.env.ART_WORKER_CODEX_MAX_RUN_MS || 6 * 60 * 60 * 1000));
 const workerHome = process.env.ART_WORKER_HOME || path.join(os.homedir(), 'ArtDirectWorker');
 const codexPath = resolveCodexPath();
 const defaultProjectRoot = process.env.ART_WORKER_PROJECT_ROOT || workerHome || process.cwd();
@@ -73,7 +75,14 @@ async function main() {
       await refreshLocalChecks();
       await flushOfflineQueue();
       await syncLocalRunState();
-      await checkSelfUpdate();
+      const updated = await checkSelfUpdate();
+      if (updated || selfRestartScheduled) {
+        await heartbeat(true).catch(error => {
+          logOfflineNotice(`自更新重启前心跳回传失败：${error.message}`);
+        });
+        await sleep(5000);
+        continue;
+      }
       await heartbeat();
       await checkAndExecuteNextRun();
     } catch (error) {
@@ -154,6 +163,25 @@ async function claimLocalRecoverableRun() {
   const states = await listRunStates();
   const pending = states.filter(state => state?.runId && state.startedAt && !state.finishedAt);
   for (const state of pending) {
+    const localLog = await localRunLogInfo(state.runId);
+    const hasEvents = Array.isArray(state.events) && state.events.length > 0;
+    const hasRecoverableEvidence = hasEvents || Number(localLog.size || 0) > 0 || Number(state.durationMs || 0) > 0;
+    if (!hasRecoverableEvidence) {
+      await removeRunState(state.runId);
+      continue;
+    }
+    const localLogText = await readLocalRunLogForSync(state.runId);
+    const hasCodexOutput = localLogText
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
+      .some(line => !line.startsWith('[worker]'));
+    const stateAgeMs = Date.now() - Date.parse(state.updatedAt || state.startedAt || state.createdAt || '');
+    if (!hasEvents && !hasCodexOutput && stateAgeMs > Math.max(codexNoOutputTimeoutMs, 10 * 60 * 1000)) {
+      await removeRunState(state.runId);
+      logOfflineNotice(`已跳过无 Codex 输出的旧执行恢复：${state.runId}`);
+      continue;
+    }
     const run = await claimRecoverableRun(state.runId).catch(error => {
       if (/404|not found/i.test(error.message)) void removeRunState(state.runId);
       else logOfflineNotice(`本机执行恢复查询失败，稍后重试：${error.message}`);
@@ -368,6 +396,7 @@ async function executeRun(run) {
   const prompt = buildPrompt(run, workspace);
   const cwd = workspace.cwd;
   await appendLocalRunLog(run.id, `\n[worker] 执行目录：${cwd}\n[worker] 本机日志：${runLogPath(run.id)}\n`);
+  await safeAppendRunLog(run.id, `\n[worker] 已在执行人本机启动任务。\n[worker] 执行目录：${cwd}\n[worker] 本机日志：${runLogPath(run.id)}\n`);
   const cwdExists = await pathExists(cwd);
   if (!cwdExists) {
     await failRunBeforeCodex(run, `执行目录不存在：${cwd}`);
@@ -392,14 +421,35 @@ async function executeRun(run) {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe']
     });
+    await appendLocalRunLog(run.id, `[worker] Codex 进程已启动，pid=${child.pid || 'unknown'}\n`);
+    await safeUpdateRunStatus(run.id, {
+      status: 'running',
+      workerStatus: 'running',
+      currentStage: '本机 Codex 执行',
+      workerResult: {
+        deviceId,
+        hostname: os.hostname(),
+        pid: child.pid || null,
+        cwd,
+        localLogPath: runLogPath(run.id),
+        localLogSize: (await localRunLogInfo(run.id)).size
+      },
+      workerLocalLogPath: runLogPath(run.id),
+      workerLocalLogSize: (await localRunLogInfo(run.id)).size
+    });
   } catch (error) {
     await failRunBeforeCodex(run, `Codex 启动失败：${error.message}`);
     return;
   }
+  let lastOutputAt = Date.now();
+  let sawCodexOutput = false;
+  let killedByWatchdog = '';
   child.on('error', error => {
     stderrText += `\nCodex 启动失败：${error.message}\n`;
   });
   child.stdout.on('data', chunk => {
+    lastOutputAt = Date.now();
+    sawCodexOutput = true;
     const text = chunk.toString();
     rawStdoutText += text;
     if (rawStdoutText.length > 200000) rawStdoutText = rawStdoutText.slice(-200000);
@@ -409,6 +459,8 @@ async function executeRun(run) {
     process.stdout.write(text);
   });
   child.stderr.on('data', chunk => {
+    lastOutputAt = Date.now();
+    sawCodexOutput = true;
     const text = chunk.toString();
     stderrText += text;
     void appendLocalRunLog(run.id, text);
@@ -422,15 +474,43 @@ async function executeRun(run) {
   }
 
   const heartbeatTimer = startExecutionHeartbeat(run.id);
+  const watchdogTimer = setInterval(() => {
+    if (killedByWatchdog) return;
+    const now = Date.now();
+    const silentForMs = now - lastOutputAt;
+    const runningForMs = now - Date.parse(startedAt);
+    const reason = !sawCodexOutput && silentForMs >= codexNoOutputTimeoutMs
+      ? `Codex 启动后 ${Math.round(silentForMs / 60000)} 分钟没有任何 stdout/stderr 输出`
+      : runningForMs >= codexMaxRunMs
+        ? `Codex 执行超过最大时长 ${Math.round(codexMaxRunMs / 60000)} 分钟`
+        : '';
+    if (!reason) return;
+    killedByWatchdog = reason;
+    stderrText += `\n[worker watchdog] ${reason}，已终止本次执行并回传失败。\n`;
+    try {
+      child.kill('SIGTERM');
+    } catch {
+    }
+    setTimeout(() => {
+      if (child.exitCode === null) {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+        }
+      }
+    }, 5000).unref?.();
+  }, Math.max(30000, Math.min(60000, codexNoOutputTimeoutMs)));
   const exitCode = await waitForChild(child);
   if (heartbeatTimer) clearInterval(heartbeatTimer);
+  if (watchdogTimer) clearInterval(watchdogTimer);
   const finishedAt = new Date().toISOString();
   const durationMs = Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt));
   const localLogInfo = await localRunLogInfo(run.id);
   const localLogText = await readLocalRunLogForSync(run.id);
   const combinedText = [finalText, rawStdoutText, localLogText, stderrText].filter(Boolean).join('\n');
   const figmaWriteResult = extractFigmaWriteEvidence(combinedText, run);
-  const status = resolveWorkerFinalStatus(exitCode, figmaWriteResult);
+  const effectiveExitCode = killedByWatchdog ? -1 : exitCode;
+  const status = resolveWorkerFinalStatus(effectiveExitCode, figmaWriteResult);
   if (localLogText) {
     await safeAppendRunLog(run.id, `\n\n[worker local full log ${finishedAt}]\n${localLogText}\n[/worker local full log]\n`);
   }
@@ -451,7 +531,7 @@ async function executeRun(run) {
   await safeUpdateRunStatus(run.id, {
     status,
     workerStatus: status,
-    exitCode,
+    exitCode: effectiveExitCode,
     startedAt,
     finishedAt,
     durationMs,
@@ -464,11 +544,11 @@ async function executeRun(run) {
         durationMs
       }
     ],
-    resultSummary: buildResultSummary(status, exitCode, combinedText, figmaWriteResult),
+    resultSummary: buildResultSummary(status, effectiveExitCode, killedByWatchdog ? `${combinedText}\n${killedByWatchdog}` : combinedText, figmaWriteResult),
     workerResult: {
       deviceId,
       hostname: os.hostname(),
-      exitCode,
+      exitCode: effectiveExitCode,
       cwd,
       materialPath: workspace.materialPath,
       snapshotPaths: workspace.snapshotPaths,
@@ -476,7 +556,8 @@ async function executeRun(run) {
       localLogSize: localLogInfo.size,
       localLogSyncedChars: localLogText.length,
       finalText: finalText.slice(-8000),
-      stderrText: stderrText.slice(-8000)
+      stderrText: stderrText.slice(-8000),
+      watchdogReason: killedByWatchdog
     },
     workerLocalLogPath: localLogInfo.path,
     workerLocalLogSize: localLogInfo.size,
