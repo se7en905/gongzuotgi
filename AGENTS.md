@@ -544,12 +544,13 @@
   - Worker 启动命令不得包含 Codex API Key、Codex 登录 token、Figma OAuth token、Figma MCP 授权、负责人 Mac 的本机凭据或任何平台管理者密钥；命令只允许负责下载/启动 Worker、登录工作台、上报心跳、轮询和领取任务。
   - Worker 必须支持自更新：运行中的 Worker 低频检查工作台 `/worker/art-direct-worker.mjs`，发现脚本内容变化时在本机原子替换并重启自己；自更新过程不得弹窗、抢焦点、打开浏览器、打开 Figma 或制造 Dock 闪烁。
   - Worker 自更新只能更新组员用户目录下的 Worker 脚本本身，不得修改组员 Codex 配置、Figma MCP 配置、系统登录项之外的文件、平台账号密码或任何本机敏感凭据。
-  - `复制开机自启` 安装出来的 Windows 当前用户启动项和 macOS LaunchAgent 必须通过本机 runner 启动 Worker；runner 每次拉起 Worker 前先尝试从工作台下载最新脚本，Worker 自更新退出后必须能自动重新拉起。
+  - `复制开机自启` 安装出来的 Windows 当前用户计划任务和 macOS LaunchAgent 必须通过本机 runner 启动 Worker；runner 每次拉起 Worker 前先尝试从工作台下载最新脚本，Worker 自更新退出后必须能自动重新拉起。
   - 工作台服务更新后，组员重新复制并执行 `本机执行状态` 页面里的最新 `复制手动启动` 或 `复制开机自启` 命令，必须重新下载最新 `art-direct-worker.mjs`；不得继续沿用旧 Worker 脚本。
   - 组员推荐重新执行 `复制开机自启` 命令来更新 Worker；该流程必须覆盖同账号旧自启配置并启动最新 Worker。仅使用 `复制手动启动` 时，必须先关闭旧 Worker 终端或旧 worker 进程，避免同账号同电脑同时跑新旧两个 Worker。
-  - Windows `复制开机自启` 必须使用当前用户启动项安装 Worker，不得依赖管理员权限或必须注册系统计划任务；普通组员 PowerShell 可直接执行，重复安装只覆盖同一个启动项。
+  - Windows `复制开机自启` 必须使用当前用户计划任务安装 Worker，不得依赖管理员权限或 Startup 快捷方式；普通组员 PowerShell 可直接执行，重复安装只覆盖同账号同目录的计划任务。
+  - Windows `复制开机自启` 必须为后台 runner 固定 `CODEX_HOME`，优先使用当前 Windows 账号的 `%USERPROFILE%\.codex`，兼容已有 `C:\Users\Administrator\.codex`；不得让计划任务因找不到 Codex/Figma MCP 授权目录而只启动一次后失联。
   - Windows Worker 的 `CODEX_CLI_PATH` 必须是真实存在的 `codex.exe` 文件路径；不得保存或使用 `WindowsApps` 下的应用别名/占位路径。安装脚本和手动启动命令必须过滤 `WindowsApps`，优先使用真实 Codex CLI 路径。
-  - Windows `复制开机自启` 重复安装时必须停止同一 Worker 目录下的旧进程，并清理当前用户启动项里旧的 `ArtDirectWorker-*` 快捷方式，只保留本次账号对应的启动项；不得因为检测到旧进程就继续沿用旧账号、旧密码或旧工作台地址。
+  - Windows `复制开机自启` 重复安装时必须停止同一 Worker 目录下的旧 node 进程和旧 PowerShell runner，删除旧 Startup 里的 `ArtDirectWorker-*` 快捷方式/命令文件，并覆盖本次账号对应的计划任务；不得因为检测到旧进程就继续沿用旧账号、旧密码或旧工作台地址。
   - macOS `复制开机自启` 使用当前用户 LaunchAgent；开机自启安装只需要操作一次，后续电脑登录系统自动启动 Worker，除非脚本、账号或工作台地址需要更新。
   - 直接执行 Worker 必须优先使用平台随任务下发的 Skill/md 内容快照，不得要求组员电脑能读取负责人本机 Skill/md 文件路径。
   - 直接执行 Worker 默认运行在执行人自己的 `ArtDirectWorker` 目录，该目录不保证是 Git 仓库或 Codex 已信任目录；Worker 拉起 `codex exec` 时必须带 `--skip-git-repo-check`，避免还未真正执行 Figma 写入就因目录信任检查秒失败。

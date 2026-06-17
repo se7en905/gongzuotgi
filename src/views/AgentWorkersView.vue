@@ -61,7 +61,7 @@
         </div>
         <div>
           <strong>开机自启</strong>
-          <p>适合组员长期接任务。复制内容同时支持 Windows 和 macOS；Windows 会写入当前用户启动项，macOS 会安装 LaunchAgent。以后该电脑登录系统时自动启动 Worker。</p>
+          <p>适合组员长期接任务。复制内容同时支持 Windows 和 macOS；Windows 会创建当前用户计划任务，macOS 会安装 LaunchAgent。以后该电脑登录系统时自动启动 Worker。</p>
         </div>
         <div>
           <strong>工作台地址</strong>

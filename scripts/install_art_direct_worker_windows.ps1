@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$InstallScriptVersion = '2026-06-08-ps51'
+$InstallScriptVersion = '2026-06-17-scheduled-task'
 
 $Root = if ($env:ART_WORKER_HOME) { $env:ART_WORKER_HOME } elseif ($env:ART_WORKER_PROJECT_ROOT) { $env:ART_WORKER_PROJECT_ROOT } else { Join-Path $env:USERPROFILE 'ArtDirectWorker' }
 $Username = $env:ART_PLATFORM_USERNAME
@@ -9,6 +9,16 @@ $PollInterval = if ($env:ART_WORKER_POLL_INTERVAL_MS) { $env:ART_WORKER_POLL_INT
 $HeartbeatInterval = if ($env:ART_WORKER_HEARTBEAT_INTERVAL_MS) { $env:ART_WORKER_HEARTBEAT_INTERVAL_MS } else { '300000' }
 $LocalCheckInterval = if ($env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS) { $env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS } else { '2400000' }
 $CodexPath = if ($env:CODEX_CLI_PATH) { $env:CODEX_CLI_PATH } else { 'codex' }
+$DefaultCodexHome = Join-Path $env:USERPROFILE '.codex'
+$CodexHome = if ($env:CODEX_HOME) {
+  $env:CODEX_HOME
+} elseif (Test-Path -LiteralPath $DefaultCodexHome) {
+  $DefaultCodexHome
+} elseif (Test-Path -LiteralPath 'C:\Users\Administrator\.codex') {
+  'C:\Users\Administrator\.codex'
+} else {
+  $DefaultCodexHome
+}
 
 function ConvertTo-PSLiteral([string]$Value) {
   return "'" + ($Value -replace "'", "''") + "'"
@@ -51,7 +61,7 @@ if (-not $Password) { throw 'Missing ART_PLATFORM_PASSWORD' }
 $Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $Principal = New-Object Security.Principal.WindowsPrincipal($Identity)
 if ($Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-  Write-Warning 'Running as Administrator. Startup will be installed for the current Windows account. Use the member normal Windows account if that is the account used at login.'
+  Write-Warning 'Running as Administrator. Scheduled task will be installed for the current Windows account. Use the member normal Windows account if that is the account used at login.'
 }
 
 try {
@@ -89,17 +99,17 @@ $StartupDir = [Environment]::GetFolderPath('Startup')
 if (-not $StartupDir) {
   $StartupDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
 }
-$StartupShortcut = Join-Path $StartupDir "$TaskName.lnk"
-$LegacyStartupCommand = Join-Path $StartupDir "$TaskName.cmd"
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $Root 'scripts') | Out-Null
 New-Item -ItemType Directory -Force -Path $StartupDir | Out-Null
 
 $CodexPath = Resolve-CodexCliPath $CodexPath $Root
+if (-not (Test-Path -LiteralPath $CodexHome -PathType Container)) {
+  Write-Warning "CODEX_HOME does not exist yet: $CodexHome. Open Codex once with this Windows account, finish Figma MCP authorization, then run this startup command again if self-check fails."
+}
 
 Get-ChildItem -Path $StartupDir -Filter 'ArtDirectWorker-*.lnk' -ErrorAction SilentlyContinue |
-  Where-Object { $_.FullName -ne $StartupShortcut } |
   Remove-Item -Force -ErrorAction SilentlyContinue
 Get-ChildItem -Path $StartupDir -Filter 'ArtDirectWorker-*.cmd' -ErrorAction SilentlyContinue |
   Remove-Item -Force -ErrorAction SilentlyContinue
@@ -118,7 +128,9 @@ Set-Location $(ConvertTo-PSLiteral $Root)
 `$env:ART_WORKER_POLL_INTERVAL_MS = $(ConvertTo-PSLiteral $PollInterval)
 `$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = $(ConvertTo-PSLiteral $HeartbeatInterval)
 `$env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS = $(ConvertTo-PSLiteral $LocalCheckInterval)
+`$env:ART_WORKER_HOME = $(ConvertTo-PSLiteral $Root)
 `$env:ART_WORKER_SUPERVISED = '1'
+`$env:CODEX_HOME = $(ConvertTo-PSLiteral $CodexHome)
 `$env:CODEX_CLI_PATH = $(ConvertTo-PSLiteral $CodexPath)
 while (`$true) {
   try {
@@ -127,6 +139,7 @@ while (`$true) {
     Add-Content -Path $(ConvertTo-PSLiteral (Join-Path $LogDir "art-direct-worker.$SafeUsername.log")) -Value ("[" + (Get-Date).ToString("s") + "] worker update download failed: " + `$_.Exception.Message)
   }
   & $(ConvertTo-PSLiteral $Node) $(ConvertTo-PSLiteral $Worker) *>> $(ConvertTo-PSLiteral (Join-Path $LogDir "art-direct-worker.$SafeUsername.log"))
+  Add-Content -Path $(ConvertTo-PSLiteral (Join-Path $LogDir "art-direct-worker.$SafeUsername.log")) -Value ("[" + (Get-Date).ToString("s") + "] worker process exited, restarting in 5 seconds. exitCode=" + `$LASTEXITCODE)
   Start-Sleep -Seconds 5
 }
 "@ | Set-Content -Path $Runner -Encoding UTF8
@@ -135,27 +148,23 @@ if (-not (Test-Path $Runner)) {
   throw "Failed to write worker runner: $Runner"
 }
 
-$Shell = New-Object -ComObject WScript.Shell
-$Shortcut = $Shell.CreateShortcut($StartupShortcut)
 $RunnerArgument = ConvertTo-WindowsArgument $Runner
-$Shortcut.TargetPath = 'powershell.exe'
-$Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File $RunnerArgument"
-$Shortcut.WorkingDirectory = $Root
-$Shortcut.WindowStyle = 7
-$Shortcut.Description = 'Art platform direct worker'
-$Shortcut.Save()
-if (-not (Test-Path $StartupShortcut)) {
-  throw "Failed to create startup shortcut: $StartupShortcut"
-}
 
 try {
+  Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Out-Null
   Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
 } catch {
 }
 
 try {
-  $existing = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction Stop |
-    Where-Object { $_.CommandLine -like '*art-direct-worker.mjs*' -and $_.CommandLine -like "*$Root*" }
+  $existing = Get-CimInstance Win32_Process -ErrorAction Stop |
+    Where-Object {
+      (
+        $_.Name -eq 'node.exe' -and $_.CommandLine -like '*art-direct-worker.mjs*' -and $_.CommandLine -like "*$Root*"
+      ) -or (
+        ($_.Name -eq 'powershell.exe' -or $_.Name -eq 'pwsh.exe') -and $_.CommandLine -like '*run-art-direct-worker-windows.ps1*' -and $_.CommandLine -like "*$Root*"
+      )
+    }
 } catch {
   $existing = @()
 }
@@ -172,21 +181,37 @@ if ($existing) {
   Start-Sleep -Seconds 1
 }
 
-$StartArguments = "-NoProfile -ExecutionPolicy Bypass -File $RunnerArgument"
-Start-Process -FilePath 'powershell.exe' -ArgumentList $StartArguments -WorkingDirectory $Root -WindowStyle Minimized
-Start-Sleep -Seconds 3
+$Action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $RunnerArgument"
+$Trigger = New-ScheduledTaskTrigger -AtLogOn -User $Identity.Name
+$Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
+$PrincipalConfig = New-ScheduledTaskPrincipal -UserId $Identity.Name -LogonType Interactive -RunLevel LeastPrivilege
+try {
+  Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Principal $PrincipalConfig -Description 'Art platform direct worker' -Force | Out-Null
+} catch {
+  Write-Warning "Scheduled task principal registration failed, retrying with current user defaults: $($_.Exception.Message)"
+  Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Description 'Art platform direct worker' -Force | Out-Null
+}
+
+Start-ScheduledTask -TaskName $TaskName
+Start-Sleep -Seconds 5
 $started = @()
 try {
-  $started = Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction Stop |
-    Where-Object { $_.CommandLine -like '*art-direct-worker.mjs*' -and $_.CommandLine -like "*$Root*" }
+  $started = Get-CimInstance Win32_Process -ErrorAction Stop |
+    Where-Object {
+      (
+        $_.Name -eq 'node.exe' -and $_.CommandLine -like '*art-direct-worker.mjs*' -and $_.CommandLine -like "*$Root*"
+      ) -or (
+        ($_.Name -eq 'powershell.exe' -or $_.Name -eq 'pwsh.exe') -and $_.CommandLine -like '*run-art-direct-worker-windows.ps1*' -and $_.CommandLine -like "*$Root*"
+      )
+    }
 } catch {
   $started = @()
 }
 if (-not $started) {
-  Write-Warning "Startup shortcut was created, but no running node.exe worker was detected. Check log: $(Join-Path $LogDir "art-direct-worker.$SafeUsername.log")"
+  Write-Warning "Scheduled task was created, but no running worker process was detected. Check log: $(Join-Path $LogDir "art-direct-worker.$SafeUsername.log")"
 }
 Write-Host "started $TaskName"
-Write-Host "installed startup $TaskName"
-Write-Host "startup $StartupShortcut"
+Write-Host "installed scheduled task $TaskName"
 Write-Host "runner $Runner"
+Write-Host "codex home $CodexHome"
 Write-Host "install script version $InstallScriptVersion"

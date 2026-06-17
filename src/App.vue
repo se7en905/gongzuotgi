@@ -1266,7 +1266,11 @@ export default {
       const map = new Map();
       for (const worker of this.agentWorkerDisplayRows) {
         const userId = String(worker.userId || '').trim();
-        if (userId && !map.has(userId)) map.set(userId, worker);
+        if (!userId) continue;
+        const current = map.get(userId);
+        if (!current || this.agentWorkerCandidateScore(worker) > this.agentWorkerCandidateScore(current)) {
+          map.set(userId, worker);
+        }
       }
       return map;
     },
@@ -17843,6 +17847,18 @@ export default {
       ].map(value => String(value || '').trim()).filter(Boolean).join(' ');
     },
 
+    agentWorkerCandidateScore(worker = null) {
+      if (!worker) return -1;
+      const lastHeartbeatMs = Date.parse(worker.lastHeartbeatAt || '') || 0;
+      const hasDeviceId = String(worker.deviceId || '').trim() ? 1 : 0;
+      const online = this.directSkillWorkerOnline(worker) ? 1 : 0;
+      const ready = this.isDirectSkillWorkerReady(worker) ? 1 : 0;
+      return (ready * 1e15)
+        + (online * 1e14)
+        + (hasDeviceId * 1e13)
+        + lastHeartbeatMs;
+    },
+
     agentWorkerStableRowOrder(row = {}) {
       const userId = String(row.user?.id || row.worker?.userId || '').trim();
       const index = (this.users || []).findIndex(user => String(user.id || '').trim() === userId);
@@ -18243,7 +18259,10 @@ export default {
           '$codexCandidates = @("$root\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe") + ((Get-Command codex -All -ErrorAction SilentlyContinue) | ForEach-Object { $_.Source })',
           '$codex = $codexCandidates | Where-Object { $_ -and ($_ -notmatch "\\\\WindowsApps\\\\") -and (Test-Path $_ -PathType Leaf) } | Select-Object -First 1',
           'if (-not $codex) { throw "缺少可用于后台 Worker 的真实 Codex CLI。WindowsApps 应用别名不能用于后台自检；请安装 Codex CLI 或配置 CODEX_CLI_PATH 为真实 codex.exe 路径。" }',
+          '$codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } elseif (Test-Path "$env:USERPROFILE\\.codex") { "$env:USERPROFILE\\.codex" } elseif (Test-Path "C:\\Users\\Administrator\\.codex") { "C:\\Users\\Administrator\\.codex" } else { "$env:USERPROFILE\\.codex" }',
+          'if (-not (Test-Path $codexHome)) { Write-Warning "未找到 CODEX_HOME：$codexHome。请先用当前 Windows 账号打开 Codex 并完成 Figma MCP 授权。" }',
           '$env:CODEX_CLI_PATH = $codex',
+          '$env:CODEX_HOME = $codexHome',
           '$env:ART_PLATFORM_API = ' + this.powershellQuote(apiBase),
           '$env:ART_PLATFORM_USERNAME = ' + this.powershellQuote(username || '组员账号'),
           '$env:ART_PLATFORM_PASSWORD = ' + this.powershellQuote(safePassword),
@@ -18299,10 +18318,13 @@ export default {
           'if (-not (Test-Path "$root\\scripts\\art-direct-worker.mjs")) { throw "Worker 下载失败，请确认工作台地址可访问" }',
           'if (-not (Test-Path "$root\\scripts\\install_art_direct_worker_windows.ps1")) { throw "开机自启安装脚本下载失败，请确认工作台地址可访问" }',
           '$installScript = Get-Content -Raw -Path "$root\\scripts\\install_art_direct_worker_windows.ps1"; Set-Content -Path "$root\\scripts\\install_art_direct_worker_windows.ps1" -Value $installScript -Encoding UTF8',
+          '$codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } elseif (Test-Path "$env:USERPROFILE\\.codex") { "$env:USERPROFILE\\.codex" } elseif (Test-Path "C:\\Users\\Administrator\\.codex") { "C:\\Users\\Administrator\\.codex" } else { "$env:USERPROFILE\\.codex" }',
+          'if (-not (Test-Path $codexHome)) { Write-Warning "未找到 CODEX_HOME：$codexHome。请先用当前 Windows 账号打开 Codex 并完成 Figma MCP 授权。" }',
           '$env:ART_PLATFORM_API = ' + this.powershellQuote(apiBase),
           '$env:ART_PLATFORM_USERNAME = ' + this.powershellQuote(username || '组员账号'),
           '$env:ART_PLATFORM_PASSWORD = ' + this.powershellQuote(safePassword),
           '$env:ART_WORKER_HOME = $root',
+          '$env:CODEX_HOME = $codexHome',
           '$env:ART_WORKER_POLL_INTERVAL_MS = ' + this.powershellQuote(pollInterval),
           '$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = ' + this.powershellQuote(heartbeatInterval),
           '$env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS = ' + this.powershellQuote(localCheckInterval),
@@ -20209,7 +20231,12 @@ export default {
     runDisplayStatusClass(run = null) {
       const value = this.runDisplayStatusValue(run);
       if (/cancelled|canceled/.test(value)) return 'is-cancelled';
-      if (this.hasPartialFigmaWrite(run)) return 'is-partial-write';
+      const resultStatus = this.effectiveResultStatus(run);
+      if (resultStatus === 'partial_write') return 'is-partial-write';
+      if (resultStatus === 'failed') return 'is-failed';
+      if (resultStatus === 'blocked') return 'is-blocked';
+      if (resultStatus === 'conditional_pass') return 'is-conditional';
+      if (resultStatus === 'passed' && /completed|done|success|passed/.test(value)) return 'is-success';
       return this.runStatusClass(value);
     },
 
