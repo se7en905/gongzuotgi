@@ -532,7 +532,7 @@ const RUN_LOG_RENDER_MAX_CHARS = 80 * 1024;
 const RUN_LOG_RENDER_MAX_LINES = 400;
 const RUN_LOG_LINE_MAX_CHARS = 2400;
 const SKILL_AUDIT_RULE_VERSION = '9-dimension-v2-fulltext';
-const USAGE_COUNTER_LOGIC_VERSION = 'usage-only-v2';
+const USAGE_COUNTER_LOGIC_VERSION = 'usage-only-v3-validation';
 const LARGE_WORKBENCH_DISPLAY_CACHE_KEYS = new Set([
   'aiMembersSnapshot',
   'aiMembersBoardHtmlSnapshot',
@@ -8636,6 +8636,9 @@ export default {
 
     isAiScoreCompletedRun(run = {}) {
       if (run.exitCode !== null && run.exitCode !== undefined && Number(run.exitCode) !== 0) return false;
+      const effectiveStatus = this.effectiveResultStatus(run);
+      const hasPartialWrite = effectiveStatus === 'partial_write' || this.hasPartialFigmaWrite(run);
+      const hasWriteEvidence = this.hasFigmaWriteEvidence(run);
       const statusText = [
         run.status,
         run.platformStatus,
@@ -8643,12 +8646,12 @@ export default {
         run.workerStatus,
         run.resultSummary?.status
       ].map(value => String(value || '').toLowerCase()).join(' ');
+      const hasCompletionTime = Boolean(run.finishedAt || run.completedAt);
+      const hasResultEvidence = Boolean(run.resultSummary || run.changeSummary || run.resultPath || run.completedAt || run.logPath || hasWriteEvidence);
+      if (hasPartialWrite || hasWriteEvidence) return hasCompletionTime || hasResultEvidence;
       if (/cancel|canceled|cancelled|failed|blocked|error|deleted|draft|pending|queued|running|in_progress|wait|失败|阻塞|取消|排队|待领取|执行中/.test(statusText)) return false;
-      const effectiveStatus = this.effectiveResultStatus(run);
       const hasCompletedStatus = ['passed', 'conditional_pass', 'completed', 'success', 'done'].includes(effectiveStatus)
         || /done|success|passed|completed|finished|approved|conditional|完成|通过|成功|有条件/.test(statusText);
-      const hasCompletionTime = Boolean(run.finishedAt || run.completedAt);
-      const hasResultEvidence = Boolean(run.resultSummary || run.changeSummary || run.resultPath || run.completedAt || (run.logPath && hasCompletedStatus));
       return hasCompletedStatus && (hasCompletionTime || hasResultEvidence);
     },
 
@@ -10370,6 +10373,9 @@ export default {
 
     skillUsageLogCountsAsCall(log = {}) {
       const raw = log.raw && typeof log.raw === 'object' ? log.raw : {};
+      if (log.type === '验证回填' || raw.source === 'Google Sheet' || raw.manualBackfill === true || String(raw.id || '').startsWith('skill-validation-')) {
+        return this.isPositiveSkillUsageRecord(log);
+      }
       const eventType = String(raw.eventType || '').trim();
       if (['research_finding', 'research_summary', 'research_artifact', 'reporter_installed', 'reporter_test'].includes(eventType)) return false;
       const action = String(raw.action || '').trim();
@@ -10605,9 +10611,34 @@ export default {
     },
 
     isPositiveSkillUsageRecord(record = {}) {
-      const text = `${record.content || ''} ${record.summary || ''} ${record.raw?.reuseAdvice || ''} ${record.raw?.validationResult || ''} ${record.raw?.status || ''}`;
-      if (/失败|不可用|未完成|取消|不适用|不用|无法复用/.test(text)) return false;
-      if (/可直接复用|已完成|通过|建议.*复用|部分可用|可用|复用|调用|使用|验证了|接入|执行/.test(text)) return true;
+      const raw = record.raw && typeof record.raw === 'object' ? record.raw : {};
+      const resultText = [
+        raw.validationResult,
+        raw.status,
+        raw.reuseAdvice,
+        record.content,
+        record.summary
+      ]
+        .map(value => String(value || '').trim())
+        .filter(value => value && value !== '-')
+        .join(' ');
+      const fullText = [
+        resultText,
+        raw.notes,
+        raw.summary,
+        raw.description,
+        raw.suggestion,
+        raw.issues
+      ]
+        .map(value => String(value || '').trim())
+        .filter(value => value && value !== '-')
+        .join(' ');
+      if (!fullText) return record.type !== '验证回填';
+      if (/场景不匹配|不适用|无法复用|不可用|失败|未完成|取消|资料不完整|无效|不通过|待填写|待记录|待评估|待判断|暂不判断/.test(resultText)) return false;
+      if (/可直接复用|部分可用|可用|可复用|建议.{0,12}复用|通过|已验证|验证完成|复用/.test(resultText)) return true;
+      if (/已完成.{0,12}验证|实任务验证/.test(fullText)) return true;
+      if (raw.walkthroughDone === true && /验证|回填|结论|结果/.test(fullText)) return true;
+      if (/调用|使用|接入|执行/.test(fullText)) return true;
       return record.type !== '验证回填';
     },
 
@@ -13723,7 +13754,29 @@ export default {
             raw: item
           };
         });
-      const rows = this.dedupeSkillUsageLogRows([...taskArtBriefLogs, ...runLogs, ...events])
+      const validations = (this.skillValidationRows || [])
+        .filter(item => this.usageRecordMatchesRowTime(item, row, connectedAt))
+        .map(item => ({ item, match: this.skillInventoryRecordMatch(row, item, 'validation') }))
+        .filter(entry => entry.match.matched)
+        .map(({ item, match }) => {
+          const person = this.canonicalArtDeptPerson(item.validator || item.walkthroughOwner) || item.validator || item.walkthroughOwner || '-';
+          const target = this.skillUsageLogTarget(row, item, 'validation', assetName);
+          return {
+            id: item.id || `validation-${target}-${this.validationRecordDisplayTime(item) || item.submittedAt || ''}`,
+            type: '验证回填',
+            person,
+            time: this.validationRecordDisplayTime(item) || item.submittedAt || item.createdAt || item.importedAt || item.updatedAt || '',
+            target,
+            task: item.validationTask || item.workflowScene || '验证回填',
+            summary: `${person} 验证了 ${target}`,
+            content: item.validationResult || item.reuseAdvice || item.notes || '-',
+            code: item.sourceRef || item.id || '',
+            matchReason: match.reason || '验证回填记录',
+            raw: item
+          };
+        })
+        .filter(item => this.skillUsageLogCountsAsCall(item));
+      const rows = this.dedupeSkillUsageLogRows([...taskArtBriefLogs, ...runLogs, ...events, ...validations])
         .sort((a, b) => String(b.time || '').localeCompare(String(a.time || '')));
       this.skillUsageLogCacheSet(cacheKey, rows);
       return rows;
@@ -13741,7 +13794,8 @@ export default {
         this.artProgressEvents.length,
         this.artProgressOperationLogRows.length,
         this.runs.length,
-        this.taskArtBriefUsageLogs.length
+        this.taskArtBriefUsageLogs.length,
+        this.skillValidationRows.length
       ].join('::');
     },
 

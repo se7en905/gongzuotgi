@@ -40,6 +40,7 @@ export const paths = {
   codexConfig: path.join(dataDir, 'codex-config.json'),
   taskCenterConfig: path.join(dataDir, 'task-center-config.json'),
   artProgressEvents: path.join(dataDir, 'art-progress-events.json'),
+  skillValidations: path.join(dataDir, 'skill-validations.json'),
   usageCounters: path.join(dataDir, 'usage-counters.json'),
   aiMemberScoreSnapshot: path.join(dataDir, 'ai-member-score-snapshot.json'),
   agentWorkers: path.join(dataDir, 'agent-workers.json')
@@ -68,7 +69,7 @@ const mysqlConfigs = new Map([
 
 const useMysqlStore = process.env.AWP_USE_MYSQL === '1';
 const retentionDays = Math.max(1, Number(process.env.AWP_DATA_RETENTION_DAYS || 2) || 2);
-const usageCounterLogicVersion = 'usage-only-v2';
+const usageCounterLogicVersion = 'usage-only-v3-validation';
 const retentionEnabled = process.env.AWP_DATA_RETENTION_ENABLED !== '0';
 const runFigmaLogEvidenceCache = new Map();
 const staleLocalWorkerRunMs = Math.max(10 * 60 * 1000, Number(process.env.AWP_STALE_LOCAL_WORKER_RUN_MS || 20 * 60 * 1000));
@@ -887,7 +888,8 @@ export async function recordUsageCountersForArtProgressEvent(record = {}) {
 
 export async function recordUsageCountersForSkillValidation(record = {}) {
   const targets = usageTargetsFromSkillValidation(record);
-  if (targets.length) await updateUsageCounters(targets);
+  if (!targets.length) return { matched: 0 };
+  return await updateUsageCounters(targets);
 }
 
 export async function recordUsageCountersForOperationLog(log = {}) {
@@ -3555,6 +3557,27 @@ async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCount
     if (normalizeUsageBucketTotals(bucket)) changed = true;
     buckets[bucket.key] = bucket;
   }
+  for (const [key, item] of usageBucketRebuildMap.entries()) {
+    if (buckets[key]) continue;
+    const usageEventKeys = [...(item.usageEventKeys || [])];
+    if (!usageEventKeys.length) continue;
+    const bucket = normalizeUsageCounterBucket({
+      key,
+      target: item.target || key,
+      count: usageEventKeys.length,
+      usageCount: usageEventKeys.length,
+      usagePeople: item.usagePeople || {},
+      people: item.usagePeople || {},
+      eventKeys: [...(item.eventKeys || [])],
+      usageEventKeys,
+      firstAt: item.firstAt || '',
+      lastAt: item.lastAt || '',
+      updatedAt: item.lastAt || item.firstAt || ''
+    }, key);
+    if (normalizeUsageBucketTotals(bucket)) changed = true;
+    buckets[bucket.key] = bucket;
+    changed = true;
+  }
   if (!changed) return counters;
   return {
     ...counters,
@@ -3564,11 +3587,40 @@ async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCount
 
 let usageCounterRebuildMapCache = null;
 
+function storedSkillValidationRows(input = {}) {
+  const rows = [
+    ...(Array.isArray(input.records) ? input.records : []),
+    ...(Array.isArray(input.googleRecords) ? input.googleRecords : []),
+    ...(Array.isArray(input.manualRecords) ? input.manualRecords : [])
+  ];
+  const seen = new Set();
+  const output = [];
+  for (const record of rows) {
+    if (!record || typeof record !== 'object') continue;
+    const key = cleanString(record.id)
+      || [
+        record.sourceRef,
+        record.artifactName,
+        record.researchName,
+        record.validator,
+        record.submittedAt,
+        record.createdAt,
+        record.importedAt
+      ].map(cleanString).join('::');
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(record);
+  }
+  return output;
+}
+
 async function historicalUsageBucketRebuildMap() {
   if (usageCounterRebuildMapCache) return usageCounterRebuildMapCache;
-  const [operationLogs, runs] = await Promise.all([
+  const [artProgressEvents, operationLogs, runs, validations] = await Promise.all([
+    readJson(paths.artProgressEvents, []),
     readJson(paths.operationLogs, []),
-    readJson(paths.runs, [])
+    readJson(paths.runs, []),
+    readJson(paths.skillValidations, {})
   ]);
   const map = new Map();
   const addTarget = (target = '', owners = [], eventKey = '', at = '') => {
@@ -3607,6 +3659,13 @@ async function historicalUsageBucketRebuildMap() {
     }
     map.set(key, bucket);
   };
+
+  for (const event of Array.isArray(artProgressEvents) ? artProgressEvents : []) {
+    for (const target of usageTargetsFromArtProgressEvent(event)) {
+      if (cleanString(target.kind) !== 'usage') continue;
+      addTarget(target.target, [event.memberName, event.memberAccount], target.eventKey, target.at || event.createdAt || event.updatedAt || event.reportedAt || '');
+    }
+  }
 
   for (const log of Array.isArray(operationLogs) ? operationLogs : []) {
     if (!isHistoricalUsageOperationLog(log)) continue;
@@ -3654,6 +3713,16 @@ async function historicalUsageBucketRebuildMap() {
       ...(Array.isArray(run.referenceItems) ? run.referenceItems.flatMap(item => [item?.path, item?.name, item?.title]) : [])
     ];
     for (const target of values.flatMap(usageTargetCandidates)) addTarget(target, owners, eventKey, at);
+  }
+
+  for (const record of storedSkillValidationRows(validations)) {
+    if (!isPositiveSkillValidationUsage(record)) continue;
+    const at = skillValidationUsageAt(record);
+    const owners = usageOwnersFromSkillValidation(record);
+    const eventKey = skillValidationUsageEventKey(record);
+    for (const target of skillValidationUsageTargets(record).flatMap(usageTargetCandidates)) {
+      addTarget(target, owners, eventKey, at);
+    }
   }
 
   usageCounterRebuildMapCache = map;
@@ -3713,15 +3782,17 @@ let usageCounterSourceCache = null;
 
 async function historicalUsageEventSources() {
   if (usageCounterSourceCache) return usageCounterSourceCache;
-  const [artProgressEvents, operationLogs, runs] = await Promise.all([
+  const [artProgressEvents, operationLogs, runs, validations] = await Promise.all([
     readJson(paths.artProgressEvents, []),
     readJson(paths.operationLogs, []),
-    readJson(paths.runs, [])
+    readJson(paths.runs, []),
+    readJson(paths.skillValidations, {})
   ]);
   usageCounterSourceCache = {
     artProgressEvents: (Array.isArray(artProgressEvents) ? artProgressEvents : []).filter(isUsageCountableArtProgressEvent),
     operationLogs: (Array.isArray(operationLogs) ? operationLogs : []).filter(isHistoricalUsageOperationLog),
-    runs: (Array.isArray(runs) ? runs : []).filter(isUsageLikeRun)
+    runs: (Array.isArray(runs) ? runs : []).filter(isUsageLikeRun),
+    skillValidations: storedSkillValidationRows(validations).filter(isPositiveSkillValidationUsage)
   };
   return usageCounterSourceCache;
 }
@@ -3810,6 +3881,10 @@ function rebuildHistoricalUsagePeople(bucket = {}, sources = {}) {
     });
   }
 
+  for (const record of sources.skillValidations || []) {
+    addHit(skillValidationUsageEventKey(record), usageOwnersFromSkillValidation(record));
+  }
+
   if (!Object.keys(usagePeople).length) return false;
   bucket.usagePeople = usagePeople;
   bucket.usagePeopleCount = Object.keys(usagePeople).length;
@@ -3884,18 +3959,8 @@ async function historicalUsageEventOwnerMap() {
     }
   }
   const validations = await readJson(paths.skillValidations, {});
-  const validationRows = [
-    ...(Array.isArray(validations.records) ? validations.records : []),
-    ...(Array.isArray(validations.googleRecords) ? validations.googleRecords : []),
-    ...(Array.isArray(validations.manualRecords) ? validations.manualRecords : [])
-  ];
-  for (const record of validationRows) {
-    const owners = [record.validator, record.walkthroughOwner, record.owner, record.updatedBy];
-    const ids = [record.id, record.sourceRef, record.artifactName, record.researchName, record.artifactLocation, record.workflowScene].filter(Boolean);
-    const times = [record.createdAt, record.submittedAt, record.importedAt, record.updatedAt].filter(Boolean);
-    for (const id of ids) {
-      for (const at of times) add(usageEventKey('validation', id, at), owners);
-    }
+  for (const record of storedSkillValidationRows(validations)) {
+    add(skillValidationUsageEventKey(record), usageOwnersFromSkillValidation(record));
   }
   const logs = await readJson(paths.operationLogs, []);
   for (const log of Array.isArray(logs) ? logs : []) {
@@ -4095,7 +4160,20 @@ function usageOwnersFromRun(run = {}) {
   const fallback = [run.createdBy, run.ownerUserId]
     .map(cleanString)
     .find(value => value && !isUsageProxyPerson(value) && !looksLikeUuid(value));
-  return fallback ? [fallback] : [];
+	  return fallback ? [fallback] : [];
+}
+
+function usageOwnersFromSkillValidation(record = {}) {
+  return [
+    record.validator,
+    record.walkthroughOwner,
+    record.owner,
+    record.updatedBy
+  ]
+    .flatMap(value => normalizeLineList(value))
+    .map(cleanString)
+    .filter(owner => owner && !isUsageProxyPerson(owner) && !looksLikeUuid(owner))
+    .filter((owner, index, array) => array.findIndex(item => samePersonName(item, owner)) === index);
 }
 
 function looksLikeUuid(value = '') {
@@ -4173,24 +4251,74 @@ async function updateUsageCounters(targets = []) {
 function usageTargetsFromRecord(file, record = {}) {
   if (file === paths.artProgressEvents) return usageTargetsFromArtProgressEvent(record);
   if (file === paths.operationLogs) return usageTargetsFromOperationLog(record);
+  if (file === paths.skillValidations) return usageTargetsFromSkillValidation(record);
   return [];
 }
 
 function usageTargetsFromSkillValidation(record = {}) {
-  const targetValues = [
+  if (!isPositiveSkillValidationUsage(record)) return [];
+  const targetValues = skillValidationUsageTargets(record);
+  return buildUsageTargets(targetValues, {
+    person: usageOwnersFromSkillValidation(record)[0] || '',
+    at: skillValidationUsageAt(record),
+    source: 'skill-validation',
+    kind: 'usage',
+    eventKey: skillValidationUsageEventKey(record)
+  });
+}
+
+function skillValidationUsageTargets(record = {}) {
+  return [
     record.artifactName,
     record.researchName,
     record.artifactLocation,
     record.sourceRef,
-    record.workflowScene
+    record.workflowScene,
+    record.evidenceLink
   ];
-  return buildUsageTargets(targetValues, {
-    person: cleanString(record.validator || record.walkthroughOwner),
-    at: cleanString(record.createdAt || record.submittedAt || record.importedAt),
-    source: 'skill-validation',
-    kind: 'validation',
-    eventKey: usageEventKey('validation', record.id || record.sourceRef || record.artifactName, record.createdAt || record.submittedAt || record.importedAt)
-  });
+}
+
+function skillValidationUsageAt(record = {}) {
+  return cleanString(record.createdAt || record.submittedAt || record.importedAt || record.updatedAt);
+}
+
+function skillValidationUsageEventKey(record = {}) {
+  return usageEventKey(
+    'skill-validation',
+    record.id || record.sourceRef || record.artifactName || record.researchName || record.artifactLocation,
+    skillValidationUsageAt(record)
+  );
+}
+
+function isPositiveSkillValidationUsage(record = {}) {
+  if (!record || typeof record !== 'object') return false;
+  if (record.deleted === true) return false;
+  const validationText = cleanValidationUsageText([
+    record.validationResult,
+    record.status
+  ]);
+  const adviceText = cleanValidationUsageText(record.reuseAdvice);
+  const evidenceText = cleanValidationUsageText([
+    record.notes,
+    record.summary,
+    record.description,
+    record.suggestion,
+    record.issues
+  ]);
+  const resultText = `${validationText} ${adviceText}`.trim();
+  const fullText = `${resultText} ${evidenceText}`.trim();
+  if (!fullText) return false;
+  if (/场景不匹配|不适用|无法复用|不可用|失败|未完成|取消|资料不完整|无效|不通过|待填写|待记录|待评估|待判断|暂不判断/.test(resultText)) return false;
+  if (/可直接复用|部分可用|可用|可复用|建议.{0,12}复用|通过|已验证|验证完成|复用/.test(resultText)) return true;
+  if (/已完成.{0,12}验证|实任务验证/.test(fullText)) return true;
+  return record.walkthroughDone === true && /验证|回填|结论|结果/.test(fullText);
+}
+
+function cleanValidationUsageText(value = '') {
+  return (Array.isArray(value) ? value : [value])
+    .map(item => cleanString(item))
+    .filter(item => item && item !== '-')
+    .join(' ');
 }
 
 function usageTargetsFromArtProgressEvent(event = {}) {

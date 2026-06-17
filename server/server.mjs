@@ -246,7 +246,14 @@ async function handleApi(req, res, url) {
     const event = await saveArtProgressEvent(body, user, 'api');
     const validationRecord = await maybeCreateSkillValidationFromArtProgress(event, user);
     broadcastPlatformEvent('art-progress-events.changed', { module: 'skill-events' });
-    if (validationRecord) broadcastPlatformEvent('skill-validations.changed', { module: 'skill-validation' });
+    if (validationRecord) {
+      broadcastPlatformEvent('skill-validations.changed', { module: 'skill-validation' });
+      broadcastUsageCountersChanged(validationRecord.usagePatch, {
+        module: 'skill-validation',
+        targetId: validationRecord.id || '',
+        target: validationRecord.artifactName || validationRecord.researchName || ''
+      });
+    }
     sendJson(res, 201, validationRecord ? { event, validationRecord } : { event });
     return;
   }
@@ -574,6 +581,7 @@ async function handleApi(req, res, url) {
     requirePermission(currentUser, 'api.skillAsset.create');
     const body = await readBody(req);
     const result = await saveSkillValidationRecord(body, currentUser);
+    const usagePatch = result.usagePatch || { matched: 0 };
     await writeOperationLog(req, {
       user: currentUser,
       module: 'skill-validation',
@@ -586,6 +594,11 @@ async function handleApi(req, res, url) {
       description: `${currentUser.displayName || currentUser.username} 保存验证回填「${result.savedRecord?.artifactName || result.savedRecord?.researchName || '未命名产物'}」`
     });
     broadcastPlatformEvent('skill-validations.changed', { module: 'skill-validation' });
+    broadcastUsageCountersChanged(usagePatch, {
+      module: 'skill-validation',
+      targetId: result.savedRecord?.id || '',
+      target: result.savedRecord?.artifactName || result.savedRecord?.researchName || ''
+    });
     sendJson(res, 200, result);
     return;
   }
@@ -606,6 +619,7 @@ async function handleApi(req, res, url) {
       originalSource: '工作台确认回填',
       source: '工作台确认回填'
     }, currentUser);
+    const usagePatch = result.usagePatch || { matched: 0 };
     await writeOperationLog(req, {
       user: currentUser,
       module: 'skill-validation',
@@ -618,6 +632,11 @@ async function handleApi(req, res, url) {
       description: `${currentUser.displayName || currentUser.username} 确认回填验证明细「${result.savedRecord?.artifactName || result.savedRecord?.researchName || '未命名产物'}」`
     });
     broadcastPlatformEvent('skill-validations.changed', { module: 'skill-validation' });
+    broadcastUsageCountersChanged(usagePatch, {
+      module: 'skill-validation',
+      targetId: result.savedRecord?.id || '',
+      target: result.savedRecord?.artifactName || result.savedRecord?.researchName || ''
+    });
     sendJson(res, 200, result);
     return;
   }
@@ -3658,8 +3677,8 @@ async function saveSkillValidationRecord(input = {}, currentUser = {}, options =
     manualRecords
   });
   await writeSkillValidations(result);
-  await recordUsageCountersForSkillValidation(savedRecord);
-  return { ...result, savedRecord };
+  const usagePatch = await recordUsageCountersForSkillValidation(savedRecord);
+  return { ...result, savedRecord, usagePatch };
 }
 
 async function deleteSkillValidationRecord(id = '', currentUser = {}) {
@@ -5284,7 +5303,7 @@ async function maybeCreateSkillValidationFromArtProgress(event = {}, user = {}) 
     after: result.savedRecord,
     description: `${result.savedRecord?.validator || user.displayName || user.username || '成员'} 的 Codex 验证内容已自动回填到验证列表「${result.savedRecord?.artifactName || result.savedRecord?.researchName || '未命名产物'}」`
   });
-  return result.savedRecord || null;
+  return result.savedRecord ? { ...result.savedRecord, usagePatch: result.usagePatch || { matched: 0 } } : null;
 }
 
 async function saveArtProgressEvent(input = {}, user = {}, source = 'api') {
