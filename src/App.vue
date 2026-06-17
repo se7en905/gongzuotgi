@@ -9881,7 +9881,9 @@ export default {
 
     skillInventoryUsageStatsForList(row = {}) {
       const historical = this.usageCounterStatsForRow(row);
-      const memberCounts = this.skillInventoryHistoricalUsageMemberCounts(historical);
+      const memberCounts = this.skillInventoryHistoricalUsageMemberCounts(historical, {
+        preferUsagePeople: this.isTaskArtBriefAssetRow(row)
+      });
       const hasHistorical = this.hasUsageCounterStats(historical);
       const currentLogs = this.skillUsageLogs(row);
       const currentUsageLogs = currentLogs.filter(item => this.skillUsageLogCountsAsCall(item));
@@ -9972,7 +9974,9 @@ export default {
       const usageLogs = this.skillUsageLogs(row);
       const callLogs = usageLogs.filter(item => this.skillUsageLogCountsAsCall(item));
       const historical = this.usageCounterStatsForRow(row);
-      const memberCounts = this.skillInventoryHistoricalUsageMemberCounts(historical);
+      const memberCounts = this.skillInventoryHistoricalUsageMemberCounts(historical, {
+        preferUsagePeople: this.isTaskArtBriefAssetRow(row)
+      });
       const hasHistorical = this.hasUsageCounterStats(historical);
       const supplementalLogs = this.skillUsageSupplementalLogs(row, callLogs, hasHistorical, historical);
       supplementalLogs.forEach(item => {
@@ -10009,9 +10013,12 @@ export default {
       return this.usageCounterBucketCountableTotal(bucket) > 0;
     },
 
-    skillInventoryHistoricalUsageMemberCounts(stats = {}) {
+    skillInventoryHistoricalUsageMemberCounts(stats = {}, options = {}) {
       const memberCounts = new Map();
-      const source = Object.keys(stats.people || {}).length ? stats.people : (stats.usagePeople || {});
+      const preferUsagePeople = options.preferUsagePeople === true;
+      const usagePeople = stats.usagePeople && typeof stats.usagePeople === 'object' ? stats.usagePeople : {};
+      const people = stats.people && typeof stats.people === 'object' ? stats.people : {};
+      const source = preferUsagePeople && Object.keys(usagePeople).length ? usagePeople : people;
       Object.entries(source || {}).forEach(([person, count]) => {
         this.addSkillInventoryUsageMemberCount(memberCounts, person, count);
       });
@@ -10043,9 +10050,9 @@ export default {
     usageCounterStatsForRow(row = {}) {
       const buckets = this.usageCounters?.buckets || {};
       if (!buckets || typeof buckets !== 'object') return { count: 0, people: {}, usagePeople: {}, usageCount: 0, validationCount: 0, researchSyncCount: 0, bucketCount: 0 };
-      const keys = this.usageRowExplicitTargetKeys(row);
-      if (this.isTaskArtBriefAssetRow(row)) keys.push(...this.taskArtBriefUsageCounterKeys());
-      const fuzzyKeys = this.usageRowFuzzyTargetKeys(row);
+      const isTaskArtBriefAsset = this.isTaskArtBriefAssetRow(row);
+      const keys = isTaskArtBriefAsset ? this.taskArtBriefUsageCounterKeys() : this.usageRowExplicitTargetKeys(row);
+      const fuzzyKeys = isTaskArtBriefAsset ? [] : this.usageRowFuzzyTargetKeys(row);
       const connectedAt = this.skillInventoryRowConnectedAt(row);
       const seen = new Set();
       const seenEventKeys = new Set();
@@ -10255,9 +10262,9 @@ export default {
     usageCounterEventKeySetForRow(row = {}) {
       const buckets = this.usageCounters?.buckets || {};
       if (!buckets || typeof buckets !== 'object') return new Set();
-      const keys = this.usageRowExplicitTargetKeys(row);
-      if (this.isTaskArtBriefAssetRow(row)) keys.push(...this.taskArtBriefUsageCounterKeys());
-      const fuzzyKeys = this.usageRowFuzzyTargetKeys(row);
+      const isTaskArtBriefAsset = this.isTaskArtBriefAssetRow(row);
+      const keys = isTaskArtBriefAsset ? this.taskArtBriefUsageCounterKeys() : this.usageRowExplicitTargetKeys(row);
+      const fuzzyKeys = isTaskArtBriefAsset ? [] : this.usageRowFuzzyTargetKeys(row);
       const seen = new Set();
       const eventKeys = new Set();
       const applyBucket = (bucket, normalizedKey = '') => {
@@ -10544,7 +10551,7 @@ export default {
     },
 
     taskArtBriefUsageCounterKeys() {
-      return this.taskArtBriefProductAliases('禅道摘取美术摘要')
+      return ['zentao-art-brief-product']
         .map(value => this.usageCounterKeyForProduct(value))
         .filter(value => value && value.length >= 4 && !this.isGenericUsageNeedle(value))
         .filter((value, index, array) => array.indexOf(value) === index);
@@ -13837,7 +13844,9 @@ export default {
       const historical = this.usageCounterStatsForRow(row);
       const hasHistorical = this.hasUsageCounterStats(historical);
       const supplementalLogs = this.skillUsageSupplementalLogs(row, callLogs, hasHistorical, historical);
-      const memberCounts = this.skillInventoryHistoricalUsageMemberCounts(historical);
+      const memberCounts = this.skillInventoryHistoricalUsageMemberCounts(historical, {
+        preferUsagePeople: this.isTaskArtBriefAssetRow(row)
+      });
       supplementalLogs.forEach(item => {
         this.addSkillInventoryUsageMemberCount(memberCounts, item.person, 1);
       });

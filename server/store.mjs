@@ -938,8 +938,8 @@ export async function recordUsageCountersForSkillAliases(aliases = [], options =
     if (!isUsageLikeOperationLog(log)) continue;
     addAliasHit(log, 'operation-log');
   }
-  if (targets.length) await updateUsageCounters(targets);
-  return { matched: targets.length };
+  if (!targets.length) return { matched: 0 };
+  return await updateUsageCounters(targets);
 }
 
 export async function upsertCodexConfig(input = {}) {
@@ -4038,21 +4038,8 @@ function usageTargetsFromArtProgressEvent(event = {}) {
 function usageTargetsFromOperationLog(log = {}) {
   if (!isUsageLikeOperationLog(log)) return [];
   const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
-  const taskArtBriefTargets = isTaskArtBriefUsageOperationLog(log)
-    ? [
-        'zentao-art-brief-product',
-        'zentao-art-brief',
-        '禅道摘取美术摘要',
-        '禅道提取美术任务摘要',
-        '禅道美术摘要',
-        '美术任务摘要',
-        '生成美术摘要',
-        '生成摘要',
-        '美术摘要'
-      ]
-    : [];
   const values = [
-    ...taskArtBriefTargets,
+    isTaskArtBriefUsageOperationLog(log) ? 'zentao-art-brief-product' : '',
     log.targetName,
     log.targetId,
     metadata.productName,
