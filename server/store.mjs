@@ -915,6 +915,8 @@ export async function recordUsageCountersForSkillAliases(aliases = [], options =
   };
   const addAliasHit = (record, source = 'art-progress') => {
     if (!shouldUseRecord(record)) return;
+    if (source === 'art-progress' && !isUsageCountableArtProgressEvent(record)) return;
+    if (source === 'operation-log' && !isHistoricalUsageOperationLog(record)) return;
     const haystack = usageSearchTextFromRecord(record, source);
     if (!haystack) return;
     if (!aliasKeys.some(key => haystack.includes(key))) return;
@@ -3467,7 +3469,14 @@ function normalizeUsageCounterBucket(input = {}, fallbackKey = '') {
   const count = Math.max(0, Number(input.count ?? input.usageCount ?? 0));
   const researchSyncCount = Math.max(0, Number(input.researchSyncCount || input.researchCount || 0));
   const validationCount = Math.max(0, Number(input.validationCount || 0));
-  const usageCount = Math.max(0, Number(input.usageOnlyCount ?? input.directUsageCount ?? input.usageCount ?? input.count ?? 0));
+  const hasExplicitUsageCount = ['usageOnlyCount', 'directUsageCount', 'usageCount'].some(field => Object.prototype.hasOwnProperty.call(input, field));
+  const hasTypedNonUsageCount = Object.prototype.hasOwnProperty.call(input, 'researchSyncCount')
+    || Object.prototype.hasOwnProperty.call(input, 'researchCount')
+    || Object.prototype.hasOwnProperty.call(input, 'validationCount');
+  const rawUsageCount = hasExplicitUsageCount
+    ? input.usageOnlyCount ?? input.directUsageCount ?? input.usageCount
+    : (hasTypedNonUsageCount ? 0 : input.count);
+  const usageCount = Math.max(0, Number(rawUsageCount || 0));
   const usagePeopleSource = input.usagePeople && typeof input.usagePeople === 'object' ? input.usagePeople : null;
   const normalizedUsagePeople = {};
   if (usagePeopleSource) {
@@ -3485,6 +3494,7 @@ function normalizeUsageCounterBucket(input = {}, fallbackKey = '') {
     researchSyncCount,
     validationCount,
     eventKeys: Array.isArray(input.eventKeys) ? input.eventKeys.map(cleanString).filter(Boolean) : [],
+    usageEventKeys: Array.isArray(input.usageEventKeys) ? input.usageEventKeys.map(cleanString).filter(Boolean) : [],
     aliases: normalizeLineList([
       ...(Array.isArray(input.aliases) ? input.aliases : normalizeLineList(input.aliases || [])),
       ...(Array.isArray(input.aliasHistory) ? input.aliasHistory : normalizeLineList(input.aliasHistory || [])),
@@ -3504,6 +3514,7 @@ let usageCounterKindFixCache = null;
 
 async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCounters()) {
   if (!counters?.buckets || typeof counters.buckets !== 'object') return counters;
+  const usageBucketRebuildMap = await historicalUsageBucketRebuildMap();
   const nonUsageLogs = await historicalNonUsageOperationLogs();
   const usageSources = await historicalUsageEventSources();
   const ownerMap = await historicalUsageEventOwnerMap();
@@ -3511,6 +3522,7 @@ async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCount
   let changed = false;
   for (const [key, inputBucket] of Object.entries(counters.buckets)) {
     const bucket = normalizeUsageCounterBucket(inputBucket, key);
+    if (applyHistoricalUsageBucketRebuild(bucket, usageBucketRebuildMap)) changed = true;
     const eventKeys = Array.isArray(bucket.eventKeys) ? bucket.eventKeys.filter(Boolean) : [];
     const misclassified = historicalNonUsageEventKeySetForBucket(bucket, nonUsageLogs);
     const badCount = misclassified.size ? eventKeys.filter(eventKey => misclassified.has(eventKey)).length : 0;
@@ -3533,6 +3545,153 @@ async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCount
     ...counters,
     buckets
   };
+}
+
+let usageCounterRebuildMapCache = null;
+
+async function historicalUsageBucketRebuildMap() {
+  if (usageCounterRebuildMapCache) return usageCounterRebuildMapCache;
+  const [operationLogs, runs] = await Promise.all([
+    readJson(paths.operationLogs, []),
+    readJson(paths.runs, [])
+  ]);
+  const map = new Map();
+  const addTarget = (target = '', owners = [], eventKey = '', at = '') => {
+    const key = usageCounterKey(target);
+    if (!key || !eventKey) return;
+    const ownerList = (Array.isArray(owners) ? owners : [owners])
+      .flatMap(value => normalizeLineList(value))
+      .map(cleanString)
+      .filter(owner => owner && !isUsageProxyPerson(owner) && !looksLikeUuid(owner));
+    if (!ownerList.length) return;
+    const bucket = map.get(key) || {
+      key,
+      target: cleanString(target),
+      usageCount: 0,
+      usagePeople: {},
+      eventKeys: new Set(),
+      usageEventKeys: new Set(),
+      firstAt: '',
+      lastAt: ''
+    };
+    if (bucket.eventKeys.has(eventKey)) {
+      map.set(key, bucket);
+      return;
+    }
+    bucket.eventKeys.add(eventKey);
+    bucket.usageEventKeys.add(eventKey);
+    bucket.usageCount += 1;
+    ownerList
+      .filter((owner, index, array) => array.findIndex(item => samePersonName(item, owner)) === index)
+      .forEach(owner => {
+        bucket.usagePeople[owner] = Number(bucket.usagePeople[owner] || 0) + 1;
+      });
+    if (at) {
+      bucket.firstAt = bucket.firstAt ? (String(bucket.firstAt).localeCompare(String(at)) <= 0 ? bucket.firstAt : at) : at;
+      bucket.lastAt = bucket.lastAt ? (String(bucket.lastAt).localeCompare(String(at)) >= 0 ? bucket.lastAt : at) : at;
+    }
+    map.set(key, bucket);
+  };
+
+  for (const log of Array.isArray(operationLogs) ? operationLogs : []) {
+    if (!isHistoricalUsageOperationLog(log)) continue;
+    const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
+    const at = cleanString(log.createdAt || log.updatedAt);
+    const owners = usageOwnersFromOperationLog(log);
+    const eventKey = usageEventKey('operation-log', log.id || log.targetId || log.targetName, at);
+    if (isTaskArtBriefUsageOperationLog(log)) {
+      addTarget('zentao-art-brief-product', owners, eventKey, at);
+      continue;
+    }
+    const values = [
+      log.targetName,
+      log.targetId,
+      metadata.productName,
+      metadata.artifactName,
+      metadata.skillName,
+      metadata.operationName,
+      metadata.alias,
+      metadata.path,
+      metadata.filePath,
+      metadata.skillPath,
+      metadata.artifactPath,
+      ...(Array.isArray(metadata.aliases) ? metadata.aliases : []),
+      ...(Array.isArray(metadata.artifactNames) ? metadata.artifactNames : []),
+      ...(Array.isArray(metadata.artifactPaths) ? metadata.artifactPaths : [])
+    ];
+    for (const target of values.flatMap(usageTargetCandidates)) addTarget(target, owners, eventKey, at);
+  }
+
+  for (const run of Array.isArray(runs) ? runs : []) {
+    if (!isUsageLikeRun(run)) continue;
+    const at = cleanString(run.startedAt || run.createdAt);
+    const owners = usageOwnersFromRun(run);
+    const eventKey = usageEventKey(run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill' ? 'direct-skill-run' : 'run', run.id || run.primarySkillPath || run.stage || run.title, at);
+    const values = [
+      run.primarySkillPath,
+      run.skillPath,
+      run.stage,
+      run.title,
+      run.sourceTitle,
+      run.productName,
+      ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
+      ...(Array.isArray(run.materials) ? run.materials.flatMap(item => [item?.path, item?.name, item?.title]) : []),
+      ...(Array.isArray(run.referenceItems) ? run.referenceItems.flatMap(item => [item?.path, item?.name, item?.title]) : [])
+    ];
+    for (const target of values.flatMap(usageTargetCandidates)) addTarget(target, owners, eventKey, at);
+  }
+
+  usageCounterRebuildMapCache = map;
+  return usageCounterRebuildMapCache;
+}
+
+function applyHistoricalUsageBucketRebuild(bucket = {}, rebuildMap = new Map()) {
+  if (!bucket?.key || !rebuildMap?.size) return false;
+  const targetValues = bucketUsageTargetValues(bucket);
+  const matched = new Map();
+  const addMatch = key => {
+    const normalized = usageCounterKey(key);
+    if (!normalized || !rebuildMap.has(normalized)) return;
+    matched.set(normalized, rebuildMap.get(normalized));
+  };
+  addMatch(bucket.key);
+  for (const target of targetValues) addMatch(target);
+  if (!matched.size) return false;
+  const usagePeople = {};
+  const eventKeys = new Set();
+  const usageEventKeys = new Set();
+  let usageCount = 0;
+  let firstAt = '';
+  let lastAt = '';
+  for (const item of matched.values()) {
+    for (const eventKey of item.eventKeys || []) {
+      if (!eventKey || eventKeys.has(eventKey)) continue;
+      eventKeys.add(eventKey);
+      usageCount += 1;
+    }
+    for (const eventKey of item.usageEventKeys || []) {
+      if (eventKey) usageEventKeys.add(eventKey);
+    }
+    for (const [person, count] of Object.entries(item.usagePeople || {})) {
+      if (!person || isUsageProxyPerson(person)) continue;
+      usagePeople[person] = Number(usagePeople[person] || 0) + Number(count || 0);
+    }
+    if (item.firstAt) firstAt = firstAt ? (String(firstAt).localeCompare(String(item.firstAt)) <= 0 ? firstAt : item.firstAt) : item.firstAt;
+    if (item.lastAt) lastAt = lastAt ? (String(lastAt).localeCompare(String(item.lastAt)) >= 0 ? lastAt : item.lastAt) : item.lastAt;
+  }
+  usageCount = Math.max(0, usageCount);
+  const usageEventKeyList = [...usageEventKeys];
+  const changed = Number(bucket.usageCount || 0) !== usageCount
+    || JSON.stringify(bucket.usagePeople || {}) !== JSON.stringify(usagePeople)
+    || Number(bucket.usagePeopleCount || 0) !== Object.keys(usagePeople).length
+    || JSON.stringify(bucket.usageEventKeys || []) !== JSON.stringify(usageEventKeyList);
+  bucket.usageCount = usageCount;
+  bucket.usagePeople = usagePeople;
+  bucket.usagePeopleCount = Object.keys(usagePeople).length;
+  bucket.usageEventKeys = usageEventKeyList;
+  if (firstAt && (!bucket.firstAt || String(firstAt).localeCompare(String(bucket.firstAt)) < 0)) bucket.firstAt = firstAt;
+  if (lastAt && (!bucket.lastAt || String(lastAt).localeCompare(String(bucket.lastAt)) > 0)) bucket.lastAt = lastAt;
+  return changed;
 }
 
 let usageCounterSourceCache = null;
@@ -3559,15 +3718,14 @@ function isUsageCountableArtProgressEvent(event = {}) {
 
 function isHistoricalUsageOperationLog(log = {}) {
   const action = cleanString(log.action);
+  const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
+  if (metadata.countAsSkillUsage === false || metadata.countAsProductUsage === false) return false;
   if ([
-    'START_RUN',
-    'RETRY_RUN',
     'CREATE_DIRECT_SKILL_RUN',
     'GENERATE_ZENTAO_ART_BRIEF',
     'REUSE_ZENTAO_ART_BRIEF',
     'REGENERATE_ZENTAO_ART_BRIEF'
   ].includes(action)) return true;
-  const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
   return metadata.countAsSkillUsage === true || metadata.countAsProductUsage === true;
 }
 
@@ -3805,14 +3963,13 @@ function normalizeUsageBucketTotals(bucket = {}) {
   }
   const usageTotal = Object.values(usagePeople).reduce((sum, value) => sum + Number(value || 0), 0);
   let usageCount = Math.max(0, Math.round(Number(bucket.usageCount || 0)));
-  if (usageCount <= 0 || usageTotal <= 0) {
+  if (usageCount <= 0) {
     if (usageCount !== 0 || usageTotal !== 0 || Object.keys(bucket.usagePeople || {}).length) changed = true;
     bucket.usageCount = 0;
     bucket.usagePeople = {};
-  } else if (usageTotal !== usageCount) {
+  } else if (usageTotal > usageCount) {
     changed = true;
-    bucket.usageCount = usageTotal;
-    bucket.usagePeople = usagePeople;
+    bucket.usagePeople = capUsagePeopleCounts(usagePeople, usageCount);
   } else {
     bucket.usagePeople = usagePeople;
   }
@@ -3823,6 +3980,25 @@ function normalizeUsageBucketTotals(bucket = {}) {
   }
   if (normalizeUsageBucketPeopleTotals(bucket)) changed = true;
   return changed;
+}
+
+function capUsagePeopleCounts(usagePeople = {}, limit = 0) {
+  const remainingLimit = Math.max(0, Math.round(Number(limit || 0)));
+  if (!remainingLimit) return {};
+  let remaining = remainingLimit;
+  const output = {};
+  Object.entries(usagePeople)
+    .map(([person, count]) => ({ person, count: Math.max(0, Math.round(Number(count || 0))) }))
+    .filter(item => item.person && item.count > 0)
+    .sort((left, right) => right.count - left.count || cleanString(left.person).localeCompare(cleanString(right.person)))
+    .forEach(item => {
+      if (remaining <= 0) return;
+      const value = Math.min(item.count, remaining);
+      if (value <= 0) return;
+      output[item.person] = value;
+      remaining -= value;
+    });
+  return output;
 }
 
 function normalizeUsageBucketPeopleTotals(bucket = {}) {
@@ -3871,37 +4047,40 @@ function usageOwnersFromOperationLog(log = {}) {
   const before = log.before && typeof log.before === 'object' ? log.before : {};
   const after = log.after && typeof log.after === 'object' ? log.after : {};
   const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
-  const runOwners = normalizeLineList([
-    before.assignedToName,
-    before.developer,
-    before.createdByName,
+  const primaryRunOwner = [
     after.assignedToName,
     after.developer,
-    after.createdByName,
+    before.assignedToName,
+    before.developer,
     metadata.assignedToName,
     metadata.developer,
+    after.createdByName,
+    before.createdByName,
     metadata.createdByName
-  ]).filter(owner => owner && !isUsageProxyPerson(owner));
-  if (['START_RUN', 'RETRY_RUN', 'CREATE_DIRECT_SKILL_RUN'].includes(action) && runOwners.length) {
-    return runOwners;
+  ].map(cleanString).find(owner => owner && !isUsageProxyPerson(owner));
+  if (['START_RUN', 'RETRY_RUN', 'CREATE_DIRECT_SKILL_RUN'].includes(action) && primaryRunOwner) {
+    return [primaryRunOwner];
   }
-  return normalizeLineList([
+  const primaryLogOwner = [
     log.memberName,
     log.displayName,
     log.username
-  ]).filter(owner => owner && !isUsageProxyPerson(owner));
+  ].map(cleanString).find(owner => owner && !isUsageProxyPerson(owner));
+  return primaryLogOwner ? [primaryLogOwner] : [];
 }
 
 function usageOwnersFromRun(run = {}) {
-  const owners = normalizeLineList([
+  const owner = [
     run.assignedToName,
     run.developer,
     run.createdByName,
     run.ownerName
-  ]).filter(owner => owner && !isUsageProxyPerson(owner));
-  if (owners.length) return owners;
-  return normalizeLineList([run.createdBy, run.ownerUserId])
-    .filter(owner => owner && !isUsageProxyPerson(owner) && !looksLikeUuid(owner));
+  ].map(cleanString).find(value => value && !isUsageProxyPerson(value));
+  if (owner) return [owner];
+  const fallback = [run.createdBy, run.ownerUserId]
+    .map(cleanString)
+    .find(value => value && !isUsageProxyPerson(value) && !looksLikeUuid(value));
+  return fallback ? [fallback] : [];
 }
 
 function looksLikeUuid(value = '') {
@@ -4000,6 +4179,7 @@ function usageTargetsFromArtProgressEvent(event = {}) {
   if (!isUsageLikeArtProgressEvent(event)) return [];
   const metadata = event.metadata && typeof event.metadata === 'object' ? event.metadata : {};
   const defaultCount = Math.max(1, Number(metadata.usageCount || metadata.count || 1) || 1);
+  const kind = isUsageCountableArtProgressEvent(event) ? 'usage' : 'research-sync';
   const targetValues = [
     event.skillId,
     event.skillName,
@@ -4017,7 +4197,7 @@ function usageTargetsFromArtProgressEvent(event = {}) {
     person: cleanString(event.memberName || event.memberAccount),
     at: cleanString(event.createdAt),
     source: 'art-progress',
-    kind: 'research-sync',
+    kind,
     count: defaultCount,
     eventKey: usageEventKey('art-progress', event.id || event.skillName || event.title, event.createdAt)
   });
@@ -4028,7 +4208,7 @@ function usageTargetsFromArtProgressEvent(event = {}) {
     person: cleanString(event.memberName || event.memberAccount),
     at: cleanString(event.createdAt),
     source: 'art-progress',
-    kind: 'research-sync',
+    kind,
     count: Math.max(1, Number(item?.count || defaultCount) || 1),
     eventKey: usageEventKey('art-progress-artifact', `${event.id || event.skillName || event.title}:${index}`, event.createdAt)
   }));
@@ -4099,7 +4279,7 @@ function usageTargetsFromRun(run = {}, options = {}) {
 function isUsageLikeRun(run = {}) {
   if (!run || typeof run !== 'object') return false;
   const status = cleanString(run.status || run.workerStatus || run.platformStatus).toLowerCase();
-  if (/cancel|canceled|cancelled|pending|queued|draft|deleted|void/.test(status)) return false;
+  if (/cancel|canceled|cancelled|pending|queued|draft|deleted|void|running|claim|start/.test(status)) return false;
   if (run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill') return true;
   if (normalizeWorkflowId(run.workflow || '') === 'art-single-skill') return true;
   if (cleanString(run.executionMode) === 'single-skill') return true;

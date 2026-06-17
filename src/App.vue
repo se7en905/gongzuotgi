@@ -4781,12 +4781,13 @@ export default {
       } catch (error) {
         console.error('AI 产物清单行展示计算失败，已使用基础展示', error);
         const versionLabel = this.safeCallDisplayValue(() => this.skillVersionShortLabel(row), '1.0');
+        const usage = this.safeCallDisplayValue(() => this.skillInventoryUsageStatsForList(row), { usageCount: 0, rate: 0 });
         return {
           ...row,
           displayVersionLabel: versionLabel,
           displayVersionClass: this.safeCallDisplayValue(() => this.skillVersionClass(row), this.skillVersionClass(versionLabel)),
-          displayUsageCount: row.hidden === true ? '-' : Number(row.usageCount || 0),
-          displayUsageRate: row.hidden === true ? '-' : '-',
+          displayUsageCount: row.hidden === true ? '-' : Math.max(0, Math.round(Number(usage.usageCount || 0))),
+          displayUsageRate: row.hidden === true || this.safeCallDisplayValue(() => this.isOwnerYushengwei(row), false) ? '-' : `${Number(usage.rate || 0)}%`,
           displayQualityScore: null,
           displayQualityClass: '',
           displayQualityText: '质量分暂未计算。',
@@ -9778,6 +9779,10 @@ export default {
     skillInventoryCachedUsageCountDisplay(row = {}) {
       if (row.hidden === true) return '-';
       const liveUsage = this.skillInventoryUsageStatsForList(row);
+      const historical = this.usageCounterStatsForRow(row);
+      if (this.hasUsageCounterStats(historical)) {
+        return Math.max(0, Math.round(Number(liveUsage.usageCount || 0)));
+      }
       if (Number(liveUsage.usageCount || 0) > 0) return Number(liveUsage.usageCount || 0);
       const value = Number(row.usageCount ?? row.skill?.usageCount);
       if (Number.isFinite(value)) return value;
@@ -9788,6 +9793,8 @@ export default {
       if (row.hidden === true) return '-';
       if (this.isOwnerYushengwei(row)) return '-';
       const liveUsage = this.skillInventoryUsageStatsForList(row);
+      const historical = this.usageCounterStatsForRow(row);
+      if (this.hasUsageCounterStats(historical)) return `${Number(liveUsage.rate || 0)}%`;
       if (Number(liveUsage.usageCount || 0) > 0) return `${Number(liveUsage.rate || 0)}%`;
       const value = Number(row.usageRate ?? row.skill?.usageRate);
       if (Number.isFinite(value)) return `${value}%`;
@@ -9892,7 +9899,9 @@ export default {
         this.addSkillInventoryUsageMemberCount(memberCounts, item.person, 1);
       });
       const people = new Set([...memberCounts.keys()]);
-      const usageCount = this.skillInventoryUsageMemberCountTotal(memberCounts);
+      const usageCount = hasUsageHistorical
+        ? Math.max(0, Math.round(Number(historical.usageCount || 0)))
+        : this.skillInventoryUsageMemberCountTotal(memberCounts);
       const count = usageCount;
       const coverage = this.skillUsageCoverageStats(row, currentUsageLogs, { historicalPeople: people });
       const rate = coverage.rate;
@@ -9984,7 +9993,9 @@ export default {
       });
       const people = new Set([...memberCounts.keys()]);
       const validationCoverage = this.skillUsageCoverageStats(row, callLogs, { historicalPeople: people });
-      const usageCount = this.skillInventoryUsageMemberCountTotal(memberCounts);
+      const usageCount = hasUsageHistorical
+        ? Math.max(0, Math.round(Number(historical.usageCount || 0)))
+        : this.skillInventoryUsageMemberCountTotal(memberCounts);
       const count = usageCount;
       const rate = validationCoverage.rate;
       const average = people.size ? Math.round((usageCount / people.size) * 10) / 10 : 0;
@@ -10053,13 +10064,14 @@ export default {
 
     usageCounterStatsForRow(row = {}) {
       const buckets = this.usageCounters?.buckets || {};
-      if (!buckets || typeof buckets !== 'object') return { count: 0, people: {}, usagePeople: {}, usageCount: 0, validationCount: 0, researchSyncCount: 0, bucketCount: 0 };
+      if (!buckets || typeof buckets !== 'object') return { count: 0, people: {}, usagePeople: {}, usageCount: 0, validationCount: 0, researchSyncCount: 0, bucketCount: 0, usageEventKeys: [] };
       const isTaskArtBriefAsset = this.isTaskArtBriefAssetRow(row);
       const keys = isTaskArtBriefAsset ? this.taskArtBriefUsageCounterKeys() : this.usageRowExplicitTargetKeys(row);
       const fuzzyKeys = isTaskArtBriefAsset ? [] : this.usageRowFuzzyTargetKeys(row);
       const connectedAt = this.skillInventoryRowConnectedAt(row);
       const seen = new Set();
       const seenEventKeys = new Set();
+      const seenUsageEventKeys = new Set();
       const people = {};
       const usagePeople = {};
       let count = 0;
@@ -10092,10 +10104,14 @@ export default {
         if (!this.usageBucketMatchesRowTime(bucket, row, connectedAt)) return;
         seen.add(normalizedKey);
         const eventKeys = Array.isArray(bucket.eventKeys) ? bucket.eventKeys.filter(Boolean) : [];
-        const newEventKeys = eventKeys.filter(eventKey => !seenEventKeys.has(eventKey));
-        const eventRatio = eventKeys.length ? newEventKeys.length / eventKeys.length : 1;
+        const usageEventKeys = Array.isArray(bucket.usageEventKeys) ? bucket.usageEventKeys.filter(Boolean) : [];
+        const countableKeys = eventKeys.length ? eventKeys : usageEventKeys;
+        const newEventKeys = countableKeys.filter(eventKey => !seenEventKeys.has(eventKey));
+        const eventRatio = countableKeys.length ? newEventKeys.length / countableKeys.length : 1;
         if (!eventRatio) return;
-        eventKeys.forEach(eventKey => seenEventKeys.add(eventKey));
+        countableKeys.forEach(eventKey => seenEventKeys.add(eventKey));
+        const newUsageEventKeys = usageEventKeys.filter(eventKey => !seenUsageEventKeys.has(eventKey));
+        usageEventKeys.forEach(eventKey => seenUsageEventKeys.add(eventKey));
         const applyCount = value => Math.round(Number(value || 0) * eventRatio);
         const bucketUsagePeople = bucket.usagePeople && typeof bucket.usagePeople === 'object'
           ? bucket.usagePeople
@@ -10103,11 +10119,14 @@ export default {
         const bucketValidationCount = applyCount(bucket.validationCount || 0);
         const bucketResearchSyncCount = applyCount(bucket.researchSyncCount || 0);
         const bucketTotalLimit = applyCount(this.usageCounterBucketCountableTotal(bucket));
-        const bucketUsageLimit = applyCount(bucket.usageCount || 0);
+        const bucketUsageLimit = usageEventKeys.length ? newUsageEventKeys.length : applyCount(bucket.usageCount || 0);
         const peopleLimit = bucketTotalLimit;
-        const bucketUsagePeopleTotal = applyPersonCounts(usagePeople, bucketUsagePeople, eventRatio, bucketUsageLimit || Infinity);
+        const usagePersonRatio = usageEventKeys.length ? (newUsageEventKeys.length / usageEventKeys.length) : eventRatio;
+        applyPersonCounts(usagePeople, bucketUsagePeople, usagePersonRatio, bucketUsageLimit || Infinity);
         applyPersonCounts(people, bucket.people || {}, eventRatio, peopleLimit || Infinity);
-        const bucketUsageCount = bucketUsagePeopleTotal > 0 ? bucketUsagePeopleTotal : 0;
+        const bucketUsageCount = bucketUsageLimit > 0
+          ? bucketUsageLimit
+          : Object.values(bucketUsagePeople).reduce((sum, value) => sum + applyCount(value), 0);
         count += bucketUsageCount + bucketValidationCount + bucketResearchSyncCount;
         usageCount += bucketUsageCount;
         validationCount += bucketValidationCount;
@@ -10126,7 +10145,7 @@ export default {
           applyBucket(bucket, bucketKey);
         });
       }
-      return { count, people, usagePeople, usageCount, validationCount, researchSyncCount, bucketCount: seen.size };
+      return { count, people, usagePeople, usageCount, validationCount, researchSyncCount, bucketCount: seen.size, usageEventKeys: [...seenUsageEventKeys] };
     },
 
     skillInventoryRowConnectedAt(row = {}) {
@@ -10275,7 +10294,7 @@ export default {
         if (!bucket || seen.has(normalizedKey)) return;
         if (!this.isUsageCounterBucketCountable(bucket)) return;
         seen.add(normalizedKey);
-        (Array.isArray(bucket.eventKeys) ? bucket.eventKeys : []).forEach(eventKey => {
+        (Array.isArray(bucket.usageEventKeys) && bucket.usageEventKeys.length ? bucket.usageEventKeys : bucket.eventKeys || []).forEach(eventKey => {
           if (eventKey) eventKeys.add(String(eventKey));
         });
       };
@@ -13857,7 +13876,9 @@ export default {
       const people = new Set([...memberCounts.keys()]);
       const effectivePeople = this.skillEffectiveUsagePeople(row);
       const validationCoverage = this.skillUsageCoverageStats(row, callLogs, { historicalPeople: people });
-      const totalCount = this.skillInventoryUsageMemberCountTotal(memberCounts);
+      const totalCount = hasUsageHistorical
+        ? Math.max(0, Math.round(Number(historical.usageCount || 0)))
+        : this.skillInventoryUsageMemberCountTotal(memberCounts);
       const memberStats = [...memberCounts.entries()]
         .map(([name, count]) => ({
           name,

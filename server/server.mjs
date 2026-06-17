@@ -1532,6 +1532,18 @@ async function handleApi(req, res, url) {
       },
       description: `${currentUser.displayName || currentUser.username} 回传${workerRunKind}「${run.title}」状态：${body.status || body.workerStatus || 'running'}`
     });
+    const usagePatch = await recordUsageCountersForRun(stableUpdated, {
+      source: workerRunKind === '直接执行' ? 'direct-skill-run' : 'agent-run-status',
+      at: stableUpdated.finishedAt || stableUpdated.updatedAt || new Date().toISOString()
+    }).catch(error => {
+      console.warn('执行状态调用次数累计失败', error);
+      return null;
+    });
+    broadcastUsageCountersChanged(usagePatch, {
+      module: workerRunKind === '直接执行' ? 'direct-skill-run' : 'agent-run-status',
+      runId: stableUpdated.id,
+      projectId: stableUpdated.projectId
+    });
     broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, run: stableUpdated, module: 'agent-run-status' });
     sendJson(res, 200, stableUpdated);
     return;
