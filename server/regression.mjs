@@ -7,9 +7,12 @@ import {
   comparePermissionCatalogs,
   deleteOperationLogRecords,
   displayMetricsForSkillInventoryRow,
+  mergeUsageCounterRebuildSnapshot,
+  normalizeTaskArtBriefCumulativeUsageBucket,
   shouldReplaceAiMembersBoardHtml,
   splitProjectDeletionSnapshot,
-  splitRunsByArchiveDeleteFilters
+  splitRunsByArchiveDeleteFilters,
+  usageCounterDisplayCountFromBucket
 } from './business-regression-rules.mjs';
 
 function testSkillInventoryStatsStayConsistent() {
@@ -230,6 +233,56 @@ function testOperationLogDeleteDoesNotMutateUsageCounters() {
   assert.equal(result.usageCounters.buckets['alias:界面收尾'].count, 5);
 }
 
+function testTaskArtBriefUsageKeepsLegacyCumulativeCount() {
+  const bucket = normalizeTaskArtBriefCumulativeUsageBucket({
+    key: 'zentaoartbriefproduct',
+    target: 'zentao-art-brief-product',
+    count: 62,
+    usageCount: 4,
+    eventKeys: ['old-a', 'old-b', 'new-a', 'new-b'],
+    usageEventKeys: ['new-a', 'new-b'],
+    people: {
+      Admin: 36,
+      李华玲: 12,
+      张倩文: 8,
+      张宗斌: 4,
+      叶君博: 2
+    },
+    usagePeople: {
+      叶君博: 2,
+      李华玲: 2
+    }
+  });
+  assert.equal(bucket.usageCount, 62, '任务中心摘要旧累计不得被短期操作日志重建压低');
+  assert.equal(usageCounterDisplayCountFromBucket(bucket), 62, '摘要产物展示调用次数必须读取累计 usageCount，不得用 usageEventKeys 条数压缩');
+  assert.deepEqual(bucket.usagePeople, {
+    Admin: 36,
+    李华玲: 12,
+    张倩文: 8,
+    张宗斌: 4,
+    叶君博: 2
+  }, '摘要产物旧累计成员分布必须随 usagePeople 一起保留');
+}
+
+function testUsageCounterRebuildNeverReducesRealUsage() {
+  const bucket = mergeUsageCounterRebuildSnapshot({
+    key: 'alias:界面收尾',
+    usageCount: 12,
+    usagePeople: { 张倩文: 8, 叶君博: 4 },
+    usageEventKeys: ['old-a', 'old-b']
+  }, {
+    usageCount: 3,
+    usagePeople: { 张倩文: 3 },
+    usageEventKeys: ['new-a']
+  });
+  assert.equal(bucket.usageCount, 12, '历史重建只剩少量日志时不得降低真实累计调用次数');
+  assert.deepEqual(bucket.usagePeople, { 张倩文: 8, 叶君博: 4 }, '重建人员分布不得因为日志变少降低已有使用人累计');
+  assert.deepEqual(bucket.usageEventKeys, ['old-a', 'old-b', 'new-a'], '重建只能合并事件键，不得丢弃旧累计事件键');
+
+  const increased = mergeUsageCounterRebuildSnapshot({ usageCount: 12 }, { usageCount: 13 });
+  assert.equal(increased.usageCount, 13, '新的真实调用出现时允许在旧累计上增加');
+}
+
 function testPermissionCatalogsStayAligned() {
   const backend = ['menu.tasks', 'menu.skillList', 'api.operationLogs.delete'];
   const frontend = ['menu.tasks', 'menu.skillList', 'api.operationLogs.delete'];
@@ -252,6 +305,8 @@ testZentaoAssignFailureKeepsLocalOwner();
 testTaskRefreshEmptyResultKeepsExistingTasks();
 testAiMembersBoardPlaceholderDoesNotReplaceCachedHtml();
 testOperationLogDeleteDoesNotMutateUsageCounters();
+testTaskArtBriefUsageKeepsLegacyCumulativeCount();
+testUsageCounterRebuildNeverReducesRealUsage();
 testPermissionCatalogsStayAligned();
 
 console.log(JSON.stringify({
@@ -266,6 +321,8 @@ console.log(JSON.stringify({
     '任务接口空返回不清空任务中心',
     'AI部门看板占位不覆盖真实缓存',
     '操作日志删除不影响累计调用次数',
+    '任务中心摘要累计调用不被短期日志压低',
+    '历史重建不得减少真实调用累计',
     '权限目录前后端一致性'
   ]
 }, null, 2));

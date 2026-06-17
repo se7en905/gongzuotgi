@@ -532,7 +532,7 @@ const RUN_LOG_RENDER_MAX_CHARS = 80 * 1024;
 const RUN_LOG_RENDER_MAX_LINES = 400;
 const RUN_LOG_LINE_MAX_CHARS = 2400;
 const SKILL_AUDIT_RULE_VERSION = '9-dimension-v2-fulltext';
-const USAGE_COUNTER_LOGIC_VERSION = 'usage-only-v3-validation';
+const USAGE_COUNTER_LOGIC_VERSION = 'usage-only-v4-summary-cumulative';
 const LARGE_WORKBENCH_DISPLAY_CACHE_KEYS = new Set([
   'aiMembersSnapshot',
   'aiMembersBoardHtmlSnapshot',
@@ -10146,9 +10146,11 @@ export default {
         const bucketValidationCount = applyCount(bucket.validationCount || 0);
         const bucketResearchSyncCount = applyCount(bucket.researchSyncCount || 0);
         const bucketTotalLimit = applyCount(this.usageCounterBucketCountableTotal(bucket));
-        const bucketUsageLimit = usageEventKeys.length ? newUsageEventKeys.length : applyCount(bucket.usageCount || 0);
+        const bucketUsageTotal = applyCount(bucket.usageCount || 0);
+        const usageEventRatio = usageEventKeys.length ? (newUsageEventKeys.length / usageEventKeys.length) : eventRatio;
+        const bucketUsageLimit = usageEventKeys.length ? Math.round(bucketUsageTotal * usageEventRatio) : bucketUsageTotal;
         const peopleLimit = bucketTotalLimit;
-        const usagePersonRatio = usageEventKeys.length ? (newUsageEventKeys.length / usageEventKeys.length) : eventRatio;
+        const usagePersonRatio = usageEventKeys.length ? usageEventRatio : eventRatio;
         applyPersonCounts(usagePeople, bucketUsagePeople, usagePersonRatio, bucketUsageLimit || Infinity);
         applyPersonCounts(people, bucket.people || {}, eventRatio, peopleLimit || Infinity);
         const bucketUsageCount = bucketUsageLimit > 0

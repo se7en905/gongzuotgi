@@ -235,6 +235,54 @@ export function deleteOperationLogRecords(logs = [], predicate = () => false, us
   };
 }
 
+export function normalizeTaskArtBriefCumulativeUsageBucket(bucket = {}) {
+  const next = {
+    ...bucket,
+    people: { ...(bucket.people || {}) },
+    usagePeople: { ...(bucket.usagePeople || {}) }
+  };
+  const legacyCount = Math.max(0, Math.round(Number(next.count || 0)));
+  const usageCount = Math.max(0, Math.round(Number(next.usageCount || 0)));
+  if (legacyCount > usageCount) next.usageCount = legacyCount;
+  const peopleTotal = Object.values(next.people || {}).reduce((sum, value) => sum + Math.max(0, Number(value || 0)), 0);
+  const usagePeopleTotal = Object.values(next.usagePeople || {}).reduce((sum, value) => sum + Math.max(0, Number(value || 0)), 0);
+  if (peopleTotal > usagePeopleTotal) {
+    next.usagePeople = { ...(next.people || {}) };
+    next.usagePeopleCount = Object.keys(next.usagePeople).length;
+  }
+  return next;
+}
+
+export function usageCounterDisplayCountFromBucket(bucket = {}) {
+  return Math.max(0, Math.round(Number(bucket.usageCount || 0)));
+}
+
+export function mergeUsageCounterRebuildSnapshot(bucket = {}, rebuilt = {}) {
+  const usageCount = Math.max(
+    0,
+    Math.round(Number(bucket.usageCount || 0)),
+    Math.round(Number(rebuilt.usageCount || 0))
+  );
+  const usagePeople = {};
+  const addPerson = (person = '', count = 0) => {
+    const key = cleanText(person);
+    const value = Math.max(0, Math.round(Number(count || 0)));
+    if (!key || value <= 0) return;
+    usagePeople[key] = Math.max(Number(usagePeople[key] || 0), value);
+  };
+  Object.entries(bucket.usagePeople || {}).forEach(([person, count]) => addPerson(person, count));
+  Object.entries(rebuilt.usagePeople || {}).forEach(([person, count]) => addPerson(person, count));
+  return {
+    ...bucket,
+    usageCount,
+    usagePeople,
+    usageEventKeys: [
+      ...(Array.isArray(bucket.usageEventKeys) ? bucket.usageEventKeys : []),
+      ...(Array.isArray(rebuilt.usageEventKeys) ? rebuilt.usageEventKeys : [])
+    ].filter((eventKey, index, array) => eventKey && array.indexOf(eventKey) === index)
+  };
+}
+
 export function comparePermissionCatalogs(backendPermissions = [], frontendPermissions = []) {
   const backend = new Set((Array.isArray(backendPermissions) ? backendPermissions : []).map(cleanText).filter(Boolean));
   const frontend = new Set((Array.isArray(frontendPermissions) ? frontendPermissions : []).map(cleanText).filter(Boolean));

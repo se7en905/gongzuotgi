@@ -69,7 +69,8 @@ const mysqlConfigs = new Map([
 
 const useMysqlStore = process.env.AWP_USE_MYSQL === '1';
 const retentionDays = Math.max(1, Number(process.env.AWP_DATA_RETENTION_DAYS || 2) || 2);
-const usageCounterLogicVersion = 'usage-only-v3-validation';
+const usageCounterLogicVersion = 'usage-only-v4-summary-cumulative';
+const taskArtBriefUsageCounterKey = 'zentaoartbriefproduct';
 const retentionEnabled = process.env.AWP_DATA_RETENTION_ENABLED !== '0';
 const runFigmaLogEvidenceCache = new Map();
 const staleLocalWorkerRunMs = Math.max(10 * 60 * 1000, Number(process.env.AWP_STALE_LOCAL_WORKER_RUN_MS || 20 * 60 * 1000));
@@ -3540,6 +3541,7 @@ async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCount
   for (const [key, inputBucket] of Object.entries(counters.buckets)) {
     const bucket = normalizeUsageCounterBucket(inputBucket, key);
     if (applyHistoricalUsageBucketRebuild(bucket, usageBucketRebuildMap)) changed = true;
+    if (normalizeTaskArtBriefLegacyUsageBucket(bucket)) changed = true;
     const eventKeys = Array.isArray(bucket.eventKeys) ? bucket.eventKeys.filter(Boolean) : [];
     const misclassified = historicalNonUsageEventKeySetForBucket(bucket, nonUsageLogs);
     const badCount = misclassified.size ? eventKeys.filter(eventKey => misclassified.has(eventKey)).length : 0;
@@ -3559,6 +3561,10 @@ async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCount
   }
   for (const [key, item] of usageBucketRebuildMap.entries()) {
     if (buckets[key]) continue;
+    const sourceSet = item.sources instanceof Set ? item.sources : new Set();
+    const canCreateHistoricalBucket = sourceSet.has('skill-validation')
+      || (key === taskArtBriefUsageCounterKey && sourceSet.has('task-art-brief'));
+    if (!canCreateHistoricalBucket) continue;
     const usageEventKeys = [...(item.usageEventKeys || [])];
     if (!usageEventKeys.length) continue;
     const bucket = normalizeUsageCounterBucket({
@@ -3583,6 +3589,27 @@ async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCount
     ...counters,
     buckets
   };
+}
+
+function normalizeTaskArtBriefLegacyUsageBucket(bucket = {}) {
+  if (!bucket || bucket.key !== taskArtBriefUsageCounterKey) return false;
+  let changed = false;
+  const legacyCount = Math.max(0, Math.round(Number(bucket.count || 0)));
+  const currentUsage = Math.max(0, Math.round(Number(bucket.usageCount || 0)));
+  if (legacyCount > currentUsage) {
+    bucket.usageCount = legacyCount;
+    changed = true;
+  }
+  const people = bucket.people && typeof bucket.people === 'object' ? bucket.people : {};
+  const usagePeople = bucket.usagePeople && typeof bucket.usagePeople === 'object' ? bucket.usagePeople : {};
+  const usageTotal = Object.values(usagePeople).reduce((sum, value) => sum + Math.max(0, Number(value || 0)), 0);
+  const peopleTotal = Object.values(people).reduce((sum, value) => sum + Math.max(0, Number(value || 0)), 0);
+  if (peopleTotal > usageTotal) {
+    bucket.usagePeople = { ...people };
+    bucket.usagePeopleCount = Object.keys(bucket.usagePeople).length;
+    changed = true;
+  }
+  return changed;
 }
 
 let usageCounterRebuildMapCache = null;
@@ -3623,7 +3650,7 @@ async function historicalUsageBucketRebuildMap() {
     readJson(paths.skillValidations, {})
   ]);
   const map = new Map();
-  const addTarget = (target = '', owners = [], eventKey = '', at = '') => {
+  const addTarget = (target = '', owners = [], eventKey = '', at = '', source = '') => {
     const key = usageCounterKey(target);
     if (!key || !eventKey) return;
     const ownerList = (Array.isArray(owners) ? owners : [owners])
@@ -3638,9 +3665,11 @@ async function historicalUsageBucketRebuildMap() {
       usagePeople: {},
       eventKeys: new Set(),
       usageEventKeys: new Set(),
+      sources: new Set(),
       firstAt: '',
       lastAt: ''
     };
+    if (source) bucket.sources.add(source);
     if (bucket.eventKeys.has(eventKey)) {
       map.set(key, bucket);
       return;
@@ -3663,7 +3692,7 @@ async function historicalUsageBucketRebuildMap() {
   for (const event of Array.isArray(artProgressEvents) ? artProgressEvents : []) {
     for (const target of usageTargetsFromArtProgressEvent(event)) {
       if (cleanString(target.kind) !== 'usage') continue;
-      addTarget(target.target, [event.memberName, event.memberAccount], target.eventKey, target.at || event.createdAt || event.updatedAt || event.reportedAt || '');
+      addTarget(target.target, [event.memberName, event.memberAccount], target.eventKey, target.at || event.createdAt || event.updatedAt || event.reportedAt || '', 'art-progress');
     }
   }
 
@@ -3674,7 +3703,7 @@ async function historicalUsageBucketRebuildMap() {
     const owners = usageOwnersFromOperationLog(log);
     const eventKey = usageEventKey('operation-log', log.id || log.targetId || log.targetName, at);
     if (isTaskArtBriefUsageOperationLog(log)) {
-      addTarget('zentao-art-brief-product', owners, eventKey, at);
+      addTarget('zentao-art-brief-product', owners, eventKey, at, 'task-art-brief');
       continue;
     }
     const values = [
@@ -3693,7 +3722,7 @@ async function historicalUsageBucketRebuildMap() {
       ...(Array.isArray(metadata.artifactNames) ? metadata.artifactNames : []),
       ...(Array.isArray(metadata.artifactPaths) ? metadata.artifactPaths : [])
     ];
-    for (const target of values.flatMap(usageTargetCandidates)) addTarget(target, owners, eventKey, at);
+    for (const target of values.flatMap(usageTargetCandidates)) addTarget(target, owners, eventKey, at, 'operation-log');
   }
 
   for (const run of Array.isArray(runs) ? runs : []) {
@@ -3712,7 +3741,7 @@ async function historicalUsageBucketRebuildMap() {
       ...(Array.isArray(run.materials) ? run.materials.flatMap(item => [item?.path, item?.name, item?.title]) : []),
       ...(Array.isArray(run.referenceItems) ? run.referenceItems.flatMap(item => [item?.path, item?.name, item?.title]) : [])
     ];
-    for (const target of values.flatMap(usageTargetCandidates)) addTarget(target, owners, eventKey, at);
+    for (const target of values.flatMap(usageTargetCandidates)) addTarget(target, owners, eventKey, at, 'run');
   }
 
   for (const record of storedSkillValidationRows(validations)) {
@@ -3721,7 +3750,7 @@ async function historicalUsageBucketRebuildMap() {
     const owners = usageOwnersFromSkillValidation(record);
     const eventKey = skillValidationUsageEventKey(record);
     for (const target of skillValidationUsageTargets(record).flatMap(usageTargetCandidates)) {
-      addTarget(target, owners, eventKey, at);
+      addTarget(target, owners, eventKey, at, 'skill-validation');
     }
   }
 
@@ -3741,17 +3770,19 @@ function applyHistoricalUsageBucketRebuild(bucket = {}, rebuildMap = new Map()) 
   addMatch(bucket.key);
   for (const target of targetValues) addMatch(target);
   if (!matched.size) return false;
+  const existingUsageCount = Math.max(0, Math.round(Number(bucket.usageCount || 0)));
+  const existingUsagePeople = bucket.usagePeople && typeof bucket.usagePeople === 'object' ? bucket.usagePeople : {};
   const usagePeople = {};
   const eventKeys = new Set();
   const usageEventKeys = new Set();
-  let usageCount = 0;
+  let rebuiltUsageCount = 0;
   let firstAt = '';
   let lastAt = '';
   for (const item of matched.values()) {
     for (const eventKey of item.eventKeys || []) {
       if (!eventKey || eventKeys.has(eventKey)) continue;
       eventKeys.add(eventKey);
-      usageCount += 1;
+      rebuiltUsageCount += 1;
     }
     for (const eventKey of item.usageEventKeys || []) {
       if (eventKey) usageEventKeys.add(eventKey);
@@ -3763,19 +3794,39 @@ function applyHistoricalUsageBucketRebuild(bucket = {}, rebuildMap = new Map()) 
     if (item.firstAt) firstAt = firstAt ? (String(firstAt).localeCompare(String(item.firstAt)) <= 0 ? firstAt : item.firstAt) : item.firstAt;
     if (item.lastAt) lastAt = lastAt ? (String(lastAt).localeCompare(String(item.lastAt)) >= 0 ? lastAt : item.lastAt) : item.lastAt;
   }
-  usageCount = Math.max(0, usageCount);
-  const usageEventKeyList = [...usageEventKeys];
+  rebuiltUsageCount = Math.max(0, rebuiltUsageCount);
+  const usageCount = Math.max(existingUsageCount, rebuiltUsageCount);
+  const usageEventKeyList = [
+    ...(Array.isArray(bucket.usageEventKeys) ? bucket.usageEventKeys.map(cleanString).filter(Boolean) : []),
+    ...usageEventKeys
+  ].filter((eventKey, index, array) => array.indexOf(eventKey) === index);
+  const nextUsagePeople = mergeHistoricalUsagePeople(existingUsagePeople, usagePeople, usageCount);
   const changed = Number(bucket.usageCount || 0) !== usageCount
-    || JSON.stringify(bucket.usagePeople || {}) !== JSON.stringify(usagePeople)
-    || Number(bucket.usagePeopleCount || 0) !== Object.keys(usagePeople).length
+    || JSON.stringify(bucket.usagePeople || {}) !== JSON.stringify(nextUsagePeople)
+    || Number(bucket.usagePeopleCount || 0) !== Object.keys(nextUsagePeople).length
     || JSON.stringify(bucket.usageEventKeys || []) !== JSON.stringify(usageEventKeyList);
   bucket.usageCount = usageCount;
-  bucket.usagePeople = usagePeople;
-  bucket.usagePeopleCount = Object.keys(usagePeople).length;
+  bucket.usagePeople = nextUsagePeople;
+  bucket.usagePeopleCount = Object.keys(nextUsagePeople).length;
   bucket.usageEventKeys = usageEventKeyList;
   if (firstAt && (!bucket.firstAt || String(firstAt).localeCompare(String(bucket.firstAt)) < 0)) bucket.firstAt = firstAt;
   if (lastAt && (!bucket.lastAt || String(lastAt).localeCompare(String(bucket.lastAt)) > 0)) bucket.lastAt = lastAt;
   return changed;
+}
+
+function mergeHistoricalUsagePeople(existing = {}, rebuilt = {}, usageCount = 0) {
+  const next = {};
+  const add = (person = '', count = 0) => {
+    const key = cleanString(person);
+    const value = Math.max(0, Math.round(Number(count || 0)));
+    if (!key || isUsageProxyPerson(key) || value <= 0) return;
+    next[key] = Math.max(Number(next[key] || 0), value);
+  };
+  for (const [person, count] of Object.entries(existing || {})) add(person, count);
+  for (const [person, count] of Object.entries(rebuilt || {})) add(person, count);
+  const limit = Math.max(0, Math.round(Number(usageCount || 0)));
+  const total = Object.values(next).reduce((sum, value) => sum + Number(value || 0), 0);
+  return limit && total > limit ? capUsagePeopleCounts(next, limit) : next;
 }
 
 let usageCounterSourceCache = null;
@@ -3886,9 +3937,9 @@ function rebuildHistoricalUsagePeople(bucket = {}, sources = {}) {
   }
 
   if (!Object.keys(usagePeople).length) return false;
-  bucket.usagePeople = usagePeople;
-  bucket.usagePeopleCount = Object.keys(usagePeople).length;
-  bucket.usageCount = Object.values(usagePeople).reduce((sum, value) => sum + Number(value || 0), 0);
+  const usageCount = Math.max(0, Math.round(Number(bucket.usageCount || 0)));
+  bucket.usagePeople = mergeHistoricalUsagePeople({}, usagePeople, usageCount);
+  bucket.usagePeopleCount = Object.keys(bucket.usagePeople).length;
   return true;
 }
 
