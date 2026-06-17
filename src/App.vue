@@ -1418,6 +1418,7 @@ export default {
       for (const worker of this.agentWorkerDisplayRows) {
         const userId = String(worker.userId || '').trim();
         const key = userId || `worker:${worker.id || worker.deviceId || worker.userName || map.size}`;
+        if (userId && map.has(userId)) continue;
         if (map.has(key)) continue;
         const matchedUser = this.users.find(user => String(user.id || '') === userId)
           || (String(this.currentUser?.id || '') === userId ? this.currentUser : null);
@@ -6897,8 +6898,8 @@ export default {
 
     async deleteArtProjectSheetField(field = {}) {
       if (!field.key || field.locked) return;
-      await ElMessageBox.confirm(`确认删除字段「${field.label || field.key}」？已有行数据会保留在本地，不再展示。`, '删除字段', {
-        confirmButtonText: '删除',
+      await ElMessageBox.confirm(`确认隐藏字段「${field.label || field.key}」？已有行数据会保留在本地，不再展示。`, '隐藏字段', {
+        confirmButtonText: '隐藏',
         cancelButtonText: '取消',
         type: 'warning',
         confirmButtonClass: 'el-button--danger'
@@ -6907,9 +6908,9 @@ export default {
       try {
         await this.api(`/api/art-project-sheet/fields/${encodeURIComponent(field.key)}`, { method: 'DELETE' });
         await this.refreshArtProjectSheet();
-        ElMessage.success('字段已删除');
+        ElMessage.success('字段已隐藏');
       } catch (error) {
-        ElMessage.error(this.readApiError(error) || '字段删除失败');
+        ElMessage.error(this.readApiError(error) || '字段隐藏失败');
       } finally {
         this.loading.artProjectSheet = false;
       }
@@ -6939,8 +6940,8 @@ export default {
 
     async deleteArtProjectSheetRow(row = {}) {
       if (!row.id) return;
-      await ElMessageBox.confirm(`确认删除项目列表里的「${row.file || row.id}」？`, '删除项目字段', {
-        confirmButtonText: '删除',
+      await ElMessageBox.confirm(`确认隐藏项目列表里的「${row.file || row.id}」？平台会保留隐藏标记，避免外部表格刷新后重新出现。`, '隐藏项目行', {
+        confirmButtonText: '隐藏',
         cancelButtonText: '取消',
         type: 'warning',
         confirmButtonClass: 'el-button--danger'
@@ -6949,9 +6950,9 @@ export default {
       try {
         await this.api(`/api/art-project-sheet/rows/${encodeURIComponent(row.id)}`, { method: 'DELETE' });
         await this.refreshArtProjectSheet();
-        ElMessage.success('项目字段已删除');
+        ElMessage.success('项目行已隐藏');
       } catch (error) {
-        ElMessage.error(this.readApiError(error) || '项目字段删除失败');
+        ElMessage.error(this.readApiError(error) || '项目行隐藏失败');
       } finally {
         this.loading.artProjectSheet = false;
       }
@@ -17611,7 +17612,7 @@ export default {
     },
 
     isRunWaitingForLocalWorker(run = null) {
-      return Boolean(this.isLocalWorkerRun(run) && /queued/i.test(String(run?.status || '')));
+      return Boolean(this.isLocalWorkerRun(run) && /queued/i.test(String(run?.status || '')) && !this.hasLocalWorkerRunEvidence(run));
     },
 
     isDirectSkillRun(run = null) {
@@ -19500,6 +19501,7 @@ export default {
       if (this.isLocalWorkerRun(run)) {
         if (/completed|done|success|passed|blocked|failed|error|cancelled|canceled/.test(value)) return value;
         if (/completed|done|success|passed|blocked|failed|error|cancelled|canceled/.test(workerValue)) return workerValue;
+        if (/queued|pending|created/.test(`${value} ${workerValue}`) && this.hasLocalWorkerRunEvidence(run)) return 'blocked';
         if (/running|in_progress/.test(`${value} ${workerValue}`)) return 'running';
         if (run.startedAt && /claimed|pending|queued|created/.test(`${value} ${workerValue}`)) return 'running';
         if (/claimed/.test(`${value} ${workerValue}`)) return 'claimed';
@@ -19512,11 +19514,22 @@ export default {
       return `${this.runDisplayStatusValue(run)} ${run?.workerStatus || ''} ${run?.status || ''}`.trim().toLowerCase();
     },
 
+    hasLocalWorkerRunEvidence(run = null) {
+      if (!this.isLocalWorkerRun(run)) return false;
+      if (run.claimedAt || run.claimedByDeviceId) return true;
+      if (run.startedAt || run.finishedAt) return true;
+      if (run.logPath || run.promptPath || run.pid) return true;
+      const localLogSize = Number(run.workerLocalLogSize ?? run.workerResult?.localLogSize ?? 0);
+      if (Number.isFinite(localLogSize) && localLogSize > 0) return true;
+      return Boolean(run.workerResult || run.resultSummary || run.figmaWriteResult);
+    },
+
     directSkillRunStatusLabel(run = null) {
       if (!run) return '待判定';
       const value = this.runDisplayStatusValue(run);
       const workerValue = String(run.workerStatus || '').toLowerCase();
       if (/cancelled|canceled/.test(value)) return '已中断，可继续执行';
+      if (/blocked/.test(value) && /queued|pending|created/i.test(`${run.status || ''} ${run.workerStatus || ''}`) && this.hasLocalWorkerRunEvidence(run)) return '本机回传异常';
       if (/pending|created|queued/.test(value)) return this.directSkillQueuedRunLabel(run);
       if (/running|in_progress/.test(`${value} ${workerValue}`) || (run.startedAt && /claimed/.test(value))) return '本机执行中';
       if (/claimed/.test(value)) return '已领取';

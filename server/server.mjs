@@ -512,13 +512,13 @@ async function handleApi(req, res, url) {
     await writeOperationLog(req, {
       user: currentUser,
       module: 'project-sheet',
-      action: 'DELETE_ART_PROJECT_ROW',
-      actionName: '删除项目列表字段',
+      action: 'HIDE_ART_PROJECT_ROW',
+      actionName: '隐藏项目列表行',
       targetType: 'art-project-sheet-row',
       targetId: row.id,
       targetName: row.file,
       before: row,
-      description: `${currentUser.displayName || currentUser.username} 删除项目列表「${row.file || row.id}」`
+      description: `${currentUser.displayName || currentUser.username} 隐藏项目列表「${row.file || row.id}」`
     });
     broadcastPlatformEvent('art-project-sheet.changed', { module: 'project-sheet' });
     sendJson(res, 200, row);
@@ -551,12 +551,12 @@ async function handleApi(req, res, url) {
     await writeOperationLog(req, {
       user: currentUser,
       module: 'art-project-sheet',
-      action: 'DELETE_ART_PROJECT_SHEET_FIELD',
-      actionName: '删除项目列表字段',
+      action: 'HIDE_ART_PROJECT_SHEET_FIELD',
+      actionName: '隐藏项目列表字段',
       targetType: 'art-project-sheet-field',
       targetId: artProjectSheetFieldDetail[1],
       before: config.deletedField,
-      description: `${currentUser.displayName || currentUser.username} 删除项目列表字段「${config.deletedField?.label || artProjectSheetFieldDetail[1]}」`
+      description: `${currentUser.displayName || currentUser.username} 隐藏项目列表字段「${config.deletedField?.label || artProjectSheetFieldDetail[1]}」`
     });
     broadcastPlatformEvent('art-project-sheet.changed', { module: 'project-sheet' });
     sendJson(res, 200, config);
@@ -2572,7 +2572,7 @@ async function writeOperationLog(req, input = {}) {
     await recordUsageCountersForOperationLog(log).catch(error => {
       console.error(`Usage counter operation log update failed: ${error.message}`);
     });
-    if (input.broadcast !== false) {
+    if (input.broadcast !== false && log?._deduped !== true) {
       broadcastPlatformEvent('operation-logs.changed', { module: input.module || 'operation-log' });
     }
     return log;

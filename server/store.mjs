@@ -687,6 +687,7 @@ export async function getOperationLog(id) {
 export async function createOperationLog(input = {}) {
   const log = normalizeOperationLog(input);
   const logs = await readJson(paths.operationLogs, []);
+  if (isDedupedOperationLog(log, logs)) return { ...log, _deduped: true };
   logs.push(log);
   const maxLogs = Number(process.env.AWP_OPERATION_LOG_MAX_ROWS || 10000);
   const nextLogs = logs
@@ -694,6 +695,26 @@ export async function createOperationLog(input = {}) {
     .slice(0, Number.isFinite(maxLogs) && maxLogs > 0 ? maxLogs : 10000);
   await writeJson(paths.operationLogs, nextLogs);
   return log;
+}
+
+function isDedupedOperationLog(log = {}, logs = []) {
+  if (log.action !== 'LOGIN' || log.result === 'fail') return false;
+  const windowMs = Math.max(60 * 1000, Number(process.env.AWP_LOGIN_LOG_DEDUP_MS || 5 * 60 * 1000));
+  const createdAt = Date.parse(log.createdAt || '');
+  if (!createdAt) return false;
+  const userKey = cleanString(log.userId || log.username || log.targetId || log.targetName);
+  if (!userKey) return false;
+  const ip = cleanString(log.ip);
+  const userAgent = cleanString(log.userAgent);
+  return logs.some(item => {
+    if (item.action !== 'LOGIN' || item.result === 'fail') return false;
+    const itemTime = Date.parse(item.createdAt || '');
+    if (!itemTime || Math.abs(createdAt - itemTime) > windowMs) return false;
+    const itemUserKey = cleanString(item.userId || item.username || item.targetId || item.targetName);
+    return itemUserKey === userKey
+      && cleanString(item.ip) === ip
+      && cleanString(item.userAgent) === userAgent;
+  });
 }
 
 export async function deleteOperationLog(id) {
