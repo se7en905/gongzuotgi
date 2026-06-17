@@ -207,6 +207,7 @@ export default {
         'workflow.manage': '工作流模板',
         'menu.agentWorkers': '本机执行状态',
         'menu.aiArchive': 'AI档案',
+        'menu.maintenance': '维护中心',
         'menu.aiMembers.owner': '历史权限：负责人 AI部门看板',
         'menu.aiMembers.member': '历史权限：组员 AI部门看板',
         'aiMembers.score.view': '查看 AI 评分',
@@ -222,7 +223,8 @@ export default {
         'api.aiMembers.read': 'AI部门看板读取 API',
         'api.aiMembers.score.read': 'AI评分依赖读取 API',
         'api.aiMembers.score.write': 'AI评分快照保存 API',
-        'api.aiMembers.refresh': 'AI部门看板刷新 API'
+        'api.aiMembers.refresh': 'AI部门看板刷新 API',
+        'api.maintenance.manage': '维护中心 API'
       };
       return this.app.permissionCatalog.find(item => item.id === id)?.name || fallbackNames[id] || '未知权限';
     },

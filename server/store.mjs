@@ -42,6 +42,8 @@ export const paths = {
   artProgressEvents: path.join(dataDir, 'art-progress-events.json'),
   skillValidations: path.join(dataDir, 'skill-validations.json'),
   usageCounters: path.join(dataDir, 'usage-counters.json'),
+  projectScanCache: path.join(dataDir, 'project-scan-cache.json'),
+  skillVersionOverrides: path.join(dataDir, 'skill-version-overrides.json'),
   aiMemberScoreSnapshot: path.join(dataDir, 'ai-member-score-snapshot.json'),
   agentWorkers: path.join(dataDir, 'agent-workers.json')
 };
@@ -69,7 +71,7 @@ const mysqlConfigs = new Map([
 
 const useMysqlStore = process.env.AWP_USE_MYSQL === '1';
 const retentionDays = Math.max(1, Number(process.env.AWP_DATA_RETENTION_DAYS || 2) || 2);
-const usageCounterLogicVersion = 'usage-only-v5-strong-evidence-compact';
+const usageCounterLogicVersion = 'usage-only-v6-inventory-bound-targets';
 const taskArtBriefUsageCounterKey = 'zentaoartbriefproduct';
 const retentionEnabled = process.env.AWP_DATA_RETENTION_ENABLED !== '0';
 const runFigmaLogEvidenceCache = new Map();
@@ -817,6 +819,91 @@ export async function deleteOperationLogsByFilters(filters = {}) {
   };
 }
 
+export async function previewOperationLogDeletion(filters = {}) {
+  const logs = await readJson(paths.operationLogs, []);
+  const keyword = String(filters.keyword || '').trim().toLowerCase();
+  const from = filters.from ? Date.parse(filters.from) : 0;
+  const to = filters.to ? Date.parse(filters.to) : 0;
+  const actions = Array.isArray(filters.actions)
+    ? filters.actions
+    : String(filters.actions || '').split(/[,，、\s]+/).filter(Boolean);
+  const matched = [];
+  let bytes = 0;
+  for (const log of logs) {
+    if (!operationLogMatchesFilters(log, filters, { keyword, from, to, actions })) continue;
+    matched.push(log);
+    bytes += Buffer.byteLength(JSON.stringify(log), 'utf8') + 2;
+  }
+  return {
+    matchedCount: matched.length,
+    estimatedBytes: bytes,
+    sample: matched.slice(0, 8).map(log => ({
+      id: log.id,
+      createdAt: log.createdAt,
+      module: log.module,
+      action: log.action,
+      actionName: log.actionName,
+      targetName: log.targetName,
+      username: log.username || log.displayName
+    }))
+  };
+}
+
+function validateOperationLogMaintenanceFilters(filters = {}) {
+  if (!filters.from || !filters.to) {
+    const error = new Error('请选择操作日志清理的开始时间和结束时间。');
+    error.status = 400;
+    throw error;
+  }
+  const from = Date.parse(filters.from);
+  const to = Date.parse(filters.to);
+  if (!from || !to || from > to) {
+    const error = new Error('操作日志清理时间范围无效。');
+    error.status = 400;
+    throw error;
+  }
+}
+
+function validateRunMaintenanceFilters(filters = {}) {
+  if (!filters.from || !filters.to) {
+    const error = new Error('请选择执行记录清理的开始时间和结束时间。');
+    error.status = 400;
+    throw error;
+  }
+  const from = Date.parse(filters.from);
+  const to = Date.parse(filters.to);
+  if (!from || !to || from > to) {
+    const error = new Error('执行记录清理时间范围无效。');
+    error.status = 400;
+    throw error;
+  }
+}
+
+function validateArtBriefMaintenanceFilters(filters = {}) {
+  const hasRange = Boolean(filters.from && filters.to);
+  const hasTaskNo = Boolean(cleanString(filters.taskNo));
+  const hasKeyword = Boolean(cleanString(filters.keyword));
+  if (!hasRange && !hasTaskNo && !hasKeyword) {
+    const error = new Error('请选择摘要产物清理的时间范围、任务号或关键词。');
+    error.status = 400;
+    throw error;
+  }
+  if ((filters.from || filters.to) && !hasRange) {
+    const error = new Error('摘要产物按时间清理时需要同时选择开始和结束时间。');
+    error.status = 400;
+    throw error;
+  }
+  if (hasRange) {
+    const from = Date.parse(filters.from);
+    const to = Date.parse(filters.to);
+    if (!from || !to || from > to) {
+      const error = new Error('摘要产物清理时间范围无效。');
+      error.status = 400;
+      throw error;
+    }
+  }
+}
+
 export async function ensureTaskForRun(input) {
   if (input.taskId) {
     const existing = await getTask(input.taskId);
@@ -1556,6 +1643,225 @@ export async function deleteRunsByFilters(filters = {}) {
   return { deleted, remaining };
 }
 
+export async function previewRunsDeletionByFilters(filters = {}) {
+  validateRunMaintenanceFilters(filters);
+  const runs = await readJson(paths.runs, []);
+  const { deleted } = splitRunsByArchiveDeleteFilters(runs, filters);
+  let estimatedBytes = 0;
+  const directories = [];
+  for (const run of deleted) {
+    estimatedBytes += Buffer.byteLength(JSON.stringify(run), 'utf8') + 2;
+    const workspacePath = getRunWorkspace(run.id);
+    const workspaceSize = await directorySize(workspacePath);
+    if (workspaceSize > 0) {
+      estimatedBytes += workspaceSize;
+      directories.push({ path: workspacePath, bytes: workspaceSize, type: 'workspace' });
+    }
+    if (run.artifactRoot) {
+      const artifactSize = await directorySize(run.artifactRoot);
+      if (artifactSize > 0) {
+        estimatedBytes += artifactSize;
+        directories.push({ path: run.artifactRoot, bytes: artifactSize, type: 'artifact' });
+      }
+    }
+  }
+  return {
+    matchedCount: deleted.length,
+    estimatedBytes,
+    directories,
+    sample: deleted.slice(0, 8).map(run => ({
+      id: run.id,
+      title: run.title,
+      status: run.status,
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
+      developer: run.developer,
+      assignedToName: run.assignedToName
+    }))
+  };
+}
+
+export async function maintenanceOverview() {
+  const [
+    operationLogs,
+    runs,
+    tasks,
+    artBriefs,
+    artProgressEvents,
+    usageCounters,
+    safePreview,
+    summaryPreview,
+    dataSize,
+    workspaceSize,
+    artifactSize,
+    outputsSize,
+    artBriefOutputsSize,
+    logsSize
+  ] = await Promise.all([
+    readJson(paths.operationLogs, []),
+    readJson(paths.runs, []),
+    readJson(paths.tasks, []),
+    readJson(paths.artBriefs, []),
+    readJson(paths.artProgressEvents, []),
+    readJson(paths.usageCounters, {}),
+    previewSafeMaintenanceCleanup(),
+    previewArtBriefOutputDeletion({}),
+    directorySize(paths.dataDir),
+    directorySize(paths.workspaceDir),
+    directorySize(paths.artifactDir),
+    directorySize(path.join(paths.root, 'outputs')),
+    directorySize(path.join(paths.root, 'outputs', 'art-briefs')),
+    directorySize(path.join(paths.root, 'logs'))
+  ]);
+  return {
+    generatedAt: new Date().toISOString(),
+    storage: [
+      { key: 'data', label: '平台业务数据 data', path: paths.dataDir, bytes: dataSize, protected: true, note: '账号、任务、缓存、调用次数和看板状态，不允许手动删目录。' },
+      { key: 'workspace', label: '执行工作区 workspace', path: paths.workspaceDir, bytes: workspaceSize, protected: true, note: '执行日志、材料和本机执行工作区，按执行记录入口清理。' },
+      { key: 'artifacts', label: '执行产物归档 workspace/artifacts', path: paths.artifactDir, bytes: artifactSize, protected: true, note: '美术执行台和 AI档案读取的产物证据。' },
+      { key: 'artBriefOutputs', label: '美术摘要 outputs/art-briefs', path: path.join(paths.root, 'outputs', 'art-briefs'), bytes: artBriefOutputsSize, protected: false, note: '任务中心生成的 HTML 摘要和 AI 工作说明。' },
+      { key: 'outputs', label: '输出目录 outputs', path: path.join(paths.root, 'outputs'), bytes: outputsSize, protected: true, note: '只允许维护中心按业务类型清理明确目录。' },
+      { key: 'logs', label: '运行日志 logs', path: path.join(paths.root, 'logs'), bytes: logsSize, protected: false, note: '可按排障窗口归档或截断。' }
+    ],
+    records: [
+      { key: 'operationLogs', label: '操作日志', count: Array.isArray(operationLogs) ? operationLogs.length : 0, file: paths.operationLogs },
+      { key: 'runs', label: '执行记录 / AI档案', count: Array.isArray(runs) ? runs.length : 0, file: paths.runs },
+      { key: 'tasks', label: '任务中心记录', count: Array.isArray(tasks) ? tasks.length : 0, file: paths.tasks },
+      { key: 'artBriefs', label: '美术摘要索引', count: Array.isArray(artBriefs) ? artBriefs.length : 0, file: paths.artBriefs },
+      { key: 'artProgressEvents', label: '研究同步记录', count: Array.isArray(artProgressEvents) ? artProgressEvents.length : 0, file: paths.artProgressEvents },
+      { key: 'usageCounters', label: '累计调用指标桶', count: usageCounters && typeof usageCounters === 'object' ? Object.keys(usageCounters.buckets || usageCounters).length : 0, file: paths.usageCounters, protected: true }
+    ],
+    safeCleanup: safePreview,
+    artBriefOutputs: summaryPreview
+  };
+}
+
+export async function previewMaintenanceAction(input = {}) {
+  const type = cleanString(input.type);
+  const filters = input.filters && typeof input.filters === 'object' ? input.filters : {};
+  if (type === 'safe-clean') return { type, ...(await previewSafeMaintenanceCleanup()) };
+  if (type === 'operation-logs') {
+    validateOperationLogMaintenanceFilters(filters);
+    return { type, ...(await previewOperationLogDeletion(filters)) };
+  }
+  if (type === 'runs') return { type, ...(await previewRunsDeletionByFilters(filters)) };
+  if (type === 'art-briefs') {
+    validateArtBriefMaintenanceFilters(filters);
+    return { type, ...(await previewArtBriefOutputDeletion(filters)) };
+  }
+  const error = new Error('不支持的维护类型。');
+  error.status = 400;
+  throw error;
+}
+
+export async function applyMaintenanceAction(input = {}) {
+  const type = cleanString(input.type);
+  const filters = input.filters && typeof input.filters === 'object' ? input.filters : {};
+  if (type === 'safe-clean') return { type, ...(await applySafeMaintenanceCleanup()) };
+  if (type === 'operation-logs') {
+    validateOperationLogMaintenanceFilters(filters);
+    return { type, ...(await deleteOperationLogsByFilters(filters)) };
+  }
+  if (type === 'runs') {
+    validateRunMaintenanceFilters(filters);
+    const result = await deleteRunsByFilters(filters);
+    return { type, deletedCount: result.deleted.length, deletedIds: result.deleted.map(run => run.id), deleted: result.deleted };
+  }
+  if (type === 'art-briefs') return { type, ...(await deleteArtBriefOutputsByFilters(filters)) };
+  const error = new Error('不支持的维护类型。');
+  error.status = 400;
+  throw error;
+}
+
+export async function previewSafeMaintenanceCleanup() {
+  const items = [
+    ...await findDsStoreFiles(paths.root),
+    ...await findStaleJsonTmpFiles(paths.dataDir),
+    ...await findOrphanRunWorkspaces()
+  ];
+  return {
+    matchedCount: items.length,
+    estimatedBytes: items.reduce((total, item) => total + Number(item.bytes || 0), 0),
+    items
+  };
+}
+
+export async function applySafeMaintenanceCleanup() {
+  const preview = await previewSafeMaintenanceCleanup();
+  const deleted = [];
+  const skipped = [];
+  for (const item of preview.items) {
+    try {
+      if (item.kind === 'orphan-run-workspace') await removeDirectoryIfSafe(item.path, paths.workspaceDir);
+      else if (['ds-store', 'json-tmp'].includes(item.kind)) await fs.unlink(item.path);
+      else {
+        skipped.push({ ...item, reason: '未知安全清理类型。' });
+        continue;
+      }
+      deleted.push(item);
+    } catch (error) {
+      skipped.push({ ...item, reason: error.message || '清理失败。' });
+    }
+  }
+  return {
+    matchedCount: preview.matchedCount,
+    deletedCount: deleted.length,
+    skippedCount: skipped.length,
+    estimatedBytes: preview.estimatedBytes,
+    releasedBytes: deleted.reduce((total, item) => total + Number(item.bytes || 0), 0),
+    deleted,
+    skipped
+  };
+}
+
+export async function previewArtBriefOutputDeletion(filters = {}) {
+  const candidates = await artBriefOutputCandidates(filters);
+  return {
+    matchedCount: candidates.length,
+    estimatedBytes: candidates.reduce((total, item) => total + Number(item.bytes || 0), 0),
+    items: candidates.slice(0, 20)
+  };
+}
+
+export async function deleteArtBriefOutputsByFilters(filters = {}) {
+  validateArtBriefMaintenanceFilters(filters);
+  const candidates = await artBriefOutputCandidates(filters);
+  const outputDirs = new Set(candidates.map(item => item.outputDir).filter(Boolean));
+  const deleted = [];
+  const skipped = [];
+  for (const item of candidates) {
+    try {
+      await removeDirectoryIfSafe(item.outputDir, path.join(paths.root, 'outputs', 'art-briefs'));
+      deleted.push(item);
+    } catch (error) {
+      skipped.push({ ...item, reason: error.message || '摘要目录删除失败。' });
+    }
+  }
+
+  const records = await readJson(paths.artBriefs, []);
+  const nextRecords = (Array.isArray(records) ? records : []).filter(record => {
+    const enriched = artBriefRecordOutputIdentity(record);
+    if (enriched.outputDir && outputDirs.has(enriched.outputDir)) return false;
+    if (enriched.reportDir && outputDirs.has(enriched.reportDir)) return false;
+    return true;
+  });
+  if (nextRecords.length !== (Array.isArray(records) ? records : []).length) {
+    await writeJson(paths.artBriefs, nextRecords.map(normalizeArtBriefRecord));
+  }
+  await rebuildArtBriefSummaryIndex();
+
+  return {
+    matchedCount: candidates.length,
+    deletedCount: deleted.length,
+    skippedCount: skipped.length,
+    removedArtBriefRecords: (Array.isArray(records) ? records.length : 0) - nextRecords.length,
+    estimatedBytes: candidates.reduce((total, item) => total + Number(item.bytes || 0), 0),
+    releasedBytes: deleted.reduce((total, item) => total + Number(item.bytes || 0), 0),
+    deleted,
+    skipped
+  };
+}
+
 export async function listUsersRaw() {
   return readJson(paths.users, []);
 }
@@ -1589,6 +1895,194 @@ async function removeDirectoryIfSafe(target, parent) {
   const resolvedParent = path.resolve(parent || '');
   if (!resolvedTarget || resolvedTarget === resolvedParent || !resolvedTarget.startsWith(`${resolvedParent}${path.sep}`)) return;
   await fs.rm(resolvedTarget, { recursive: true, force: true });
+}
+
+async function findDsStoreFiles(dir) {
+  const ignored = new Set(['.git', 'node_modules', 'dist']);
+  const results = [];
+  async function walk(current) {
+    const entries = await fs.readdir(current, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const target = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        if (!ignored.has(entry.name)) await walk(target);
+        continue;
+      }
+      if (!entry.isFile() || entry.name !== '.DS_Store') continue;
+      const stat = await fs.stat(target).catch(() => null);
+      if (!stat) continue;
+      results.push({
+        kind: 'ds-store',
+        label: '.DS_Store',
+        path: target,
+        relativePath: path.relative(paths.root, target),
+        bytes: stat.size,
+        reason: 'macOS Finder 元数据文件。'
+      });
+    }
+  }
+  await walk(dir);
+  return results;
+}
+
+async function findStaleJsonTmpFiles(dir) {
+  const results = [];
+  const minAgeMs = Math.max(60_000, Number(process.env.AWP_SAFE_CLEAN_TMP_MIN_AGE_MS || 10 * 60 * 1000));
+  async function walk(current) {
+    const entries = await fs.readdir(current, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const target = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        await walk(target);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const match = entry.name.match(/^(.+\.json)\.(\d+)\.[0-9a-f-]+\.tmp$/i);
+      if (!match) continue;
+      const baseFile = path.join(current, match[1]);
+      const [tmpStat, baseStat] = await Promise.all([
+        fs.stat(target).catch(() => null),
+        fs.stat(baseFile).catch(() => null)
+      ]);
+      if (!tmpStat || !baseStat?.isFile()) continue;
+      if (Date.now() - tmpStat.mtimeMs < minAgeMs) continue;
+      results.push({
+        kind: 'json-tmp',
+        label: '过期 JSON 临时文件',
+        path: target,
+        relativePath: path.relative(paths.root, target),
+        bytes: tmpStat.size,
+        reason: '原子写入留下的过期临时文件。'
+      });
+    }
+  }
+  await walk(dir);
+  return results;
+}
+
+async function findOrphanRunWorkspaces() {
+  const runs = await readJson(paths.runs, []);
+  const runIds = new Set((Array.isArray(runs) ? runs : []).map(run => cleanString(run?.id)).filter(Boolean));
+  const entries = await fs.readdir(paths.workspaceDir, { withFileTypes: true }).catch(() => []);
+  const results = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name === 'artifacts') continue;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entry.name)) continue;
+    if (runIds.has(entry.name)) continue;
+    const target = path.join(paths.workspaceDir, entry.name);
+    results.push({
+      kind: 'orphan-run-workspace',
+      label: '孤儿执行工作区',
+      path: target,
+      relativePath: path.relative(paths.root, target),
+      bytes: await directorySize(target),
+      reason: 'runs.json 已不存在的执行工作区目录。'
+    });
+  }
+  return results;
+}
+
+async function artBriefOutputCandidates(filters = {}) {
+  const artBriefRoot = path.join(paths.root, 'outputs', 'art-briefs');
+  const entries = await fs.readdir(artBriefRoot, { withFileTypes: true }).catch(() => []);
+  const records = await readJson(paths.artBriefs, []);
+  const recordByOutputDir = new Map((Array.isArray(records) ? records : [])
+    .map(record => artBriefRecordOutputIdentity(record))
+    .filter(record => record.outputDir || record.reportDir)
+    .flatMap(record => [
+      record.outputDir ? [record.outputDir, record] : null,
+      record.reportDir ? [record.reportDir, record] : null
+    ].filter(Boolean)));
+  const candidates = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const outputDir = path.join(artBriefRoot, entry.name);
+    if (entry.name.startsWith('_')) continue;
+    const manifest = await readArtBriefManifest(path.join(outputDir, 'summary-manifest.json'));
+    const record = recordByOutputDir.get(outputDir) || {};
+    const item = {
+      outputDir,
+      relativePath: path.relative(paths.root, outputDir),
+      taskNo: cleanString(manifest.taskId || record.taskNo),
+      title: cleanString(manifest.title || record.title || record.groupTitle || entry.name),
+      generatedAt: cleanString(manifest.generatedAt || record.generatedAt || record.updatedAt),
+      bytes: await directorySize(outputDir),
+      manifestPath: path.join(outputDir, 'summary-manifest.json')
+    };
+    if (artBriefOutputMatchesFilters(item, filters)) candidates.push(item);
+  }
+  return candidates.sort((a, b) => String(b.generatedAt || '').localeCompare(String(a.generatedAt || '')));
+}
+
+function artBriefOutputMatchesFilters(item = {}, filters = {}) {
+  const taskNo = cleanString(filters.taskNo);
+  if (taskNo && item.taskNo !== taskNo) return false;
+  const keyword = cleanString(filters.keyword).toLowerCase();
+  if (keyword) {
+    const haystack = [item.taskNo, item.title, item.relativePath].join('\n').toLowerCase();
+    if (!haystack.includes(keyword)) return false;
+  }
+  const from = filters.from ? Date.parse(filters.from) : 0;
+  const to = filters.to ? Date.parse(filters.to) : 0;
+  if (from || to) {
+    const time = Date.parse(item.generatedAt || '');
+    if (from && (!time || time < from)) return false;
+    if (to && (!time || time > to)) return false;
+  }
+  return true;
+}
+
+function artBriefRecordOutputIdentity(record = {}) {
+  const normalized = normalizeArtBriefRecord(record);
+  const raw = record.raw && typeof record.raw === 'object' ? record.raw : {};
+  const reportFile = cleanString(normalized.reportFile || raw.htmlPath || raw.reportFile);
+  const outputDir = cleanString(raw.outputDir || (reportFile ? path.dirname(reportFile) : ''));
+  return {
+    ...normalized,
+    outputDir: outputDir ? path.resolve(outputDir) : '',
+    reportDir: reportFile ? path.resolve(path.dirname(reportFile)) : ''
+  };
+}
+
+async function readArtBriefManifest(file) {
+  try {
+    return JSON.parse(await fs.readFile(file, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+async function rebuildArtBriefSummaryIndex() {
+  const artBriefRoot = path.join(paths.root, 'outputs', 'art-briefs');
+  const candidates = await artBriefOutputCandidates({});
+  const items = [];
+  for (const candidate of candidates) {
+    const manifest = await readArtBriefManifest(candidate.manifestPath);
+    if (manifest && Object.keys(manifest).length) {
+      items.push({ ...manifest, manifestPath: candidate.manifestPath });
+    }
+  }
+  const index = {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    count: items.length,
+    items
+  };
+  await fs.mkdir(artBriefRoot, { recursive: true });
+  await fs.writeFile(path.join(artBriefRoot, 'summary-index.json'), `${JSON.stringify(index, null, 2)}\n`);
+}
+
+async function directorySize(dir) {
+  const stat = await fs.stat(dir).catch(() => null);
+  if (!stat) return 0;
+  if (stat.isFile()) return stat.size;
+  if (!stat.isDirectory()) return 0;
+  let total = 0;
+  const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    total += await directorySize(path.join(dir, entry.name));
+  }
+  return total;
 }
 
 export async function appendRunLog(runId, chunk) {
@@ -3462,7 +3956,9 @@ function normalizeUsageCounters(input = {}) {
   const buckets = {};
   for (const [key, value] of Object.entries(rawBuckets)) {
     const bucket = normalizeUsageCounterBucket(value, key);
-    if (bucket.key) buckets[bucket.key] = bucket;
+    if (!bucket.key) continue;
+    if (buckets[bucket.key]) mergeUsageCounterBucket(buckets[bucket.key], bucket);
+    else buckets[bucket.key] = bucket;
   }
   return {
     ...fallback,
@@ -3476,7 +3972,7 @@ function normalizeUsageCounters(input = {}) {
 }
 
 function normalizeUsageCounterBucket(input = {}, fallbackKey = '') {
-  const key = usageCounterKey(input.key || fallbackKey || input.target || input.targetName || '');
+  const key = usageCounterBucketCanonicalKey(input, fallbackKey);
   if (!key) return { key: '' };
   const people = input.people && typeof input.people === 'object' ? input.people : {};
   const normalizedPeople = {};
@@ -3529,11 +4025,29 @@ function normalizeUsageCounterBucket(input = {}, fallbackKey = '') {
   };
 }
 
+function usageCounterBucketCanonicalKey(input = {}, fallbackKey = '') {
+  const values = [
+    input.target,
+    input.targetName,
+    ...(Array.isArray(input.aliases) ? input.aliases : normalizeLineList(input.aliases || [])),
+    ...(Array.isArray(input.aliasHistory) ? input.aliasHistory : normalizeLineList(input.aliasHistory || [])),
+    ...(Array.isArray(input.historicalAliases) ? input.historicalAliases : normalizeLineList(input.historicalAliases || [])),
+    input.key,
+    fallbackKey
+  ];
+  for (const value of values) {
+    const key = usageCounterKey(value);
+    if (key) return key;
+  }
+  return '';
+}
+
 let usageCounterKindFixCache = null;
 
 async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCounters()) {
   if (!counters?.buckets || typeof counters.buckets !== 'object') return counters;
-  const usageBucketRebuildMap = await historicalUsageBucketRebuildMap();
+  const inventoryIdentity = await usageInventoryIdentity();
+  const usageBucketRebuildMap = await historicalUsageBucketRebuildMap(inventoryIdentity);
   const nonUsageLogs = await historicalNonUsageOperationLogs();
   const usageSources = await historicalUsageEventSources();
   const ownerMap = await historicalUsageEventOwnerMap();
@@ -3541,12 +4055,13 @@ async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCount
   let changed = false;
   for (const [key, inputBucket] of Object.entries(counters.buckets)) {
     const bucket = normalizeUsageCounterBucket(inputBucket, key);
-    if (isTechnicalUsageCounterBucket(bucket)) {
+    if (isTechnicalUsageCounterBucket(bucket) || isNonInventoryUsageCounterBucket(bucket, inventoryIdentity)) {
       changed = true;
       continue;
     }
     if (applyHistoricalUsageBucketRebuild(bucket, usageBucketRebuildMap)) changed = true;
     if (normalizeTaskArtBriefLegacyUsageBucket(bucket)) changed = true;
+    if (normalizeUsageBucketAliases(bucket)) changed = true;
     const eventKeys = Array.isArray(bucket.eventKeys) ? bucket.eventKeys.filter(Boolean) : [];
     const misclassified = historicalNonUsageEventKeySetForBucket(bucket, nonUsageLogs);
     const badCount = misclassified.size ? eventKeys.filter(eventKey => misclassified.has(eventKey)).length : 0;
@@ -3562,7 +4077,12 @@ async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCount
     if (rebuildHistoricalUsagePeople(bucket, usageSources)) changed = true;
     if (remapProxyUsagePeople(bucket, ownerMap)) changed = true;
     if (normalizeUsageBucketTotals(bucket)) changed = true;
-    buckets[bucket.key] = bucket;
+    if (buckets[bucket.key]) {
+      mergeUsageCounterBucket(buckets[bucket.key], bucket);
+      changed = true;
+    } else {
+      buckets[bucket.key] = bucket;
+    }
   }
   for (const [key, item] of usageBucketRebuildMap.entries()) {
     if (buckets[key]) continue;
@@ -3596,6 +4116,134 @@ async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCount
   };
 }
 
+let usageInventoryIdentityCache = null;
+
+async function usageInventoryIdentity() {
+  const signature = await usageInventoryIdentitySignature();
+  if (usageInventoryIdentityCache?.signature === signature) return usageInventoryIdentityCache;
+  const [projectScanCache, versionOverrides] = await Promise.all([
+    readJson(paths.projectScanCache, {}),
+    readJson(paths.skillVersionOverrides, {})
+  ]);
+  const keys = new Set([taskArtBriefUsageCounterKey]);
+  const texts = new Set(['zentao-art-brief-product']);
+  const addValue = value => {
+    const text = cleanString(value);
+    if (!text || !isInventoryUsageIdentityValue(text)) return;
+    for (const candidate of usageInventoryIdentityCandidates(text)) {
+      const key = usageCounterKey(candidate);
+      if (!key || isGenericUsageTarget(key) || isTechnicalUsageTarget(candidate)) continue;
+      keys.add(key);
+      texts.add(compactUsageTargetText(candidate));
+    }
+  };
+  const addSkill = skill => {
+    if (!skill || typeof skill !== 'object') return;
+    [
+      skill.id,
+      skill.title,
+      skill.productDisplayName,
+      skill.productFileName,
+      skill.displayName,
+      skill.commonName,
+      skill.originalTitle,
+      skill.path,
+      skill.relativePath,
+      skill.git?.relativePath,
+      skill.productGroupPath,
+      ...(Array.isArray(skill.aliases) ? skill.aliases : []),
+      ...(Array.isArray(skill.manualAliases) ? skill.manualAliases : []),
+      ...(Array.isArray(skill.aliasHistory) ? skill.aliasHistory : [])
+    ].forEach(addValue);
+  };
+  for (const rawScan of Object.values(projectScanCache && typeof projectScanCache === 'object' ? projectScanCache : {})) {
+    const scan = rawScan?.scan && typeof rawScan.scan === 'object' ? rawScan.scan : rawScan;
+    for (const skill of Array.isArray(scan?.skills) ? scan.skills : []) addSkill(skill);
+  }
+  for (const record of Object.values(versionOverrides && typeof versionOverrides === 'object' ? versionOverrides : {})) {
+    if (!record || typeof record !== 'object') continue;
+    [
+      record.key,
+      record.id,
+      record.title,
+      record.relativePath,
+      record.path,
+      ...(Array.isArray(record.aliases) ? record.aliases : [])
+    ].forEach(addValue);
+  }
+  usageInventoryIdentityCache = { signature, keys, texts };
+  return usageInventoryIdentityCache;
+}
+
+async function usageInventoryIdentitySignature() {
+  const values = await Promise.all([
+    fs.stat(paths.projectScanCache).catch(() => null),
+    fs.stat(paths.skillVersionOverrides).catch(() => null)
+  ]);
+  return values.map(stat => stat ? `${Math.round(stat.mtimeMs)}:${stat.size}` : '0:0').join('|');
+}
+
+function usageInventoryIdentityCandidates(value = '') {
+  const text = cleanString(value).replace(/\\/g, '/').replace(/[?#].*$/, '');
+  if (!text) return [];
+  const parts = text.split('/').map(part => cleanString(part)).filter(Boolean);
+  const candidates = [text];
+  if (parts.length) {
+    const last = parts[parts.length - 1];
+    candidates.push(last, last.replace(/\.(md|markdown)$/i, ''));
+    if (/^SKILL\.md$/i.test(last) && parts.length > 1) candidates.push(parts[parts.length - 2]);
+    if (/^(README|AGENTS|MEMORY)\.md$/i.test(last)) {
+      return candidates;
+    }
+    for (const part of parts.slice(0, -1).reverse()) {
+      if (!/^(skills?|references?|runs?|generated|assets|data|art-git)$/i.test(part)) candidates.push(part);
+      if (candidates.length >= 8) break;
+    }
+  }
+  return candidates.filter((item, index, array) => item && array.indexOf(item) === index);
+}
+
+function isInventoryUsageIdentityValue(value = '') {
+  const text = cleanString(value).replace(/\\/g, '/');
+  if (!text || isTechnicalUsageTarget(text)) return false;
+  if (looksLikeTaskOrProjectIdentifier(text)) return false;
+  if (looksLikeUrlTarget(text)) return false;
+  if (looksLikePlatformScriptTarget(text)) return false;
+  if (looksLikeLongUsageSummaryTarget(text)) return false;
+  const key = usageCounterKey(text);
+  return Boolean(key && !isGenericUsageTarget(key));
+}
+
+function usageBucketMatchesInventory(bucket = {}, inventoryIdentity = {}) {
+  if (bucket?.key === taskArtBriefUsageCounterKey) return true;
+  const keys = inventoryIdentity?.keys instanceof Set ? inventoryIdentity.keys : new Set();
+  const texts = inventoryIdentity?.texts instanceof Set ? inventoryIdentity.texts : new Set();
+  const values = bucketUsageTargetValues(bucket);
+  return values.filter(isInventoryUsageIdentityValue).some(value => {
+    const key = usageCounterKey(value);
+    if (key && keys.has(key)) return true;
+    const compact = compactUsageTargetText(value);
+    return Boolean(compact && [...texts].some(text => {
+      if (!text) return false;
+      if (compact === text) return true;
+      return (text.length >= 8 && compact.includes(text)) || (compact.length >= 8 && text.includes(compact));
+    }));
+  });
+}
+
+function isNonInventoryUsageCounterBucket(bucket = {}, inventoryIdentity = {}) {
+  if (!bucket?.key || bucket.key === taskArtBriefUsageCounterKey) return false;
+  if (usageBucketMatchesInventory(bucket, inventoryIdentity)) return false;
+  const values = normalizeLineList([
+    bucket.key,
+    bucket.target,
+    ...(Array.isArray(bucket.aliases) ? bucket.aliases : normalizeLineList(bucket.aliases || []))
+  ]);
+  if (values.some(value => looksLikeTaskOrProjectIdentifier(value) || looksLikeUrlTarget(value) || looksLikePlatformScriptTarget(value) || looksLikeLongUsageSummaryTarget(value))) return true;
+  if (values.some(value => looksLikeSkillOrMarkdownMaterial(value) && !isGenericUsageTarget(value))) return false;
+  return true;
+}
+
 function normalizeTaskArtBriefLegacyUsageBucket(bucket = {}) {
   if (!bucket || bucket.key !== taskArtBriefUsageCounterKey) return false;
   let changed = false;
@@ -3615,6 +4263,63 @@ function normalizeTaskArtBriefLegacyUsageBucket(bucket = {}) {
     changed = true;
   }
   return changed;
+}
+
+function normalizeUsageBucketAliases(bucket = {}) {
+  if (!bucket || typeof bucket !== 'object') return false;
+  const rawAliases = Array.isArray(bucket.aliases) ? bucket.aliases : normalizeLineList(bucket.aliases || []);
+  const aliases = rawAliases
+    .map(cleanString)
+    .filter(Boolean)
+    .filter(value => isInventoryUsageIdentityValue(value) || usageCounterKey(value) === bucket.key)
+    .filter((value, index, array) => array.findIndex(item => usageCounterKey(item) === usageCounterKey(value)) === index)
+    .slice(-50);
+  const changed = JSON.stringify(rawAliases) !== JSON.stringify(aliases);
+  bucket.aliases = aliases;
+  return changed;
+}
+
+function mergeUsageCounterBucket(target = {}, source = {}) {
+  target.count = Math.max(0, Math.round(Number(target.count || 0))) + Math.max(0, Math.round(Number(source.count || 0)));
+  target.usageCount = Math.max(0, Math.round(Number(target.usageCount || 0))) + Math.max(0, Math.round(Number(source.usageCount || 0)));
+  target.validationCount = Math.max(0, Math.round(Number(target.validationCount || 0))) + Math.max(0, Math.round(Number(source.validationCount || 0)));
+  target.researchSyncCount = Math.max(0, Math.round(Number(target.researchSyncCount || 0))) + Math.max(0, Math.round(Number(source.researchSyncCount || 0)));
+  target.aliases = [...(Array.isArray(target.aliases) ? target.aliases : []), source.target, ...(Array.isArray(source.aliases) ? source.aliases : [])]
+    .map(cleanString)
+    .filter(Boolean)
+    .filter(value => isInventoryUsageIdentityValue(value) || usageCounterKey(value) === target.key)
+    .filter((value, index, array) => array.findIndex(item => usageCounterKey(item) === usageCounterKey(value)) === index)
+    .slice(-80);
+  target.eventKeys = [...(Array.isArray(target.eventKeys) ? target.eventKeys : []), ...(Array.isArray(source.eventKeys) ? source.eventKeys : [])]
+    .filter(Boolean)
+    .filter((value, index, array) => array.indexOf(value) === index)
+    .slice(-500);
+  target.usageEventKeys = [...(Array.isArray(target.usageEventKeys) ? target.usageEventKeys : []), ...(Array.isArray(source.usageEventKeys) ? source.usageEventKeys : [])]
+    .filter(Boolean)
+    .filter((value, index, array) => array.indexOf(value) === index)
+    .slice(-500);
+  target.people = mergeUsageCounterPeople(target.people, source.people);
+  target.usagePeople = mergeUsageCounterPeople(target.usagePeople, source.usagePeople);
+  target.peopleCount = Object.keys(target.people || {}).length;
+  target.usagePeopleCount = Object.keys(target.usagePeople || {}).length;
+  if (source.firstAt) target.firstAt = target.firstAt ? (String(target.firstAt).localeCompare(String(source.firstAt)) <= 0 ? target.firstAt : source.firstAt) : source.firstAt;
+  if (source.lastAt) target.lastAt = target.lastAt ? (String(target.lastAt).localeCompare(String(source.lastAt)) >= 0 ? target.lastAt : source.lastAt) : source.lastAt;
+  if (source.updatedAt) target.updatedAt = target.updatedAt ? (String(target.updatedAt).localeCompare(String(source.updatedAt)) >= 0 ? target.updatedAt : source.updatedAt) : source.updatedAt;
+  normalizeUsageBucketTotals(target);
+  return target;
+}
+
+function mergeUsageCounterPeople(left = {}, right = {}) {
+  const output = {};
+  for (const source of [left, right]) {
+    for (const [person, count] of Object.entries(source && typeof source === 'object' ? source : {})) {
+      const key = cleanString(person);
+      const value = Math.max(0, Math.round(Number(count || 0)));
+      if (!key || value <= 0) continue;
+      output[key] = Number(output[key] || 0) + value;
+    }
+  }
+  return output;
 }
 
 let usageCounterRebuildMapCache = null;
@@ -3646,8 +4351,9 @@ function storedSkillValidationRows(input = {}) {
   return output;
 }
 
-async function historicalUsageBucketRebuildMap() {
-  if (usageCounterRebuildMapCache) return usageCounterRebuildMapCache;
+async function historicalUsageBucketRebuildMap(inventoryIdentity = null) {
+  const inventory = inventoryIdentity || await usageInventoryIdentity();
+  if (usageCounterRebuildMapCache?.signature === inventory.signature) return usageCounterRebuildMapCache.map;
   const [artProgressEvents, operationLogs, runs, validations] = await Promise.all([
     readJson(paths.artProgressEvents, []),
     readJson(paths.operationLogs, []),
@@ -3679,14 +4385,17 @@ async function historicalUsageBucketRebuildMap() {
       map.set(key, bucket);
       return;
     }
+    const isUsageSource = source !== 'skill-validation' || inventory?.keys?.has(key);
     bucket.eventKeys.add(eventKey);
-    bucket.usageEventKeys.add(eventKey);
-    bucket.usageCount += 1;
-    ownerList
-      .filter((owner, index, array) => array.findIndex(item => samePersonName(item, owner)) === index)
-      .forEach(owner => {
-        bucket.usagePeople[owner] = Number(bucket.usagePeople[owner] || 0) + 1;
-      });
+    if (isUsageSource) {
+      bucket.usageEventKeys.add(eventKey);
+      bucket.usageCount += 1;
+      ownerList
+        .filter((owner, index, array) => array.findIndex(item => samePersonName(item, owner)) === index)
+        .forEach(owner => {
+          bucket.usagePeople[owner] = Number(bucket.usagePeople[owner] || 0) + 1;
+        });
+    }
     if (at) {
       bucket.firstAt = bucket.firstAt ? (String(bucket.firstAt).localeCompare(String(at)) <= 0 ? bucket.firstAt : at) : at;
       bucket.lastAt = bucket.lastAt ? (String(bucket.lastAt).localeCompare(String(at)) >= 0 ? bucket.lastAt : at) : at;
@@ -3749,8 +4458,8 @@ async function historicalUsageBucketRebuildMap() {
     }
   }
 
-  usageCounterRebuildMapCache = map;
-  return usageCounterRebuildMapCache;
+  usageCounterRebuildMapCache = { signature: inventory.signature, map };
+  return map;
 }
 
 function applyHistoricalUsageBucketRebuild(bucket = {}, rebuildMap = new Map()) {
@@ -4332,9 +5041,7 @@ function skillValidationUsageTargets(record = {}) {
     record.artifactName,
     record.researchName,
     record.artifactLocation,
-    record.sourceRef,
-    record.workflowScene,
-    record.evidenceLink
+    record.sourceRef
   ];
 }
 
@@ -4423,12 +5130,9 @@ function usageTargetsFromOperationLog(log = {}) {
     });
   }
   const values = [
-    log.targetName,
-    log.targetId,
     metadata.productName,
     metadata.artifactName,
     metadata.skillName,
-    metadata.operationName,
     metadata.alias,
     metadata.path,
     metadata.filePath,
@@ -4502,8 +5206,7 @@ function runUsageTargetValues(run = {}) {
   if (materialValues.length) return materialValues;
   return [
     run.productName,
-    run.sourceTitle,
-    run.title
+    run.sourceTitle
   ]
     .map(cleanString)
     .filter(value => value && isStrongUsageTargetValue(value));
@@ -4552,11 +5255,15 @@ function isStrongUsageTargetValue(value = '') {
   const text = cleanString(value).replace(/\\/g, '/').replace(/^[#\[]+|[\]]+$/g, '').trim();
   if (!text) return false;
   if (isTechnicalUsageTarget(text)) return false;
+  if (looksLikeTaskOrProjectIdentifier(text)) return false;
+  if (looksLikeUrlTarget(text)) return false;
+  if (looksLikePlatformScriptTarget(text)) return false;
+  if (looksLikeLongUsageSummaryTarget(text)) return false;
   if (/(^|\/)(references?|runs?)\//i.test(text)) return false;
   if (looksLikeSkillOrMarkdownMaterial(text)) {
     return text.split('/').filter(Boolean).some(part => {
       const cleaned = part.replace(/\.(md|markdown)$/i, '').replace(/^[#\[]+|[\]]+$/g, '').trim();
-      return cleaned && !isTechnicalUsageTarget(cleaned) && !isGenericUsageTarget(cleaned);
+      return cleaned && !isTechnicalUsageTarget(cleaned) && !isGenericUsageTarget(cleaned) && !looksLikePlatformScriptTarget(cleaned);
     });
   }
   const compact = compactUsageTargetText(text);
@@ -4706,11 +5413,11 @@ function usageTargetCandidates(value = '') {
   if (!text || !isStrongUsageTargetValue(text)) return [];
   const parts = text.split('/').filter(Boolean);
   const last = parts[parts.length - 1] || text;
-  const withoutExt = last.replace(/\.(md|markdown)$/i, '');
+  const withoutExt = cleanUsageTargetLabel(last.replace(/\.(md|markdown)$/i, ''));
   const parentForSkill = /^SKILL\.md$/i.test(last) && parts.length > 1 ? parts[parts.length - 2] : '';
   return [text, last, withoutExt, parentForSkill]
     .map(item => cleanString(item))
-    .filter(item => item && item.length >= 3 && !isGenericUsageTarget(item));
+    .filter(item => item && item.length >= 3 && isStrongUsageTargetValue(item) && !isGenericUsageTarget(item));
 }
 
 function normalizeUsageTargets(targets = []) {
@@ -4734,6 +5441,15 @@ function usageEventKey(source = '', id = '', at = '') {
   const text = [source, id, at].map(cleanString).join('::');
   if (!text.replace(/:/g, '')) return '';
   return createHash('sha1').update(text).digest('hex').slice(0, 24);
+}
+
+function cleanUsageTargetLabel(value = '') {
+  return cleanString(value)
+    .replace(/^只执行一个规范\s*\/\s*Skill[：:\s]*/i, '')
+    .replace(/^Skill[：:\s]+/i, '')
+    .replace(/^skill([a-z0-9_-]+)$/i, '$1')
+    .replace(/^直接执行\s+/i, '')
+    .trim();
 }
 
 function mergeArtProgressEvents(records = []) {
@@ -4787,7 +5503,7 @@ function artProgressEventMergeKey(input = {}) {
 }
 
 function usageCounterKey(value = '') {
-  const text = cleanString(value)
+  const text = cleanUsageTargetLabel(value)
     .replace(/\\/g, '/')
     .split('/')
     .filter(Boolean)
@@ -5234,6 +5950,46 @@ function isTechnicalUsageTarget(value = '') {
   return looksLikeUuid(raw)
     || /^[0-9a-f]{32}$/i.test(compact)
     || /^(untitledtask|undefined|null|nan)$/i.test(compact);
+}
+
+function looksLikeUrlTarget(value = '') {
+  const text = cleanString(value);
+  return /^https?:\/\//i.test(text)
+    || /^www\./i.test(text)
+    || /figma\.com\/(?:design|file|board|slides|make)\//i.test(text)
+    || /node-id=/i.test(text);
+}
+
+function looksLikeTaskOrProjectIdentifier(value = '') {
+  const text = cleanString(value);
+  const compact = compactUsageTargetText(text);
+  if (!text || !compact) return false;
+  return /^artdepartment\d+$/i.test(compact)
+    || /^art[_-]?department[_-]?\d+$/i.test(text)
+    || /^(zentao|task|bug|story|project)?\d{4,}$/i.test(compact)
+    || /^【?(制作单|验收单|需求|任务|缺陷|bug|story|task)】?/i.test(text)
+    || /美术(验收)?$/.test(text) && /(制作单|验收单|需求|任务|活动|弹窗|页面|优化|新增|调整|web\d+)/i.test(text);
+}
+
+function looksLikePlatformScriptTarget(value = '') {
+  const text = cleanString(value).replace(/\\/g, '/');
+  const base = text.split('/').filter(Boolean).pop() || text;
+  const compact = compactUsageTargetText(base);
+  if (!compact) return false;
+  if (/\.(?:js|mjs|cjs|ts|tsx|vue|py|sh|bash|ps1|bat|json|ya?ml|png|jpe?g|webp|gif|svg)$/i.test(base)) {
+    if (!/\.(?:md|markdown)$/i.test(base)) return true;
+  }
+  return /^(artdirectworker|server|store|appvue|packagejson|assets|index|main|viteconfig|launchagent|install|installer|script|scripts|plugin|plugin代码|插件代码)$/i.test(compact);
+}
+
+function looksLikeLongUsageSummaryTarget(value = '') {
+  const text = cleanString(value).replace(/\\/g, '/');
+  const compact = compactUsageTargetText(text);
+  if (!text || !compact) return false;
+  if (/AGENTS\.md\s*\/\s*试用/i.test(text)) return true;
+  if (text.split('/').filter(Boolean).length >= 5 && /(要求|已经|先把|前者|后者|快照|规则|内容|文本|代码|可用|完整|节点|截图)/.test(text)) return true;
+  if (text.length > 80 && !looksLikeSkillOrMarkdownMaterial(text)) return true;
+  return /^(先把指定|插件代码|已确认可用|要求这类文本不能直接改|前者拿节点结构和截图|快照已经给出了完整规范|文件内容能读到|基于完成的界面设计生成对应套系页面|批量改图标色值和大小间距|用来让同一个角色在多次生图)$/i.test(compact);
 }
 
 function normalizeCustomWorkflow(input = {}) {

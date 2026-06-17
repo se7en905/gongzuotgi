@@ -27,6 +27,7 @@ const permissionCatalog = [
   { id: 'menu.users', name: '账户管理', type: 'menu', group: '用户管理', description: '访问账户管理页。' },
   { id: 'menu.roles', name: '角色管理', type: 'menu', group: '用户管理', description: '访问角色管理页。' },
   { id: 'menu.operationLogs', name: '操作日志', type: 'menu', group: '用户管理', description: '访问平台操作审计日志。' },
+  { id: 'menu.maintenance', name: '维护中心', type: 'menu', group: '系统维护', description: '管理员查看本机数据体量并执行范围清理。' },
   { id: 'task.sync', name: '同步任务/Bug', type: 'button', group: '任务中心', description: '同步禅道任务或 Bug。' },
   { id: 'task.note.manage', name: '保存任务备注', type: 'button', group: '任务中心', description: '保存任务中心处理备注。' },
   { id: 'task.artBrief.generate', name: '生成美术摘要', type: 'button', group: '任务中心', description: '生成或重新生成任务美术摘要。' },
@@ -88,7 +89,8 @@ const permissionCatalog = [
   { id: 'api.roles.manage', name: '角色管理 API', type: 'api', group: '后端接口', description: '角色管理接口。' },
   { id: 'api.taskCenter.config.manage', name: '任务中心字段配置 API', type: 'api', group: '后端接口', description: '保存任务中心组员可见字段。' },
   { id: 'api.operationLogs.read', name: '操作日志读取 API', type: 'api', group: '后端接口', description: '查询平台操作审计日志。' },
-  { id: 'api.operationLogs.delete', name: '操作日志删除 API', type: 'api', group: '后端接口', description: '删除平台操作日志记录。' }
+  { id: 'api.operationLogs.delete', name: '操作日志删除 API', type: 'api', group: '后端接口', description: '删除平台操作日志记录。' },
+  { id: 'api.maintenance.manage', name: '维护中心 API', type: 'api', group: '后端接口', description: '管理员预览和执行维护中心清理。' }
 ];
 const allPermissionIds = permissionCatalog.map(item => item.id);
 const levelPermissions = {

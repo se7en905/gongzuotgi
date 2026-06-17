@@ -49,6 +49,7 @@ import {
   deleteCustomWorkflow,
   ensurePlatformDirs,
   enforceRetentionNow,
+  applyMaintenanceAction,
   getCodexConfig,
   getCustomWorkflow,
   getAiMemberScoreSnapshot,
@@ -78,7 +79,9 @@ import {
   listTaskReviews,
   listTaskProcessingNotes,
   listTasks,
+  maintenanceOverview,
   paths,
+  previewMaintenanceAction,
   recordUsageCountersForArtProgressEvent,
   recordUsageCountersForExpiredSkillValidations,
   recordUsageCountersForOperationLog,
@@ -960,6 +963,48 @@ async function handleApi(req, res, url) {
       requirePermission(currentUser, 'api.operationLogs.read');
     }
     sendJson(res, 200, await listOperationLogs(Object.fromEntries(url.searchParams.entries())));
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/maintenance/overview') {
+    requireRole(currentUser, 'admin');
+    requirePermission(currentUser, 'api.maintenance.manage');
+    sendJson(res, 200, await maintenanceOverview());
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/maintenance/preview') {
+    requireRole(currentUser, 'admin');
+    requirePermission(currentUser, 'api.maintenance.manage');
+    const body = await readBody(req);
+    sendJson(res, 200, await previewMaintenanceAction(body));
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/maintenance/apply') {
+    requireRole(currentUser, 'admin');
+    requirePermission(currentUser, 'api.maintenance.manage');
+    const body = await readBody(req);
+    const result = await applyMaintenanceAction(body);
+    await writeOperationLog(req, {
+      user: currentUser,
+      module: 'maintenance',
+      action: 'APPLY_MAINTENANCE_ACTION',
+      actionName: '执行维护中心清理',
+      targetType: body?.type || 'maintenance',
+      targetId: body?.type || 'maintenance',
+      targetName: maintenanceActionLabel(body?.type),
+      before: { type: body?.type || '', filters: body?.filters || {} },
+      after: {
+        deletedCount: result.deletedCount || 0,
+        skippedCount: result.skippedCount || 0,
+        releasedBytes: result.releasedBytes || result.estimatedBytes || 0,
+        removedArtBriefRecords: result.removedArtBriefRecords || 0
+      },
+      description: `${currentUser.displayName || currentUser.username} 在维护中心执行「${maintenanceActionLabel(body?.type)}」，删除 ${Number(result.deletedCount || 0)} 项`
+    });
+    broadcastPlatformEvent('maintenance.changed', { module: 'maintenance', type: body?.type || '', result });
+    sendJson(res, 200, result);
     return;
   }
 
@@ -9767,6 +9812,15 @@ function formatBytes(value) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function maintenanceActionLabel(type = '') {
+  return {
+    'safe-clean': '安全维护清理',
+    'operation-logs': '操作日志范围删除',
+    runs: 'AI档案 / 执行记录范围删除',
+    'art-briefs': '美术摘要产物清理'
+  }[String(type || '').trim()] || '维护中心清理';
 }
 
 function clampNumber(value, min, max, fallback) {

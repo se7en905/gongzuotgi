@@ -86,6 +86,12 @@
             </ElIcon>
           <span>角色管理</span>
         </ElMenuItem>
+        <ElMenuItem v-if="isPlatformAdmin && can('menu.maintenance')" index="maintenance-center">
+            <ElIcon>
+              <Operation />
+            </ElIcon>
+          <span>维护中心</span>
+        </ElMenuItem>
       </ElMenu>
 
       <div class="side-controls">
@@ -213,6 +219,8 @@
         <RoleManagementView v-if="activeView === 'role-management'" :app="appBridge" />
 
         <OperationLogView v-if="activeView === 'operation-logs'" :app="appBridge" />
+
+        <MaintenanceCenterView v-if="activeView === 'maintenance-center'" :app="appBridge" />
 
       </main>
     </ElContainer>
@@ -494,6 +502,7 @@ import LoginView from './views/LoginView.vue';
 import UserAccessView from './views/UserAccessView.vue';
 import RoleManagementView from './views/RoleManagementView.vue';
 import OperationLogView from './views/OperationLogView.vue';
+import MaintenanceCenterView from './views/MaintenanceCenterView.vue';
 import RunCreateDialog from './components/dialogs/RunCreateDialog.vue';
 import RunStartConfirmDialog from './components/dialogs/RunStartConfirmDialog.vue';
 import RunDiffPreviewDialog from './components/dialogs/RunDiffPreviewDialog.vue';
@@ -569,13 +578,13 @@ function readWorkbenchDisplayCacheArray(key = '') {
 
 const roleLevelPermissionPresets = {
   4: [
-    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive', 'menu.users', 'menu.roles', 'menu.operationLogs',
+    'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive', 'menu.users', 'menu.roles', 'menu.operationLogs', 'menu.maintenance',
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy', 'task.personPressure.view', 'task.platform.delete',
     'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'run.start', 'run.cancel', 'run.delete', 'review.submit', 'review.image.submit',
     'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.source.delete', 'skill.asset.create', 'skill.asset.void', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
     'aiMembers.score.view', 'aiMembers.score.refresh',
     'codex.config.manage', 'user.manage', 'role.manage',
-    'api.skillSources.manage', 'api.skillSources.delete', 'api.skillScan.run', 'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.tasks.deletePlatform', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.runs.delete', 'api.aiArchive.delete', 'api.reviews.submit', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.skillAsset.void', 'api.aiMembers.read', 'api.aiMembers.score.read', 'api.aiMembers.score.write', 'api.aiMembers.refresh', 'api.codex.config.read', 'api.codex.config.manage', 'api.users.manage', 'api.roles.manage', 'api.taskCenter.config.manage', 'api.operationLogs.read', 'api.operationLogs.delete'
+    'api.skillSources.manage', 'api.skillSources.delete', 'api.skillScan.run', 'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.tasks.deletePlatform', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.runs.delete', 'api.aiArchive.delete', 'api.reviews.submit', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.skillAsset.void', 'api.aiMembers.read', 'api.aiMembers.score.read', 'api.aiMembers.score.write', 'api.aiMembers.refresh', 'api.codex.config.read', 'api.codex.config.manage', 'api.users.manage', 'api.roles.manage', 'api.taskCenter.config.manage', 'api.operationLogs.read', 'api.operationLogs.delete', 'api.maintenance.manage'
   ],
   3: [
     'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive',
@@ -607,6 +616,7 @@ export default {
     UserAccessView,
     RoleManagementView,
     OperationLogView,
+    MaintenanceCenterView,
     RunCreateDialog,
     RunStartConfirmDialog,
     RunDiffPreviewDialog,
@@ -754,6 +764,18 @@ export default {
         visible: false,
         row: null
       },
+      maintenanceOverview: {
+        storage: [],
+        records: [],
+        safeCleanup: null,
+        artBriefOutputs: null
+      },
+      maintenanceForm: {
+        type: 'safe-clean',
+        filters: emptyMaintenanceFilters()
+      },
+      maintenancePreview: null,
+      maintenancePreviewPayloadKey: '',
       permissionCatalog: [],
       runs: [],
       agentWorkers: [],
@@ -904,6 +926,9 @@ export default {
         users: false,
         roles: false,
         operationLogs: false,
+        maintenance: false,
+        maintenancePreview: false,
+        maintenanceApply: false,
         codexConfig: false,
         artProjectSheet: false,
         skillValidations: false,
@@ -1050,7 +1075,7 @@ export default {
 
   computed: {
     activeNav() {
-      if (['user-access', 'role-management', 'operation-logs'].includes(this.activeView)) return this.activeView;
+      if (['user-access', 'role-management', 'operation-logs', 'maintenance-center'].includes(this.activeView)) return this.activeView;
       if (['task-result', 'manual-review'].includes(this.activeView)) return 'tasks';
       if (this.isSkillInventoryViewActive) return 'skill-assets';
       if (['ai-members'].includes(this.activeView)) return 'ai-members';
@@ -1135,6 +1160,7 @@ export default {
         'user-access': { eyebrow: '账户管理', title: '账户管理' },
         'role-management': { eyebrow: '角色管理', title: '角色管理' },
         'operation-logs': { eyebrow: '操作日志', title: '操作日志' },
+        'maintenance-center': { eyebrow: '系统维护', title: '维护中心' },
         'project-detail': { eyebrow: '资料库详情', title: this.selectedProject?.name || '资料库详情' },
         runs: { eyebrow: '执行管理', title: '美术执行台' },
         'agent-workers': { eyebrow: '执行管理', title: '本机执行状态' },
@@ -1460,6 +1486,29 @@ export default {
 
     isPlatformAdmin() {
       return this.currentUser?.role === 'admin';
+    },
+
+    maintenancePreviewCount() {
+      const preview = this.maintenancePreview || {};
+      return Number(preview.deletedCount || preview.matchedCount || 0) || 0;
+    },
+
+    maintenancePreviewBytes() {
+      const preview = this.maintenancePreview || {};
+      return Number(preview.releasedBytes || preview.estimatedBytes || 0) || 0;
+    },
+
+    maintenancePreviewReady() {
+      return this.isPlatformAdmin
+        && this.maintenancePreviewCount > 0
+        && this.maintenancePreviewPayloadKey === this.maintenancePayloadKey()
+        && !this.loading.maintenanceApply;
+    },
+
+    maintenancePreviewRows() {
+      const preview = this.maintenancePreview || {};
+      const rows = preview.items || preview.sample || preview.deleted || [];
+      return Array.isArray(rows) ? rows : [];
     },
 
     canManageTaskCenterFields() {
@@ -4626,6 +4675,10 @@ export default {
   },
 
   methods: {
+    formatBytes(value) {
+      return formatBytes(Number(value || 0));
+    },
+
     skillInventoryOverrideSignature(overrides = {}) {
       if (!overrides || typeof overrides !== 'object') return '';
       return Object.entries(overrides)
@@ -5289,6 +5342,10 @@ export default {
         if (!this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
         if (!this.operationLogs.length && !this.loading.operationLogs) this.refreshOperationLogs().catch(() => {});
       }
+      if (view === 'maintenance-center') {
+        if (this.isPlatformAdmin && !this.loading.maintenance) this.refreshMaintenanceOverview().catch(() => {});
+        if (this.isPlatformAdmin && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
+      }
     },
 
     workbenchPageSizeKeys() {
@@ -5732,9 +5789,10 @@ export default {
         ['menu.codexConfig', '/codex-config'],
         ['menu.users', '/user-access'],
         ['menu.roles', '/role-management'],
-        ['menu.operationLogs', '/operation-logs']
+        ['menu.operationLogs', '/operation-logs'],
+        ['menu.maintenance', '/maintenance']
       ];
-      return routes.find(([permission]) => this.can(permission))?.[1] || '/login';
+      return routes.find(([permission]) => permission === 'menu.maintenance' ? this.isPlatformAdmin && this.can(permission) : this.can(permission))?.[1] || '/login';
     },
 
     userAvatarText(user) {
@@ -5790,6 +5848,7 @@ export default {
       if (normalizedPath === '/user-access') return this.activeView === 'user-access';
       if (normalizedPath === '/role-management') return this.activeView === 'role-management';
       if (normalizedPath === '/operation-logs') return this.activeView === 'operation-logs';
+      if (normalizedPath === '/maintenance') return this.activeView === 'maintenance-center';
       return false;
     },
 
@@ -5937,6 +5996,14 @@ export default {
           return;
         }
         this.activateRouteView('operation-logs');
+        return;
+      }
+      if (path === '/maintenance') {
+        if (!this.isPlatformAdmin || !this.can('menu.maintenance')) {
+          this.pushRoute(this.firstAllowedRoute());
+          return;
+        }
+        this.activateRouteView('maintenance-center');
         return;
       }
       if (projectMatch) {
@@ -9139,6 +9206,123 @@ export default {
       };
     },
 
+    setMaintenanceActionType(type = 'safe-clean') {
+      this.maintenanceForm = {
+        type,
+        filters: emptyMaintenanceFilters()
+      };
+      this.maintenancePreview = null;
+      this.maintenancePreviewPayloadKey = '';
+    },
+
+    resetMaintenanceFilters() {
+      this.maintenanceForm.filters = emptyMaintenanceFilters();
+      this.maintenancePreview = null;
+      this.maintenancePreviewPayloadKey = '';
+    },
+
+    maintenancePayload() {
+      const filters = {};
+      Object.entries(this.maintenanceForm.filters || {}).forEach(([key, value]) => {
+        const text = String(value ?? '').trim();
+        if (text) filters[key] = text;
+      });
+      return {
+        type: this.maintenanceForm.type,
+        filters
+      };
+    },
+
+    maintenancePayloadKey(payload = this.maintenancePayload()) {
+      return JSON.stringify(payload);
+    },
+
+    async refreshMaintenanceOverview() {
+      if (!this.isPlatformAdmin) {
+        ElMessage.warning('只有管理员可以访问维护中心。');
+        return null;
+      }
+      this.loading.maintenance = true;
+      try {
+        const result = await this.api('/api/maintenance/overview');
+        this.maintenanceOverview = result || { storage: [], records: [] };
+        return result;
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || '维护中心概览读取失败');
+        return null;
+      } finally {
+        this.loading.maintenance = false;
+      }
+    },
+
+    async previewMaintenanceAction() {
+      if (!this.isPlatformAdmin) {
+        ElMessage.warning('只有管理员可以执行维护预览。');
+        return null;
+      }
+      this.loading.maintenancePreview = true;
+      try {
+        const payload = this.maintenancePayload();
+        const result = await this.api('/api/maintenance/preview', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+        this.maintenancePreview = result;
+        this.maintenancePreviewPayloadKey = this.maintenancePayloadKey(payload);
+        if (!this.maintenancePreviewCount) ElMessage.info('当前条件没有命中可清理内容');
+        return result;
+      } catch (error) {
+        this.maintenancePreview = null;
+        this.maintenancePreviewPayloadKey = '';
+        ElMessage.error(this.readApiError(error) || '维护清理预览失败');
+        return null;
+      } finally {
+        this.loading.maintenancePreview = false;
+      }
+    },
+
+    async applyMaintenanceAction() {
+      if (!this.isPlatformAdmin) {
+        ElMessage.warning('只有管理员可以执行维护清理。');
+        return;
+      }
+      if (!this.maintenancePreviewReady) {
+        ElMessage.warning('请先按当前条件重新预览，并确认有可清理内容。');
+        return;
+      }
+      const count = this.maintenancePreviewCount;
+      const bytes = this.formatBytes(this.maintenancePreviewBytes);
+      const confirmed = await ElMessageBox.confirm(
+        `确认删除当前维护范围内 ${count} 项内容？预计释放 ${bytes}。本操作会按所选业务域彻底移除命中记录或文件，累计调用次数和禅道任务不会回退或修改。`,
+        '确认维护清理',
+        {
+          confirmButtonText: '确认删除',
+          cancelButtonText: '取消',
+          type: 'warning',
+          confirmButtonClass: 'el-button--danger'
+        }
+      ).then(() => true).catch(() => false);
+      if (!confirmed) return;
+      this.loading.maintenanceApply = true;
+      try {
+        const payload = this.maintenancePayload();
+        const result = await this.api('/api/maintenance/apply', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+        this.maintenancePreview = result;
+        this.maintenancePreviewPayloadKey = this.maintenancePayloadKey(payload);
+        await this.refreshMaintenanceOverview();
+        if (this.maintenanceForm.type === 'operation-logs') await this.refreshOperationLogs().catch(() => {});
+        if (this.maintenanceForm.type === 'runs') await this.refreshRuns({ minInterval: 0 }).catch(() => {});
+        ElMessage.success(`维护清理完成：删除 ${Number(result.deletedCount || 0)} 项，释放 ${this.formatBytes(result.releasedBytes || result.estimatedBytes || 0)}`);
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || '维护清理失败');
+      } finally {
+        this.loading.maintenanceApply = false;
+      }
+    },
+
     handleOperationLogPageChange(page) {
       this.operationLogPage = page;
       this.refreshOperationLogs();
@@ -10043,14 +10227,7 @@ export default {
     },
 
     usageCounterBucketCountableTotal(bucket = {}) {
-      const explicitTotal = Math.max(0, Math.round(Number(bucket.count || 0)));
-      const typedTotal = Math.max(
-        0,
-        Math.round(Number(bucket.usageCount || 0))
-          + Math.round(Number(bucket.validationCount || 0))
-          + Math.round(Number(bucket.researchSyncCount || 0))
-      );
-      return Math.max(explicitTotal, typedTotal);
+      return Math.max(0, Math.round(Number(bucket.usageCount || 0)));
     },
 
     isUsageCounterBucketCountable(bucket = {}) {
@@ -10131,9 +10308,8 @@ export default {
         if (!this.isUsageCounterBucketCountable(bucket)) return;
         if (!this.usageBucketMatchesRowTime(bucket, row, connectedAt)) return;
         seen.add(normalizedKey);
-        const eventKeys = Array.isArray(bucket.eventKeys) ? bucket.eventKeys.filter(Boolean) : [];
         const usageEventKeys = Array.isArray(bucket.usageEventKeys) ? bucket.usageEventKeys.filter(Boolean) : [];
-        const countableKeys = eventKeys.length ? eventKeys : usageEventKeys;
+        const countableKeys = usageEventKeys;
         const newEventKeys = countableKeys.filter(eventKey => !seenEventKeys.has(eventKey));
         const eventRatio = countableKeys.length ? newEventKeys.length / countableKeys.length : 1;
         if (!eventRatio) return;
@@ -10144,8 +10320,6 @@ export default {
         const bucketUsagePeople = bucket.usagePeople && typeof bucket.usagePeople === 'object'
           ? bucket.usagePeople
           : {};
-        const bucketValidationCount = applyCount(bucket.validationCount || 0);
-        const bucketResearchSyncCount = applyCount(bucket.researchSyncCount || 0);
         const bucketTotalLimit = applyCount(this.usageCounterBucketCountableTotal(bucket));
         const bucketUsageTotal = applyCount(bucket.usageCount || 0);
         const usageEventRatio = usageEventKeys.length ? (newUsageEventKeys.length / usageEventKeys.length) : eventRatio;
@@ -10157,10 +10331,8 @@ export default {
         const bucketUsageCount = bucketUsageLimit > 0
           ? bucketUsageLimit
           : Object.values(bucketUsagePeople).reduce((sum, value) => sum + applyCount(value), 0);
-        count += bucketUsageCount + bucketValidationCount + bucketResearchSyncCount;
+        count += bucketUsageCount;
         usageCount += bucketUsageCount;
-        validationCount += bucketValidationCount;
-        researchSyncCount += bucketResearchSyncCount;
       };
       keys.forEach(key => {
         const normalizedKey = this.normalizeUsageMatchText(key).replace(/\.(md|markdown)$/i, '');
@@ -10206,9 +10378,16 @@ export default {
     },
 
     usageBucketHasStrongRowIdentity(bucket = {}, row = {}) {
-      const compactBucket = this.usageBucketCompactText(bucket.key || '', bucket);
-      if (!compactBucket) return false;
-      return this.usageRowStrongIdentityKeys(row).some(value => compactBucket.includes(value));
+      const bucketValues = [
+        bucket.key,
+        bucket.target,
+        ...(Array.isArray(bucket.aliases) ? bucket.aliases : [])
+      ]
+        .filter(value => value && !this.isInvalidUsageTargetValue(value))
+        .map(value => this.usageCompactMatchText(value))
+        .filter(Boolean);
+      if (!bucketValues.length) return false;
+      return this.usageRowStrongIdentityKeys(row).some(value => bucketValues.some(bucketValue => bucketValue.includes(value) || value.includes(bucketValue)));
     },
 
     usageRowStrongIdentityKeys(row = {}) {
@@ -13005,6 +13184,23 @@ export default {
         || this.isGenericUsageNeedle(text);
     },
 
+    isInvalidUsageTargetValue(value = '') {
+      const raw = String(value || '').trim().replace(/\\/g, '/');
+      const text = this.usageCounterKeyForProduct(raw);
+      if (!raw || !text || this.isGenericUsageFileTarget(raw)) return true;
+      return /^https?:\/\//i.test(raw)
+        || /^www\./i.test(raw)
+        || /figma\.com\/(?:design|file|board|slides|make)\//i.test(raw)
+        || /node-id=/i.test(raw)
+        || /^artdepartment\d+$/i.test(text)
+        || /^【?(制作单|验收单|需求|任务|缺陷|bug|story|task)】?/i.test(raw)
+        || /(制作单|验收单|需求|任务|活动|弹窗|页面|优化|新增|调整|web\d+)/i.test(raw) && /美术(验收)?$/.test(raw)
+        || /\.(?:js|mjs|cjs|ts|tsx|vue|py|sh|bash|ps1|bat|json|ya?ml|png|jpe?g|webp|gif|svg)$/i.test(raw)
+        || /AGENTS\.md\s*\/\s*试用/i.test(raw)
+        || raw.split('/').filter(Boolean).length >= 5 && /(要求|已经|先把|前者|后者|快照|规则|内容|文本|代码|可用|完整|节点|截图)/.test(raw)
+        || /^(先把指定|插件代码|已确认可用|要求这类文本不能直接改|前者拿节点结构和截图|快照已经给出了完整规范|文件内容能读到|基于完成的界面设计生成对应套系页面|批量改图标色值和大小间距|用来让同一个角色在多次生图)$/i.test(text);
+    },
+
     usageConcreteNamesFromPath(value = '') {
       const parts = String(value || '')
         .replace(/\\/g, '/')
@@ -13049,15 +13245,12 @@ export default {
             item.artifactName,
             item.researchName,
             item.artifactLocation,
-            item.sourceRef,
-            item.workflowScene,
-            item.notes
+            item.sourceRef
           ]
         : [
             item.skillId,
             item.skillName,
             item.repoPath,
-            item.title,
             metadata.path,
             metadata.filePath,
             metadata.finalPath,
@@ -13082,7 +13275,7 @@ export default {
             : [text];
         })
         .map(value => String(value || '').trim())
-        .filter(value => value && value.length >= 3 && !this.isGenericUsageFileTarget(value))
+        .filter(value => value && value.length >= 3 && !this.isInvalidUsageTargetValue(value))
         .filter((value, index, array) => array.findIndex(item => this.normalizeUsageMatchText(item) === this.normalizeUsageMatchText(value)) === index);
     },
 
@@ -13101,6 +13294,10 @@ export default {
         .filter(Boolean)
         .pop()
         ?.replace(/\.(md|markdown)$/i, '')
+        .replace(/^只执行一个规范\s*\/\s*Skill[：:\s]*/i, '')
+        .replace(/^Skill[：:\s]+/i, '')
+        .replace(/^skill([a-z0-9_-]+)$/i, '$1')
+        .replace(/^直接执行\s+/i, '')
         .toLowerCase()
         .replace(/[_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '') || '';
       return text;
@@ -15090,6 +15287,7 @@ export default {
         'user-access': '/user-access',
         'role-management': '/role-management',
         'operation-logs': '/operation-logs',
+        'maintenance-center': '/maintenance',
         'agent-workers': '/agent-workers',
         'ai-archive': '/ai-archive',
         runs: '/runs'
@@ -22626,6 +22824,20 @@ function emptyCodexConfigForm(input = {}) {
     apiKey: '',
     hasApiKey: input.hasApiKey === true,
     clearApiKey: false
+  };
+}
+
+function emptyMaintenanceFilters() {
+  return {
+    keyword: '',
+    module: '',
+    result: '',
+    status: '',
+    sourceType: '',
+    userId: '',
+    taskNo: '',
+    from: '',
+    to: ''
   };
 }
 
