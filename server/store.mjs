@@ -68,6 +68,7 @@ const mysqlConfigs = new Map([
 
 const useMysqlStore = process.env.AWP_USE_MYSQL === '1';
 const retentionDays = Math.max(1, Number(process.env.AWP_DATA_RETENTION_DAYS || 2) || 2);
+const usageCounterLogicVersion = 'usage-only-v2';
 const retentionEnabled = process.env.AWP_DATA_RETENTION_ENABLED !== '0';
 const runFigmaLogEvidenceCache = new Map();
 const staleLocalWorkerRunMs = Math.max(10 * 60 * 1000, Number(process.env.AWP_STALE_LOCAL_WORKER_RUN_MS || 20 * 60 * 1000));
@@ -859,7 +860,19 @@ export async function getCodexConfig() {
 
 export async function getUsageCounters() {
   const counters = normalizeUsageCounters(await readJson(paths.usageCounters, defaultUsageCounters()));
-  return await normalizeHistoricalUsageCounterKinds(counters);
+  const normalized = await normalizeHistoricalUsageCounterKinds(counters);
+  const output = {
+    ...normalized,
+    version: 1,
+    logicVersion: usageCounterLogicVersion
+  };
+  const needsPersist = counters.logicVersion !== usageCounterLogicVersion
+    || JSON.stringify(counters.buckets || {}) !== JSON.stringify(output.buckets || {});
+  if (needsPersist) {
+    output.updatedAt = new Date().toISOString();
+    await writeJson(paths.usageCounters, output, { skipRetention: true });
+  }
+  return output;
 }
 
 export async function recordUsageCountersForExpiredSkillValidations(records = []) {
@@ -3430,6 +3443,7 @@ function defaultUsageCounters() {
   const now = new Date().toISOString();
   return {
     version: 1,
+    logicVersion: usageCounterLogicVersion,
     retentionDays,
     updatedAt: now,
     buckets: {}
@@ -3450,6 +3464,7 @@ function normalizeUsageCounters(input = {}) {
     ...fallback,
     ...input,
     version: 1,
+    logicVersion: input.logicVersion || '',
     retentionDays,
     updatedAt: input.updatedAt || fallback.updatedAt,
     buckets
@@ -4137,6 +4152,9 @@ async function updateUsageCounters(targets = []) {
       }
     }
     if (eventKey) bucket.eventKeys = [...bucket.eventKeys, eventKey].slice(-500);
+    if (eventKey && kind !== 'validation' && kind !== 'skill-validation' && kind !== 'research-sync' && kind !== 'art-progress') {
+      bucket.usageEventKeys = [...(Array.isArray(bucket.usageEventKeys) ? bucket.usageEventKeys : []), eventKey].slice(-500);
+    }
     bucket.peopleCount = Object.keys(bucket.people).length;
     bucket.usagePeopleCount = Object.keys(bucket.usagePeople || {}).length;
     const at = target.at || '';

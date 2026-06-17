@@ -532,6 +532,7 @@ const RUN_LOG_RENDER_MAX_CHARS = 80 * 1024;
 const RUN_LOG_RENDER_MAX_LINES = 400;
 const RUN_LOG_LINE_MAX_CHARS = 2400;
 const SKILL_AUDIT_RULE_VERSION = '9-dimension-v2-fulltext';
+const USAGE_COUNTER_LOGIC_VERSION = 'usage-only-v2';
 const LARGE_WORKBENCH_DISPLAY_CACHE_KEYS = new Set([
   'aiMembersSnapshot',
   'aiMembersBoardHtmlSnapshot',
@@ -4815,11 +4816,15 @@ export default {
         productDisplayName: row.productDisplayName || row.productFileName || row.title || row.id || '',
         productFileName: row.productFileName || row.productDisplayName || row.title || row.id || '',
         productKind: row.productKind || row.skill?.productKind || '',
+        uploader: row.uploader || row.owner || row.displayOwnerText || '',
+        owner: row.owner || row.uploader || row.displayOwnerText || '',
+        aliases: Array.isArray(row.aliases) ? row.aliases.slice(0, 12) : [],
+        aliasHistory: Array.isArray(row.aliasHistory) ? row.aliasHistory.slice(-80) : [],
         hidden: row.hidden === true,
         displayVersionLabel: row.displayVersionLabel || '1.0',
         displayVersionClass: row.displayVersionClass || '',
-        displayUsageCount: row.displayUsageCount ?? '-',
-        displayUsageRate: row.displayUsageRate ?? '-',
+        displayUsageCount: row.hidden === true ? '-' : 0,
+        displayUsageRate: '-',
         displayQualityScore: row.displayQualityScore ?? null,
         displayQualityClass: row.displayQualityClass || '',
         displayQualityText: row.displayQualityText || '',
@@ -4852,12 +4857,19 @@ export default {
         const rightUid = String(row.uid || row.id || '').trim();
         return Boolean(leftUid && rightUid && leftUid === rightUid);
       });
-      if (!liveRow) return row;
+      if (!liveRow) {
+        const usage = this.safeCallDisplayValue(() => this.skillInventoryUsageStatsForList(row), { usageCount: 0, rate: 0 });
+        return {
+          ...row,
+          displayUsageCount: Math.max(0, Math.round(Number(usage.usageCount || 0))),
+          displayUsageRate: this.safeCallDisplayValue(() => this.isOwnerYushengwei(row), false) ? '-' : `${Number(usage.rate || 0)}%`
+        };
+      }
       const decorated = this.safeDecorateSkillInventoryDisplayRow(liveRow);
       return {
         ...row,
-        displayUsageCount: decorated.displayUsageCount ?? row.displayUsageCount,
-        displayUsageRate: decorated.displayUsageRate ?? row.displayUsageRate,
+        displayUsageCount: decorated.displayUsageCount ?? (row.hidden === true ? '-' : 0),
+        displayUsageRate: decorated.displayUsageRate ?? '-',
         displayQualityScore: decorated.displayQualityScore ?? row.displayQualityScore,
         displayQualityClass: decorated.displayQualityClass || row.displayQualityClass,
         displayQualityText: decorated.displayQualityText || row.displayQualityText
@@ -6131,6 +6143,10 @@ export default {
         const parsed = JSON.parse(raw);
         if (!parsed || !Object.prototype.hasOwnProperty.call(parsed, 'value')) return false;
         if (key === 'scans' && !this.hasProjectScanProducts(parsed.value)) return false;
+        if (key === 'usageCounters' && !this.isCurrentUsageCountersPayload(parsed.value)) {
+          localStorage.removeItem(this.workbenchDisplayCacheKey(key));
+          return false;
+        }
         if (Array.isArray(this[key]) && Array.isArray(parsed.value)) {
           this[key] = parsed.value;
           return true;
@@ -6223,6 +6239,16 @@ export default {
       if (current && typeof current === 'object' && !Array.isArray(current) && Object.keys(current).length) return false;
       if (current !== null && current !== undefined && !Array.isArray(current) && typeof current !== 'object') return false;
       return this.restoreWorkbenchDisplayCacheKey(key);
+    },
+
+    isCurrentUsageCountersPayload(payload = {}) {
+      return Boolean(
+        payload
+          && typeof payload === 'object'
+          && payload.logicVersion === USAGE_COUNTER_LOGIC_VERSION
+          && payload.buckets
+          && typeof payload.buckets === 'object'
+      );
     },
 
     restoreWorkbenchDisplayCache() {
@@ -8288,9 +8314,9 @@ export default {
 
     aiScoreProductRowValue(row = {}) {
       const usage = this.skillInventoryUsageStatsForList(row);
-      const usageCount = Number(usage.count || row.usageCount || 0);
-      const peopleCount = Number(usage.peopleCount || row.usagePeopleCount || 0);
-      const usageRate = Number(usage.rate || row.usageRate || 0);
+      const usageCount = Number(usage.count || 0);
+      const peopleCount = Number(usage.peopleCount || 0);
+      const usageRate = Number(usage.rate || 0);
       const versionMajor = Number(this.skillInventoryVersionMajor(row));
       const isSkill = this.isSkillInventorySkillProduct(row);
       const isStandard = this.isSkillInventoryStandardProduct(row);
@@ -9003,9 +9029,11 @@ export default {
       }
       try {
         const result = await this.api('/api/usage-counters');
-        this.usageCounters = result && typeof result === 'object' ? result : null;
+        this.usageCounters = this.isCurrentUsageCountersPayload(result) ? result : null;
         this.clearSkillUsageStatsCache();
         this.clearSkillInventoryRowsCache({ keepScanSignature: true });
+        this.skillInventoryDisplayRowsCacheClear();
+        this.scheduleSkillInventoryFirstPageSnapshotSave(0);
         this.saveWorkbenchDisplayCache('usageCounters', this.usageCounters);
         return this.usageCounters;
       } catch {
@@ -9784,8 +9812,6 @@ export default {
         return Math.max(0, Math.round(Number(liveUsage.usageCount || 0)));
       }
       if (Number(liveUsage.usageCount || 0) > 0) return Number(liveUsage.usageCount || 0);
-      const value = Number(row.usageCount ?? row.skill?.usageCount);
-      if (Number.isFinite(value)) return value;
       return Number(liveUsage.usageCount || 0);
     },
 
@@ -9796,8 +9822,6 @@ export default {
       const historical = this.usageCounterStatsForRow(row);
       if (this.hasUsageCounterStats(historical)) return `${Number(liveUsage.rate || 0)}%`;
       if (Number(liveUsage.usageCount || 0) > 0) return `${Number(liveUsage.rate || 0)}%`;
-      const value = Number(row.usageRate ?? row.skill?.usageRate);
-      if (Number.isFinite(value)) return `${value}%`;
       return this.skillUsageRateDisplay(row);
     },
 
@@ -13796,6 +13820,11 @@ export default {
         this.skillInventoryScanSignature = this.buildSkillInventoryScanSignature(this.scans);
       }
       this.skillInventoryRowsCacheToken = String(Date.now());
+    },
+
+    skillInventoryDisplayRowsCacheClear() {
+      this._skillInventoryDisplayRowsCache = new Map();
+      this._skillInventoryDecoratedRowCache = new Map();
     },
 
     clearSkillUsageStatsCache() {

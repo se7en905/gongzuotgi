@@ -482,6 +482,8 @@
   - 执行调用次数累计必须读取 run 中的 `productName`、`sourceTitle`、`primarySkillPath`、`stage`、`selectedMaterialHints`、`materials`、`referenceItems` 等字段，命中产物名、展示名、文件名、路径和别名；不得只依赖操作日志标题。
   - `CREATE_RUN`、`START_RUN`、`RETRY_RUN`、`CLAIM_LOCAL_WORKER_RUN`、`QUEUE_RUN_LOCAL_WORKER`、`UPDATE_LOCAL_WORKER_RUN` 等操作日志只作为审计和状态线索，默认不得直接补成调用次数；只有结构化 `metadata.countAsSkillUsage === true` 或 `metadata.countAsProductUsage === true` 且不是显式 false 时，才允许作为真实调用补计数线索，并必须使用事件唯一键去重。
   - `usage-counters.json` 中 `count` 是混合证据总量，不等于调用次数；前端调用次数必须优先读取 `usageCount` 和 `usagePeople`，并用 `usageEventKeys` 对同一真实事件在产物名、路径、当前别名、历史别名、标题桶之间的重复命中去重。不得把 `count`、`researchSyncCount`、`validationCount` 或 `people` 当调用次数展示。
+  - `/api/usage-counters` 返回的累计桶必须带当前调用次数口径版本，例如 `logicVersion: usage-only-v2`；前端只允许恢复同口径版本的浏览器缓存，旧口径本地缓存必须丢弃并重新读取服务端，避免旧 `count` 或旧 `usageCount` 在刷新页面时回流。
+  - AI产物清单首屏快照不得作为调用次数和有效占比的事实来源；快照只保留行结构、版本、贡献人和质量分等展示兜底，展示调用次数时必须重新按当前 `usageCounters.usageCount/usagePeople/usageEventKeys` 装饰。无法命中新口径累计桶时只能显示 `0` 或作废横线，不得回退扫描缓存里的 `row.usageCount`、`skill.usageCount`、旧 `displayUsageCount` 或 `count`。
   - 成员调用明细只能在去重后的真实调用总数内分配；同一事件同时出现中文姓名、账号、别名、路径或多个桶时，只能绑定一个主使用人并累计一次，不得因成员字段重复或别名重叠把总次数放大。
   - 执行调用次数写入成功后必须广播 `usage-counters.changed`；客户端只刷新 `/api/usage-counters`，不得触发库存扫描、Git 拉取、本地路径读取或共享盘读取。
   - 负责人新增或修改调用别名后，平台必须用新别名轻量匹配最近成员上报和工作台操作记录，并把命中结果补入 `usage-counters.json`；不得要求负责人刷新库存、重扫 Git、本地路径或共享盘后才生效。
