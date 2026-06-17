@@ -9,6 +9,7 @@ import {
   displayMetricsForSkillInventoryRow,
   mergeUsageCounterRebuildSnapshot,
   normalizeTaskArtBriefCumulativeUsageBucket,
+  shouldKeepOperationLog,
   shouldReplaceAiMembersBoardHtml,
   splitProjectDeletionSnapshot,
   splitRunsByArchiveDeleteFilters,
@@ -233,6 +234,15 @@ function testOperationLogDeleteDoesNotMutateUsageCounters() {
   assert.equal(result.usageCounters.buckets['alias:界面收尾'].count, 5);
 }
 
+function testOperationLogKeepsOnlyImportantActions() {
+  assert.equal(shouldKeepOperationLog({ module: 'auth', action: 'LOGIN', result: 'success' }), false, '成功登录不得写入操作日志');
+  assert.equal(shouldKeepOperationLog({ module: 'auth', action: 'LOGOUT', result: 'success' }), false, '退出登录不得写入操作日志');
+  assert.equal(shouldKeepOperationLog({ module: 'workbench', action: 'VIEW_PAGE', result: 'success' }), false, '切换页面不得写入操作日志');
+  assert.equal(shouldKeepOperationLog({ module: 'auth', action: 'LOGIN', result: 'fail' }), true, '失败登录必须保留排障日志');
+  assert.equal(shouldKeepOperationLog({ module: 'run', action: 'QUEUE_RUN_LOCAL_WORKER', result: 'success' }), true, '执行台启动执行必须保留操作日志');
+  assert.equal(shouldKeepOperationLog({ module: 'run', action: 'DELETE_RUN_RANGE', result: 'success' }), true, '范围删除执行明细必须保留操作日志');
+}
+
 function testTaskArtBriefUsageKeepsLegacyCumulativeCount() {
   const bucket = normalizeTaskArtBriefCumulativeUsageBucket({
     key: 'zentaoartbriefproduct',
@@ -305,6 +315,7 @@ testZentaoAssignFailureKeepsLocalOwner();
 testTaskRefreshEmptyResultKeepsExistingTasks();
 testAiMembersBoardPlaceholderDoesNotReplaceCachedHtml();
 testOperationLogDeleteDoesNotMutateUsageCounters();
+testOperationLogKeepsOnlyImportantActions();
 testTaskArtBriefUsageKeepsLegacyCumulativeCount();
 testUsageCounterRebuildNeverReducesRealUsage();
 testPermissionCatalogsStayAligned();
@@ -321,6 +332,7 @@ console.log(JSON.stringify({
     '任务接口空返回不清空任务中心',
     'AI部门看板占位不覆盖真实缓存',
     '操作日志删除不影响累计调用次数',
+    '操作日志只保留关键动作',
     '任务中心摘要累计调用不被短期日志压低',
     '历史重建不得减少真实调用累计',
     '权限目录前后端一致性'

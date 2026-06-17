@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { normalizeCustomStages, normalizeLevel, normalizeWorkflowId, stagesForWorkflow, workflowForLevel } from './workflow.mjs';
 import { normalizeGitConfig } from './repository-config.mjs';
-import { splitProjectDeletionSnapshot, splitRunsByArchiveDeleteFilters } from './business-regression-rules.mjs';
+import { shouldKeepOperationLog, splitProjectDeletionSnapshot, splitRunsByArchiveDeleteFilters } from './business-regression-rules.mjs';
 import {
   ensureMysqlStore,
   readMysqlCollection,
@@ -689,6 +689,7 @@ export async function getOperationLog(id) {
 
 export async function createOperationLog(input = {}) {
   const log = normalizeOperationLog(input);
+  if (!shouldKeepOperationLog(log)) return { ...log, _skipped: true };
   const logs = await readJson(paths.operationLogs, []);
   if (isRecentDuplicateLoginOperationLog(log, logs)) return { ...log, _deduped: true };
   const maxLogs = Number(process.env.AWP_OPERATION_LOG_MAX_ROWS || 10000);

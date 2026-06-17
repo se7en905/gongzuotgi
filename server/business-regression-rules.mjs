@@ -291,3 +291,19 @@ export function comparePermissionCatalogs(backendPermissions = [], frontendPermi
     missingInBackend: [...frontend].filter(item => !backend.has(item)).sort()
   };
 }
+
+export function shouldKeepOperationLog(log = {}) {
+  const action = cleanText(log.action).toUpperCase();
+  const module = cleanText(log.module);
+  const result = cleanText(log.result).toLowerCase();
+  if (!action) return false;
+  if (action === 'LOGIN' && result === 'fail') return true;
+  if ([
+    'VIEW_PAGE',
+    'LOGIN',
+    'LOGOUT',
+    'SESSION_EXPIRED'
+  ].includes(action)) return false;
+  if (module === 'workbench' && /^VIEW_/.test(action)) return false;
+  return true;
+}

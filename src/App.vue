@@ -15096,33 +15096,8 @@ export default {
     },
 
     recordWorkbenchViewLog(view = '', route = '') {
-      if (!this.currentUser || !view || view === 'operation-logs') return;
-      const now = Date.now();
-      const key = `${view}:${route}`;
-      if (this._lastWorkbenchViewLogKey === key && now - Number(this._lastWorkbenchViewLogAt || 0) < 3000) return;
-      this._lastWorkbenchViewLogKey = key;
-      this._lastWorkbenchViewLogAt = now;
-      const viewName = {
-        tasks: '任务中心',
-        'skill-assets': 'AI 产物清单',
-        'skill-inventory': 'AI 产物清单',
-        'skii-repository': 'AI 产物清单',
-        'ai-members': 'AI部门看板',
-        'codex-config': 'Codex 配置',
-        runs: '美术执行台',
-        'agent-workers': '本机执行状态',
-        'ai-archive': 'AI档案',
-        'user-access': '用户管理',
-        'role-management': '角色管理'
-      }[view] || view;
-      this.api('/api/operation-logs/view', {
-        method: 'POST',
-        body: JSON.stringify({
-          view,
-          viewName,
-          path: route
-        })
-      }).catch(() => {});
+      void view;
+      void route;
     },
 
     goProjectList() {
