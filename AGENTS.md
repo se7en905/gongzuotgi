@@ -238,7 +238,7 @@
   - 已保存模板必须进入新建美术执行弹窗的 `使用已保存模板` 下拉，且多个模板必须全部展示可选；不得只展示第一个模板或因为项目筛选隐藏其它模板。
   - 套用模板创建执行时，执行记录应保留所选模板的 `customWorkflowId` 和 `customWorkflowName`；如果套用后负责人手动删除或补充步骤，应清除本次执行和模板的绑定，避免误显示仍完全使用原模板。
   - 自定义流程模板和执行记录都必须按业务删除入口清理；平台不得因为轮询、日志、临时事件或模板套用无意义复制长期数据，避免工作台数据暴增卡顿。
-  - 美术执行台里的普通执行记录，负责人或组员点击 `发起执行`、`继续执行`、`重新执行` 时，必须排队给当前点击账号的本机 Worker 领取执行；不得再由工作台服务器或负责人 Mac 直接启动 Codex 跑普通执行。
+  - 美术执行台里的普通执行记录，负责人或组员点击 `发起执行`、`我来继续执行`、`继续执行` 或 `重新执行` 时，必须排队给当前点击账号的本机 Worker 领取执行；不得再由工作台服务器或负责人 Mac 直接启动 Codex 跑普通执行。
   - 美术执行台启动普通执行的核心目的，是避免组员操作时消耗负责人 Mac 上的 Codex key、token、Figma OAuth 或 Figma MCP 授权；平台不得回退到负责人 Mac、本机服务器或平台侧 Codex/Figma 凭据执行。
   - 谁点击启动，就必须使用谁自己电脑上的 Codex CLI 登录态、Codex key/token、Figma MCP、Figma OAuth 和 Figma 文件权限；执行失败也只能提示该操作人补齐本机授权，不得自动改用负责人 Mac 的授权兜底。
   - 普通执行点击启动时只负责把当前执行记录排队给当前点击账号；不得因为该账号 Worker 当场未在线、Codex 未就绪或 Figma MCP 未就绪而拒绝排队，也不得要求已经按最新命令启动过 Worker 的组员重复执行命令。
@@ -253,10 +253,11 @@
   - 新建美术执行弹窗默认来源必须是 `独立执行`；`关联任务` 只在负责人明确选择任务中心记录时使用。
   - 无任务关联执行的 `sourceType` 必须使用 `standalone` 或同等独立来源标识；任务中心发起的执行使用 `task-center` 或明确任务关联标识。前端判断任务链路、人工验收入口、任务中心执行次数时必须先判断是否确实有关联任务，不得仅凭 `zentaoId/taskNo` 字符串匹配。
   - 独立执行创建后只刷新 `/api/runs`，不得刷新任务中心、触发禅道同步、库存扫描、Git 拉取、本地路径扫描或共享盘扫描。
-  - 美术执行台右侧顶部按钮 `再次执行` 必须在当前执行记录上继续启动，不得新建执行清单记录、不得新增一条 AI档案明细、不得丢失原执行记录里的 Figma 链接、补充要求、任务描述、Skill/md 线索、执行对象、执行模式和环境信息。
-  - 同一条执行记录需要重跑时，只允许清理旧的运行状态、结果摘要、变更摘要、退出码、阻塞信息、旧日志和旧进程信息；原始上下文字段必须沿用当前记录继续执行。
-  - 中断、失败或阻塞后的主按钮必须优先表现为 `继续执行`，语义是业务断点续跑：复用当前 `run.id`、Figma 链接、补充要求、产物目录和已完成阶段，从未完成步骤继续处理，不得默认从第一步重做。
-  - `重新执行` 必须作为独立次级操作保留，只在负责人明确点击时才清空旧日志、重置阶段和结果，从第一步重新跑；不得把 `继续执行` 和 `重新执行` 混成同一个按钮。
+  - 美术执行台不得再提供 `让原执行人继续` 或同等入口；负责人或组员点击 `我来继续执行` 时，不管原记录属于自己还是他人，都必须复用当前 `run.id` 并排队给当前点击账号，自己的任务就是自己继续，别人的任务就是转到当前点击账号继续。
+  - `我来继续执行` 只能用于中断、失败或阻塞后的业务断点续跑：复用当前 `run.id`、Figma 链接、补充要求、执行定义、上下文线索和可续跑阶段信息，从未完成步骤继续处理，不得默认从第一步重做。
+  - `重新执行` 必须新建一条独立执行记录并保留原记录；新记录必须复制原记录的 Figma 链接、md/Skill、Skill 内容快照、执行要求、任务描述、执行对象、执行模式、自定义流程/模板信息、写入方式和必要上下文线索，归当前点击账号并排队给当前点击账号 Worker，从第一步重新跑。
+  - `重新执行` 创建新记录时只能复制执行定义和上下文，不得复制旧运行状态、领取设备、日志路径、产物目录、阶段完成状态、耗时、阻塞信息、结果摘要、Figma 写入结果、退出码、pid、Worker 事件 ID 或本机异常标记。
+  - `继续执行` 和 `重新执行` 必须保持语义分离：继续执行复用当前记录，重新执行新建记录；不得把失败/阻塞后的主按钮做成重新执行，也不得把重新执行做成清空当前记录。
   - `继续执行` 不等于恢复已被 kill 的 Codex 进程内存；它必须通过读取已有产物、阶段报告、旧日志尾部和当前 Figma 状态来续跑，避免重复创建已完成节点或重复执行已完成步骤。
   - 每条美术执行记录必须长期保留 `startedAt`、`finishedAt`、`durationMs`、`stages[].startedAt`、`stages[].finishedAt`、`stages[].durationMs` 和必要阶段状态；除非负责人通过对应业务删除入口明确删除该执行记录，否则刷新、切页、操作日志删除、AI档案筛选或轻量恢复都不得清空这些字段。
   - 本机执行状态不得只看 `claimedAt`、`startedAt` 或 `status=running` 判定为真实执行。必须结合 Worker 心跳 `currentRunId`、服务端 `run.log`、`workerLocalLogPath/workerLocalLogSize`、`workerResult`、`resultSummary`、`figmaWriteResult`、产物目录和最近真实活动时间共同判断。
@@ -268,7 +269,7 @@
   - Worker 启动 Codex 后必须尽早回传本机日志路径和日志大小；如果 Codex 长时间没有任何 stdout/stderr 输出，必须超时终止并回传失败/阻塞摘要，不得无限保持 running。
   - 执行记录主状态已经进入 `completed`、`blocked`、`failed`、`cancelled` 等终态后，`workerStatus` 不得继续保留 `claimed`、`running`、`queued`、`pending` 等活动态；服务端读取时必须自动归一，前端展示也必须优先尊重主终态，避免负责人看到“已中断但本机执行中”的矛盾状态。
   - 美术执行台右侧 `执行步骤明细` 必须展示累计执行耗时和每步阶段耗时；累计耗时显示在模块右上角，每步下方按上下布局展示状态和耗时，例如 `已完成`、`00:00:00`。已有真实耗时不得因刷新、读取阶段报告、恢复历史记录或界面重算变成 `00:00:00`。
-  - 中断、继续执行和重新执行都不得无故丢失已有阶段耗时。`继续执行` 只能从未完成阶段追加或更新耗时；`重新执行` 只有在负责人明确点击重跑时才允许重置运行态和阶段状态，但仍不得丢失原始 Figma 链接、补充要求、执行对象、执行模式和上下文线索。
+  - 中断、继续执行和重新执行都不得无故丢失已有阶段耗时。`继续执行` 只能从未完成阶段追加或更新耗时；`重新执行` 必须在新执行记录里重新计算阶段状态和耗时，原执行记录已有耗时、日志和结果必须保留。
   - 美术执行台右侧任务明细必须使用统一基础结构：顶部标题和操作按钮、`执行步骤明细`、结果明细模块、执行对象、执行环境、问题提示、下一步操作和 `查看档案` 入口。不同执行类型只能在这套基础结构后面新增补充模块，不得替换成另一套主展示。
   - 普通“新建美术执行”或分阶段执行可以额外展示关键动作概览、任务链路和继续和 Codex 沟通，但这些只能作为结果明细后的补充内容，不能替代统一的任务明细基础结构。
   - 只要执行记录已经明确选择了某个 md、SKILL.md 或 Skill 作为本次执行依据，右侧不得再展示关键动作概览、任务链路、md/SKILL.md 引用汇总或“明细在产物列表查看”这类重复说明；这些内容属于创建时已选定信息，不是执行中的有效明细。判断时必须同时看创建字段和执行链路解析结果，例如 `primarySkillPath`、`selectedMaterialHints`、`showdocHints`、`stage`、`executionMode === single-skill`、`workflow === art-single-skill`、`direct-skill`、以及 `runReferenceCount(run) > 0`，不得只看单一字段。
@@ -568,8 +569,8 @@
   - Figma 写入完成不等于整条执行完成；整条执行还必须完成写入后的最终回读/截图验收。缺少最终验收证据时，执行明细必须展示为部分写入阻塞，并提示恢复执行人本机 Figma MCP 授权后继续执行。
 - Web 端 Codex 对话数据约定：
   - Web 对话入口复用普通执行权限 `run.codex.execute`，只对非 `direct-skill` 执行记录开放；直接执行仍由执行人本机 Worker 领取，不走平台对话启动。
-  - 只有 Web 对话提交追加沟通时，才必须调用 `/api/runs/:id/retry` 创建新执行，再通过 `/api/runs/:id/start` 启动；美术执行台顶部按钮 `再次执行` 不得调用 `/retry`，必须复用当前记录直接调用 `/api/runs/:id/start`。
-  - `/api/runs/:id/retry` 请求体必须使用字段白名单，只允许 `title`、`requirement`、`figmaLinks`、`showdocHints`、`targetPage`、`stage`、`codexRequest` 这类追加执行字段覆盖到新执行；不得允许前端传入任意字段覆盖项目、权限、状态、执行人或路径。
+  - Web 对话提交追加沟通和美术执行台 `重新执行` 都必须调用 `/api/runs/:id/retry` 创建新执行，再通过 `/api/runs/:id/start` 启动；`我来继续执行` 才复用当前记录直接调用 `/api/runs/:id/start`。
+  - `/api/runs/:id/retry` 请求体必须使用字段白名单，只允许 `title`、`requirement`、`figmaLinks`、`showdocHints`、`targetPage`、`stage`、`codexRequest` 这类追加执行字段覆盖到新执行；后端必须从原记录复制 md/Skill、Skill 内容快照、自定义流程/模板、执行模式、Figma 写入方式等核心上下文，并强制把新执行归当前点击账号；不得允许前端传入任意字段覆盖项目、权限、状态、旧执行人或路径。
   - `codexRequest` 只允许保存 `model`、`reasoningEffort`、`requestStandard`、`source`；`requestStandard` 必须限制长度，不能保存完整聊天历史、大日志、API Key、Figma token 或本机敏感路径。
   - 后端启动普通执行时必须将全局 Codex 配置和 `run.codexRequest` 合并：API Key、Base URL 和 provider 来自全局配置，单次 `model` 和 `reasoningEffort` 可覆盖本次启动参数。
   - `reasoningEffort` 允许值必须受控，例如 `low`、`medium`、`high`、`xhigh`；不得把未校验字符串直接拼入 Codex CLI 参数。
@@ -599,7 +600,12 @@
   - 美术执行台新建或启动本机 Worker 执行单时，必须保存当前操作账号的 `assignedToUserId`、`queuedForUserId`、`queuedAt`、`executionHost=local-worker` 和 `workerExecution=true`，确保“谁点启动就由谁电脑领取”可被 Worker 按账号准确匹配。
   - 本机执行状态页的待领取/执行中/已完成统计必须覆盖所有本机 Worker 执行单，包含 `direct-skill`、`executionHost=local-worker`、`workerExecution=true` 和美术执行台 `single-skill/custom-workflow` 创建的本机执行记录；不得只统计直接执行记录导致负责人误判。
   - 如果某条执行单的排队时间晚于该执行人 Worker 最近心跳时间，但该 Worker 仍处于 40 分钟在线窗口且 Codex/Figma MCP 已就绪，前端必须按实时事件唤醒口径显示 `正在启动本机执行`；不得把正常在线就绪的任务显示为 `等待下一次心跳/轮询`。只有实时事件连接断开、Worker 离线或自检未就绪时，才把 5 分钟任务轮询作为兜底原因展示。
-  - 平台创建或更新本机 Worker 执行单时，必须通过带 `targetUserId` 和 `wakeWorker=true` 的实时事件只唤醒对应执行人的 Worker 立即检查任务；不得广播唤醒所有组员 Worker。
+  - 平台创建或更新本机 Worker 执行单时，必须通过带 `targetUserId` 和 `wakeWorker=true` 的实时事件只唤醒对应执行人的 Worker 立即检查任务；`targetUserId` 只能是当前点击账号，不得使用原执行人或负责人账号兜底；不得广播唤醒所有组员 Worker。
+  - 同一条本机 Worker 执行记录被 `继续执行` 或 `我来继续执行` 重新排队时，平台必须清空上一轮执行证据字段，包括 `claimedByDeviceId`、`claimedAt`、`startedAt`、`finishedAt`、`completedAt`、`workerResult`、`workerLocalLogPath`、`workerLocalLogSize`、`logPath`、`promptPath`、`artifactRoot`、`stages`、`blocker`、`resultSummary`、`figmaWriteResult`、`exitCode`、`pid`、`localWorkerStale`、`workerEventIds` 等；不得让 `queued/claimed/running` 因旧证据被误判为本机回传异常。
+  - 本机 Worker 执行记录处于 `queued/claimed/running` 这类非最终状态时，服务端读取、领取、状态回传和离线事件补传都必须做活跃状态归一化：非最终状态不得继承上一轮 `finishedAt`、`workerResult`、已结束阶段、旧 Figma 写入结果或旧阻塞信息；只有 `completed/failed/blocked/cancelled` 才允许保存最终证据。
+  - 如果 Worker 心跳仍在线且 `currentRunId` 指向某条 `claimed/running` 执行记录，负责人或执行人再次点击开始/继续按钮时，后端必须幂等返回当前记录，不得重新排队、清空领取设备、覆盖当前执行状态或中断已经启动的本机 Codex/Figma 进程。
+  - Worker 本机 `state/runs/<runId>/state.json` 只能恢复排队时间之后启动且未完成的同一次本机执行；若平台重新排队时间晚于本机旧 `startedAt`，Worker 必须清空旧 state 的 `startedAt/finishedAt/duration/events/syncedEventIds` 后作为新一轮执行开始，不得复用上一轮开始时间、阶段耗时或离线事件。
+  - 最终状态回传为 `completed/failed/blocked/cancelled` 时，平台必须清理旧的 `localWorkerStale/localWorkerStaleDetectedAt` 标记；不得让已经完成且有 Figma 写入和最终验收证据的记录继续显示 `本机回传异常`、`本机阻塞` 或其它旧异常状态。
   - Worker 收到本账号任务唤醒事件后，必须走轻量领取路径：复用最近一次 Codex/Figma MCP 自检结果，立即上报心跳并调用领取接口；不得每次唤醒都强制启动 Codex/Figma 自检进程。5 分钟任务轮询只作为实时事件断线、网络抖动或服务重启后的兜底。
   - Worker 启动后必须先上报一次准备状态；后续只在定时心跳、实际领取任务或执行结束后刷新 Worker 状态。
   - Worker 不能依赖组员浏览器网页是否置顶或是否正在操作工作台；只要组员电脑启动 Worker 且登录成功，就必须能接收直接执行任务。
@@ -670,8 +676,8 @@
   - 发现新任务或全量扫描必须使用独立接口或独立 `syncProfile/mode`，并接受独立权限校验；不得让普通 `同步任务` 请求默认进入全量扫描。
   - `/api/runs`：创建普通执行；当 `sourceType` 或 `executionMode` 为 `direct-skill` 时创建直接执行。
   - `/api/runs` 创建普通执行时必须支持无任务关联的独立执行：无 `taskId` 且未显式要求创建任务时，只写 `runs` 执行记录和产物目录，不写 `tasks` 任务中心数据。
-  - `/api/runs/:id/retry`：只用于 Web Codex 对话追加沟通，基于当前执行记录创建一次新的追加执行；只允许白名单字段和 `codexRequest` 进入新执行。
-  - `/api/runs/:id/start`：启动普通执行；必须应用全局 Codex 配置和该执行上的 `codexRequest` 单次模型/推理配置；不得启动 `direct-skill`。已执行、已失败、已取消或中断后的同一条普通执行再次启动时，仍复用当前 `run.id`，不得自动克隆新记录。请求体 `mode: "resume"` 表示业务断点续跑，必须保留旧日志和产物；`mode: "restart"` 表示负责人明确重跑，才允许清空日志和阶段状态。
+  - `/api/runs/:id/retry`：用于 Web Codex 对话追加沟通和美术执行台 `重新执行`，基于当前执行记录创建一条新的执行记录；只允许白名单字段和 `codexRequest` 覆盖新执行，核心 Figma 链接、md/Skill、Skill 快照、流程/模板和执行要求必须从原记录继承，旧运行状态和结果证据不得继承。
+  - `/api/runs/:id/start`：启动普通执行；必须应用全局 Codex 配置和该执行上的 `codexRequest` 单次模型/推理配置；不得启动 `direct-skill`。`start/resume` 只能把当前 `run.id` 排队给当前点击账号本机 Worker；请求体中的 `targetUserId` 不得被用于改派给原执行人或他人。`mode: "resume"` 表示业务断点续跑，必须保留旧上下文和可续跑线索；`mode: "restart"` 只能用于已经由 `/retry` 新建出的记录从第一步执行，不得清空原记录。
   - `/api/runs` 返回的执行记录必须包含阶段耗时相关字段：`startedAt`、`finishedAt`、`durationMs`、`stages[].startedAt`、`stages[].finishedAt`、`stages[].durationMs`；历史补齐出来的估算耗时必须标记 `durationEstimated: true`，不得伪装成原始实时计时。
   - `scripts/restore_run_durations.mjs` 是执行记录耗时恢复脚本；运行前必须先备份 `data/runs.json` 到 `data/restore-backups/`。该脚本只允许补齐 `durationMs`、`startedAt`、`finishedAt`、`durationEstimated` 和必要阶段状态，不得修改 Figma 链接、补充要求、任务描述、Skill/md 线索、执行对象、执行模式、执行人、设备、日志正文或其它业务上下文字段。
   - `DELETE /api/runs?from=...&to=...`：AI档案按筛选范围删除执行明细；只允许有 `api.aiArchive.delete` 权限的账号调用。
@@ -784,7 +790,8 @@
   - 禁止 Worker 断网恢复补同步时新建重复 run、重复累计调用次数、重建任务中心记录或触发库存扫描、评分重算、禅道同步。
   - 禁止把平台删除执行记录后的 Worker 本机清理做成永久增长的全局墓碑表；必须采用轻量 `runId` 对账或同等不累积方案。
   - 禁止执行台恢复网络后用服务器恢复时间覆盖执行人本机真实 `durationMs`。
-  - 禁止美术执行台顶部 `再次执行` 为普通执行调用 `/api/runs/:id/retry` 克隆新记录；普通再次执行必须复用当前执行记录。
+  - 禁止美术执行台 `我来继续执行` 为普通执行调用 `/api/runs/:id/retry` 克隆新记录；继续执行必须复用当前执行记录并改派给当前点击账号。
+  - 禁止美术执行台 `重新执行` 清空或覆盖原执行记录；重新执行必须调用 `/api/runs/:id/retry` 新建同资料记录并排队给当前点击账号。
   - 禁止把本机执行状态页藏在深层入口。
   - 禁止新增界面、新按钮、新接口后不更新角色管理权限目录。
   - 禁止新增或变更功能后不给负责人/admin 默认补齐对应权限。

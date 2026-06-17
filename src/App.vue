@@ -1604,18 +1604,11 @@ export default {
       if (this.isRunWaitingForLocalWorker(this.selectedRun)) return this.directSkillQueuedRunLabel(this.selectedRun);
       if (this.isRunInProgress(this.selectedRun)) return this.isLocalWorkerRun(this.selectedRun) ? '本机执行中' : '执行中';
       if (this.canResumeRun(this.selectedRun)) return '我来继续执行';
-      return this.hasRunExecuted(this.selectedRun) ? '再次执行' : '发起执行';
+      return this.hasRunExecuted(this.selectedRun) ? '重新执行' : '发起执行';
     },
 
     canRestartSelectedRun() {
-      return Boolean(this.selectedRun && !this.isDirectSkillRun(this.selectedRun) && !this.isRunSourceDeleted(this.selectedRun) && !this.isRunInProgress(this.selectedRun) && this.hasRunExecuted(this.selectedRun));
-    },
-
-    canOriginalExecutorResumeSelectedRun() {
-      if (!this.selectedRun || !this.canResumeRun(this.selectedRun)) return false;
-      const originalUserId = this.originalRunExecutorUserId(this.selectedRun);
-      const currentUserId = String(this.currentUser?.id || '').trim();
-      return Boolean(originalUserId && originalUserId !== currentUserId);
+      return Boolean(this.selectedRun && !this.isDirectSkillRun(this.selectedRun) && !this.isRunSourceDeleted(this.selectedRun) && !this.isRunInProgress(this.selectedRun) && this.canResumeRun(this.selectedRun));
     },
 
     runDiffPreviewTitle() {
@@ -10314,7 +10307,7 @@ export default {
         raw.metadata?.operationName,
         raw.metadata?.skillName
       ].map(value => String(value || '')).join('\n');
-      return /直接执行|启动执行|再次执行|调用|使用|执行/.test(text)
+      return /直接执行|启动执行|再次执行|重新执行|调用|使用|执行/.test(text)
         && !/同步研究沉淀|自动回填验证|修改产物调用别名|研究沉淀/.test(text);
     },
 
@@ -17614,19 +17607,6 @@ export default {
       return /cancelled|canceled|blocked|failed/i.test(this.runDisplayStatusValue(run));
     },
 
-    originalRunExecutorUserId(run = null) {
-      if (!run) return '';
-      const currentUserId = String(this.currentUser?.id || '').trim();
-      const candidates = [
-        run.startedBy,
-        run.claimedByUserId,
-        run.queuedForUserId,
-        run.assignedToUserId,
-        run.ownerUserId
-      ].map(value => String(value || '').trim()).filter(Boolean);
-      return candidates.find(value => value && value !== currentUserId) || candidates[0] || '';
-    },
-
     isRunInProgress(run = null) {
       return /running|in_progress|claimed/i.test(this.runDisplayStatusValue(run));
     },
@@ -20650,7 +20630,9 @@ export default {
         ElMessage.info(this.directSkillQueuedRunDetail(this.selectedRun));
         return;
       }
-      const mode = this.canResumeRun(this.selectedRun) ? 'resume' : this.hasRunExecuted(this.selectedRun) ? 'restart' : 'start';
+      if (this.canResumeRun(this.selectedRun)) return this.confirmStartRun('resume');
+      if (this.hasRunExecuted(this.selectedRun)) return this.createRestartRunFromSelected();
+      const mode = 'start';
       return this.confirmStartRun(mode);
     },
 
@@ -20669,23 +20651,6 @@ export default {
         return;
       }
       return this.createRestartRunFromSelected();
-    },
-
-    resumeSelectedRunAsOriginalExecutor() {
-      if (!this.selectedRun) return;
-      if (this.isRunSourceDeleted(this.selectedRun)) {
-        ElMessage.warning('该执行记录的扫描来源已删除，只能查看、归档或删除，不能继续执行。');
-        return;
-      }
-      if (this.isRunInProgress(this.selectedRun)) {
-        ElMessage.info('当前任务正在执行中');
-        return;
-      }
-      if (this.isRunWaitingForLocalWorker(this.selectedRun)) {
-        ElMessage.info(this.directSkillQueuedRunDetail(this.selectedRun));
-        return;
-      }
-      return this.confirmStartRun('resume', { targetUserId: this.originalRunExecutorUserId(this.selectedRun), keepSelection: true });
     },
 
     async confirmStartRun(mode = 'start', options = {}) {
@@ -20711,14 +20676,13 @@ export default {
       try {
         this.startConfirm.visible = false;
         const runId = sourceRun.id;
-        const targetUserId = String(options.targetUserId || this.currentUser?.id || '').trim();
+        const targetUserId = String(this.currentUser?.id || '').trim();
         const targetUser = this.usersById.get(targetUserId) || {};
         const targetUserName = targetUser.displayName || targetUser.username || targetUserId || '';
-        const isCurrentUserTarget = !targetUserId || targetUserId === String(this.currentUser?.id || '').trim();
-	        this.patchRun(runId, {
-	          status: 'queued',
-	          workerStatus: 'queued',
-	          executionHost: 'local-worker',
+        this.patchRun(runId, {
+          status: 'queued',
+          workerStatus: 'queued',
+          executionHost: 'local-worker',
           workerExecution: true,
           queuedForUserId: targetUserId,
           queuedForName: targetUserName,
@@ -20742,9 +20706,9 @@ export default {
           blocker: null,
           cancelledBy: ''
         });
-        const onlineWorker = isCurrentUserTarget ? this.currentUserOnlineWorker() : this.directSkillWorkerForUser(targetUser);
-        const readyWorker = isCurrentUserTarget ? this.currentUserReadyWorker() : this.isDirectSkillWorkerReady(onlineWorker);
-        const targetLabel = isCurrentUserTarget ? '当前账号本机 Worker' : `${targetUserName || '原执行人'} 本机 Worker`;
+        const onlineWorker = this.currentUserOnlineWorker();
+        const readyWorker = this.currentUserReadyWorker();
+        const targetLabel = '当前账号本机 Worker';
         const waitingText = readyWorker
           ? `已唤醒${targetLabel}，正在领取...`
           : onlineWorker
@@ -20755,7 +20719,7 @@ export default {
         this.runLogDrawerVisible = false;
         const queued = await this.api(`/api/runs/${encodeURIComponent(runId)}/start`, {
           method: 'POST',
-          body: JSON.stringify({ mode, targetUserId })
+          body: JSON.stringify({ mode })
         });
         if (queued?.id) this.upsertRunInLocalState(queued, { select: options.keepSelection !== false });
         this.connectEvents(runId);
@@ -20778,6 +20742,19 @@ export default {
             showdocHints: sourceRun.showdocHints || '',
             targetPage: sourceRun.targetPage || '',
             stage: sourceRun.stage || '',
+            workflow: sourceRun.workflow || '',
+            workflowLevel: sourceRun.workflowLevel || '',
+            executionMode: sourceRun.executionMode || '',
+            sourceType: sourceRun.sourceType || '',
+            primarySkillPath: sourceRun.primarySkillPath || '',
+            primarySkillTitle: sourceRun.primarySkillTitle || '',
+            primarySkillContent: sourceRun.primarySkillContent || '',
+            selectedMaterialHints: sourceRun.selectedMaterialHints || [],
+            selectedMaterialSnapshots: sourceRun.selectedMaterialSnapshots || [],
+            customWorkflowId: sourceRun.customWorkflowId || '',
+            customWorkflowName: sourceRun.customWorkflowName || '',
+            customStages: sourceRun.stages || [],
+            figmaWriteMode: sourceRun.figmaWriteMode || '',
             codexRequest: sourceRun.codexRequest || {}
           })
         });

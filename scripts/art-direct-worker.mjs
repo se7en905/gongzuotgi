@@ -360,8 +360,22 @@ function shouldWakeForRunEvent(event = null) {
 
 async function executeRun(run) {
   const runState = await loadOrCreateRunState(run);
-  const resume = Boolean(runState.startedAt && !runState.finishedAt);
-  const startedAt = runState.startedAt || new Date().toISOString();
+  const runQueuedAt = Date.parse(run.queuedAt || run.updatedAt || run.claimedAt || '');
+  const stateStartedAt = Date.parse(runState.startedAt || '');
+  const canResumeLocalState = Boolean(
+    runState.startedAt
+    && !runState.finishedAt
+    && (!runQueuedAt || !stateStartedAt || stateStartedAt >= runQueuedAt)
+  );
+  if (!canResumeLocalState && (runState.startedAt || runState.finishedAt || runState.status)) {
+    runState.startedAt = '';
+    runState.finishedAt = '';
+    runState.durationMs = 0;
+    runState.events = [];
+    runState.syncedEventIds = [];
+  }
+  const resume = canResumeLocalState;
+  const startedAt = resume ? runState.startedAt : new Date().toISOString();
   const stageName = workerStageName(run);
   runState.startedAt = startedAt;
   runState.status = 'running';

@@ -1244,6 +1244,10 @@ export async function updateAgentRunFromWorker(runId, input = {}) {
     updatedAt: now,
     ...timingPatch
   };
+  if (isFinalWorkerRunStatus(nextStatus)) {
+    patch.localWorkerStale = false;
+    patch.localWorkerStaleDetectedAt = '';
+  }
   if (input.pid !== undefined) patch.pid = input.pid;
   if (input.startedAt) patch.startedAt = input.startedAt;
   if (patch.currentStage !== undefined) patch.currentStage = normalizeWorkerStageName(patch.currentStage);
@@ -1315,6 +1319,7 @@ export async function applyAgentRunEvents(runId, input = {}) {
   next = {
     ...next,
     workerEventIds: nextEventIds,
+    ...(isFinalWorkerRunStatus(next.status || next.workerStatus) ? { localWorkerStale: false, localWorkerStaleDetectedAt: '' } : {}),
     updatedAt: hasRunEventMaterial ? now : existing.updatedAt
   };
   runs[index] = next;
@@ -1336,6 +1341,9 @@ export async function listMissingRunIds(runIds = []) {
 export async function cloneRunForRetry(id, overrides = {}) {
   const source = await getRun(id);
   if (!source) return null;
+  const retryCustomStages = normalizeRetryCustomStages(overrides.customStages || source.stages);
+  const safeOverrides = { ...overrides };
+  delete safeOverrides.customStages;
   return createRun({
     taskId: source.taskId,
     projectId: source.projectId,
@@ -1344,7 +1352,7 @@ export async function cloneRunForRetry(id, overrides = {}) {
     workflowLevel: source.workflowLevel,
     customWorkflowId: source.customWorkflowId,
     customWorkflowName: source.customWorkflowName,
-    customStages: source.stages,
+    customStages: retryCustomStages,
     stage: source.stage,
     targetPage: source.targetPage,
     zentaoId: source.zentaoId,
@@ -1352,13 +1360,38 @@ export async function cloneRunForRetry(id, overrides = {}) {
     agentModel: source.agentModel,
     figmaLinks: source.figmaLinks,
     showdocHints: source.showdocHints,
+    selectedMaterialHints: source.selectedMaterialHints,
+    selectedMaterialSnapshots: source.selectedMaterialSnapshots,
+    productName: source.productName,
+    sourceTitle: source.sourceTitle,
+    primarySkillPath: source.primarySkillPath,
+    primarySkillTitle: source.primarySkillTitle,
+    primarySkillContent: source.primarySkillContent,
+    figmaWriteMode: source.figmaWriteMode,
     requirement: source.requirement,
     sourceType: source.sourceType,
     executionMode: source.executionMode,
     createTaskForRun: Boolean(source.taskId),
     codexRequest: normalizeRunCodexRequest(overrides.codexRequest || source.codexRequest),
-    ...overrides
+    ...safeOverrides,
+    customStages: retryCustomStages
   });
+}
+
+function normalizeRetryCustomStages(stages = []) {
+  if (!Array.isArray(stages)) return [];
+  return stages.map((stage, index) => ({
+    no: index + 1,
+    id: stage.id || stage.skillId || stage.name || `stage-${index + 1}`,
+    name: stage.name || stage.skillId || `自定义阶段 ${index + 1}`,
+    skillId: stage.skillId || '',
+    required: stage.required,
+    skippable: stage.skippable,
+    artifactDir: stage.artifactDir || stage.skillId || stage.id || stage.name || `custom-stage-${index + 1}`,
+    description: stage.description || '',
+    doneCriteria: stage.doneCriteria || '',
+    status: 'pending'
+  })).filter(stage => String(stage.name || '').trim());
 }
 
 export async function updateRun(id, patch) {
@@ -1565,16 +1598,16 @@ export function buildStages(workflow, requestedStage = '', workflowLevel = '') {
 }
 
 async function resolveCustomWorkflowForRun(input = {}) {
-  if (input.customWorkflowId) {
-    const workflow = await getCustomWorkflow(input.customWorkflowId);
-    if (workflow) return workflow;
-  }
   if (Array.isArray(input.customStages) && input.customStages.length) {
     return {
       id: input.customWorkflowId || '',
       name: input.customWorkflowName || '临时自定义流程',
       stages: normalizeCustomStages(input.customStages)
     };
+  }
+  if (input.customWorkflowId) {
+    const workflow = await getCustomWorkflow(input.customWorkflowId);
+    if (workflow) return workflow;
   }
   throw new Error('custom workflow requires customWorkflowId or customStages');
 }
@@ -1801,6 +1834,8 @@ function escapeTableCell(value = '') {
 
 async function hydrateRunStages(run) {
   if (!run) return null;
+  const normalizedActive = normalizeActiveLocalWorkerRun(run, run.status || run.workerStatus);
+  if (normalizedActive !== run) return normalizedActive;
   const stages = Array.isArray(run.stages) ? run.stages : [];
   if (!stages.length || !isFinishedRun(run.status)) return run;
   if (!stages.some(stage => isPendingStage(stage.status))) return run;
@@ -1840,14 +1875,20 @@ async function reconcileStaleLocalWorkerRuns() {
     if (normalizedFinal !== run) {
       nextRuns.push(normalizedFinal);
       changed = true;
-    } else if (await shouldMarkLocalWorkerRunStale(run, workerByDevice, now)) {
-      nextRuns.push(markLocalWorkerRunStale(run, workerByDevice.get(cleanString(run.claimedByDeviceId)), now));
-      changed = true;
-    } else if (run.localWorkerStale === true && /当前已空闲/.test(cleanString(run.resultSummary?.summary))) {
-      nextRuns.push(normalizeLocalWorkerStaleSummary(run, now));
-      changed = true;
     } else {
-      nextRuns.push(run);
+      const normalizedActive = normalizeActiveLocalWorkerRun(run, run.status || run.workerStatus);
+      if (stableWorkerRunValue(run) !== stableWorkerRunValue(normalizedActive)) {
+        nextRuns.push(normalizedActive);
+        changed = true;
+      } else if (await shouldMarkLocalWorkerRunStale(run, workerByDevice, now)) {
+        nextRuns.push(markLocalWorkerRunStale(run, workerByDevice.get(cleanString(run.claimedByDeviceId)), now));
+        changed = true;
+      } else if (run.localWorkerStale === true && /当前已空闲/.test(cleanString(run.resultSummary?.summary))) {
+        nextRuns.push(normalizeLocalWorkerStaleSummary(run, now));
+        changed = true;
+      } else {
+        nextRuns.push(run);
+      }
     }
   }
   if (changed) await writeJson(paths.runs, nextRuns);
@@ -1858,7 +1899,10 @@ function normalizeFinalWorkerStatusConflict(run = {}, now = new Date()) {
   const finalStatus = normalizeCanonicalFinalWorkerStatus(run.status);
   if (!finalStatus) return run;
   const workerStatus = cleanString(run.workerStatus).toLowerCase();
-  if (!workerStatus || workerStatus === finalStatus) return run;
+  const clearStalePatch = run.localWorkerStale || run.localWorkerStaleDetectedAt
+    ? { localWorkerStale: false, localWorkerStaleDetectedAt: '', updatedAt: now.toISOString() }
+    : null;
+  if (!workerStatus || workerStatus === finalStatus) return clearStalePatch ? { ...run, ...clearStalePatch } : run;
   if (finalStatus === 'cancelled' && isFinalWorkerRunStatus(workerStatus)) {
     return {
       ...run,
@@ -1873,17 +1917,19 @@ function normalizeFinalWorkerStatusConflict(run = {}, now = new Date()) {
         summary: '执行已中断。',
         blockerReason: ''
       },
+      ...clearStalePatch,
       updatedAt: now.toISOString()
     };
   }
-  if (isFinalWorkerRunStatus(workerStatus)) return run;
-  if (!/running|claimed|in_progress|queued|pending|created/.test(workerStatus)) return run;
+  if (isFinalWorkerRunStatus(workerStatus)) return clearStalePatch ? { ...run, ...clearStalePatch } : run;
+  if (!/running|claimed|in_progress|queued|pending|created/.test(workerStatus)) return clearStalePatch ? { ...run, ...clearStalePatch } : run;
   return {
     ...run,
     status: finalStatus,
     workerStatus: finalStatus,
     currentStage: finalStatus === 'cancelled' ? '已中断' : run.currentStage,
     ...(finalStatus === 'cancelled' && !run.finishedAt ? { finishedAt: cleanString(run.updatedAt || run.startedAt || run.claimedAt || run.createdAt || now.toISOString()) } : {}),
+    ...clearStalePatch,
     updatedAt: now.toISOString()
   };
 }
@@ -4369,6 +4415,68 @@ function isFinalWorkerRunStatus(status = '') {
 
 function isWorkerRunStarted(run = {}) {
   return Boolean(run.startedAt || /running|in_progress/i.test(`${run.status || ''} ${run.workerStatus || ''}`));
+}
+
+function normalizeActiveLocalWorkerRun(run = {}, statusHint = '') {
+  if (!isWorkerExecutableRun(run)) return run;
+  const statusText = normalizeWorkerRunStatus(statusHint || run.status || run.workerStatus);
+  if (!/queued|pending|created|claimed|running|in_progress/.test(statusText)) return run;
+  const workerResult = run.workerResult && typeof run.workerResult === 'object' ? run.workerResult : null;
+  const currentDeviceId = cleanString(run.claimedByDeviceId);
+  const workerResultDeviceId = cleanString(workerResult?.deviceId);
+  const keepWorkerResult = Boolean(
+    workerResult
+    && workerResultDeviceId
+    && currentDeviceId
+    && workerResultDeviceId === currentDeviceId
+    && /running|in_progress/.test(statusText)
+    && !workerResult.exitCode
+  );
+  const next = {
+    ...run,
+    blocker: null,
+    resultSummary: null,
+    figmaWriteResult: null,
+    strictCheck: null,
+    exitCode: null,
+    finishedAt: '',
+    completedAt: '',
+    durationEstimated: false,
+    localWorkerStale: false,
+    localWorkerStaleDetectedAt: '',
+    stages: activeLocalWorkerStages(run, statusText)
+  };
+  if (!/running|in_progress/.test(statusText)) {
+    next.startedAt = '';
+    next.durationMs = 0;
+    next.pid = null;
+    next.workerResult = null;
+    next.workerLocalLogPath = '';
+    next.workerLocalLogSize = 0;
+    next.logPath = '';
+    next.promptPath = '';
+    next.artifactRoot = '';
+    next.workerEventIds = [];
+  } else if (!keepWorkerResult) {
+    next.workerResult = null;
+    next.workerLocalLogPath = '';
+    next.workerLocalLogSize = 0;
+    next.pid = null;
+  }
+  return next;
+}
+
+function activeLocalWorkerStages(run = {}, status = '') {
+  const stageName = normalizeWorkerStageName(run.currentStage || run.stage || '本机 Codex 执行');
+  if (/queued|pending|created|claimed/.test(status)) return [];
+  return [{
+    no: 1,
+    name: stageName || '本机 Codex 执行',
+    status: 'running',
+    startedAt: cleanString(run.startedAt || run.claimedAt || run.queuedAt || ''),
+    finishedAt: '',
+    durationMs: 0
+  }];
 }
 
 function resolveWorkerRunStatusTransition(run = {}, incoming = '') {

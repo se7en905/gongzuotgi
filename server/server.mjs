@@ -2373,23 +2373,14 @@ async function handleApi(req, res, url) {
     if (run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill') {
       throw new HttpError(409, '直接执行任务只能由执行人本机 Worker 领取，不能在平台服务器启动。');
     }
+    const activeWorker = await findOnlineWorkerRunningRun(run.id);
+    if (activeWorker && /claimed|running|in_progress/i.test(`${run.status || ''} ${run.workerStatus || ''}`)) {
+      sendJson(res, 200, run);
+      return;
+    }
     const startMode = ['resume', 'restart'].includes(String(body.mode || '').trim()) ? String(body.mode).trim() : 'start';
-    const requestedTargetUserId = String(body.targetUserId || '').trim();
-    const allowedTargetUserIds = [
-      currentUser.id,
-      run.startedBy,
-      run.claimedByUserId,
-      run.queuedForUserId,
-      run.assignedToUserId,
-      run.ownerUserId,
-      run.createdBy
-    ].map(value => String(value || '').trim()).filter(Boolean);
-    const targetUserId = requestedTargetUserId && allowedTargetUserIds.includes(requestedTargetUserId)
-      ? requestedTargetUserId
-      : currentUser.id;
-    const targetUser = targetUserId === currentUser.id
-      ? currentUser
-      : (await listPublicUsers()).find(user => String(user.id || '') === targetUserId) || {};
+    const targetUserId = String(currentUser.id || '').trim();
+    const targetUser = currentUser;
     const targetUserName = targetUser.displayName || targetUser.username || targetUserId;
     const queued = await queueRunForLocalWorker(run.id, {
       queuedForUserId: targetUserId,
@@ -2437,11 +2428,20 @@ async function handleApi(req, res, url) {
       showdocHints: body.showdocHints,
       targetPage: body.targetPage,
       stage: body.stage,
+      workflow: source.workflow,
+      workflowLevel: source.workflowLevel,
+      customWorkflowId: source.customWorkflowId,
+      customWorkflowName: source.customWorkflowName,
+      customStages: source.stages,
+      executionMode: source.executionMode,
+      sourceType: source.sourceType,
       productName: source.productName,
       sourceTitle: source.sourceTitle,
       primarySkillPath: source.primarySkillPath,
+      primarySkillTitle: source.primarySkillTitle,
       primarySkillContent: source.primarySkillContent,
       selectedMaterialHints: source.selectedMaterialHints,
+      selectedMaterialSnapshots: source.selectedMaterialSnapshots,
       figmaWriteMode: source.figmaWriteMode,
       assignedToUserId: currentUser.id,
       assignedToName: currentUser.displayName || currentUser.username || currentUser.id,
@@ -2456,7 +2456,7 @@ async function handleApi(req, res, url) {
       user: currentUser,
       module: 'run',
       action: 'RETRY_RUN',
-      actionName: '再次执行',
+      actionName: '重新执行',
       targetType: 'run',
       targetId: retryRun.id,
       targetName: retryRun.title,
@@ -2467,7 +2467,7 @@ async function handleApi(req, res, url) {
         countAsProductUsage: false,
         ...runUsageLogMetadata(retryRun)
       },
-      description: `${currentUser.displayName || currentUser.username} 基于「${source.title}」创建再次执行`
+      description: `${currentUser.displayName || currentUser.username} 基于「${source.title}」创建重新执行`
     });
     sendJson(res, 201, retryRun);
     return;
@@ -2614,6 +2614,21 @@ function ensureWorkerCanUpdateRun(user = {}, run = {}) {
   const assignee = String(run.assignedToUserId || run.ownerUserId || '').trim();
   if (!assignee || assignee === userId || hasPermission(user, 'api.runs.delete')) return;
   throw new HttpError(403, '只能回传分配给自己的直接执行任务。');
+}
+
+async function findOnlineWorkerRunningRun(runId = '') {
+  const id = String(runId || '').trim();
+  if (!id) return null;
+  const now = Date.now();
+  const workers = await listAgentWorkers();
+  return workers.find(worker => {
+    if (String(worker.currentRunId || '').trim() !== id) return false;
+    const lastHeartbeatMs = Date.parse(worker.lastHeartbeatAt || '');
+    if (!lastHeartbeatMs) return false;
+    const heartbeat = Math.max(Number(worker.heartbeatIntervalMs || 0), 60000);
+    const grace = Math.min(Math.max(Number(worker.onlineGraceMs || 0), heartbeat * 3, 180000), 900000);
+    return now - lastHeartbeatMs < grace;
+  }) || null;
 }
 
 function buildDirectSkillRequirement(body = {}) {
