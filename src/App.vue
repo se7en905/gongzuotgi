@@ -6327,12 +6327,21 @@ export default {
         }, 400);
       }
       if (type === 'runs.changed' && this.can('menu.runs')) {
+        if (event.payload?.run) {
+          this.upsertRunInLocalState(event.payload.run, { select: false, prepend: false });
+          if (this.activeView === 'runs' && this.selectedRunId === event.payload.run.id && this.isRunInProgress(this.selectedRun)) {
+            window.setTimeout(() => {
+              if (this.selectedRunId === event.payload.run.id) this.loadSelectedRunLog().catch(() => {});
+            }, 0);
+          }
+        }
         if (!['runs', 'agent-workers', 'ai-archive'].includes(this.activeView)) {
           this.markViewDataDirty('runs', 'runs');
           this.markViewDataDirty('agent-workers', 'runs');
           this.markViewDataDirty('ai-archive', 'runs');
           return;
         }
+        if (event.payload?.run) return;
         this.schedulePlatformRefresh('runs', async () => {
           await this.refreshRuns({ background: true, minInterval: 1500 });
         }, 300);
@@ -8657,6 +8666,24 @@ export default {
         }
       })();
       return this.trackRefreshRequest('runs', request);
+    },
+
+    upsertRunInLocalState(run = null, options = {}) {
+      if (!run?.id) return null;
+      const index = this.runs.findIndex(item => item.id === run.id);
+      const merged = index >= 0 ? { ...this.runs[index], ...run } : run;
+      if (index >= 0) {
+        const nextRuns = this.runs.slice();
+        nextRuns.splice(index, 1, merged);
+        this.runs = nextRuns;
+      } else if (options.prepend === false) {
+        this.runs = [...this.runs, merged];
+      } else {
+        this.runs = [merged, ...this.runs];
+      }
+      if (options.select === true) this.selectedRunId = merged.id;
+      this.saveWorkbenchDisplayCache('runs', this.runs);
+      return merged;
     },
 
     async refreshAgentWorkers(options = {}) {
@@ -12786,13 +12813,11 @@ export default {
             executionMode: 'direct-skill'
           })
         });
-        this.runs = [run, ...this.runs.filter(item => item.id !== run.id)];
-        this.selectedRunId = run.id;
+        this.upsertRunInLocalState(run, { select: true });
         this.directSkillRunDialog.visible = false;
         this.skillPreview.visible = false;
         this.activeView = 'runs';
         this.pushRoute('/runs');
-        await this.refreshRuns();
         ElMessage.success('直接执行已创建，等待对应组员本机 Worker 领取');
       } catch (error) {
         ElMessage.error(this.readApiError(error) || '直接执行创建失败');
@@ -17411,13 +17436,12 @@ export default {
         method: 'POST',
         body: JSON.stringify(payload)
       });
-      this.selectedRunId = run.id;
+      this.upsertRunInLocalState(run, { select: true });
       this.runDrawer = false;
       this.activeView = 'runs';
       this.pushRoute('/runs');
       const linkedTaskRun = Boolean(payload.taskId);
       this.runForm = this.newRunForm({ projectId: this.selectedProjectId || '' });
-      await this.refreshRuns();
       ElMessage.success(linkedTaskRun ? '任务执行已创建' : '独立执行已创建');
     },
 
@@ -20175,10 +20199,18 @@ export default {
       const value = String(status || '').toLowerCase();
       if (/conditional/.test(value)) return 'is-conditional';
       if (/failed|error/.test(value)) return 'is-failed';
-      if (/blocked|cancelled|canceled/.test(value)) return 'is-blocked';
+      if (/cancelled|canceled/.test(value)) return 'is-cancelled';
+      if (/blocked/.test(value)) return 'is-blocked';
       if (/running|in_progress|claimed/.test(value)) return 'is-running';
       if (/done|success|passed|completed/.test(value)) return 'is-success';
       return 'is-pending';
+    },
+
+    runDisplayStatusClass(run = null) {
+      const value = this.runDisplayStatusValue(run);
+      if (/cancelled|canceled/.test(value)) return 'is-cancelled';
+      if (this.hasPartialFigmaWrite(run)) return 'is-partial-write';
+      return this.runStatusClass(value);
     },
 
     forbiddenCommandText(project) {
@@ -21640,7 +21672,8 @@ export default {
       if (/running/.test(status)) return 'primary';
       if (/done|success|passed/.test(status)) return 'success';
       if (/partial_write|conditional|有条件/.test(status)) return 'warning';
-      if (/blocked|failed|cancelled|阻塞/.test(status)) return 'danger';
+      if (/cancelled|canceled/.test(status)) return 'info';
+      if (/blocked|failed|阻塞/.test(status)) return 'danger';
       return 'info';
     },
 

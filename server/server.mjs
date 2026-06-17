@@ -1433,7 +1433,7 @@ async function handleApi(req, res, url) {
       metadata: { deviceId: worker.deviceId, capabilities: worker.capabilities },
       description: `${currentUser.displayName || currentUser.username} 的本机 Worker 领取${run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill' ? '直接执行' : '美术执行'}「${run.title}」`
     });
-    broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, module: 'agent-run' });
+    broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, run, module: 'agent-run' });
     sendJson(res, 200, { run, worker });
     return;
   }
@@ -1482,7 +1482,7 @@ async function handleApi(req, res, url) {
       metadata: { deviceId: worker.deviceId, capabilities: worker.capabilities },
       description: `${currentUser.displayName || currentUser.username} 的本机 Worker 恢复${stableRun.sourceType === 'direct-skill' || stableRun.executionMode === 'direct-skill' ? '直接执行' : '美术执行'}「${stableRun.title}」`
     });
-    broadcastPlatformEvent('runs.changed', { projectId: stableRun.projectId, runId: stableRun.id, module: 'agent-run-recover' });
+    broadcastPlatformEvent('runs.changed', { projectId: stableRun.projectId, runId: stableRun.id, run: stableRun, module: 'agent-run-recover' });
     sendJson(res, 200, { run: stableRun, worker });
     return;
   }
@@ -1532,7 +1532,7 @@ async function handleApi(req, res, url) {
       },
       description: `${currentUser.displayName || currentUser.username} 回传${workerRunKind}「${run.title}」状态：${body.status || body.workerStatus || 'running'}`
     });
-    broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, module: 'agent-run-status' });
+    broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, run: stableUpdated, module: 'agent-run-status' });
     sendJson(res, 200, stableUpdated);
     return;
   }
@@ -1549,7 +1549,7 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, stableUpdated || run);
       return;
     }
-    broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, module: 'agent-run-offline-sync' });
+    broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, run: stableUpdated || run, module: 'agent-run-offline-sync' });
     sendJson(res, 200, stableUpdated || run);
     return;
   }
@@ -2317,6 +2317,7 @@ async function handleApi(req, res, url) {
     broadcastPlatformEvent('runs.changed', {
       projectId: project.id,
       runId: run.id,
+      run,
       module: 'run-created',
       targetUserId: run.queuedForUserId || run.assignedToUserId || run.ownerUserId || currentUser.id,
       wakeWorker: true
@@ -2394,6 +2395,7 @@ async function handleApi(req, res, url) {
     broadcastPlatformEvent('runs.changed', {
       projectId: project.id,
       runId: run.id,
+      run: queued,
       module: 'local-worker-run',
       targetUserId: queued.queuedForUserId || queued.assignedToUserId || queued.ownerUserId || currentUser.id,
       wakeWorker: true
@@ -2708,6 +2710,7 @@ async function createDirectSkillRunFromBody(req, project, body = {}, currentUser
   broadcastPlatformEvent('runs.changed', {
     projectId: project.id,
     runId: run.id,
+    run,
     module: 'direct-skill-run',
     targetUserId: run.queuedForUserId || run.assignedToUserId || run.ownerUserId || assigneeUserId || currentUser.id,
     wakeWorker: true
@@ -2867,6 +2870,7 @@ function canReceivePlatformEvent(client, event = {}) {
   if (type === 'task-art-brief.changed' || type === 'task-processing-notes.changed' || type === 'tasks.changed') {
     return client.permissions.has('menu.tasks') && canClientAccessProject(client, event.payload?.projectId || artProjectId);
   }
+  if (type === 'runs.changed') return canClientAccessProject(client, event.payload?.projectId || '');
   if (type === 'access-control.changed') return true;
   if (type === 'operation-logs.changed') return client.role === 'admin' && (client.permissions.has('api.operationLogs.read') || client.permissions.has('menu.operationLogs'));
   return true;

@@ -23,7 +23,7 @@
         v-for="run in app.runs"
         :key="run.id"
         class="run-item"
-        :class="[app.runStatusClass(app.runDisplayStatusValue(run)), { active: run.id === app.selectedRunId }]"
+        :class="[app.runDisplayStatusClass(run), { active: run.id === app.selectedRunId }]"
         :aria-current="run.id === app.selectedRunId ? 'true' : undefined"
         @click="app.selectRunFromList(run)"
       >
@@ -869,6 +869,7 @@ export default {
     padding: 14px;
     max-height: calc(100vh - 260px);
     overflow: auto;
+    scrollbar-gutter: stable;
   }
 
   .run-item {
@@ -879,6 +880,12 @@ export default {
     border-radius: 8px;
     background: var(--row-bg);
     box-shadow: none;
+    --run-success-color: #16a34a;
+    --run-success-soft: rgba(22, 163, 74, 0.12);
+    --run-warning-color: var(--warn);
+    --run-warning-soft: rgba(245, 158, 11, 0.1);
+    --run-muted-color: #64748b;
+    --run-muted-soft: rgba(100, 116, 139, 0.1);
 
     &.is-failed,
     &.is-blocked {
@@ -899,13 +906,21 @@ export default {
 
     &.is-success {
       border-color: rgba(34, 197, 94, 0.42);
-      box-shadow: inset 4px 0 0 var(--primary);
+      background: linear-gradient(90deg, var(--run-success-soft), transparent 46%), var(--row-bg);
+      box-shadow: inset 4px 0 0 var(--run-success-color);
     }
 
-    &.is-conditional {
+    &.is-conditional,
+    &.is-partial-write {
       border-color: rgba(245, 158, 11, 0.46);
-      background: linear-gradient(90deg, rgba(245, 158, 11, 0.1), transparent 46%), var(--row-bg);
-      box-shadow: inset 4px 0 0 var(--warn);
+      background: linear-gradient(90deg, var(--run-warning-soft), transparent 46%), var(--row-bg);
+      box-shadow: inset 4px 0 0 var(--run-warning-color);
+    }
+
+    &.is-cancelled {
+      border-color: rgba(100, 116, 139, 0.36);
+      background: linear-gradient(90deg, var(--run-muted-soft), transparent 46%), var(--row-bg);
+      box-shadow: inset 4px 0 0 var(--run-muted-color);
     }
   }
 
@@ -942,6 +957,31 @@ export default {
       0 0 0 2px rgba(220, 38, 38, 0.14);
   }
 
+  .run-item.is-success.active {
+    border-color: rgba(22, 163, 74, 0.62);
+    background: var(--run-success-soft);
+    box-shadow:
+      inset 5px 0 0 var(--run-success-color),
+      0 0 0 2px rgba(22, 163, 74, 0.14);
+  }
+
+  .run-item.is-conditional.active,
+  .run-item.is-partial-write.active {
+    border-color: rgba(245, 158, 11, 0.62);
+    background: var(--run-warning-soft);
+    box-shadow:
+      inset 5px 0 0 var(--run-warning-color),
+      0 0 0 2px rgba(245, 158, 11, 0.16);
+  }
+
+  .run-item.is-cancelled.active {
+    border-color: rgba(100, 116, 139, 0.52);
+    background: var(--run-muted-soft);
+    box-shadow:
+      inset 5px 0 0 var(--run-muted-color),
+      0 0 0 2px rgba(100, 116, 139, 0.14);
+  }
+
   .run-item-head {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -963,12 +1003,25 @@ export default {
       font-weight: 800;
       font-size: 12px;
       text-align: center;
+      position: relative;
+      overflow: hidden;
+
+      &::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: rgba(255, 255, 255, 0.2);
+        opacity: 0;
+        pointer-events: none;
+      }
     }
   }
 
   .run-item.is-failed,
   .run-item.is-blocked,
   .run-item.is-conditional,
+  .run-item.is-partial-write,
+  .run-item.is-cancelled,
   .run-item.is-running,
   .run-item.is-success {
     .run-status-tag {
@@ -983,13 +1036,24 @@ export default {
     --run-status-color: var(--warn);
   }
 
+  .run-item.is-partial-write .run-status-tag {
+    --run-status-color: var(--run-warning-color);
+  }
+
+  .run-item.is-cancelled .run-status-tag {
+    --run-status-color: var(--run-muted-color);
+  }
+
   .run-item.is-running .run-status-tag {
     --run-status-color: var(--accent);
+  }
+
+  .run-item.is-running .run-status-tag::after {
     animation: runStatusPulse 1.5s ease-in-out infinite;
   }
 
   .run-item.is-success .run-status-tag {
-    --run-status-color: var(--primary);
+    --run-status-color: var(--run-success-color);
   }
 
   .run-item strong {
@@ -1773,10 +1837,10 @@ export default {
   @keyframes runStatusPulse {
     0%,
     100% {
-      box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.28);
+      opacity: 0;
     }
     50% {
-      box-shadow: 0 0 0 6px rgba(14, 165, 233, 0);
+      opacity: 1;
     }
   }
 
