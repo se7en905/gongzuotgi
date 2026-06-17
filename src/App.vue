@@ -19452,8 +19452,8 @@ export default {
       const value = String(run.status || '').toLowerCase();
       const workerValue = String(run.workerStatus || '').toLowerCase();
       if (this.isLocalWorkerRun(run)) {
-        if (/completed|done|success|passed|blocked|failed|error|cancelled|canceled/.test(workerValue)) return workerValue;
         if (/completed|done|success|passed|blocked|failed|error|cancelled|canceled/.test(value)) return value;
+        if (/completed|done|success|passed|blocked|failed|error|cancelled|canceled/.test(workerValue)) return workerValue;
         if (/running|in_progress/.test(`${value} ${workerValue}`)) return 'running';
         if (run.startedAt && /claimed|pending|queued|created/.test(`${value} ${workerValue}`)) return 'running';
         if (/claimed/.test(`${value} ${workerValue}`)) return 'claimed';
@@ -19470,6 +19470,7 @@ export default {
       if (!run) return '待判定';
       const value = this.runDisplayStatusValue(run);
       const workerValue = String(run.workerStatus || '').toLowerCase();
+      if (/cancelled|canceled/.test(value)) return '已中断，可继续执行';
       if (/pending|created|queued/.test(value)) return this.directSkillQueuedRunLabel(run);
       if (/running|in_progress/.test(`${value} ${workerValue}`) || (run.startedAt && /claimed/.test(value))) return '本机执行中';
       if (/claimed/.test(value)) return '已领取';

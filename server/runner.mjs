@@ -247,9 +247,17 @@ function isCompletedStageStatus(status = '') {
 
 export async function cancelRun(runId, cancelledBy = '') {
   const child = processes.get(runId);
+  const cancelledAt = new Date().toISOString();
+  const cancelPatch = {
+    status: 'cancelled',
+    workerStatus: 'cancelled',
+    cancelledBy,
+    finishedAt: cancelledAt,
+    currentStage: '已中断'
+  };
   if (!child) {
     processTokens.delete(runId);
-    await updateRun(runId, { status: 'cancelled', cancelledBy });
+    await updateRun(runId, cancelPatch);
     await reportRunProgress(null, { id: runId, startedBy: cancelledBy }, {
       eventType: 'task_blocked',
       status: 'cancelled',
@@ -260,7 +268,7 @@ export async function cancelRun(runId, cancelledBy = '') {
   child.kill('SIGTERM');
   processes.delete(runId);
   processTokens.delete(runId);
-  await updateRun(runId, { status: 'cancelled', cancelledBy });
+  await updateRun(runId, cancelPatch);
   await reportRunProgress(null, { id: runId, startedBy: cancelledBy }, {
     eventType: 'task_blocked',
     status: 'cancelled',

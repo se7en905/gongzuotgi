@@ -767,6 +767,7 @@ export async function listRuns() {
   const runs = await reconcileStaleLocalWorkerRuns();
   const hydratedRuns = await Promise.all(runs.map(hydrateRunStages));
   const enrichedRuns = await Promise.all(hydratedRuns.map(enrichRunWithFigmaLogEvidence));
+  await persistRunReadReconciliations(hydratedRuns, enrichedRuns);
   return enrichedRuns.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
@@ -893,7 +894,10 @@ export function redactCodexConfig(config = {}) {
 export async function getRun(id) {
   const runs = await reconcileStaleLocalWorkerRuns();
   const run = runs.find(item => item.id === id) || null;
-  return enrichRunWithFigmaLogEvidence(await hydrateRunStages(run));
+  const hydrated = await hydrateRunStages(run);
+  const enriched = await enrichRunWithFigmaLogEvidence(hydrated);
+  await persistRunReadReconciliations(hydrated ? [hydrated] : [], enriched ? [enriched] : []);
+  return enriched;
 }
 
 export async function createRun(input) {
@@ -1731,7 +1735,11 @@ async function reconcileStaleLocalWorkerRuns() {
   let changed = false;
   const nextRuns = [];
   for (const run of Array.isArray(runs) ? runs : []) {
-    if (await shouldMarkLocalWorkerRunStale(run, workerByDevice, now)) {
+    const normalizedFinal = normalizeFinalWorkerStatusConflict(run, now);
+    if (normalizedFinal !== run) {
+      nextRuns.push(normalizedFinal);
+      changed = true;
+    } else if (await shouldMarkLocalWorkerRunStale(run, workerByDevice, now)) {
       nextRuns.push(markLocalWorkerRunStale(run, workerByDevice.get(cleanString(run.claimedByDeviceId)), now));
       changed = true;
     } else if (run.localWorkerStale === true && /当前已空闲/.test(cleanString(run.resultSummary?.summary))) {
@@ -1745,6 +1753,49 @@ async function reconcileStaleLocalWorkerRuns() {
   return nextRuns;
 }
 
+function normalizeFinalWorkerStatusConflict(run = {}, now = new Date()) {
+  const finalStatus = normalizeCanonicalFinalWorkerStatus(run.status);
+  if (!finalStatus) return run;
+  const workerStatus = cleanString(run.workerStatus).toLowerCase();
+  if (!workerStatus || workerStatus === finalStatus) return run;
+  if (finalStatus === 'cancelled' && isFinalWorkerRunStatus(workerStatus)) {
+    return {
+      ...run,
+      status: finalStatus,
+      workerStatus: finalStatus,
+      currentStage: '已中断',
+      ...(run.blocker ? { blocker: null } : {}),
+      resultSummary: {
+        ...(run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {}),
+        status: finalStatus,
+        statusText: finalStatus,
+        summary: '执行已中断。',
+        blockerReason: ''
+      },
+      updatedAt: now.toISOString()
+    };
+  }
+  if (isFinalWorkerRunStatus(workerStatus)) return run;
+  if (!/running|claimed|in_progress|queued|pending|created/.test(workerStatus)) return run;
+  return {
+    ...run,
+    status: finalStatus,
+    workerStatus: finalStatus,
+    currentStage: finalStatus === 'cancelled' ? '已中断' : run.currentStage,
+    ...(finalStatus === 'cancelled' && !run.finishedAt ? { finishedAt: cleanString(run.updatedAt || run.startedAt || run.claimedAt || run.createdAt || now.toISOString()) } : {}),
+    updatedAt: now.toISOString()
+  };
+}
+
+function normalizeCanonicalFinalWorkerStatus(value = '') {
+  const status = cleanString(value).toLowerCase();
+  if (/cancelled|canceled/.test(status)) return 'cancelled';
+  if (/completed|done|success|passed/.test(status)) return 'completed';
+  if (/blocked/.test(status)) return 'blocked';
+  if (/failed|error/.test(status)) return 'failed';
+  return '';
+}
+
 async function shouldMarkLocalWorkerRunStale(run = {}, workerByDevice = new Map(), now = new Date()) {
   if (!isWorkerExecutableRun(run)) return false;
   if (!isActiveWorkerRun(run)) return false;
@@ -1755,9 +1806,10 @@ async function shouldMarkLocalWorkerRunStale(run = {}, workerByDevice = new Map(
     : localWorkerRunStartedMs(run);
   if (!lastActivityMs || now.getTime() - lastActivityMs < staleLocalWorkerRunMs) return false;
   const worker = workerByDevice.get(cleanString(run.claimedByDeviceId));
-  if (!isAgentWorkerOnline(worker, now)) return false;
-  const workerCurrentRunId = cleanString(worker.currentRunId);
+  const workerOnline = isAgentWorkerOnline(worker, now);
+  const workerCurrentRunId = cleanString(worker?.currentRunId);
   const workerStillReportsThisRun = workerCurrentRunId && workerCurrentRunId === cleanString(run.id);
+  if (!workerOnline) return true;
   if (workerStillReportsThisRun && hasCodexOutput) return false;
   return true;
 }
@@ -1781,7 +1833,7 @@ function markLocalWorkerRunStale(run = {}, worker = null, now = new Date()) {
   const durationMs = normalizeDurationMs(run.durationMs, startedAt, finishedAt, run.durationMs);
   const reason = [
     'Worker 已领取并回传 running，但长时间没有可验证的 Codex 输出、最终状态或产物结果。',
-    worker ? `领取设备最近心跳在线，currentRunId 为「${cleanString(worker.currentRunId) || '空'}」。` : '',
+    describeStaleLocalWorker(worker, now),
     '平台已判定为本机回传失联，不再按普通执行中展示。'
   ].filter(Boolean).join(' ');
   const stages = Array.isArray(run.stages)
@@ -1808,7 +1860,8 @@ function markLocalWorkerRunStale(run = {}, worker = null, now = new Date()) {
       reason,
       staleDetectedAt: detectedAt,
       lastWorkerHeartbeatAt: cleanString(worker?.lastHeartbeatAt),
-      workerCurrentRunId: cleanString(worker?.currentRunId)
+      workerCurrentRunId: cleanString(worker?.currentRunId),
+      workerOnline: worker ? isAgentWorkerOnline(worker, now) : false
     },
     resultSummary: {
       ...(run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {}),
@@ -1832,6 +1885,16 @@ function markLocalWorkerRunStale(run = {}, worker = null, now = new Date()) {
     localWorkerStaleDetectedAt: detectedAt,
     updatedAt: detectedAt
   };
+}
+
+function describeStaleLocalWorker(worker = null, now = new Date()) {
+  if (!worker) return '领取设备没有可用的 Worker 心跳记录。';
+  const currentRunId = cleanString(worker.currentRunId) || '空';
+  const lastHeartbeatAt = cleanString(worker.lastHeartbeatAt);
+  if (isAgentWorkerOnline(worker, now)) {
+    return `领取设备最近心跳在线，currentRunId 为「${currentRunId}」。`;
+  }
+  return `领取设备最近心跳已超时，最后心跳为「${lastHeartbeatAt || '无'}」，currentRunId 为「${currentRunId}」。`;
 }
 
 function isActiveWorkerRun(run = {}) {
@@ -1993,11 +2056,55 @@ async function enrichRunWithFigmaLogEvidence(run) {
   });
 }
 
+async function persistRunReadReconciliations(beforeRuns = [], afterRuns = []) {
+  const changedById = new Map();
+  const beforeById = new Map((Array.isArray(beforeRuns) ? beforeRuns : [])
+    .filter(run => run?.id)
+    .map(run => [run.id, run]));
+  for (const after of Array.isArray(afterRuns) ? afterRuns : []) {
+    if (!after?.id) continue;
+    const before = beforeById.get(after.id);
+    if (!before || !hasRunReadReconciliationChange(before, after)) continue;
+    changedById.set(after.id, after);
+  }
+  if (!changedById.size) return;
+  const runs = await readJson(paths.runs, []);
+  let changed = false;
+  const next = runs.map(run => {
+    const replacement = changedById.get(run.id);
+    if (!replacement) return run;
+    changed = true;
+    return {
+      ...run,
+      ...replacement,
+      updatedAt: replacement.updatedAt || new Date().toISOString()
+    };
+  });
+  if (changed) await writeJson(paths.runs, next);
+}
+
+function hasRunReadReconciliationChange(before = {}, after = {}) {
+  const keys = [
+    'status',
+    'workerStatus',
+    'blocker',
+    'resultSummary',
+    'figmaWriteResult',
+    'stages',
+    'finishedAt',
+    'durationMs',
+    'durationEstimated'
+  ];
+  return keys.some(key => stableWorkerRunValue(before[key]) !== stableWorkerRunValue(after[key]));
+}
+
 function shouldDeriveFigmaEvidenceFromLog(run = {}) {
   if (!runRequiresFigmaWriteEvidence(run)) return false;
   if (!isFinishedRun(run.status) && !isFinishedRun(run.workerStatus)) return false;
   const result = run.figmaWriteResult && typeof run.figmaWriteResult === 'object' ? run.figmaWriteResult : {};
-  if (hasFigmaWriteEvidence(run) && !(result.partialWrite === true || cleanString(run.status).toLowerCase() === 'blocked' || cleanString(run.workerStatus).toLowerCase() === 'blocked')) return false;
+  const statusText = `${cleanString(run.status)} ${cleanString(run.workerStatus)}`.toLowerCase();
+  if (hasFigmaWriteEvidence(run) && !(result.partialWrite === true || /blocked|failed/.test(statusText))) return false;
+  if (result.written === false && !/blocked|failed/.test(statusText)) return false;
   return Boolean(cleanString(run.logPath) || cleanString(run.id));
 }
 
@@ -2030,8 +2137,9 @@ async function deriveFigmaLogEvidence(run = {}) {
 
 function parseFigmaLogEvidence(text = '') {
   const source = String(text || '');
-  const createdNodeIds = extractFigmaNodeIdsFromLog(source, 'createdNodeIds').slice(0, 80);
-  const mutatedNodeIds = extractFigmaNodeIdsFromLog(source, 'mutatedNodeIds').slice(0, 120);
+  const writeEvidenceText = figmaLogEvidenceWriteText(source);
+  const createdNodeIds = extractFigmaNodeIdsFromLog(writeEvidenceText, 'createdNodeIds').slice(0, 80);
+  const mutatedNodeIds = extractFigmaNodeIdsFromLog(writeEvidenceText, 'mutatedNodeIds').slice(0, 120);
   const written = createdNodeIds.length > 0 || mutatedNodeIds.length > 0;
   const evidence = [];
   if (createdNodeIds.length) evidence.push(`日志识别到 createdNodeIds：${createdNodeIds.slice(0, 12).join('、')}`);
@@ -2059,6 +2167,47 @@ function parseFigmaLogEvidence(text = '') {
   };
 }
 
+function figmaLogEvidenceWriteText(source = '') {
+  return String(source || '')
+    .split(/\r?\n/)
+    .map(figmaLogEvidenceWriteChunk)
+    .filter(Boolean)
+    .filter(hasAffirmativeFigmaWriteEvidenceText)
+    .join('\n');
+}
+
+function figmaLogEvidenceWriteChunk(line = '') {
+  const trimmed = String(line || '').trim();
+  if (!trimmed) return '';
+  try {
+    const event = JSON.parse(trimmed);
+    const item = event?.item || {};
+    if (item.type === 'command_execution') return '';
+    if (item.type === 'agent_message') return String(item.text || '').trim();
+    if (item.type === 'mcp_tool_call') {
+      if (item.status !== 'completed' || item.error) return '';
+      const resultText = figmaLogToolResultText(item.result);
+      if (!/figma/i.test(`${item.server || ''} ${item.tool || ''}`)) return '';
+      if (!/createdNodeIds|mutatedNodeIds/i.test(resultText)) return '';
+      return `__FIGMA_WRITE_EVENT__ ${item.tool || 'use_figma'} ${item.arguments?.description || ''} ${resultText}`.trim();
+    }
+    return String(event.message || event.text || event.delta || '').trim();
+  } catch {
+    return trimmed;
+  }
+}
+
+function hasAffirmativeFigmaWriteEvidenceText(text = '') {
+  const value = String(text || '');
+  if (!/createdNodeIds|mutatedNodeIds|figmaWriteResult/i.test(value)) return false;
+  const hasNodeIds = extractFigmaNodeIdsFromLog(value, 'createdNodeIds').length > 0
+    || extractFigmaNodeIdsFromLog(value, 'mutatedNodeIds').length > 0;
+  if (!hasNodeIds) return false;
+  if (/未生成|未检测到|未完成\s*Figma\s*写入|没有执行写入|没有实际写入|无，本次未完成|no mutation|no canvas mutation/i.test(value)) return false;
+  return /^__FIGMA_WRITE_EVENT__\b/.test(value)
+    || /写入成功|Figma 写入证据|figmaWriteResult\s*[:=]\s*["']?(?:rename_applied|applied|written|true)|mutationCount/i.test(value);
+}
+
 function extractFigmaNodeIdsFromLog(text = '', field = '') {
   const values = new Set();
   const source = String(text || '');
@@ -2081,6 +2230,16 @@ function extractFigmaNodeIdsFromLog(text = '', field = '') {
       .filter(isLikelyFigmaNodeId)
       .forEach(item => values.add(item));
     match = loosePattern.exec(source);
+  }
+  const equalsPattern = new RegExp(`${field}[^\\n:=]*[:=]\\s*(?!\\[)([^\\n\\r]+)`, 'gi');
+  match = equalsPattern.exec(source);
+  while (match) {
+    String(match[1] || '')
+      .split(/,|\s|；|、/)
+      .map(item => item.replace(/[\\"'`\[\]]/g, '').trim())
+      .filter(isLikelyFigmaNodeId)
+      .forEach(item => values.add(item));
+    match = equalsPattern.exec(source);
   }
   return [...values];
 }
@@ -2152,7 +2311,7 @@ function findFirstFigmaWriteLineIndex(lines = []) {
 function isNegatedFigmaBlockerLine(line = '') {
   const text = compactEvidenceReason(line);
   if (!text) return false;
-  return /阻塞原因\s*[:：]\s*(无|没有|未发现)|无最终阻塞|无硬阻塞|无阻塞|没有阻塞|未发现阻塞|不构成阻塞|不作为阻塞/i.test(text);
+  return /(?:^|[，。；\s])阻塞原因\s*[:：]\s*(?:无|没有|未发现)|无最终阻塞|无硬阻塞|无阻塞|没有阻塞|未发现阻塞|不构成阻塞|不作为阻塞/i.test(text);
 }
 
 function isNonBlockingFigmaNoteLine(line = '') {
@@ -2172,7 +2331,9 @@ function isFigmaPostWriteBlockerLine(line = '') {
 
 function isFigmaVerificationSuccessLine(line = '') {
   const text = compactEvidenceReason(line);
-  if (!text || isFigmaPostWriteBlockerLine(text)) return false;
+  if (!text) return false;
+  if (isNegatedFigmaBlockerLine(text)) return true;
+  if (isFigmaPostWriteBlockerLine(text)) return false;
   if (/^\d+\.\s*每批执行后回读|^\d+\.\s*每完成一个有意义的批次|`(?:已验证|部分验证|未验证)`|按以下|成功标准|工作流|必须|不要|不得|只允许/i.test(text)) return false;
   return /最终.*(?:回读|截图|验证|验收).*(?:完成|通过|成功|已完成|已生成|已返回|已保存|已验证)|(?:回读|截图|视觉|复核|验证|验收).*(?:完成|通过|成功|已完成|已生成|已返回|已保存|已验证|可见|确认)|(?:已回读|回读确认|截图复核已通过|视觉复核通过|内联截图可见|截图工具.*返回|MCP.*截图.*已生成|未见换行、遮挡、截断|画面无空白|无明显(?:遮挡|错位|截断|异常换行)|同类复扫.*(?:未发现|清零|无残留))/i.test(text);
 }

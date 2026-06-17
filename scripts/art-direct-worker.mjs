@@ -1340,8 +1340,9 @@ function extractFigmaWriteEvidence(text = '', run = {}) {
   const required = requiresFigmaWriteEvidence(run);
   const source = String(text || '');
   const toolEvents = extractFigmaToolEvents(source);
-  const createdSet = new Set(extractArrayLikeValues(source, 'createdNodeIds'));
-  const mutatedSet = new Set(extractArrayLikeValues(source, 'mutatedNodeIds'));
+  const affirmativeWriteText = extractAffirmativeFigmaWriteText(source);
+  const createdSet = new Set(extractArrayLikeValues(affirmativeWriteText, 'createdNodeIds'));
+  const mutatedSet = new Set(extractArrayLikeValues(affirmativeWriteText, 'mutatedNodeIds'));
   const evidence = [];
   let lastWriteOrder = -1;
   for (const event of toolEvents) {
@@ -1352,7 +1353,7 @@ function extractFigmaWriteEvidence(text = '', run = {}) {
       evidence.push(formatFigmaWriteEvidence(event));
     }
   }
-  const lines = source.split(/\r?\n/).map((line, index) => ({ line: line.trim(), index })).filter(item => item.line);
+  const lines = affirmativeWriteText.split(/\r?\n/).map((line, index) => ({ line: line.trim(), index })).filter(item => item.line);
   for (const line of lines) {
     if (!/createdNodeIds|mutatedNodeIds|figmaWriteResult|use_figma/i.test(line.line)) continue;
     if (/未检测|没有|无写入|缺少|失败|error|failed|blocked|阻塞|不可用/i.test(line.line) && !/createdNodeIds|mutatedNodeIds/.test(line.line)) continue;
@@ -1393,6 +1394,47 @@ function extractFigmaWriteEvidence(text = '', run = {}) {
   };
 }
 
+function extractAffirmativeFigmaWriteText(source = '') {
+  return String(source || '')
+    .split(/\r?\n/)
+    .map(figmaWriteEvidenceChunk)
+    .filter(Boolean)
+    .filter(hasAffirmativeFigmaWriteEvidenceText)
+    .join('\n');
+}
+
+function figmaWriteEvidenceChunk(line = '') {
+  const trimmed = String(line || '').trim();
+  if (!trimmed) return '';
+  try {
+    const event = JSON.parse(trimmed);
+    const item = event?.item || {};
+    if (item.type === 'command_execution') return '';
+    if (item.type === 'agent_message') return String(item.text || '').trim();
+    if (item.type === 'mcp_tool_call') {
+      if (item.status !== 'completed' || item.error) return '';
+      const resultText = figmaToolResultText(item.result);
+      if (!/figma/i.test(`${item.server || ''} ${item.tool || ''}`)) return '';
+      if (!/createdNodeIds|mutatedNodeIds/i.test(resultText)) return '';
+      return `__FIGMA_WRITE_EVENT__ ${item.tool || 'use_figma'} ${item.arguments?.description || ''} ${resultText}`.trim();
+    }
+    return String(event.message || event.text || event.delta || '').trim();
+  } catch {
+    return trimmed;
+  }
+}
+
+function hasAffirmativeFigmaWriteEvidenceText(text = '') {
+  const value = String(text || '');
+  if (!/createdNodeIds|mutatedNodeIds|figmaWriteResult/i.test(value)) return false;
+  const hasNodeIds = extractArrayLikeValues(value, 'createdNodeIds').length > 0
+    || extractArrayLikeValues(value, 'mutatedNodeIds').length > 0;
+  if (!hasNodeIds) return false;
+  if (/未生成|未检测到|未完成\s*Figma\s*写入|没有执行写入|没有实际写入|无，本次未完成|no mutation|no canvas mutation/i.test(value)) return false;
+  return /^__FIGMA_WRITE_EVENT__\b/.test(value)
+    || /写入成功|Figma 写入证据|figmaWriteResult\s*[:=]\s*["']?(?:rename_applied|applied|written|true)|mutationCount/i.test(value);
+}
+
 function extractArrayLikeValues(text = '', field = '') {
   const values = new Set();
   const pattern = new RegExp(`${field}[^\\n\\[]*\\[([^\\]]*)\\]`, 'gi');
@@ -1410,6 +1452,16 @@ function extractArrayLikeValues(text = '', field = '') {
   while (match) {
     if (match[1] && isLikelyFigmaNodeId(match[1])) values.add(match[1]);
     match = singlePattern.exec(text);
+  }
+  const equalsPattern = new RegExp(`${field}[^\\n:=]*[:=]\\s*(?!\\[)([^\\n\\r]+)`, 'gi');
+  match = equalsPattern.exec(text);
+  while (match) {
+    String(match[1] || '')
+      .split(/,|\\s|；|、/)
+      .map(item => item.replace(/["'`\\[\\]]/g, '').trim())
+      .filter(isLikelyFigmaNodeId)
+      .forEach(item => values.add(item));
+    match = equalsPattern.exec(text);
   }
   return [...values].slice(0, 50);
 }
@@ -1595,7 +1647,7 @@ function findFirstFigmaWriteOrder(source = '', toolEvents = [], fallbackOrder = 
 function isNegatedFigmaBlockerLine(line = '') {
   const text = compactReason(line);
   if (!text) return false;
-  return /阻塞原因\s*[:：]\s*(无|没有|未发现)|无最终阻塞|无硬阻塞|无阻塞|没有阻塞|未发现阻塞|不构成阻塞|不作为阻塞/i.test(text);
+  return /(?:^|[，。；\s])阻塞原因\s*[:：]\s*(?:无|没有|未发现)|无最终阻塞|无硬阻塞|无阻塞|没有阻塞|未发现阻塞|不构成阻塞|不作为阻塞/i.test(text);
 }
 
 function isNonBlockingFigmaNoteLine(line = '') {
@@ -1615,7 +1667,9 @@ function isFigmaPostWriteBlockerLine(line = '') {
 
 function isFigmaVerificationSuccessLine(line = '') {
   const text = compactReason(line);
-  if (!text || isFigmaPostWriteBlockerLine(text)) return false;
+  if (!text) return false;
+  if (isNegatedFigmaBlockerLine(text)) return true;
+  if (isFigmaPostWriteBlockerLine(text)) return false;
   if (/^\d+\.\s*每批执行后回读|^\d+\.\s*每完成一个有意义的批次|`(?:已验证|部分验证|未验证)`|按以下|成功标准|工作流|必须|不要|不得|只允许/i.test(text)) return false;
   return /最终.*(?:回读|截图|验证|验收).*(?:完成|通过|成功|已完成|已生成|已返回|已保存|已验证)|(?:回读|截图|视觉|复核|验证|验收).*(?:完成|通过|成功|已完成|已生成|已返回|已保存|已验证|可见|确认)|(?:已回读|回读确认|截图复核已通过|视觉复核通过|内联截图可见|截图工具.*返回|MCP.*截图.*已生成|未见换行、遮挡、截断|画面无空白|无明显(?:遮挡|错位|截断|异常换行)|同类复扫.*(?:未发现|清零|无残留))/i.test(text);
 }
