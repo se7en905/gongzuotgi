@@ -69,7 +69,7 @@ const mysqlConfigs = new Map([
 
 const useMysqlStore = process.env.AWP_USE_MYSQL === '1';
 const retentionDays = Math.max(1, Number(process.env.AWP_DATA_RETENTION_DAYS || 2) || 2);
-const usageCounterLogicVersion = 'usage-only-v4-summary-cumulative';
+const usageCounterLogicVersion = 'usage-only-v5-strong-evidence-compact';
 const taskArtBriefUsageCounterKey = 'zentaoartbriefproduct';
 const retentionEnabled = process.env.AWP_DATA_RETENTION_ENABLED !== '0';
 const runFigmaLogEvidenceCache = new Map();
@@ -3541,6 +3541,10 @@ async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCount
   let changed = false;
   for (const [key, inputBucket] of Object.entries(counters.buckets)) {
     const bucket = normalizeUsageCounterBucket(inputBucket, key);
+    if (isTechnicalUsageCounterBucket(bucket)) {
+      changed = true;
+      continue;
+    }
     if (applyHistoricalUsageBucketRebuild(bucket, usageBucketRebuildMap)) changed = true;
     if (normalizeTaskArtBriefLegacyUsageBucket(bucket)) changed = true;
     const eventKeys = Array.isArray(bucket.eventKeys) ? bucket.eventKeys.filter(Boolean) : [];
@@ -3731,17 +3735,7 @@ async function historicalUsageBucketRebuildMap() {
     const at = cleanString(run.startedAt || run.createdAt);
     const owners = usageOwnersFromRun(run);
     const eventKey = usageEventKey(run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill' ? 'direct-skill-run' : 'run', run.id || run.primarySkillPath || run.stage || run.title, at);
-    const values = [
-      run.primarySkillPath,
-      run.skillPath,
-      run.stage,
-      run.title,
-      run.sourceTitle,
-      run.productName,
-      ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
-      ...(Array.isArray(run.materials) ? run.materials.flatMap(item => [item?.path, item?.name, item?.title]) : []),
-      ...(Array.isArray(run.referenceItems) ? run.referenceItems.flatMap(item => [item?.path, item?.name, item?.title]) : [])
-    ];
+    const values = runUsageTargetValues(run);
     for (const target of values.flatMap(usageTargetCandidates)) addTarget(target, owners, eventKey, at, 'run');
   }
 
@@ -3851,7 +3845,10 @@ async function historicalUsageEventSources() {
 
 function isUsageCountableArtProgressEvent(event = {}) {
   const type = cleanString(event.eventType);
-  return ['skill_called', 'tool_used', 'task_completed'].includes(type);
+  if (!['skill_called', 'tool_used', 'task_completed'].includes(type)) return false;
+  const metadata = event.metadata && typeof event.metadata === 'object' ? event.metadata : {};
+  if (metadata.countAsSkillUsage === false || metadata.countAsProductUsage === false) return false;
+  return hasStrongArtProgressUsageTarget(event);
 }
 
 function isHistoricalUsageOperationLog(log = {}) {
@@ -3875,6 +3872,17 @@ function bucketUsageTargetValues(bucket = {}) {
     .filter(value => usageCounterKey(value))
     .filter((value, index, array) => array.findIndex(item => usageCounterKey(item) === usageCounterKey(value)) === index)
     .slice(0, 80);
+}
+
+function isTechnicalUsageCounterBucket(bucket = {}) {
+  if (!bucket?.key || bucket.key === taskArtBriefUsageCounterKey) return false;
+  const values = normalizeLineList([
+    bucket.key,
+    bucket.target,
+    ...(Array.isArray(bucket.aliases) ? bucket.aliases : normalizeLineList(bucket.aliases || []))
+  ]);
+  if (!values.length) return true;
+  return !values.some(value => isStrongUsageTargetValue(value));
 }
 
 function rebuildHistoricalUsagePeople(bucket = {}, sources = {}) {
@@ -4378,19 +4386,7 @@ function usageTargetsFromArtProgressEvent(event = {}) {
   const metadata = event.metadata && typeof event.metadata === 'object' ? event.metadata : {};
   const defaultCount = Math.max(1, Number(metadata.usageCount || metadata.count || 1) || 1);
   const kind = isUsageCountableArtProgressEvent(event) ? 'usage' : 'research-sync';
-  const targetValues = [
-    event.skillId,
-    event.skillName,
-    event.repoPath,
-    metadata.path,
-    metadata.filePath,
-    metadata.finalPath,
-    metadata.skillPath,
-    metadata.artifactPath,
-    metadata.artifactLocation,
-    ...(Array.isArray(metadata.artifactPaths) ? metadata.artifactPaths : []),
-    ...(Array.isArray(metadata.artifactNames) ? metadata.artifactNames : [])
-  ];
+  const targetValues = artProgressStrongUsageTargetValues(event);
   const targets = buildUsageTargets(targetValues, {
     person: cleanString(event.memberName || event.memberAccount),
     at: cleanString(event.createdAt),
@@ -4402,7 +4398,8 @@ function usageTargetsFromArtProgressEvent(event = {}) {
   const artifactTargets = [
     ...(Array.isArray(metadata.calledArtifacts) ? metadata.calledArtifacts : []),
     ...(Array.isArray(metadata.matchedArtifacts) ? metadata.matchedArtifacts : [])
-  ].flatMap((item, index) => buildUsageTargets([item?.id, item?.name, item?.path], {
+  ].filter(item => isStrongUsageTargetValue(item?.path || item?.name || item?.id))
+    .flatMap((item, index) => buildUsageTargets([item?.path, item?.name, item?.id], {
     person: cleanString(event.memberName || event.memberAccount),
     at: cleanString(event.createdAt),
     source: 'art-progress',
@@ -4454,17 +4451,7 @@ function usageTargetsFromRun(run = {}, options = {}) {
   if (!isUsageLikeRun(run)) return [];
   const source = cleanString(options.source || 'run');
   const at = cleanString(options.at || run.startedAt || run.createdAt);
-  const values = [
-    run.primarySkillPath,
-    run.skillPath,
-    run.stage,
-    run.title,
-    run.sourceTitle,
-    run.productName,
-    ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
-    ...(Array.isArray(run.materials) ? run.materials.flatMap(item => [item?.path, item?.name, item?.title]) : []),
-    ...(Array.isArray(run.referenceItems) ? run.referenceItems.flatMap(item => [item?.path, item?.name, item?.title]) : [])
-  ];
+  const values = runUsageTargetValues(run);
   return buildUsageTargets(values, {
     person: cleanString(usageOwnersFromRun(run)[0] || ''),
     at,
@@ -4478,6 +4465,7 @@ function isUsageLikeRun(run = {}) {
   if (!run || typeof run !== 'object') return false;
   const status = cleanString(run.status || run.workerStatus || run.platformStatus).toLowerCase();
   if (/cancel|canceled|cancelled|pending|queued|draft|deleted|void|running|claim|start/.test(status)) return false;
+  if (!/completed|done|success|passed|conditional_pass|finished/.test(status)) return false;
   if (run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill') return true;
   if (normalizeWorkflowId(run.workflow || '') === 'art-single-skill') return true;
   if (cleanString(run.executionMode) === 'single-skill') return true;
@@ -4498,6 +4486,97 @@ function looksLikeSkillOrMarkdownMaterial(value = '') {
   return /(^|\/)SKILL\.md(?:$|[?#])/i.test(text)
     || /\.(md|markdown)(?:$|[?#])/i.test(text)
     || /\/(skills?|\.codex|\.claude|规范|资料库|references)\//i.test(text);
+}
+
+function runUsageTargetValues(run = {}) {
+  const materialValues = [
+    run.primarySkillPath,
+    run.skillPath,
+    run.stage,
+    ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
+    ...(Array.isArray(run.materials) ? run.materials.flatMap(item => [item?.path, item?.name, item?.title]) : []),
+    ...(Array.isArray(run.referenceItems) ? run.referenceItems.flatMap(item => [item?.path, item?.name, item?.title]) : [])
+  ]
+    .map(cleanString)
+    .filter(value => value && looksLikeSkillOrMarkdownMaterial(value) && isStrongUsageTargetValue(value));
+  if (materialValues.length) return materialValues;
+  return [
+    run.productName,
+    run.sourceTitle,
+    run.title
+  ]
+    .map(cleanString)
+    .filter(value => value && isStrongUsageTargetValue(value));
+}
+
+function artProgressStrongUsageTargetValues(event = {}) {
+  const metadata = event.metadata && typeof event.metadata === 'object' ? event.metadata : {};
+  const isSessionSummary = metadata.source === 'codex-session-summary';
+  const structuredTargets = [
+    ...(Array.isArray(metadata.calledArtifacts) ? metadata.calledArtifacts : []),
+    ...(Array.isArray(metadata.matchedArtifacts) ? metadata.matchedArtifacts : [])
+  ]
+    .flatMap(item => [item?.path, item?.name, item?.id])
+    .map(cleanString)
+    .filter(value => value && isStrongUsageTargetValue(value) && (!isSessionSummary || looksLikePrimaryArtifactTarget(value)));
+  const directTargets = [
+    event.skillId,
+    event.repoPath,
+    metadata.path,
+    metadata.filePath,
+    metadata.finalPath,
+    metadata.skillPath,
+    metadata.artifactPath,
+    metadata.artifactLocation,
+    ...(Array.isArray(metadata.artifactPaths) ? metadata.artifactPaths : [])
+  ]
+    .map(cleanString)
+    .filter(value => value && isStrongUsageTargetValue(value) && (!isSessionSummary || looksLikePrimaryArtifactTarget(value)));
+  if (isSessionSummary) return [...directTargets, ...structuredTargets];
+  return [
+    ...directTargets,
+    ...structuredTargets,
+    metadata.artifactName,
+    metadata.skillName,
+    event.skillName
+  ]
+    .map(cleanString)
+    .filter(value => value && isStrongUsageTargetValue(value));
+}
+
+function hasStrongArtProgressUsageTarget(event = {}) {
+  return artProgressStrongUsageTargetValues(event).length > 0;
+}
+
+function isStrongUsageTargetValue(value = '') {
+  const text = cleanString(value).replace(/\\/g, '/').replace(/^[#\[]+|[\]]+$/g, '').trim();
+  if (!text) return false;
+  if (isTechnicalUsageTarget(text)) return false;
+  if (/(^|\/)(references?|runs?)\//i.test(text)) return false;
+  if (looksLikeSkillOrMarkdownMaterial(text)) {
+    return text.split('/').filter(Boolean).some(part => {
+      const cleaned = part.replace(/\.(md|markdown)$/i, '').replace(/^[#\[]+|[\]]+$/g, '').trim();
+      return cleaned && !isTechnicalUsageTarget(cleaned) && !isGenericUsageTarget(cleaned);
+    });
+  }
+  const compact = compactUsageTargetText(text);
+  if (!compact || compact.length < 4) return false;
+  return !isGenericUsageTarget(compact) && !isTechnicalUsageTarget(compact);
+}
+
+function looksLikePrimaryArtifactTarget(value = '') {
+  const text = cleanString(value).replace(/\\/g, '/').replace(/^[#\[]+|[\]]+$/g, '').trim();
+  if (!text || /(^|\/)(references?|runs?)\//i.test(text)) return false;
+  if (/(^|\/)SKILL\.md$/i.test(text)) {
+    const parts = text.split('/').filter(Boolean);
+    const parent = parts.length > 1 ? parts[parts.length - 2] : '';
+    return Boolean(parent && !isGenericUsageTarget(parent) && !isTechnicalUsageTarget(parent));
+  }
+  if (/\.(md|markdown)$/i.test(text)) {
+    const base = text.split('/').filter(Boolean).pop() || '';
+    return !/^(AGENTS|README|MEMORY|资料)\.md$/i.test(base);
+  }
+  return false;
 }
 
 function usageSearchTextFromRecord(record = {}, source = 'art-progress') {
@@ -4624,7 +4703,7 @@ function buildUsageTargets(values = [], common = {}) {
 
 function usageTargetCandidates(value = '') {
   const text = cleanString(value).replace(/\\/g, '/');
-  if (!text) return [];
+  if (!text || !isStrongUsageTargetValue(text)) return [];
   const parts = text.split('/').filter(Boolean);
   const last = parts[parts.length - 1] || text;
   const withoutExt = last.replace(/\.(md|markdown)$/i, '');
@@ -4716,7 +4795,7 @@ function usageCounterKey(value = '') {
     ?.replace(/\.(md|markdown)$/i, '')
     .toLowerCase()
     .replace(/[_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '') || '';
-  if (!text || text.length < 3 || isGenericUsageTarget(text)) return '';
+  if (!text || text.length < 3 || isGenericUsageTarget(text) || isTechnicalUsageTarget(text)) return '';
   return text;
 }
 
@@ -5135,7 +5214,26 @@ function isGenericUsageTarget(value = '') {
     .pop()
     ?.replace(/\.(md|markdown)$/i, '')
     .replace(/[_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '') || '';
-  return /^(skill|skills|readme|agents|agent|memory|data|design|git|ai|artgit|users|user|se7en|artproject|platform|project|projects|volumes|volume|private|tmp|temp|outputs|output|downloads|download|desktop|documents|runs|agentworkers|美术执行台|本机执行状态|安装说明|安装包|同步器|上报器|执行|试用|文件本体|ip|默认|default)$/i.test(text);
+  return /^(figma|mcp|codex|markdown|md|skill|skills|readme|agents|agent|memory|references|reference|data|design|git|ai|artgit|users|user|se7en|artproject|platform|project|projects|volumes|volume|private|tmp|temp|outputs|output|downloads|download|desktop|documents|runs|agentworkers|美术执行台|本机执行状态|安装说明|安装包|同步器|上报器|执行|试用|文件|文件本体|内容执行|快照执行|已读取|说明|执行契约|或规范|规范文件路径|中的提醒文字替代这些文件|codex实任务验证|实任务验证|资料|ip|默认|default)$/i.test(text);
+}
+
+function compactUsageTargetText(value = '') {
+  return cleanString(value)
+    .toLowerCase()
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .pop()
+    ?.replace(/\.(md|markdown)$/i, '')
+    .replace(/[_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '') || '';
+}
+
+function isTechnicalUsageTarget(value = '') {
+  const raw = cleanString(value);
+  const compact = compactUsageTargetText(raw);
+  return looksLikeUuid(raw)
+    || /^[0-9a-f]{32}$/i.test(compact)
+    || /^(untitledtask|undefined|null|nan)$/i.test(compact);
 }
 
 function normalizeCustomWorkflow(input = {}) {

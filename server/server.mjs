@@ -5124,6 +5124,7 @@ function isGenericCodexOperationForValidation(event = {}) {
   const text = artProgressValidationHaystack(event);
   return isSkillCreationDraftText(text)
     || isDistributedConfigValidationText(text)
+    || !hasConcreteValidationArtifactSignal(event)
     || (/Codex 使用记录补传|记录日期：|会话：|codex session|sessionId|操作记录|对话记录|environment_context|AGENTS\.md instructions/i.test(text)
     && !/验证结果|验证回填|验收结果|可直接复用|部分可用|不可用需重做|资料不完整|场景不匹配|建议部门内复用|建议小范围复用/i.test(text)
     && !isAppliedArtifactValidationText(text));
@@ -5165,7 +5166,11 @@ function inferArtifactTypeFromValidation(event = {}) {
 }
 
 function firstCleanValidationValue(values = []) {
-  return compactValidationTextParts(values)[0] || '';
+  return compactValidationTextParts(values).find(value => !isGenericValidationArtifactValue(value)) || '';
+}
+
+function firstConcreteValidationArtifactValue(values = []) {
+  return compactValidationTextParts(values).find(value => isConcreteValidationArtifactValue(value)) || '';
 }
 
 function extractArtifactPathFromValidationText(text = '') {
@@ -5208,18 +5213,41 @@ function hasConcreteValidationArtifactSignal(event = {}) {
     ...(Array.isArray(metadata.calledArtifacts) ? metadata.calledArtifacts.flatMap(item => [item?.name, item?.path, item?.alias]) : []),
     ...(Array.isArray(metadata.matchedArtifacts) ? metadata.matchedArtifacts.flatMap(item => [item?.name, item?.path, item?.alias]) : [])
   ]);
-  const generic = /^(skill|skills|md|markdown|readme|agents|agent|memory|文档|说明|规范|流程|工具|技能)$/i;
   return values.some(value => {
-    const text = String(value || '').replace(/\\/g, '/').trim();
-    if (!text) return false;
-    const fileName = path.basename(text).replace(/\.(md|markdown)$/i, '');
-    if (!fileName || generic.test(fileName)) {
-      const parts = text.split('/').filter(Boolean);
-      const parent = parts.length > 1 ? parts[parts.length - 2] : '';
-      return Boolean(parent && parent.length >= 2 && !generic.test(parent));
-    }
-    return fileName.length >= 2;
+    return isConcreteValidationArtifactValue(value);
   });
+}
+
+function isConcreteValidationArtifactValue(value = '') {
+  const text = String(value || '').replace(/\\/g, '/').replace(/^[#\[]+|[\]]+$/g, '').trim();
+  if (!text || isGenericValidationArtifactValue(text)) return false;
+  if (/(^|\/)(?:SKILL|README|AGENTS|MEMORY)\.md$/i.test(text)) {
+    const parts = text.split('/').filter(Boolean);
+    const parent = parts.length > 1 ? parts[parts.length - 2] : '';
+    return Boolean(parent && !isGenericValidationArtifactValue(parent));
+  }
+  if (/\.(md|markdown|txt|js|mjs|py)$/i.test(text)) return true;
+  const normalized = normalizeValidationArtifactToken(text);
+  return normalized.length >= 4 && !isGenericValidationArtifactValue(normalized);
+}
+
+function isGenericValidationArtifactValue(value = '') {
+  const normalized = normalizeValidationArtifactToken(value);
+  return !normalized
+    || /^[0-9a-f]{32}$/i.test(normalized)
+    || /^(skill|skills|md|markdown|readme|agents|agent|memory|references|reference|文档|说明|规范|流程|工具|技能|试用|执行|文件|内容执行|快照执行|已读取|untitledtask)$/i.test(normalized);
+}
+
+function normalizeValidationArtifactToken(value = '') {
+  return String(value || '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .pop()
+    ?.replace(/\.(md|markdown)$/i, '')
+    .replace(/^[#\[]+|[\]]+$/g, '')
+    .replace(/[_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '')
+    .toLowerCase() || '';
 }
 
 function buildSkillValidationDraftFromArtProgress(event = {}) {
@@ -5234,7 +5262,7 @@ function buildSkillValidationDraftFromArtProgress(event = {}) {
   const validationResult = cleanText(metadata.validationResult || metadata.validationStatus || metadata.result) || inferValidationResultFromText(haystack) || inferAppliedValidationResult(haystack);
   const reuseAdvice = cleanText(metadata.reuseAdvice || metadata.reuse || extractFirstValidationMatch(haystack, [/(?:复用建议|是否建议部门内复用)[:：]\s*([^\n。；;]+)/i]));
   if (!validationResult && !reuseAdvice && !/验证回填|待验证|已验证|进行验证|完成验证|验收/i.test(haystack)) return null;
-  const artifactLocation = firstCleanValidationValue([
+  const artifactLocation = firstConcreteValidationArtifactValue([
     metadata.artifactLocation,
     metadata.artifactPath,
     metadata.finalPath,
@@ -5244,7 +5272,7 @@ function buildSkillValidationDraftFromArtProgress(event = {}) {
     event.repoPath,
     extractArtifactPathFromValidationText(haystack)
   ]);
-  const artifactName = firstCleanValidationValue([
+  const artifactName = firstConcreteValidationArtifactValue([
     metadata.artifactName,
     metadata.fileName,
     metadata.skillName,
@@ -5398,6 +5426,11 @@ async function removeArtProgressEvent(id = '', user = {}) {
 }
 
 async function listVisibleArtProgressEvents(user, filters = {}) {
+  const visibleEvents = await listRawVisibleArtProgressEvents(user, filters);
+  return projectArtProgressEventsForResponse(visibleEvents, filters);
+}
+
+async function listRawVisibleArtProgressEvents(user, filters = {}) {
   const events = await listArtProgressEvents(filters);
   if (canSeeAllArtProgress(user, filters)) return events;
   const account = String(user?.username || '');
@@ -5405,8 +5438,58 @@ async function listVisibleArtProgressEvents(user, filters = {}) {
   return events.filter(event => event.memberAccount === account || normalizeArtMemberName(event.memberName, event.memberAccount) === name);
 }
 
+function projectArtProgressEventsForResponse(events = [], filters = {}) {
+  const pageSize = Math.max(1, Math.min(1000, Number(filters.pageSize || filters.limit || 200) || 200));
+  const page = Math.max(1, Number(filters.page || 1) || 1);
+  const start = filters.all === '1' ? 0 : (page - 1) * pageSize;
+  const end = filters.all === '1' ? events.length : start + pageSize;
+  const sliced = events.slice(start, end);
+  if (filters.full === '1') return sliced;
+  return sliced.map(compactArtProgressEventForList);
+}
+
+function compactArtProgressEventForList(event = {}) {
+  const metadata = event.metadata && typeof event.metadata === 'object' && !Array.isArray(event.metadata) ? event.metadata : {};
+  const compactArtifacts = value => (Array.isArray(value) ? value : [])
+    .slice(0, 12)
+    .map(item => ({
+      id: cleanText(item?.id),
+      name: cleanText(item?.name || item?.alias),
+      path: cleanText(item?.path)
+    }))
+    .filter(item => item.id || item.name || item.path);
+  return {
+    ...event,
+    title: truncateText(event.title, 240),
+    summary: truncateText(event.summary, 1000),
+    metadata: {
+      source: cleanText(metadata.source),
+      displaySource: cleanText(metadata.displaySource),
+      path: cleanText(metadata.path),
+      filePath: cleanText(metadata.filePath),
+      finalPath: cleanText(metadata.finalPath),
+      skillPath: cleanText(metadata.skillPath),
+      artifactPath: cleanText(metadata.artifactPath),
+      artifactLocation: cleanText(metadata.artifactLocation),
+      artifactName: cleanText(metadata.artifactName),
+      skillName: cleanText(metadata.skillName),
+      validationResult: cleanText(metadata.validationResult || metadata.validationStatus || metadata.result),
+      reuseAdvice: cleanText(metadata.reuseAdvice || metadata.reuse),
+      calledArtifacts: compactArtifacts(metadata.calledArtifacts),
+      matchedArtifacts: compactArtifacts(metadata.matchedArtifacts),
+      artifactNames: Array.isArray(metadata.artifactNames) ? metadata.artifactNames.map(cleanText).filter(Boolean).slice(0, 12) : [],
+      artifactPaths: Array.isArray(metadata.artifactPaths) ? metadata.artifactPaths.map(cleanText).filter(Boolean).slice(0, 12) : []
+    }
+  };
+}
+
+function truncateText(value = '', max = 1000) {
+  const text = cleanText(value);
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
 async function buildArtProgressSummary(user, filters = {}) {
-  const events = await listVisibleArtProgressEvents(user, filters);
+  const events = await listRawVisibleArtProgressEvents(user, filters);
   const researchEvents = events.filter(event => !isReporterLifecycleEvent(event));
   const today = new Date().toISOString().slice(0, 10);
   const todayEvents = events.filter(event => String(event.createdAt || '').slice(0, 10) === today);

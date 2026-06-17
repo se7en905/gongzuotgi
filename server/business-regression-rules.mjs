@@ -283,6 +283,72 @@ export function mergeUsageCounterRebuildSnapshot(bucket = {}, rebuilt = {}) {
   };
 }
 
+function compactUsageTargetText(value = '') {
+  return cleanText(value)
+    .toLowerCase()
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .pop()
+    ?.replace(/\.(md|markdown)$/i, '')
+    .replace(/[_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '') || '';
+}
+
+function isGenericUsageTarget(value = '') {
+  const text = compactUsageTargetText(value);
+  return !text
+    || /^(figma|mcp|codex|markdown|md|skill|skills|readme|agents|agent|memory|references|reference|data|design|git|ai|runs|执行|试用|文件|说明|内容执行|快照执行|已读取|codex实任务验证|实任务验证|untitledtask)$/i.test(text)
+    || /^[0-9a-f]{32}$/i.test(text);
+}
+
+function looksLikePrimaryArtifactTarget(value = '') {
+  const text = cleanText(value).replace(/\\/g, '/').replace(/^[#\[]+|[\]]+$/g, '').trim();
+  if (!text || /(^|\/)(references?|runs?)\//i.test(text)) return false;
+  if (/(^|\/)SKILL\.md$/i.test(text)) {
+    const parts = text.split('/').filter(Boolean);
+    const parent = parts.length > 1 ? parts[parts.length - 2] : '';
+    return Boolean(parent && !isGenericUsageTarget(parent));
+  }
+  if (/\.(md|markdown)$/i.test(text)) {
+    const base = text.split('/').filter(Boolean).pop() || '';
+    return !/^(AGENTS|README|MEMORY|资料)\.md$/i.test(base);
+  }
+  return false;
+}
+
+export function artProgressEventCountsAsUsage(event = {}) {
+  const type = cleanText(event.eventType);
+  if (!['skill_called', 'tool_used', 'task_completed'].includes(type)) return false;
+  const metadata = event.metadata && typeof event.metadata === 'object' ? event.metadata : {};
+  if (metadata.countAsSkillUsage === false || metadata.countAsProductUsage === false) return false;
+  const isSessionSummary = metadata.source === 'codex-session-summary';
+  const targets = [
+    event.skillId,
+    event.repoPath,
+    metadata.path,
+    metadata.filePath,
+    metadata.finalPath,
+    metadata.skillPath,
+    metadata.artifactPath,
+    metadata.artifactLocation,
+    ...(Array.isArray(metadata.artifactPaths) ? metadata.artifactPaths : []),
+    ...(Array.isArray(metadata.calledArtifacts) ? metadata.calledArtifacts.flatMap(item => [item?.path, item?.name, item?.id]) : []),
+    ...(Array.isArray(metadata.matchedArtifacts) ? metadata.matchedArtifacts.flatMap(item => [item?.path, item?.name, item?.id]) : [])
+  ].map(cleanText).filter(Boolean);
+  return targets.some(target => (isSessionSummary ? looksLikePrimaryArtifactTarget(target) : !isGenericUsageTarget(target)));
+}
+
+export function usageCounterBucketIsTechnical(bucket = {}) {
+  if (compactUsageTargetText(bucket.target) === 'zentaoartbriefproduct') return false;
+  const values = [
+    bucket.key,
+    bucket.target,
+    ...(Array.isArray(bucket.aliases) ? bucket.aliases : [])
+  ].map(cleanText).filter(Boolean);
+  if (!values.length) return true;
+  return !values.some(value => !isGenericUsageTarget(value));
+}
+
 export function comparePermissionCatalogs(backendPermissions = [], frontendPermissions = []) {
   const backend = new Set((Array.isArray(backendPermissions) ? backendPermissions : []).map(cleanText).filter(Boolean));
   const frontend = new Set((Array.isArray(frontendPermissions) ? frontendPermissions : []).map(cleanText).filter(Boolean));

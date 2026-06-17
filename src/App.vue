@@ -532,7 +532,7 @@ const RUN_LOG_RENDER_MAX_CHARS = 80 * 1024;
 const RUN_LOG_RENDER_MAX_LINES = 400;
 const RUN_LOG_LINE_MAX_CHARS = 2400;
 const SKILL_AUDIT_RULE_VERSION = '9-dimension-v2-fulltext';
-const USAGE_COUNTER_LOGIC_VERSION = 'usage-only-v4-summary-cumulative';
+const USAGE_COUNTER_LOGIC_VERSION = 'usage-only-v5-strong-evidence-compact';
 const LARGE_WORKBENCH_DISPLAY_CACHE_KEYS = new Set([
   'aiMembersSnapshot',
   'aiMembersBoardHtmlSnapshot',
@@ -541,6 +541,7 @@ const LARGE_WORKBENCH_DISPLAY_CACHE_KEYS = new Set([
   'businessTasks',
   'bugs',
   'taskReviews',
+  'artProgressEvents',
   'skillInventoryFirstPageSnapshot'
 ]);
 
@@ -7470,7 +7471,7 @@ export default {
       try {
         const [summary, events] = await Promise.all([
           this.api('/api/art-progress-events/summary'),
-          this.api(this.canViewArtProgressOperationLog ? '/api/art-progress-events?scope=log' : '/api/art-progress-events')
+          this.api(this.canViewArtProgressOperationLog ? '/api/art-progress-events?scope=log&pageSize=200' : '/api/art-progress-events?pageSize=200')
         ]);
         this.artProgressSummary = summary || null;
         if (!Array.isArray(events)) {
@@ -10382,7 +10383,9 @@ export default {
       if (['research_finding', 'research_summary', 'research_artifact', 'reporter_installed', 'reporter_test'].includes(eventType)) return false;
       const action = String(raw.action || '').trim();
       if (['REPORT_ART_PROGRESS', 'AUTO_UPSERT_SKILL_VALIDATION', 'UPSERT_SKILL_VALIDATION', 'UPDATE_SKILL_VALIDATION', 'UPDATE_SKILL_ALIAS'].includes(action)) return false;
-      if (['skill_called', 'tool_used', 'task_completed'].includes(eventType)) return true;
+      if (['skill_called', 'tool_used', 'task_completed'].includes(eventType)) {
+        return this.usageExplicitTargetsFromRecord(raw, 'art-progress').some(target => !this.isGenericUsageFileTarget(target));
+      }
       if (['START_RUN', 'RETRY_RUN', 'CREATE_DIRECT_SKILL_RUN'].includes(action)) return true;
       const sourceType = String(raw.sourceType || raw.executionMode || '').trim();
       if (sourceType === 'direct-skill') return true;
@@ -12983,7 +12986,8 @@ export default {
         .replace(/\.(md|markdown)$/i, '')
         .replace(/[\\/_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '');
       if (!text) return true;
-      return /^(figma|mcp|codex|markdown|md|skill|skills|git|ai|data|design|artgit|artgitskills|users|user|se7en|artproject|platform|project|projects|volumes|volume|private|tmp|temp|outputs|output|downloads|download|desktop|documents|0group|000插件共享|美术项目资源|工作台可放产物区域的内容|工具|技能|文档|流程|规范|验证|平台|资源|图片|素材|截图|入口|入口图|悬浮入口|界面|命名|说明|readme|agents|memory|ip|默认|default)$/i.test(text);
+      return /^(figma|mcp|codex|markdown|md|skill|skills|git|ai|data|design|artgit|artgitskills|users|user|se7en|artproject|platform|project|projects|volumes|volume|private|tmp|temp|outputs|output|downloads|download|desktop|documents|runs|references|reference|0group|000插件共享|美术项目资源|工作台可放产物区域的内容|工具|技能|文档|流程|规范|验证|平台|资源|图片|素材|截图|入口|入口图|悬浮入口|界面|命名|说明|readme|agents|memory|试用|执行|文件|内容执行|快照执行|已读取|ip|默认|default|untitledtask)$/i.test(text)
+        || /^[0-9a-f]{32}$/i.test(text);
     },
 
     isGenericUsageFileTarget(value = '') {
@@ -12997,7 +13001,7 @@ export default {
         .toLowerCase()
         .replace(/[_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '') || '';
       if (!text) return true;
-      return /^(agents|agent|readme|memory|codexrules|codexrule|安装说明|安装包|同步器|上报器|试用|执行|文件本体)$/i.test(text)
+      return /^(agents|agent|readme|memory|codexrules|codexrule|安装说明|安装包|同步器|上报器|试用|执行|文件|文件本体|内容执行|快照执行|已读取|untitledtask)$/i.test(text)
         || this.isGenericUsageNeedle(text);
     },
 

@@ -479,13 +479,16 @@
   - 删除 AI档案、操作日志、清理原始上报明细、构建前端、刷新页面或切换账号，都不得导致已累计调用次数减少。
   - 真实调用一旦成功写入 `usageCount/usagePeople/usageEventKeys` 累计桶，后续日志删除、日志过期、日志压缩、历史重建、缓存刷新、页面刷新和别名重算都不得把次数减小；只能在有新的真实成功调用、正向验证或明确真实执行事件时继续递增。
   - AI产物清单所有产物的 `调用次数` 只表示真实使用/执行/生成/正向验证累计：执行单真正进入终态并有 Skill/md/规范目标、直接执行完成、任务中心生成/复用/重新生成美术摘要、成员上报 `skill_called/tool_used/task_completed`、验证回填里出现 `可直接复用`、`部分可用`、`可用/可复用`、`建议复用`、`已完成实任务验证`、`实任务验证中` 等正向验证事件才计入；研究同步、只是在摘要/日志里提到产物名、负向验证、场景不匹配、不可用、资料不完整、待填写、待评估、待判断、领取 Worker、排队 Worker、运行中状态回传、取消、删除、登录、页面浏览和刷新库存不得计入。
+  - 成员本机 `codex-session-summary` 上报只允许作为辅助证据：只有 `calledArtifacts` / `matchedArtifacts` / 路径字段明确命中真实主产物，例如 `skills/<name>/SKILL.md` 或具体业务 md 文件时，才允许按 `skill_called`、`tool_used`、`task_completed` 计入调用次数；`research_artifact`、`research_summary`、`research_finding` 默认只算研究沉淀，不进入 `usageCount`。
+  - 成员上报里的 `AGENTS.md`、`README.md`、`MEMORY.md`、`references/` 子参考文件、`runs/` 任务资料、`资料.md`、`试用`、`md`、`文件`、`说明`、`规范`、`内容执行`、`快照执行`、`已读取`、`Untitled task`、runId/UUID 等泛词或技术值不得作为 AI 产物调用目标建桶，也不得自动回填为验证产物。
+  - `art-progress-events.json` 是短期成员上报证据文件，不是前端包体内容；接口默认只能返回最近轻量明细，不得把完整会话正文、长 `metadata`、大段 snippet 或 session 文件整包返回并写入浏览器缓存。头部汇总可用服务端全量短期明细计算，但 AI产物调用累计必须读取 `usage-counters.json`。
   - 任务中心 `生成摘要`、`复用摘要`、`重生成摘要` 属于工作台真实调用摘要产物，必须累计到 `zentao-art-brief-product`；操作日志只保留短期明细，旧日志被清理后不得把摘要产物已累计调用次数从旧累计值压低到短期日志条数。
   - 美术执行台里已经选择的 Skill、md 或规范文件，必须等 Worker 回传完成、阻塞、失败等终态且能确认实际执行目标后，才计入 AI产物清单调用次数；普通创建执行清单、刚排队、刚领取或运行中不计入调用次数。
   - `direct-skill` 直接执行到 Figma 创建后进入 Worker 队列，不得在创建时提前计数；必须按后续 Worker 终态回传或明确真实执行事件累计一次。
   - 执行调用次数累计必须读取 run 中的 `productName`、`sourceTitle`、`primarySkillPath`、`stage`、`selectedMaterialHints`、`materials`、`referenceItems` 等字段，命中产物名、展示名、文件名、路径和别名；不得只依赖操作日志标题。
   - `CREATE_RUN`、`START_RUN`、`RETRY_RUN`、`CLAIM_LOCAL_WORKER_RUN`、`QUEUE_RUN_LOCAL_WORKER`、`UPDATE_LOCAL_WORKER_RUN` 等操作日志只作为审计和状态线索，默认不得直接补成调用次数；只有结构化 `metadata.countAsSkillUsage === true` 或 `metadata.countAsProductUsage === true` 且不是显式 false 时，才允许作为真实调用补计数线索，并必须使用事件唯一键去重。
   - `usage-counters.json` 中 `count` 是混合证据总量，不等于调用次数；前端调用次数必须优先读取 `usageCount` 和 `usagePeople`，并用 `usageEventKeys` 对同一真实事件在产物名、路径、当前别名、历史别名、标题桶之间的重复命中去重。正向验证回填应作为 `usageCount` 事件写入，负向/待判断验证不得写入 `usageCount`；不得把 `count`、`researchSyncCount`、`validationCount` 或 `people` 当调用次数展示。
-  - `/api/usage-counters` 返回的累计桶必须带当前调用次数口径版本，例如 `logicVersion: usage-only-v4-summary-cumulative`；前端只允许恢复同口径版本的浏览器缓存，旧口径本地缓存必须丢弃并重新读取服务端，避免旧 `count` 或旧 `usageCount` 在刷新页面时回流。
+  - `/api/usage-counters` 返回的累计桶必须带当前调用次数口径版本，例如 `logicVersion: usage-only-v5-strong-evidence-compact`；前端只允许恢复同口径版本的浏览器缓存，旧口径本地缓存必须丢弃并重新读取服务端，避免旧 `count` 或旧 `usageCount` 在刷新页面时回流。
   - AI产物清单首屏快照不得作为调用次数和有效占比的事实来源；快照只保留行结构、版本、贡献人和质量分等展示兜底，展示调用次数时必须重新按当前 `usageCounters.usageCount/usagePeople/usageEventKeys` 装饰。无法命中新口径累计桶时只能显示 `0` 或作废横线，不得回退扫描缓存里的 `row.usageCount`、`skill.usageCount`、旧 `displayUsageCount` 或 `count`。
   - 成员调用明细只能在去重后的真实调用总数内分配；同一事件同时出现中文姓名、账号、别名、路径或多个桶时，只能绑定一个主使用人并累计一次，不得因成员字段重复或别名重叠把总次数放大。
   - 执行调用次数写入成功后必须广播 `usage-counters.changed`；客户端只刷新 `/api/usage-counters`，不得触发库存扫描、Git 拉取、本地路径读取或共享盘读取。

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   applyTaskRefreshResult,
   applySkillVersionOverrideRecordState,
+  artProgressEventCountsAsUsage,
   applyZentaoAssignResultToTasks,
   buildSkillInventoryStats,
   comparePermissionCatalogs,
@@ -13,6 +14,7 @@ import {
   shouldReplaceAiMembersBoardHtml,
   splitProjectDeletionSnapshot,
   splitRunsByArchiveDeleteFilters,
+  usageCounterBucketIsTechnical,
   usageCounterDisplayCountFromBucket
 } from './business-regression-rules.mjs';
 
@@ -293,6 +295,56 @@ function testUsageCounterRebuildNeverReducesRealUsage() {
   assert.equal(increased.usageCount, 13, '新的真实调用出现时允许在旧累计上增加');
 }
 
+function testArtProgressUsageRequiresStrongEvidence() {
+  assert.equal(
+    artProgressEventCountsAsUsage({
+      eventType: 'research_artifact',
+      metadata: {
+        source: 'codex-session-summary',
+        calledArtifacts: [{ path: 'skills/ui-finalize/SKILL.md' }]
+      }
+    }),
+    false,
+    '研究沉淀记录不得直接计入调用次数'
+  );
+  assert.equal(
+    artProgressEventCountsAsUsage({
+      eventType: 'tool_used',
+      metadata: {
+        source: 'codex-session-summary',
+        calledArtifacts: [
+          { path: 'AGENTS.md' },
+          { name: '试用' },
+          { name: 'md' }
+        ]
+      }
+    }),
+    false,
+    '会话摘要里的 AGENTS.md、试用、md 等泛词不得计入调用次数'
+  );
+  assert.equal(
+    artProgressEventCountsAsUsage({
+      eventType: 'tool_used',
+      metadata: {
+        source: 'codex-session-summary',
+        calledArtifacts: [{ path: 'skills/ui-finalize/SKILL.md' }]
+      }
+    }),
+    true,
+    '会话摘要里明确命中真实 Skill 路径时才允许计入调用次数'
+  );
+  assert.equal(
+    usageCounterBucketIsTechnical({ key: '50a20a8173fa40a8934c354e44f0be7a', target: '50a20a81-73fa-40a8-934c-354e44f0be7a' }),
+    true,
+    'runId/UUID 技术桶不得长期作为产物调用桶保留'
+  );
+  assert.equal(
+    usageCounterBucketIsTechnical({ key: 'uifinalize', target: 'skills/ui-finalize/SKILL.md' }),
+    false,
+    '真实 Skill/md 目标不能被技术桶清理规则误删'
+  );
+}
+
 function testPermissionCatalogsStayAligned() {
   const backend = ['menu.tasks', 'menu.skillList', 'api.operationLogs.delete'];
   const frontend = ['menu.tasks', 'menu.skillList', 'api.operationLogs.delete'];
@@ -318,6 +370,7 @@ testOperationLogDeleteDoesNotMutateUsageCounters();
 testOperationLogKeepsOnlyImportantActions();
 testTaskArtBriefUsageKeepsLegacyCumulativeCount();
 testUsageCounterRebuildNeverReducesRealUsage();
+testArtProgressUsageRequiresStrongEvidence();
 testPermissionCatalogsStayAligned();
 
 console.log(JSON.stringify({
@@ -335,6 +388,7 @@ console.log(JSON.stringify({
     '操作日志只保留关键动作',
     '任务中心摘要累计调用不被短期日志压低',
     '历史重建不得减少真实调用累计',
+    '成员上报调用必须有强证据且过滤技术桶',
     '权限目录前后端一致性'
   ]
 }, null, 2));
