@@ -4038,8 +4038,16 @@ function usageTargetsFromArtProgressEvent(event = {}) {
 function usageTargetsFromOperationLog(log = {}) {
   if (!isUsageLikeOperationLog(log)) return [];
   const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
+  if (isTaskArtBriefUsageOperationLog(log)) {
+    return buildUsageTargets(['zentao-art-brief-product'], {
+      person: cleanString(usageOwnersFromOperationLog(log)[0] || ''),
+      at: cleanString(log.createdAt),
+      source: 'operation-log',
+      kind: 'usage',
+      eventKey: usageEventKey('operation-log', log.id || log.targetId || log.targetName, log.createdAt)
+    });
+  }
   const values = [
-    isTaskArtBriefUsageOperationLog(log) ? 'zentao-art-brief-product' : '',
     log.targetName,
     log.targetId,
     metadata.productName,

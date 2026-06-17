@@ -9882,12 +9882,12 @@ export default {
     skillInventoryUsageStatsForList(row = {}) {
       const historical = this.usageCounterStatsForRow(row);
       const memberCounts = this.skillInventoryHistoricalUsageMemberCounts(historical, {
-        preferUsagePeople: this.isTaskArtBriefAssetRow(row)
+        usageOnly: true
       });
-      const hasHistorical = this.hasUsageCounterStats(historical);
       const currentLogs = this.skillUsageLogs(row);
       const currentUsageLogs = currentLogs.filter(item => this.skillUsageLogCountsAsCall(item));
-      const supplementalLogs = this.skillUsageSupplementalLogs(row, currentUsageLogs, hasHistorical, historical);
+      const hasUsageHistorical = this.hasUsageCounterUsageStats(historical);
+      const supplementalLogs = hasUsageHistorical ? [] : currentUsageLogs;
       supplementalLogs.forEach(item => {
         this.addSkillInventoryUsageMemberCount(memberCounts, item.person, 1);
       });
@@ -9975,10 +9975,10 @@ export default {
       const callLogs = usageLogs.filter(item => this.skillUsageLogCountsAsCall(item));
       const historical = this.usageCounterStatsForRow(row);
       const memberCounts = this.skillInventoryHistoricalUsageMemberCounts(historical, {
-        preferUsagePeople: this.isTaskArtBriefAssetRow(row)
+        usageOnly: true
       });
-      const hasHistorical = this.hasUsageCounterStats(historical);
-      const supplementalLogs = this.skillUsageSupplementalLogs(row, callLogs, hasHistorical, historical);
+      const hasUsageHistorical = this.hasUsageCounterUsageStats(historical);
+      const supplementalLogs = hasUsageHistorical ? [] : callLogs;
       supplementalLogs.forEach(item => {
         this.addSkillInventoryUsageMemberCount(memberCounts, item.person, 1);
       });
@@ -9995,6 +9995,11 @@ export default {
       return Number(stats.count || 0) > 0
         || Number(stats.usageCount || 0) > 0
         || Object.keys(stats.people || {}).length > 0
+        || Object.keys(stats.usagePeople || {}).length > 0;
+    },
+
+    hasUsageCounterUsageStats(stats = {}) {
+      return Number(stats.usageCount || 0) > 0
         || Object.keys(stats.usagePeople || {}).length > 0;
     },
 
@@ -10015,10 +10020,9 @@ export default {
 
     skillInventoryHistoricalUsageMemberCounts(stats = {}, options = {}) {
       const memberCounts = new Map();
-      const preferUsagePeople = options.preferUsagePeople === true;
       const usagePeople = stats.usagePeople && typeof stats.usagePeople === 'object' ? stats.usagePeople : {};
       const people = stats.people && typeof stats.people === 'object' ? stats.people : {};
-      const source = preferUsagePeople && Object.keys(usagePeople).length ? usagePeople : people;
+      const source = options.usageOnly === true ? usagePeople : (Object.keys(usagePeople).length ? usagePeople : people);
       Object.entries(source || {}).forEach(([person, count]) => {
         this.addSkillInventoryUsageMemberCount(memberCounts, person, count);
       });
@@ -13842,10 +13846,10 @@ export default {
       const logs = this.skillUsageLogs(row);
       const callLogs = logs.filter(item => this.skillUsageLogCountsAsCall(item));
       const historical = this.usageCounterStatsForRow(row);
-      const hasHistorical = this.hasUsageCounterStats(historical);
-      const supplementalLogs = this.skillUsageSupplementalLogs(row, callLogs, hasHistorical, historical);
+      const hasUsageHistorical = this.hasUsageCounterUsageStats(historical);
+      const supplementalLogs = hasUsageHistorical ? [] : callLogs;
       const memberCounts = this.skillInventoryHistoricalUsageMemberCounts(historical, {
-        preferUsagePeople: this.isTaskArtBriefAssetRow(row)
+        usageOnly: true
       });
       supplementalLogs.forEach(item => {
         this.addSkillInventoryUsageMemberCount(memberCounts, item.person, 1);
