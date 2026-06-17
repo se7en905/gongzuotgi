@@ -1603,12 +1603,19 @@ export default {
       if (this.isRunSourceDeleted(this.selectedRun)) return '来源已删除';
       if (this.isRunWaitingForLocalWorker(this.selectedRun)) return this.directSkillQueuedRunLabel(this.selectedRun);
       if (this.isRunInProgress(this.selectedRun)) return this.isLocalWorkerRun(this.selectedRun) ? '本机执行中' : '执行中';
-      if (this.canResumeRun(this.selectedRun)) return '继续执行';
+      if (this.canResumeRun(this.selectedRun)) return '我来继续执行';
       return this.hasRunExecuted(this.selectedRun) ? '再次执行' : '发起执行';
     },
 
     canRestartSelectedRun() {
       return Boolean(this.selectedRun && !this.isDirectSkillRun(this.selectedRun) && !this.isRunSourceDeleted(this.selectedRun) && !this.isRunInProgress(this.selectedRun) && this.hasRunExecuted(this.selectedRun));
+    },
+
+    canOriginalExecutorResumeSelectedRun() {
+      if (!this.selectedRun || !this.canResumeRun(this.selectedRun)) return false;
+      const originalUserId = this.originalRunExecutorUserId(this.selectedRun);
+      const currentUserId = String(this.currentUser?.id || '').trim();
+      return Boolean(originalUserId && originalUserId !== currentUserId);
     },
 
     runDiffPreviewTitle() {
@@ -17607,6 +17614,19 @@ export default {
       return /cancelled|canceled|blocked|failed/i.test(this.runDisplayStatusValue(run));
     },
 
+    originalRunExecutorUserId(run = null) {
+      if (!run) return '';
+      const currentUserId = String(this.currentUser?.id || '').trim();
+      const candidates = [
+        run.startedBy,
+        run.claimedByUserId,
+        run.queuedForUserId,
+        run.assignedToUserId,
+        run.ownerUserId
+      ].map(value => String(value || '').trim()).filter(Boolean);
+      return candidates.find(value => value && value !== currentUserId) || candidates[0] || '';
+    },
+
     isRunInProgress(run = null) {
       return /running|in_progress|claimed/i.test(this.runDisplayStatusValue(run));
     },
@@ -20648,10 +20668,27 @@ export default {
         ElMessage.info(this.directSkillQueuedRunDetail(this.selectedRun));
         return;
       }
-      return this.confirmStartRun('restart');
+      return this.createRestartRunFromSelected();
     },
 
-    async confirmStartRun(mode = 'start') {
+    resumeSelectedRunAsOriginalExecutor() {
+      if (!this.selectedRun) return;
+      if (this.isRunSourceDeleted(this.selectedRun)) {
+        ElMessage.warning('该执行记录的扫描来源已删除，只能查看、归档或删除，不能继续执行。');
+        return;
+      }
+      if (this.isRunInProgress(this.selectedRun)) {
+        ElMessage.info('当前任务正在执行中');
+        return;
+      }
+      if (this.isRunWaitingForLocalWorker(this.selectedRun)) {
+        ElMessage.info(this.directSkillQueuedRunDetail(this.selectedRun));
+        return;
+      }
+      return this.confirmStartRun('resume', { targetUserId: this.originalRunExecutorUserId(this.selectedRun), keepSelection: true });
+    },
+
+    async confirmStartRun(mode = 'start', options = {}) {
       if (!this.selectedRun) return;
       if (this.isRunSourceDeleted(this.selectedRun)) {
         this.startConfirm.visible = false;
@@ -20674,35 +20711,82 @@ export default {
       try {
         this.startConfirm.visible = false;
         const runId = sourceRun.id;
-        this.patchRun(runId, {
-          status: 'queued',
-          workerStatus: 'queued',
-          executionHost: 'local-worker',
+        const targetUserId = String(options.targetUserId || this.currentUser?.id || '').trim();
+        const targetUser = this.usersById.get(targetUserId) || {};
+        const targetUserName = targetUser.displayName || targetUser.username || targetUserId || '';
+        const isCurrentUserTarget = !targetUserId || targetUserId === String(this.currentUser?.id || '').trim();
+	        this.patchRun(runId, {
+	          status: 'queued',
+	          workerStatus: 'queued',
+	          executionHost: 'local-worker',
           workerExecution: true,
-          queuedForUserId: this.currentUser?.id || '',
-          queuedForName: this.currentUser?.displayName || this.currentUser?.username || '',
+          queuedForUserId: targetUserId,
+          queuedForName: targetUserName,
+          claimedByDeviceId: '',
+          claimedAt: '',
+          startedAt: '',
+          finishedAt: '',
+          completedAt: '',
           resultSummary: null,
+          workerResult: null,
           figmaWriteResult: null,
           changeSummary: null,
           exitCode: null,
+          pid: null,
+          workerLocalLogPath: '',
+          workerLocalLogSize: 0,
+          logPath: '',
+          promptPath: '',
+          artifactRoot: '',
+          stages: [],
           blocker: null,
           cancelledBy: ''
         });
-        const onlineWorker = this.currentUserOnlineWorker();
-        const waitingText = this.currentUserReadyWorker()
-          ? '已唤醒当前账号本机 Worker，正在领取...'
+        const onlineWorker = isCurrentUserTarget ? this.currentUserOnlineWorker() : this.directSkillWorkerForUser(targetUser);
+        const readyWorker = isCurrentUserTarget ? this.currentUserReadyWorker() : this.isDirectSkillWorkerReady(onlineWorker);
+        const targetLabel = isCurrentUserTarget ? '当前账号本机 Worker' : `${targetUserName || '原执行人'} 本机 Worker`;
+        const waitingText = readyWorker
+          ? `已唤醒${targetLabel}，正在领取...`
           : onlineWorker
-            ? `当前账号本机 Worker 在线，待自检通过后领取：${this.directSkillWorkerIssueText(onlineWorker)}`
-            : '当前账号本机 Worker 上线后自动领取...';
+            ? `${targetLabel}在线，待自检通过后领取：${this.directSkillWorkerIssueText(onlineWorker)}`
+            : `${targetLabel}上线后自动领取...`;
         this.logText = mode === 'resume' ? `继续执行已排队，${waitingText}` : `执行已排队，${waitingText}`;
         this.runLogCollapse = [];
         this.runLogDrawerVisible = false;
-        await this.api(`/api/runs/${encodeURIComponent(runId)}/start`, {
+        const queued = await this.api(`/api/runs/${encodeURIComponent(runId)}/start`, {
           method: 'POST',
-          body: JSON.stringify({ mode })
+          body: JSON.stringify({ mode, targetUserId })
         });
+        if (queued?.id) this.upsertRunInLocalState(queued, { select: options.keepSelection !== false });
         this.connectEvents(runId);
-        await this.refreshRuns();
+      } finally {
+        this.startConfirm.submitting = false;
+      }
+    },
+
+    async createRestartRunFromSelected() {
+      const sourceRun = this.selectedRun;
+      if (!sourceRun || this.startConfirm.submitting) return;
+      this.startConfirm.submitting = true;
+      try {
+        const retryRun = await this.api(`/api/runs/${encodeURIComponent(sourceRun.id)}/retry`, {
+          method: 'POST',
+          body: JSON.stringify({
+            title: sourceRun.title,
+            requirement: sourceRun.requirement,
+            figmaLinks: sourceRun.figmaLinks || '',
+            showdocHints: sourceRun.showdocHints || '',
+            targetPage: sourceRun.targetPage || '',
+            stage: sourceRun.stage || '',
+            codexRequest: sourceRun.codexRequest || {}
+          })
+        });
+        this.upsertRunInLocalState(retryRun, { select: true });
+        this.startConfirm.submitting = false;
+        await this.confirmStartRun('restart');
+        ElMessage.success('已新建一条重新执行记录，原失败记录已保留');
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || '重新执行创建失败');
       } finally {
         this.startConfirm.submitting = false;
       }

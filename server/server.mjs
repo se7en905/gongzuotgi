@@ -2374,9 +2374,26 @@ async function handleApi(req, res, url) {
       throw new HttpError(409, '直接执行任务只能由执行人本机 Worker 领取，不能在平台服务器启动。');
     }
     const startMode = ['resume', 'restart'].includes(String(body.mode || '').trim()) ? String(body.mode).trim() : 'start';
+    const requestedTargetUserId = String(body.targetUserId || '').trim();
+    const allowedTargetUserIds = [
+      currentUser.id,
+      run.startedBy,
+      run.claimedByUserId,
+      run.queuedForUserId,
+      run.assignedToUserId,
+      run.ownerUserId,
+      run.createdBy
+    ].map(value => String(value || '').trim()).filter(Boolean);
+    const targetUserId = requestedTargetUserId && allowedTargetUserIds.includes(requestedTargetUserId)
+      ? requestedTargetUserId
+      : currentUser.id;
+    const targetUser = targetUserId === currentUser.id
+      ? currentUser
+      : (await listPublicUsers()).find(user => String(user.id || '') === targetUserId) || {};
+    const targetUserName = targetUser.displayName || targetUser.username || targetUserId;
     const queued = await queueRunForLocalWorker(run.id, {
-      queuedForUserId: currentUser.id,
-      queuedForName: currentUser.displayName || currentUser.username || currentUser.id,
+      queuedForUserId: targetUserId,
+      queuedForName: targetUserName,
       startMode
     });
     await writeOperationLog(req, {
@@ -2389,8 +2406,8 @@ async function handleApi(req, res, url) {
       targetName: run.title,
       before: run,
       after: queued,
-      metadata: { executionHost: 'local-worker', queuedForUserId: currentUser.id, startMode },
-      description: `${currentUser.displayName || currentUser.username} 将执行「${run.title}」排队到本人本机 Worker`
+      metadata: { executionHost: 'local-worker', queuedForUserId: targetUserId, startMode },
+      description: `${currentUser.displayName || currentUser.username} 将执行「${run.title}」排队到${targetUserName || '执行人'}本机 Worker`
     });
     broadcastPlatformEvent('runs.changed', {
       projectId: project.id,
@@ -2426,8 +2443,11 @@ async function handleApi(req, res, url) {
       primarySkillContent: source.primarySkillContent,
       selectedMaterialHints: source.selectedMaterialHints,
       figmaWriteMode: source.figmaWriteMode,
-      assignedToUserId: source.assignedToUserId,
-      assignedToName: source.assignedToName,
+      assignedToUserId: currentUser.id,
+      assignedToName: currentUser.displayName || currentUser.username || currentUser.id,
+      queuedForUserId: currentUser.id,
+      queuedForName: currentUser.displayName || currentUser.username || currentUser.id,
+      developer: currentUser.displayName || currentUser.username || source.developer,
       codexRequest: body.codexRequest,
       createdBy: currentUser.id,
       ownerUserId: currentUser.id

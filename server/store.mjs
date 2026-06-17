@@ -687,34 +687,95 @@ export async function getOperationLog(id) {
 export async function createOperationLog(input = {}) {
   const log = normalizeOperationLog(input);
   const logs = await readJson(paths.operationLogs, []);
-  if (isDedupedOperationLog(log, logs)) return { ...log, _deduped: true };
-  logs.push(log);
+  if (isRecentDuplicateLoginOperationLog(log, logs)) return { ...log, _deduped: true };
   const maxLogs = Number(process.env.AWP_OPERATION_LOG_MAX_ROWS || 10000);
-  const nextLogs = logs
-    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
-    .slice(0, Number.isFinite(maxLogs) && maxLogs > 0 ? maxLogs : 10000);
+  const nextLogs = compactOperationLogList([...logs, log], { maxLogs });
   await writeJson(paths.operationLogs, nextLogs);
   return log;
 }
 
-function isDedupedOperationLog(log = {}, logs = []) {
-  if (log.action !== 'LOGIN' || log.result === 'fail') return false;
+export async function compactOperationLogs(options = {}) {
+  const logs = await readJson(paths.operationLogs, []);
+  const maxLogs = Number(options.maxLogs || process.env.AWP_OPERATION_LOG_MAX_ROWS || 10000);
+  const nextLogs = compactOperationLogList(logs, { maxLogs });
+  const changed = nextLogs.length !== logs.length || JSON.stringify(nextLogs.map(log => log.id)) !== JSON.stringify(logs.map(log => log.id));
+  if (changed) await writeJson(paths.operationLogs, nextLogs);
+  return {
+    before: logs.length,
+    after: nextLogs.length,
+    removed: Math.max(0, logs.length - nextLogs.length)
+  };
+}
+
+function isRecentDuplicateLoginOperationLog(log = {}, logs = []) {
+  if (log.action !== 'LOGIN') return false;
   const windowMs = Math.max(60 * 1000, Number(process.env.AWP_LOGIN_LOG_DEDUP_MS || 5 * 60 * 1000));
   const createdAt = Date.parse(log.createdAt || '');
   if (!createdAt) return false;
-  const userKey = cleanString(log.userId || log.username || log.targetId || log.targetName);
-  if (!userKey) return false;
-  const ip = cleanString(log.ip);
-  const userAgent = cleanString(log.userAgent);
+  const compactKey = operationLogCompactKey(log);
+  if (!compactKey) return false;
   return logs.some(item => {
-    if (item.action !== 'LOGIN' || item.result === 'fail') return false;
+    if (item.action !== 'LOGIN') return false;
     const itemTime = Date.parse(item.createdAt || '');
     if (!itemTime || Math.abs(createdAt - itemTime) > windowMs) return false;
-    const itemUserKey = cleanString(item.userId || item.username || item.targetId || item.targetName);
-    return itemUserKey === userKey
-      && cleanString(item.ip) === ip
-      && cleanString(item.userAgent) === userAgent;
+    return operationLogCompactKey(item) === compactKey;
   });
+}
+
+function compactOperationLogList(logs = [], options = {}) {
+  const maxLogs = Number.isFinite(Number(options.maxLogs)) && Number(options.maxLogs) > 0 ? Number(options.maxLogs) : 10000;
+  const latestByKey = new Map();
+  const standalone = [];
+  for (const rawLog of Array.isArray(logs) ? logs : []) {
+    const log = normalizeOperationLog(rawLog);
+    const key = operationLogCompactKey(log);
+    if (!key) {
+      standalone.push(log);
+      continue;
+    }
+    const previous = latestByKey.get(key);
+    if (!previous || compareOperationLogTime(log, previous) >= 0) latestByKey.set(key, log);
+  }
+  return [...standalone, ...latestByKey.values()]
+    .sort((a, b) => compareOperationLogTime(b, a))
+    .slice(0, maxLogs);
+}
+
+function operationLogCompactKey(log = {}) {
+  const action = cleanString(log.action);
+  const module = cleanString(log.module);
+  if (!action || !module) return '';
+  const result = cleanString(log.result || 'success');
+  const userKey = cleanString(log.userId || log.username || log.displayName);
+  if (!userKey) return '';
+  if (action === 'LOGIN') {
+    return [
+      module,
+      action,
+      result,
+      userKey,
+      cleanString(log.targetId || log.targetName || log.username),
+      cleanString(log.ip),
+      cleanString(log.userAgent)
+    ].join('|');
+  }
+  const targetKey = cleanString(log.targetId || log.targetName);
+  if (!targetKey) return '';
+  return [
+    module,
+    action,
+    result,
+    userKey,
+    cleanString(log.targetType),
+    targetKey
+  ].join('|');
+}
+
+function compareOperationLogTime(left = {}, right = {}) {
+  const leftTime = Date.parse(left.createdAt || '') || 0;
+  const rightTime = Date.parse(right.createdAt || '') || 0;
+  if (leftTime !== rightTime) return leftTime - rightTime;
+  return cleanString(left.id).localeCompare(cleanString(right.id));
 }
 
 export async function deleteOperationLog(id) {
@@ -817,6 +878,7 @@ export async function recordUsageCountersForSkillValidation(record = {}) {
 }
 
 export async function recordUsageCountersForOperationLog(log = {}) {
+  if (log?._deduped === true) return;
   const targets = usageTargetsFromOperationLog(log);
   if (targets.length) await updateUsageCounters(targets);
 }
@@ -1072,12 +1134,13 @@ export async function claimNextAgentRun(input = {}) {
   const now = new Date().toISOString();
   const candidateIndex = runs.findIndex(run => isClaimableAgentRun(run, userId, { allowedProjectIds, canAccessAllProjects }));
   if (candidateIndex === -1) return null;
+  const baseRun = normalizeActiveLocalWorkerRun(runs[candidateIndex], 'claimed');
   const run = {
-    ...runs[candidateIndex],
+    ...baseRun,
     status: 'claimed',
     workerStatus: 'claimed',
-    assignedToUserId: runs[candidateIndex].assignedToUserId || userId,
-    queuedForUserId: runs[candidateIndex].queuedForUserId || userId,
+    assignedToUserId: baseRun.assignedToUserId || userId,
+    queuedForUserId: baseRun.queuedForUserId || userId,
     claimedByDeviceId: deviceId,
     claimedAt: now,
     startedBy: userId,
@@ -1109,7 +1172,9 @@ export async function claimRecoverableAgentRun(input = {}) {
   const nextClaimedAt = existing.claimedAt || now;
   const nextStartedBy = existing.startedBy || userId;
   const nextQueuedForUserId = existing.queuedForUserId || userId;
-  const statusUnchanged = existing.status === nextStatus
+  const normalizedExisting = normalizeActiveLocalWorkerRun(existing, nextStatus);
+  const statusUnchanged = stableWorkerRunValue(existing) === stableWorkerRunValue(normalizedExisting)
+    && existing.status === nextStatus
     && existing.workerStatus === nextStatus
     && existing.claimedByDeviceId === nextClaimedByDeviceId
     && existing.claimedAt === nextClaimedAt
@@ -1126,10 +1191,10 @@ export async function claimRecoverableAgentRun(input = {}) {
     };
   }
   const run = {
-    ...existing,
+    ...normalizedExisting,
     status: nextStatus,
     workerStatus: nextStatus,
-    assignedToUserId: existing.assignedToUserId || userId,
+    assignedToUserId: normalizedExisting.assignedToUserId || userId,
     queuedForUserId: nextQueuedForUserId,
     claimedByDeviceId: nextClaimedByDeviceId,
     claimedAt: nextClaimedAt,
@@ -1160,18 +1225,22 @@ export async function updateAgentRunFromWorker(runId, input = {}) {
       _changed: false
     };
   }
-  const timingPatch = normalizeWorkerTimingPatch(input, existing);
-  const nextStatus = resolveWorkerRunStatusTransition(existing, input.status || input.workerStatus || existing.status);
+  const incomingStatus = input.status || input.workerStatus || existing.status;
+  const activeExisting = isFinalWorkerRunStatus(incomingStatus)
+    ? existing
+    : normalizeActiveLocalWorkerRun(existing, normalizeWorkerRunStatus(incomingStatus || existing.status || 'running'));
+  const timingPatch = normalizeWorkerTimingPatch(input, activeExisting);
+  const nextStatus = resolveWorkerRunStatusTransition(activeExisting, incomingStatus);
   const patch = {
     workerStatus: nextStatus,
     status: nextStatus,
-    currentStage: input.currentStage ?? existing.currentStage,
-    blocker: input.blocker ?? existing.blocker,
-    resultSummary: input.resultSummary ?? existing.resultSummary,
-    exitCode: input.exitCode ?? existing.exitCode,
-    finishedAt: input.finishedAt || timingPatch.finishedAt || (/completed|blocked|failed|cancelled/.test(String(input.status || input.workerStatus || '')) ? now : existing.finishedAt),
-    workerResult: input.workerResult ?? existing.workerResult,
-    figmaWriteResult: input.figmaWriteResult ?? existing.figmaWriteResult,
+    currentStage: input.currentStage ?? activeExisting.currentStage,
+    blocker: input.blocker ?? activeExisting.blocker,
+    resultSummary: input.resultSummary ?? activeExisting.resultSummary,
+    exitCode: input.exitCode ?? activeExisting.exitCode,
+    finishedAt: input.finishedAt || timingPatch.finishedAt || (/completed|blocked|failed|cancelled/.test(String(input.status || input.workerStatus || '')) ? now : activeExisting.finishedAt),
+    workerResult: input.workerResult ?? activeExisting.workerResult,
+    figmaWriteResult: input.figmaWriteResult ?? activeExisting.figmaWriteResult,
     updatedAt: now,
     ...timingPatch
   };
@@ -1185,7 +1254,7 @@ export async function updateAgentRunFromWorker(runId, input = {}) {
   if (workerLocalLogPath) patch.workerLocalLogPath = workerLocalLogPath;
   const workerLocalLogSize = Number(input.workerLocalLogSize ?? input.workerResult?.localLogSize);
   if (Number.isFinite(workerLocalLogSize) && workerLocalLogSize >= 0) patch.workerLocalLogSize = workerLocalLogSize;
-  const nextRun = guardFigmaWriteCompletion({ ...existing, ...patch });
+  const nextRun = guardFigmaWriteCompletion({ ...activeExisting, ...patch });
   if (!hasWorkerRunMaterialChange(existing, nextRun)) {
     const hydrated = await hydrateRunStages(existing);
     return {
@@ -1232,6 +1301,7 @@ export async function applyAgentRunEvents(runId, input = {}) {
   const now = new Date().toISOString();
   for (const chunk of logChunks) await appendRunLog(runId, chunk);
   if (logChunks.length) await ensureRunLogPath(runId);
+  next = normalizeActiveLocalWorkerRun(next, next.status || next.workerStatus);
   const hasRunEventMaterial = hasWorkerRunMaterialChange(existing, next);
   const nextEventIds = hasRunEventMaterial ? [...knownIds].slice(-500) : (Array.isArray(existing.workerEventIds) ? existing.workerEventIds : []);
   const eventIdsChanged = stableWorkerRunValue(existing.workerEventIds || []) !== stableWorkerRunValue(nextEventIds);
@@ -1323,15 +1393,25 @@ export async function queueRunForLocalWorker(id, input = {}) {
     claimedByDeviceId: '',
     claimedAt: '',
     startedBy: queuedForUserId || existing.startedBy || '',
+    startedAt: '',
+    finishedAt: '',
+    completedAt: '',
     startMode: input.startMode || existing.startMode || 'start',
     currentStage: '正在启动本机执行',
     primarySkillContent: existing.primarySkillContent || materialSnapshot,
     blocker: null,
     resultSummary: null,
+    workerResult: null,
     figmaWriteResult: null,
     strictCheck: null,
     exitCode: null,
     pid: null,
+    workerLocalLogPath: '',
+    workerLocalLogSize: 0,
+    logPath: '',
+    promptPath: '',
+    artifactRoot: '',
+    stages: [],
     updatedAt: now
   };
   await writeJson(paths.runs, runs);

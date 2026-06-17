@@ -16,7 +16,8 @@
     "test:regression": "node server/regression.mjs",
     "db:sync": "node scripts/sync-json-to-mysql.mjs",
     "audit:cleanup": "node scripts/audit-cleanup-candidates.mjs",
-    "maintenance:safe-clean": "node scripts/cleanup-safe-maintenance.mjs"
+    "maintenance:safe-clean": "node scripts/cleanup-safe-maintenance.mjs",
+    "maintenance:compact-logs": "node scripts/compact-operation-logs.mjs"
   },
   "engines": {
     "node": ">=20"
