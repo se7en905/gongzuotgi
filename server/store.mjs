@@ -878,15 +878,16 @@ export async function recordUsageCountersForSkillValidation(record = {}) {
 }
 
 export async function recordUsageCountersForOperationLog(log = {}) {
-  if (log?._deduped === true) return;
+  if (log?._deduped === true) return { matched: 0 };
   const targets = usageTargetsFromOperationLog(log);
-  if (targets.length) await updateUsageCounters(targets);
+  if (!targets.length) return { matched: 0 };
+  return await updateUsageCounters(targets);
 }
 
 export async function recordUsageCountersForRun(run = {}, options = {}) {
   const targets = usageTargetsFromRun(run, options);
-  if (targets.length) await updateUsageCounters(targets);
-  return { matched: targets.length };
+  if (!targets.length) return { matched: 0 };
+  return await updateUsageCounters(targets);
 }
 
 export async function recordUsageCountersForDirectSkillRun(run = {}) {
@@ -3920,15 +3921,17 @@ async function accumulateUsageCountersFromExpiredRecords(file, records = []) {
 
 async function updateUsageCounters(targets = []) {
   const normalizedTargets = normalizeUsageTargets(targets);
-  if (!normalizedTargets.length) return;
+  if (!normalizedTargets.length) return { matched: 0 };
   const counters = await getUsageCounters();
   const now = new Date().toISOString();
+  let matched = 0;
   for (const target of normalizedTargets) {
     const key = usageCounterKey(target.key || target.target);
     if (!key) continue;
     const bucket = normalizeUsageCounterBucket(counters.buckets[key] || { key, target: target.target }, key);
     const eventKey = cleanString(target.eventKey);
     if (eventKey && bucket.eventKeys.includes(eventKey)) continue;
+    matched += 1;
     bucket.target = bucket.target || target.target || key;
     bucket.aliases = [
       ...(Array.isArray(bucket.aliases) ? bucket.aliases : []),
@@ -3963,8 +3966,11 @@ async function updateUsageCounters(targets = []) {
     bucket.updatedAt = now;
     counters.buckets[key] = bucket;
   }
-  counters.updatedAt = now;
-  await writeJson(paths.usageCounters, counters, { skipRetention: true });
+  if (matched > 0) {
+    counters.updatedAt = now;
+    await writeJson(paths.usageCounters, counters, { skipRetention: true });
+  }
+  return { matched };
 }
 
 function usageTargetsFromRecord(file, record = {}) {
@@ -4032,8 +4038,21 @@ function usageTargetsFromArtProgressEvent(event = {}) {
 function usageTargetsFromOperationLog(log = {}) {
   if (!isUsageLikeOperationLog(log)) return [];
   const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
+  const taskArtBriefTargets = isTaskArtBriefUsageOperationLog(log)
+    ? [
+        'zentao-art-brief-product',
+        'zentao-art-brief',
+        '禅道摘取美术摘要',
+        '禅道提取美术任务摘要',
+        '禅道美术摘要',
+        '美术任务摘要',
+        '生成美术摘要',
+        '生成摘要',
+        '美术摘要'
+      ]
+    : [];
   const values = [
-    isTaskArtBriefUsageOperationLog(log) ? 'zentao-art-brief-product' : '',
+    ...taskArtBriefTargets,
     log.targetName,
     log.targetId,
     metadata.productName,

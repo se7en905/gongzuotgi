@@ -2589,11 +2589,18 @@ async function writeOperationLog(req, input = {}) {
       userAgent: req.headers['user-agent'] || '',
       requestId: req.headers['x-request-id'] || ''
     });
-    await recordUsageCountersForOperationLog(log).catch(error => {
+    const usagePatch = await recordUsageCountersForOperationLog(log).catch(error => {
       console.error(`Usage counter operation log update failed: ${error.message}`);
+      return null;
     });
     if (input.broadcast !== false && log?._deduped !== true) {
       broadcastPlatformEvent('operation-logs.changed', { module: input.module || 'operation-log' });
+      broadcastUsageCountersChanged(usagePatch, {
+        module: input.module || 'operation-log',
+        targetType: input.targetType || '',
+        targetId: input.targetId || '',
+        action: input.action || ''
+      });
     }
     return log;
   } catch (error) {

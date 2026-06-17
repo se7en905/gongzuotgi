@@ -1070,7 +1070,7 @@ export default {
     skillInventoryFirstPageSnapshotRows() {
       const snapshot = this.skillInventoryFirstPageSnapshot;
       return Array.isArray(snapshot?.rows)
-        ? snapshot.rows.map(row => this.skillInventorySnapshotRowWithVersionOverride(row))
+        ? snapshot.rows.map(row => this.skillInventorySnapshotRowWithLiveStats(this.skillInventorySnapshotRowWithVersionOverride(row)))
         : [];
     },
 
@@ -4838,6 +4838,28 @@ export default {
         ...row,
         displayVersionLabel: label,
         displayVersionClass: this.skillVersionClass(label)
+      };
+    },
+
+    skillInventorySnapshotRowWithLiveStats(row = {}) {
+      if (!row || row.hidden === true) return row;
+      const liveRow = this.skillInventoryRows.find(item => {
+        const leftKey = this.skillInventoryDedupeKey(item);
+        const rightKey = this.skillInventoryDedupeKey(row);
+        if (leftKey && rightKey && leftKey === rightKey) return true;
+        const leftUid = String(item.uid || item.id || '').trim();
+        const rightUid = String(row.uid || row.id || '').trim();
+        return Boolean(leftUid && rightUid && leftUid === rightUid);
+      });
+      if (!liveRow) return row;
+      const decorated = this.safeDecorateSkillInventoryDisplayRow(liveRow);
+      return {
+        ...row,
+        displayUsageCount: decorated.displayUsageCount ?? row.displayUsageCount,
+        displayUsageRate: decorated.displayUsageRate ?? row.displayUsageRate,
+        displayQualityScore: decorated.displayQualityScore ?? row.displayQualityScore,
+        displayQualityClass: decorated.displayQualityClass || row.displayQualityClass,
+        displayQualityText: decorated.displayQualityText || row.displayQualityText
       };
     },
 
@@ -9755,14 +9777,18 @@ export default {
 
     skillInventoryCachedUsageCountDisplay(row = {}) {
       if (row.hidden === true) return '-';
+      const liveUsage = this.skillInventoryUsageStatsForList(row);
+      if (Number(liveUsage.usageCount || 0) > 0) return Number(liveUsage.usageCount || 0);
       const value = Number(row.usageCount ?? row.skill?.usageCount);
       if (Number.isFinite(value)) return value;
-      return Number(this.skillInventoryUsageStatsForList(row).usageCount || 0);
+      return Number(liveUsage.usageCount || 0);
     },
 
     skillInventoryCachedUsageRateDisplay(row = {}) {
       if (row.hidden === true) return '-';
       if (this.isOwnerYushengwei(row)) return '-';
+      const liveUsage = this.skillInventoryUsageStatsForList(row);
+      if (Number(liveUsage.usageCount || 0) > 0) return `${Number(liveUsage.rate || 0)}%`;
       const value = Number(row.usageRate ?? row.skill?.usageRate);
       if (Number.isFinite(value)) return `${value}%`;
       return this.skillUsageRateDisplay(row);
@@ -10018,7 +10044,7 @@ export default {
       const buckets = this.usageCounters?.buckets || {};
       if (!buckets || typeof buckets !== 'object') return { count: 0, people: {}, usagePeople: {}, usageCount: 0, validationCount: 0, researchSyncCount: 0, bucketCount: 0 };
       const keys = this.usageRowExplicitTargetKeys(row);
-      if (this.isTaskArtBriefAssetRow(row)) keys.push('zentaoartbriefproduct');
+      if (this.isTaskArtBriefAssetRow(row)) keys.push(...this.taskArtBriefUsageCounterKeys());
       const fuzzyKeys = this.usageRowFuzzyTargetKeys(row);
       const connectedAt = this.skillInventoryRowConnectedAt(row);
       const seen = new Set();
@@ -10230,7 +10256,7 @@ export default {
       const buckets = this.usageCounters?.buckets || {};
       if (!buckets || typeof buckets !== 'object') return new Set();
       const keys = this.usageRowExplicitTargetKeys(row);
-      if (this.isTaskArtBriefAssetRow(row)) keys.push('zentaoartbriefproduct');
+      if (this.isTaskArtBriefAssetRow(row)) keys.push(...this.taskArtBriefUsageCounterKeys());
       const fuzzyKeys = this.usageRowFuzzyTargetKeys(row);
       const seen = new Set();
       const eventKeys = new Set();
@@ -10497,20 +10523,31 @@ export default {
 
     isTaskArtBriefProductName(value = '') {
       const text = String(value || '').trim();
-      return /zentao[-_ ]?art[-_ ]?brief|禅道提取美术任务摘要|禅道美术摘要|禅道美术简报|美术任务摘要|美术摘要|美术简报/i.test(text);
+      return /zentao[-_ ]?art[-_ ]?brief|禅道摘取美术摘要|禅道提取美术任务摘要|禅道美术摘要|禅道美术简报|美术任务摘要|美术摘要|美术简报|生成美术摘要|生成摘要/i.test(text);
     },
 
     taskArtBriefProductAliases(value = '') {
       return this.normalizeSkillAliasList([
         value,
+        '禅道摘取美术摘要',
         '禅道提取美术任务摘要',
         '美术任务摘要',
         '禅道美术摘要',
+        '美术摘要',
         '生成美术摘要',
+        '生成摘要',
         '重新生成美术摘要',
         '复用禅道美术摘要',
-        'zentao-art-brief'
+        'zentao-art-brief',
+        'zentao-art-brief-product'
       ]);
+    },
+
+    taskArtBriefUsageCounterKeys() {
+      return this.taskArtBriefProductAliases('禅道摘取美术摘要')
+        .map(value => this.usageCounterKeyForProduct(value))
+        .filter(value => value && value.length >= 4 && !this.isGenericUsageNeedle(value))
+        .filter((value, index, array) => array.indexOf(value) === index);
     },
 
     isPositiveSkillUsageRecord(record = {}) {
