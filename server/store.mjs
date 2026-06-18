@@ -628,7 +628,7 @@ export async function listOperationLogs(filters = {}) {
   let total = 0;
   for (const log of logs) {
     if (!operationLogMatchesFilters(log, filters, { keyword, from, to, actions })) continue;
-    if (total >= start && items.length < pageSize) items.push(log);
+    if (total >= start && items.length < pageSize) items.push(displayOperationLog(log));
     total += 1;
   }
   return {
@@ -663,6 +663,8 @@ function operationLogMatchesFilters(log = {}, filters = {}, prepared = {}) {
   }
   const keyword = prepared.keyword || '';
   if (keyword) {
+    const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
+    const after = log.after && typeof log.after === 'object' ? log.after : {};
     const haystack = [
       log.username,
       log.displayName,
@@ -672,6 +674,17 @@ function operationLogMatchesFilters(log = {}, filters = {}, prepared = {}) {
       log.targetType,
       log.targetId,
       log.targetName,
+      operationLogDisplayTargetName(log),
+      after.artifactName,
+      after.researchName,
+      after.artifactLocation,
+      metadata.productName,
+      metadata.artifactName,
+      metadata.skillName,
+      metadata.path,
+      metadata.filePath,
+      metadata.skillPath,
+      metadata.artifactPath,
       log.description,
       log.errorMessage,
       log.ip
@@ -686,7 +699,7 @@ export async function getOperationLog(id) {
   if (!logId) return null;
   const logs = await readJson(paths.operationLogs, []);
   const log = logs.find(item => String(item.id) === logId);
-  return log ? normalizeOperationLog(log) : null;
+  return log ? displayOperationLog(log) : null;
 }
 
 export async function createOperationLog(input = {}) {
@@ -977,6 +990,13 @@ export async function recordUsageCountersForArtProgressEvent(record = {}) {
 
 export async function recordUsageCountersForSkillValidation(record = {}) {
   const targets = usageTargetsFromSkillValidation(record);
+  if (!targets.length) return { matched: 0 };
+  return await updateUsageCounters(targets);
+}
+
+export async function recordUsageCountersForSkillValidationOperationLog(log = {}) {
+  const inventory = await usageInventoryIdentity();
+  const targets = usageTargetsFromSkillValidationOperationLog(log, inventory);
   if (!targets.length) return { matched: 0 };
   return await updateUsageCounters(targets);
 }
@@ -3278,6 +3298,58 @@ function normalizeOperationLog(input = {}) {
   };
 }
 
+function displayOperationLog(input = {}) {
+  const log = normalizeOperationLog(input);
+  const targetName = operationLogDisplayTargetName(log);
+  if (!targetName || targetName === log.targetName) return log;
+  return {
+    ...log,
+    targetName,
+    description: rewriteOperationLogDescriptionTarget(log.description, log.targetName, targetName)
+  };
+}
+
+function rewriteOperationLogDescriptionTarget(description = '', previousTarget = '', nextTarget = '') {
+  const text = cleanString(description);
+  const previous = cleanString(previousTarget);
+  const next = cleanString(nextTarget);
+  if (!text || !previous || !next || previous === next) return text;
+  if (text.includes(`「${previous}」`)) return text.replace(`「${previous}」`, `「${next}」`);
+  return text;
+}
+
+function operationLogDisplayTargetName(log = {}) {
+  if (!isSkillValidationOperationLog(log)) return cleanString(log.targetName);
+  return preferredSkillValidationUsageTarget(log.after) || cleanString(log.targetName);
+}
+
+function preferredSkillValidationUsageTarget(record = {}) {
+  const values = [
+    ...skillValidationEmbeddedArtifactTargets(record.researchName),
+    ...skillValidationEmbeddedArtifactTargets(record.artifactName),
+    ...skillValidationEmbeddedArtifactTargets(record.artifactLocation),
+    record.artifactLocation,
+    record.artifactName,
+    record.researchName,
+    record.sourceRef
+  ].map(cleanString).filter(Boolean);
+  const preferred = values.find(value => /(^|\/)SKILL\.md(?:$|[?#])/i.test(value))
+    || values.find(value => /(^|\/)skills?\//i.test(value))
+    || values.find(value => /\.(md|markdown)$/i.test(value) && !/(^|\/)(?:AGENTS|README|MEMORY)\.md$/i.test(value))
+    || values.find(value => usageCounterKey(value));
+  return usageTargetDisplayName(preferred);
+}
+
+function usageTargetDisplayName(value = '') {
+  const text = cleanString(value).replace(/\\/g, '/').replace(/[?#].*$/, '');
+  if (!text) return '';
+  const parts = text.split('/').filter(Boolean);
+  const last = parts[parts.length - 1] || text;
+  if (/^SKILL\.md$/i.test(last) && parts.length > 1) return parts[parts.length - 2];
+  if (/^(AGENTS|README|MEMORY)\.md$/i.test(last) && parts.length <= 1) return '';
+  return cleanUsageTargetLabel(last.replace(/\.(md|markdown)$/i, ''));
+}
+
 function compactOperationLogPayload(value, action = '') {
   if (!shouldCompactOperationPayload(action)) return value;
   return compactSyncPayload(value);
@@ -4232,6 +4304,25 @@ function usageBucketMatchesInventory(bucket = {}, inventoryIdentity = {}) {
   });
 }
 
+let usageInventoryMatcherCache = null;
+
+function targetMatchesUsageInventory(value = '', inventoryIdentity = null) {
+  const inventory = inventoryIdentity || usageInventoryIdentityCache;
+  const signature = inventory?.signature || '';
+  if (!usageInventoryMatcherCache || usageInventoryMatcherCache.signature !== signature) {
+    usageInventoryMatcherCache = {
+      signature,
+      keys: inventory?.keys instanceof Set ? inventory.keys : new Set([taskArtBriefUsageCounterKey]),
+      texts: inventory?.texts instanceof Set ? inventory.texts : new Set(['zentao-art-brief-product'])
+    };
+  }
+  return usageBucketMatchesInventory({
+    key: usageCounterKey(value),
+    target: value,
+    aliases: [value]
+  }, usageInventoryMatcherCache);
+}
+
 function isNonInventoryUsageCounterBucket(bucket = {}, inventoryIdentity = {}) {
   if (!bucket?.key || bucket.key === taskArtBriefUsageCounterKey) return false;
   if (usageBucketMatchesInventory(bucket, inventoryIdentity)) return false;
@@ -4428,11 +4519,17 @@ async function historicalUsageBucketRebuildMap(inventoryIdentity = null) {
   }
 
   for (const log of Array.isArray(operationLogs) ? operationLogs : []) {
-    if (!isHistoricalUsageOperationLog(log)) continue;
     const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
     const at = cleanString(log.createdAt || log.updatedAt);
     const owners = usageOwnersFromOperationLog(log);
     const eventKey = usageEventKey('operation-log', log.id || log.targetId || log.targetName, at);
+    if (isSkillValidationOperationLog(log)) {
+      for (const target of usageTargetsFromSkillValidationOperationLog(log, inventory)) {
+        addTarget(target.target, [target.person, ...owners], target.eventKey || eventKey, at, 'operation-log');
+      }
+      continue;
+    }
+    if (!isHistoricalUsageOperationLog(log)) continue;
     if (isTaskArtBriefUsageOperationLog(log)) {
       addTarget('zentao-art-brief-product', owners, eventKey, at, 'task-art-brief');
       continue;
@@ -4562,7 +4659,7 @@ async function historicalUsageEventSources() {
   ]);
   usageCounterSourceCache = {
     artProgressEvents: (Array.isArray(artProgressEvents) ? artProgressEvents : []).filter(isUsageCountableArtProgressEvent),
-    operationLogs: (Array.isArray(operationLogs) ? operationLogs : []).filter(isHistoricalUsageOperationLog),
+    operationLogs: (Array.isArray(operationLogs) ? operationLogs : []).filter(log => isHistoricalUsageOperationLog(log) || isSkillValidationOperationLog(log)),
     runs: (Array.isArray(runs) ? runs : []).filter(isUsageLikeRun),
     skillValidations: storedSkillValidationRows(validations).filter(isPositiveSkillValidationUsage)
   };
@@ -4588,6 +4685,17 @@ function isHistoricalUsageOperationLog(log = {}) {
     'REGENERATE_ZENTAO_ART_BRIEF'
   ].includes(action)) return true;
   return metadata.countAsSkillUsage === true || metadata.countAsProductUsage === true;
+}
+
+function isSkillValidationOperationLog(log = {}) {
+  if (!log || typeof log !== 'object') return false;
+  if (cleanString(log.result).toLowerCase() === 'fail') return false;
+  const action = cleanString(log.action);
+  return [
+    'AUTO_UPSERT_SKILL_VALIDATION',
+    'UPSERT_SKILL_VALIDATION',
+    'BACKFILL_SKILL_VALIDATION'
+  ].includes(action);
 }
 
 function bucketUsageTargetValues(bucket = {}) {
@@ -4913,7 +5021,10 @@ function isUsageProxyPerson(person = '') {
   return samePersonName(text, '研究同步助手')
     || samePersonName(text, '同步助手')
     || samePersonName(text, '系统同步助手')
-    || text === 'art-progress-sync';
+    || text === 'art-progress-sync'
+    || text === 'art-progress-reporter'
+    || text === 'member-art-reporter'
+    || text === 'art-workbench-sync-reporter';
 }
 
 function usageOwnersFromOperationLog(log = {}) {
@@ -5062,6 +5173,57 @@ function usageTargetsFromSkillValidation(record = {}) {
   });
 }
 
+function usageTargetsFromSkillValidationOperationLog(log = {}, inventoryIdentity = null) {
+  if (!isSkillValidationOperationLog(log)) return [];
+  const record = log.after && typeof log.after === 'object' ? log.after : {};
+  if (!isPositiveSkillValidationUsage(record)) return [];
+  const values = skillValidationOperationLogTargetValues(log);
+  if (!values.length) return [];
+  return buildUsageTargets(values, {
+    person: usageOwnersFromSkillValidation(record)[0] || usageOwnersFromOperationLog(log)[0] || '',
+    at: skillValidationUsageAt(record) || cleanString(log.createdAt || log.updatedAt),
+    source: 'operation-log',
+    kind: 'usage',
+    eventKey: skillValidationUsageEventKey(record)
+  }).filter(target => targetMatchesUsageInventory(target.target, inventoryIdentity));
+}
+
+function skillValidationOperationLogTargetValues(log = {}) {
+  const record = log.after && typeof log.after === 'object' ? log.after : {};
+  const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
+  return [
+    log.targetName,
+    metadata.productName,
+    metadata.artifactName,
+    metadata.skillName,
+    metadata.alias,
+    metadata.path,
+    metadata.filePath,
+    metadata.skillPath,
+    metadata.artifactPath,
+    ...(Array.isArray(metadata.aliases) ? metadata.aliases : []),
+    ...(Array.isArray(metadata.artifactNames) ? metadata.artifactNames : []),
+    ...(Array.isArray(metadata.artifactPaths) ? metadata.artifactPaths : []),
+    ...skillValidationUsageTargets(record),
+    ...skillValidationEmbeddedArtifactTargets(record.researchName),
+    ...skillValidationEmbeddedArtifactTargets(record.artifactName),
+    ...skillValidationEmbeddedArtifactTargets(log.targetName)
+  ]
+    .map(cleanString)
+    .filter(Boolean)
+    .filter((value, index, array) => array.findIndex(item => usageCounterKey(item) === usageCounterKey(value)) === index);
+}
+
+function skillValidationEmbeddedArtifactTargets(value = '') {
+  const text = cleanString(value).replace(/\\/g, '/');
+  if (!text) return [];
+  const matches = [
+    ...text.matchAll(/(?:^|[\s"'「『【《(\[])([^"'「『【《)\]\s，,。；;、]*skills?\/[^"'「『【《)\]\s，,。；;、]+\/SKILL\.md)(?=$|[\s"'」』】》)\]，,。；;、])/ig),
+    ...text.matchAll(/(?:^|[\s"'「『【《(\[])([^"'「『【《)\]\s，,。；;、]+\.md)(?=$|[\s"'」』】》)\]，,。；;、])/ig)
+  ].map(match => cleanString(match[1]).replace(/^[#\[]+|[\]]+$/g, ''));
+  return matches.filter(Boolean);
+}
+
 function skillValidationUsageTargets(record = {}) {
   return [
     record.artifactName,
@@ -5144,6 +5306,7 @@ function usageTargetsFromArtProgressEvent(event = {}) {
 }
 
 function usageTargetsFromOperationLog(log = {}) {
+  if (isSkillValidationOperationLog(log)) return usageTargetsFromSkillValidationOperationLog(log);
   if (!isUsageLikeOperationLog(log)) return [];
   const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
   if (isTaskArtBriefUsageOperationLog(log)) {
@@ -5417,8 +5580,6 @@ function isNonUsageOperationLog(log = {}) {
     'UPSERT_TASK_CENTER_CONFIG',
     'UPDATE_AGENT_WORKER_ALIAS',
     'REPORT_ART_PROGRESS',
-    'AUTO_UPSERT_SKILL_VALIDATION',
-    'UPSERT_SKILL_VALIDATION',
     'UPDATE_SKILL_VALIDATION',
     'TRIGGER_ZENTAO_TASK_SYNC',
     'TRIGGER_ZENTAO_TASK_SYNC_ONLY',

@@ -9,8 +9,8 @@
     <span>正在检查登录状态...</span>
   </div>
 
-  <ElContainer v-else class="app-shell" :class="{ collapsed: isSidebarCollapsed }" :data-theme="theme">
-    <ElAside class="side-nav" :width="isSidebarCollapsed ? '82px' : '236px'">
+  <ElContainer v-else class="app-shell" :data-theme="theme">
+    <ElAside class="side-nav" width="236px">
       <div class="side-head">
         <button type="button" class="brand" @click="switchView('tasks')" aria-label="回到任务中心">
           <div class="brand-mark" aria-hidden="true">
@@ -19,16 +19,9 @@
           </div>
           <div>
             <strong>美术部工作台</strong>
-            <span>禅道任务实时看板</span>
+            <span>美术生产与AI协作中枢</span>
           </div>
         </button>
-        <ElTooltip :content="isSidebarCollapsed ? '展开侧栏' : '收起侧栏'" placement="right">
-          <button type="button" class="side-collapse-button" data-testid="sidebar-toggle" @click="toggleSidebar">
-            <ElIcon>
-              <Operation />
-            </ElIcon>
-          </button>
-        </ElTooltip>
       </div>
 
       <ElMenu class="nav-menu" :default-active="activeNav" :default-openeds="navDefaultOpeneds" @select="switchView">
@@ -654,7 +647,6 @@ export default {
       activeView: 'tasks',
       currentPath: typeof window !== 'undefined' ? window.location.pathname : '/',
       theme: 'light',
-      isSidebarCollapsed: false,
       projectPage: 1,
       projectPageSize: 10,
       artProjectSheetRows: [],
@@ -4414,10 +4406,6 @@ export default {
       this.applyTheme(value);
     },
 
-    isSidebarCollapsed(value) {
-      localStorage.setItem('awp-sidebar-collapsed', value ? '1' : '0');
-    },
-
     selectedProjectId(value) {
       this.runForm.projectId = value || this.runForm.projectId;
       this.taskPage = 1;
@@ -4669,7 +4657,6 @@ export default {
     this.clearDeprecatedWorkbenchDisplayCache();
     this.applyRememberedWorkbenchPageSize();
     this.restoreWorkbenchDisplayCache();
-    this.isSidebarCollapsed = localStorage.getItem('awp-sidebar-collapsed') === '1';
     this.taskProcessingNotes = this.loadTaskProcessingNotes();
     this.taskArtBriefs = this.loadTaskArtBriefs();
     this.applyTheme(this.theme);
@@ -6082,10 +6069,6 @@ export default {
 
     toggleTheme() {
       this.theme = this.theme === 'dark' ? 'light' : 'dark';
-    },
-
-    toggleSidebar() {
-      this.isSidebarCollapsed = !this.isSidebarCollapsed;
     },
 
     async copyText(value, label = '内容') {

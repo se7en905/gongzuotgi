@@ -88,6 +88,7 @@ import {
   recordUsageCountersForRun,
   recordUsageCountersForDirectSkillRun,
   recordUsageCountersForSkillValidation,
+  recordUsageCountersForSkillValidationOperationLog,
   recordUsageCountersForSkillAliases,
   queueRunForLocalWorker,
   reconcileZentaoTaskSnapshot,
@@ -585,6 +586,7 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const result = await saveSkillValidationRecord(body, currentUser);
     const usagePatch = result.usagePatch || { matched: 0 };
+    const targetName = skillValidationOperationTargetName(result.savedRecord);
     await writeOperationLog(req, {
       user: currentUser,
       module: 'skill-validation',
@@ -592,15 +594,15 @@ async function handleApi(req, res, url) {
       actionName: '保存验证回填',
       targetType: 'skill-validation',
       targetId: result.savedRecord?.id || '',
-      targetName: result.savedRecord?.artifactName || result.savedRecord?.researchName || '',
+      targetName,
       after: result.savedRecord,
-      description: `${currentUser.displayName || currentUser.username} 保存验证回填「${result.savedRecord?.artifactName || result.savedRecord?.researchName || '未命名产物'}」`
+      description: `${currentUser.displayName || currentUser.username} 保存验证回填「${targetName}」`
     });
     broadcastPlatformEvent('skill-validations.changed', { module: 'skill-validation' });
     broadcastUsageCountersChanged(usagePatch, {
       module: 'skill-validation',
       targetId: result.savedRecord?.id || '',
-      target: result.savedRecord?.artifactName || result.savedRecord?.researchName || ''
+      target: targetName
     });
     sendJson(res, 200, result);
     return;
@@ -623,6 +625,7 @@ async function handleApi(req, res, url) {
       source: '工作台确认回填'
     }, currentUser);
     const usagePatch = result.usagePatch || { matched: 0 };
+    const targetName = skillValidationOperationTargetName(result.savedRecord);
     await writeOperationLog(req, {
       user: currentUser,
       module: 'skill-validation',
@@ -630,15 +633,15 @@ async function handleApi(req, res, url) {
       actionName: '确认验证明细回填',
       targetType: 'skill-validation',
       targetId: result.savedRecord?.id || '',
-      targetName: result.savedRecord?.artifactName || result.savedRecord?.researchName || '',
+      targetName,
       after: result.savedRecord,
-      description: `${currentUser.displayName || currentUser.username} 确认回填验证明细「${result.savedRecord?.artifactName || result.savedRecord?.researchName || '未命名产物'}」`
+      description: `${currentUser.displayName || currentUser.username} 确认回填验证明细「${targetName}」`
     });
     broadcastPlatformEvent('skill-validations.changed', { module: 'skill-validation' });
     broadcastUsageCountersChanged(usagePatch, {
       module: 'skill-validation',
       targetId: result.savedRecord?.id || '',
-      target: result.savedRecord?.artifactName || result.savedRecord?.researchName || ''
+      target: targetName
     });
     sendJson(res, 200, result);
     return;
@@ -2670,9 +2673,16 @@ async function writeOperationLog(req, input = {}) {
       console.error(`Usage counter operation log update failed: ${error.message}`);
       return null;
     });
+    const validationUsagePatch = await recordUsageCountersForSkillValidationOperationLog(log).catch(error => {
+      console.error(`Usage counter skill validation operation log update failed: ${error.message}`);
+      return null;
+    });
+    const mergedUsagePatch = {
+      matched: Number(usagePatch?.matched || 0) + Number(validationUsagePatch?.matched || 0)
+    };
     if (input.broadcast !== false && log?._deduped !== true) {
       broadcastPlatformEvent('operation-logs.changed', { module: input.module || 'operation-log' });
-      broadcastUsageCountersChanged(usagePatch, {
+      broadcastUsageCountersChanged(mergedUsagePatch, {
         module: input.module || 'operation-log',
         targetType: input.targetType || '',
         targetId: input.targetId || '',
@@ -3646,6 +3656,14 @@ function normalizeSkillValidationRecord(input = {}, options = {}) {
   };
   if (!record.artifactName && !record.researchName) throw new HttpError(400, '请填写研究项名称或产物文件名。');
   return record;
+}
+
+function skillValidationOperationTargetName(record = {}) {
+  return validationArtifactDisplayName(record.artifactLocation)
+    || cleanText(record.artifactName)
+    || validationArtifactDisplayName(record.researchName)
+    || cleanText(record.researchName)
+    || '未命名产物';
 }
 
 function isOwnerWorkbenchUser(user = {}) {
@@ -5218,6 +5236,62 @@ function firstConcreteValidationArtifactValue(values = []) {
   return compactValidationTextParts(values).find(value => isConcreteValidationArtifactValue(value)) || '';
 }
 
+function preferredValidationArtifactCandidate(event = {}) {
+  const metadata = artProgressValidationMetadata(event);
+  const haystack = artProgressValidationHaystack(event);
+  const directPaths = [
+    metadata.artifactLocation,
+    metadata.artifactPath,
+    metadata.finalPath,
+    metadata.skillPath,
+    metadata.path,
+    metadata.filePath,
+    event.repoPath,
+    ...(Array.isArray(metadata.artifactPaths) ? metadata.artifactPaths : []),
+    ...(Array.isArray(metadata.calledArtifacts) ? metadata.calledArtifacts.flatMap(item => [item?.path]) : []),
+    ...(Array.isArray(metadata.matchedArtifacts) ? metadata.matchedArtifacts.flatMap(item => [item?.path]) : []),
+    extractArtifactPathFromValidationText(haystack)
+  ];
+  const directNames = [
+    metadata.artifactName,
+    metadata.fileName,
+    metadata.skillName,
+    event.skillName,
+    ...(Array.isArray(metadata.artifactNames) ? metadata.artifactNames : []),
+    ...(Array.isArray(metadata.calledArtifacts) ? metadata.calledArtifacts.flatMap(item => [item?.name, item?.id, item?.alias]) : []),
+    ...(Array.isArray(metadata.matchedArtifacts) ? metadata.matchedArtifacts.flatMap(item => [item?.name, item?.id, item?.alias]) : []),
+    extractArtifactNameFromValidationText(haystack),
+    event.title
+  ];
+  const location = preferredConcreteValidationArtifactValue(directPaths)
+    || preferredConcreteValidationArtifactValue(directNames);
+  return {
+    location,
+    name: validationArtifactDisplayName(location) || preferredConcreteValidationArtifactValue(directNames)
+  };
+}
+
+function preferredConcreteValidationArtifactValue(values = []) {
+  const candidates = compactValidationTextParts(values)
+    .map(value => cleanText(value).replace(/\\/g, '/').replace(/^[#\[]+|[\]]+$/g, '').trim())
+    .filter(value => isConcreteValidationArtifactValue(value));
+  if (!candidates.length) return '';
+  return candidates.find(value => /(^|\/)SKILL\.md(?:$|[?#])/i.test(value))
+    || candidates.find(value => /(^|\/)skills?\//i.test(value))
+    || candidates.find(value => /\.(md|markdown|txt|js|mjs|py)$/i.test(value) && !/(^|\/)(?:AGENTS|README|MEMORY)\.md$/i.test(value))
+    || candidates[0];
+}
+
+function validationArtifactDisplayName(value = '') {
+  const text = cleanText(value).replace(/\\/g, '/').replace(/[?#].*$/, '');
+  if (!text) return '';
+  const parts = text.split('/').filter(Boolean);
+  const last = parts[parts.length - 1] || text;
+  if (/^SKILL\.md$/i.test(last) && parts.length > 1) return parts[parts.length - 2];
+  if (/^(AGENTS|README|MEMORY)\.md$/i.test(last) && parts.length <= 1) return '';
+  return last.replace(/\.(md|markdown)$/i, '');
+}
+
 function extractArtifactPathFromValidationText(text = '') {
   const normalized = String(text || '');
   const pathMatch = normalized.match(/((?:[A-Z]:\\|\\\\)[^\n`<>"'，。；;]+?\.(?:md|markdown|txt|js|mjs|py))/i);
@@ -5307,7 +5381,8 @@ function buildSkillValidationDraftFromArtProgress(event = {}) {
   const validationResult = cleanText(metadata.validationResult || metadata.validationStatus || metadata.result) || inferValidationResultFromText(haystack) || inferAppliedValidationResult(haystack);
   const reuseAdvice = cleanText(metadata.reuseAdvice || metadata.reuse || extractFirstValidationMatch(haystack, [/(?:复用建议|是否建议部门内复用)[:：]\s*([^\n。；;]+)/i]));
   if (!validationResult && !reuseAdvice && !/验证回填|待验证|已验证|进行验证|完成验证|验收/i.test(haystack)) return null;
-  const artifactLocation = firstConcreteValidationArtifactValue([
+  const preferredArtifact = preferredValidationArtifactCandidate(event);
+  const artifactLocation = preferredArtifact.location || firstConcreteValidationArtifactValue([
     metadata.artifactLocation,
     metadata.artifactPath,
     metadata.finalPath,
@@ -5317,7 +5392,7 @@ function buildSkillValidationDraftFromArtProgress(event = {}) {
     event.repoPath,
     extractArtifactPathFromValidationText(haystack)
   ]);
-  const artifactName = firstConcreteValidationArtifactValue([
+  const artifactName = preferredArtifact.name || firstConcreteValidationArtifactValue([
     metadata.artifactName,
     metadata.fileName,
     metadata.skillName,
@@ -5366,6 +5441,7 @@ async function maybeCreateSkillValidationFromArtProgress(event = {}, user = {}) 
   const draft = buildSkillValidationDraftFromArtProgress(event);
   if (!draft) return null;
   const result = await saveSkillValidationRecord(draft, user, { skipOwnerGuard: true });
+  const targetName = skillValidationOperationTargetName(result.savedRecord);
   await createOperationLog({
     user,
     module: 'skill-validation',
@@ -5373,9 +5449,9 @@ async function maybeCreateSkillValidationFromArtProgress(event = {}, user = {}) 
     actionName: '自动回填验证',
     targetType: 'skill-validation',
     targetId: result.savedRecord?.id || '',
-    targetName: result.savedRecord?.artifactName || result.savedRecord?.researchName || '',
+    targetName,
     after: result.savedRecord,
-    description: `${result.savedRecord?.validator || user.displayName || user.username || '成员'} 的 Codex 验证内容已自动回填到验证列表「${result.savedRecord?.artifactName || result.savedRecord?.researchName || '未命名产物'}」`
+    description: `${result.savedRecord?.validator || user.displayName || user.username || '成员'} 的 Codex 验证内容已自动回填到验证列表「${targetName}」`
   });
   return result.savedRecord ? { ...result.savedRecord, usagePatch: result.usagePatch || { matched: 0 } } : null;
 }
