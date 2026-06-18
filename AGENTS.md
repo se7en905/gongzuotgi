@@ -501,11 +501,14 @@
   - 美术执行台里已经选择的 Skill、md 或规范文件，必须等 Worker 回传完成、阻塞、失败等终态且能确认实际执行目标后，才计入 AI产物清单调用次数；普通创建执行清单、刚排队、刚领取或运行中不计入调用次数。
   - `direct-skill` 直接执行到 Figma 创建后进入 Worker 队列，不得在创建时提前计数；必须按后续 Worker 终态回传或明确真实执行事件累计一次。
   - 执行调用次数累计必须读取 run 中的 `productName`、`sourceTitle`、`primarySkillPath`、`stage`、`selectedMaterialHints`、`materials`、`referenceItems` 等字段，命中产物名、展示名、文件名、路径和别名；不得只依赖操作日志标题。
-  - `CREATE_RUN`、`START_RUN`、`RETRY_RUN`、`CLAIM_LOCAL_WORKER_RUN`、`QUEUE_RUN_LOCAL_WORKER`、`UPDATE_LOCAL_WORKER_RUN` 等操作日志只作为审计和状态线索，默认不得直接补成调用次数；只有结构化 `metadata.countAsSkillUsage === true` 或 `metadata.countAsProductUsage === true` 且不是显式 false 时，才允许作为真实调用补计数线索，并必须使用事件唯一键去重。
+  - `CREATE_RUN`、`START_RUN`、`RETRY_RUN`、`CLAIM_LOCAL_WORKER_RUN`、`QUEUE_RUN_LOCAL_WORKER`、`RECOVER_LOCAL_WORKER_RUN` 等创建、启动、重试、领取、排队和恢复操作日志只作为审计和状态线索，默认不得直接补成调用次数；`UPDATE_LOCAL_WORKER_RUN` / `UPDATE_DIRECT_SKILL_RUN` 只有在 `after` 执行记录已经进入完成、失败、阻塞等真实终态并能命中具体 Skill/md/规范目标时，才允许按终态事件补计数。其它操作日志只有结构化 `metadata.countAsSkillUsage === true` 或 `metadata.countAsProductUsage === true` 且不是显式 false 时，才允许作为真实调用补计数线索，并必须使用事件唯一键去重。
   - `usage-counters.json` 中 `count` 是混合证据总量，不等于调用次数；前端调用次数必须优先读取 `usageCount` 和 `usagePeople`，并用 `usageEventKeys` 对同一真实事件在产物名、路径、当前别名、历史别名、标题桶之间的重复命中去重。正向验证回填应作为 `usageCount` 事件写入，负向/待判断验证不得写入 `usageCount`；不得把 `count`、`researchSyncCount`、`validationCount` 或 `people` 当调用次数展示。
+  - 操作日志进入调用次数前必须先确认该日志属于真实调用、真实执行终态、真实生成/复用或正向验证；通过后再用操作日志 `targetName` 对象字段、归一后的对象名、`metadata`、`after`、嵌套 records/items/artifacts 中的产物名、Skill 名、路径和别名，与当前库存产物名、展示名、路径、当前别名、历史别名匹配。匹配成功时必须增加对应产物 `usageCount`，同时增加同一使用人的 `usagePeople`；若无法识别真实使用人，必须归入 `未识别使用人` 区域，不得丢弃该次真实调用。`未识别使用人` 只用于明细兜底展示和总次数对齐，不参与有效使用人数、版本升级人数或成员覆盖率计算。
+  - AI产物清单外层调用次数、明细弹窗调用次数、成员使用次数、版本有效人数和评分依赖必须共用同一套 `usageCounters.usageCount/usagePeople/usageEventKeys`；不得外层按累计桶、内层按短期日志，或列表和明细分别用不同口径导致内外不一致。
+  - 单条操作日志如果携带多条 records/items/artifacts，只能按每条子记录的稳定 ID、路径或对象名拆分事件；同一子记录同时命中产物名、对象字段、路径、当前别名和历史别名时只能累计一次。同一条日志里重复出现同一产物、同一子记录、同一事件键时必须去重，不得因多字段命中把调用次数放大。
   - 操作日志里的验证回填对象必须显示真实 Skill/md/规范产物名称，优先从结构化 `artifactLocation`、`artifactName`、`researchName`、`metadata.skillPath/artifactPath` 和嵌入的 `skills/<name>/SKILL.md` 提取；不得把 `AGENTS`、`README`、`MEMORY`、`试用`、`md` 等通用词显示为对象。只有验证回填对象名或对象路径能命中当前库存真实产物身份时，才允许按该对象增加调用次数，并必须用验证记录唯一键去重，避免同一验证记录因保存日志、自动回填日志、对象名和路径多处命中而重复累计。
   - `研究同步助手`、`同步助手`、`系统同步助手`、`art-progress-reporter`、`member-art-reporter`、`art-workbench-sync-reporter` 都是同步代理人，不得作为 AI 产物有效使用人写入 `usagePeople`。操作日志中代理人产生的 `REPORT_ART_PROGRESS` 仍只算研究同步证据；即使正文或对象字段提到 Skill 名，也不得直接按研究沉淀日志增加调用次数。若同一次同步后产生正向验证回填，则只能通过验证回填记录本身按真实对象名/路径入账一次。
-  - `/api/usage-counters` 返回的累计桶必须带当前调用次数口径版本，例如 `logicVersion: usage-only-v6-inventory-bound-targets`；前端只允许恢复同口径版本的浏览器缓存，旧口径本地缓存必须丢弃并重新读取服务端，避免旧 `count` 或旧 `usageCount` 在刷新页面时回流。
+  - `/api/usage-counters` 返回的累计桶必须带当前调用次数口径版本，例如 `logicVersion: usage-only-v7-operation-log-targets`；前端只允许恢复同口径版本的浏览器缓存，旧口径本地缓存必须丢弃并重新读取服务端，避免旧 `count` 或旧 `usageCount` 在刷新页面时回流。
   - AI产物清单首屏快照不得作为调用次数和有效占比的事实来源；快照只保留行结构、版本、贡献人和质量分等展示兜底，展示调用次数时必须重新按当前 `usageCounters.usageCount/usagePeople/usageEventKeys` 装饰。无法命中新口径累计桶时只能显示 `0` 或作废横线，不得回退扫描缓存里的 `row.usageCount`、`skill.usageCount`、旧 `displayUsageCount` 或 `count`。
   - 成员调用明细只能在去重后的真实调用总数内分配；同一事件同时出现中文姓名、账号、别名、路径或多个桶时，只能绑定一个主使用人并累计一次，不得因成员字段重复或别名重叠把总次数放大。
   - 执行调用次数写入成功后必须广播 `usage-counters.changed`；客户端只刷新 `/api/usage-counters`，不得触发库存扫描、Git 拉取、本地路径读取或共享盘读取。

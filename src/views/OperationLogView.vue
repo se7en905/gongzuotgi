@@ -138,14 +138,14 @@
           <div><dt>操作时间</dt><dd>{{ app.formatDateTime(app.operationLogDetail.row.createdAt) }}</dd></div>
           <div><dt>操作</dt><dd>{{ app.operationLogDetail.row.actionName || actionLabel(app.operationLogDetail.row.action) }}</dd></div>
           <div><dt>模块</dt><dd>{{ moduleLabel(app.operationLogDetail.row.module) }}</dd></div>
-          <div><dt>对象</dt><dd>{{ app.operationLogDetail.row.targetName || app.operationLogDetail.row.targetId || '-' }}</dd></div>
+          <div><dt>对象</dt><dd>{{ app.operationLogDisplayTarget(app.operationLogDetail.row) }}</dd></div>
           <div><dt>结果</dt><dd>{{ app.operationLogDetail.row.result === 'fail' ? '失败' : '成功' }}</dd></div>
           <div><dt>IP</dt><dd>{{ app.displayClientIp(app.operationLogDetail.row.ip) }}</dd></div>
           <div><dt>User Agent</dt><dd>{{ app.operationLogDetail.row.userAgent || '-' }}</dd></div>
         </dl>
         <section>
           <h4>说明</h4>
-          <p>{{ app.operationLogDetail.row.description || '-' }}</p>
+          <p>{{ app.operationLogDisplayDescription(app.operationLogDetail.row) }}</p>
           <p v-if="app.operationLogDetail.row.errorMessage" class="operation-log-error">{{ app.operationLogDetail.row.errorMessage }}</p>
         </section>
         <ElTabs>

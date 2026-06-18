@@ -86,7 +86,6 @@ import {
   recordUsageCountersForExpiredSkillValidations,
   recordUsageCountersForOperationLog,
   recordUsageCountersForRun,
-  recordUsageCountersForDirectSkillRun,
   recordUsageCountersForSkillValidation,
   recordUsageCountersForSkillValidationOperationLog,
   recordUsageCountersForSkillAliases,
@@ -2348,11 +2347,6 @@ async function handleApi(req, res, url) {
     if (body.sourceType === 'direct-skill' || body.executionMode === 'direct-skill') {
       requireProjectAccess(currentUser, project.id, 'developer', 'api.agentRuns.create');
       const run = await createDirectSkillRunFromBody(req, project, body, currentUser);
-      const usagePatch = await recordUsageCountersForDirectSkillRun(run).catch(error => {
-        console.warn('直接执行调用次数累计失败', error);
-        return null;
-      });
-      broadcastUsageCountersChanged(usagePatch, { module: 'direct-skill-run', runId: run.id, projectId: project.id });
       sendJson(res, 201, run);
       return;
     }
@@ -2410,11 +2404,6 @@ async function handleApi(req, res, url) {
     const project = await requireProject(body.projectId);
     requireProjectAccess(currentUser, project.id, 'developer', 'api.agentRuns.create');
     const run = await createDirectSkillRunFromBody(req, project, body, currentUser);
-    const usagePatch = await recordUsageCountersForDirectSkillRun(run).catch(error => {
-      console.warn('直接执行调用次数累计失败', error);
-      return null;
-    });
-    broadcastUsageCountersChanged(usagePatch, { module: 'direct-skill-run', runId: run.id, projectId: project.id });
     sendJson(res, 201, run);
     return;
   }

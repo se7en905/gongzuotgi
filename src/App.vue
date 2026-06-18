@@ -10265,6 +10265,7 @@ export default {
     isExcludedSkillVersionUsagePerson(person = '') {
       const name = this.canonicalArtDeptPerson(person) || String(person || '').trim();
       const raw = String(person || '').trim().toLowerCase();
+      if (samePerson(name, '未识别使用人') || samePerson(raw, 'unknownusageperson')) return true;
       if (samePerson(name, this.defaultSkillInventoryOwnerName()) || samePerson(name, '张倩文') || samePerson(raw, 'zhangqw') || samePerson(raw, 'admin')) return true;
       if (samePerson(name, '余盛威') || samePerson(name, '盛威') || samePerson(raw, 'ysw') || samePerson(raw, 'yushengwei')) return true;
       return /^(ysw|yushengwei|yu\s*sheng\s*wei)$/i.test(raw);

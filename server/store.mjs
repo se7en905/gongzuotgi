@@ -4163,6 +4163,7 @@ async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCount
     const sourceSet = item.sources instanceof Set ? item.sources : new Set();
     const canCreateHistoricalBucket = sourceSet.has('skill-validation')
       || (inventoryIdentity?.keys instanceof Set && inventoryIdentity.keys.has(key) && sourceSet.has('run'))
+      || (inventoryIdentity?.keys instanceof Set && inventoryIdentity.keys.has(key) && sourceSet.has('operation-log'))
       || (key === taskArtBriefUsageCounterKey && sourceSet.has('task-art-brief'));
     if (!canCreateHistoricalBucket) continue;
     const usageEventKeys = [...(item.usageEventKeys || [])];
@@ -4667,11 +4668,11 @@ function isHistoricalUsageOperationLog(log = {}) {
   const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
   if (metadata.countAsSkillUsage === false || metadata.countAsProductUsage === false) return false;
   if ([
-    'CREATE_DIRECT_SKILL_RUN',
     'GENERATE_ZENTAO_ART_BRIEF',
     'REUSE_ZENTAO_ART_BRIEF',
     'REGENERATE_ZENTAO_ART_BRIEF'
   ].includes(action)) return true;
+  if (['UPDATE_LOCAL_WORKER_RUN', 'UPDATE_DIRECT_SKILL_RUN'].includes(action)) return isUsageLikeOperationLog(log);
   return metadata.countAsSkillUsage === true || metadata.countAsProductUsage === true;
 }
 
@@ -4941,6 +4942,10 @@ function normalizeUsageBucketTotals(bucket = {}) {
     changed = true;
     bucket.usagePeople = capUsagePeopleCounts(usagePeople, usageCount);
   } else {
+    if (usageTotal < usageCount) {
+      usagePeople[unknownUsagePersonName] = Number(usagePeople[unknownUsagePersonName] || 0) + (usageCount - usageTotal);
+      changed = true;
+    }
     bucket.usagePeople = usagePeople;
   }
   const usagePeopleCount = Object.keys(bucket.usagePeople || {}).length;
@@ -5031,7 +5036,7 @@ function usageOwnersFromOperationLog(log = {}) {
     before.createdByName,
     metadata.createdByName
   ].map(cleanString).find(owner => owner && !isUsageProxyPerson(owner));
-  if (['START_RUN', 'RETRY_RUN', 'CREATE_DIRECT_SKILL_RUN'].includes(action) && primaryRunOwner) {
+  if (['START_RUN', 'RETRY_RUN', 'CREATE_DIRECT_SKILL_RUN', 'UPDATE_LOCAL_WORKER_RUN', 'UPDATE_DIRECT_SKILL_RUN'].includes(action) && primaryRunOwner) {
     return [primaryRunOwner];
   }
   const primaryLogOwner = [
@@ -5104,7 +5109,8 @@ function extractOwnerFromResearchSyncDescription(value = '') {
 }
 
 async function accumulateUsageCountersFromExpiredRecords(file, records = []) {
-  const targets = records.flatMap(record => usageTargetsFromRecord(file, record));
+  const inventory = file === paths.operationLogs ? await usageInventoryIdentity().catch(() => null) : null;
+  const targets = records.flatMap(record => usageTargetsFromRecord(file, record, inventory));
   if (!targets.length) return;
   await updateUsageCounters(targets);
 }
@@ -5167,9 +5173,9 @@ async function updateUsageCounters(targets = []) {
   return { matched };
 }
 
-function usageTargetsFromRecord(file, record = {}) {
+function usageTargetsFromRecord(file, record = {}, inventoryIdentity = null) {
   if (file === paths.artProgressEvents) return usageTargetsFromArtProgressEvent(record);
-  if (file === paths.operationLogs) return usageTargetsFromOperationLog(record);
+  if (file === paths.operationLogs) return usageTargetsFromOperationLog(record, inventoryIdentity);
   if (file === paths.skillValidations) return usageTargetsFromSkillValidation(record);
   return [];
 }
@@ -5193,7 +5199,7 @@ function usageTargetsFromSkillValidationOperationLog(log = {}, inventoryIdentity
   const values = skillValidationOperationLogTargetValues(log);
   if (!values.length) return [];
   return buildUsageTargets(values, {
-    person: usageOwnersFromSkillValidation(record)[0] || usageOwnersFromOperationLog(log)[0] || '',
+    person: usageOwnersFromSkillValidation(record)[0] || primaryUsageOwnerFromOperationLog(log, record),
     at: skillValidationUsageAt(record) || cleanString(log.createdAt || log.updatedAt),
     source: 'operation-log',
     kind: 'usage',
@@ -5318,39 +5324,168 @@ function usageTargetsFromArtProgressEvent(event = {}) {
   return [...targets, ...artifactTargets];
 }
 
-function usageTargetsFromOperationLog(log = {}) {
-  if (isSkillValidationOperationLog(log)) return usageTargetsFromSkillValidationOperationLog(log);
+function usageTargetsFromOperationLog(log = {}, inventoryIdentity = null) {
+  if (isSkillValidationOperationLog(log)) return usageTargetsFromSkillValidationOperationLog(log, inventoryIdentity);
   if (!isUsageLikeOperationLog(log)) return [];
-  const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
   if (isTaskArtBriefUsageOperationLog(log)) {
     return buildUsageTargets(['zentao-art-brief-product'], {
-      person: cleanString(usageOwnersFromOperationLog(log)[0] || ''),
+      person: primaryUsageOwnerFromOperationLog(log),
       at: cleanString(log.createdAt),
       source: 'operation-log',
       kind: 'usage',
       eventKey: usageEventKey('operation-log', log.id || log.targetId || log.targetName, log.createdAt)
     });
   }
-  const values = [
-    metadata.productName,
-    metadata.artifactName,
-    metadata.skillName,
-    metadata.alias,
-    metadata.path,
-    metadata.filePath,
-    metadata.skillPath,
-    metadata.artifactPath,
-    ...(Array.isArray(metadata.aliases) ? metadata.aliases : []),
-    ...(Array.isArray(metadata.artifactNames) ? metadata.artifactNames : []),
-    ...(Array.isArray(metadata.artifactPaths) ? metadata.artifactPaths : [])
-  ];
-  return buildUsageTargets(values, {
-    person: cleanString(usageOwnersFromOperationLog(log)[0] || ''),
-    at: cleanString(log.createdAt),
+  const records = operationLogEmbeddedUsageRecords(log);
+  const recordList = records.length ? records : [null];
+  const targets = recordList.flatMap(record => buildUsageTargets(operationLogUsageTargetValues(log, record), {
+    person: primaryUsageOwnerFromOperationLog(log, record),
+    at: operationLogUsageRecordTime(log, record),
     source: 'operation-log',
     kind: 'usage',
-    eventKey: usageEventKey('operation-log', log.id || log.targetId || log.targetName, log.createdAt)
+    eventKey: operationLogUsageEventKey(log, record)
+  }));
+  return normalizeUsageTargets(targets.filter(target => targetMatchesUsageInventory(target.target, inventoryIdentity)));
+}
+
+function operationLogEmbeddedUsageRecords(log = {}) {
+  const after = log.after && typeof log.after === 'object' ? log.after : {};
+  const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
+  const fields = [
+    'records',
+    'items',
+    'events',
+    'logs',
+    'results',
+    'validations',
+    'savedRecords',
+    'usageRecords',
+    'artifacts',
+    'calledArtifacts',
+    'matchedArtifacts',
+    'artifactRecords'
+  ];
+  const records = [];
+  for (const container of [after, metadata]) {
+    for (const field of fields) {
+      const value = container?.[field];
+      if (!Array.isArray(value)) continue;
+      value.forEach(item => {
+        if (item && typeof item === 'object') records.push(item);
+      });
+    }
+  }
+  const seen = new Set();
+  return records.filter(record => {
+    const key = [
+      record.id,
+      record.sourceRef,
+      record.eventId,
+      record.runId,
+      record.path,
+      record.filePath,
+      record.skillPath,
+      record.artifactPath,
+      record.name,
+      record.title,
+      record.artifactName,
+      record.skillName
+    ].map(cleanString).filter(Boolean).join('|');
+    if (!key) return true;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
+}
+
+function operationLogUsageRecordTime(log = {}, record = null) {
+  return cleanString(log.createdAt || log.updatedAt || record?.createdAt || record?.updatedAt || record?.reportedAt || record?.submittedAt);
+}
+
+function operationLogUsageEventKey(log = {}, record = null) {
+  const action = cleanString(log.action);
+  const after = log.after && typeof log.after === 'object' ? log.after : {};
+  if (['UPDATE_LOCAL_WORKER_RUN', 'UPDATE_DIRECT_SKILL_RUN'].includes(action)) {
+    return usageEventKey('run-usage', after.id || record?.id || log.targetId || after.primarySkillPath || after.stage || after.title || log.targetName, '');
+  }
+  const recordId = record && typeof record === 'object'
+    ? cleanString(record.id || record.sourceRef || record.eventId || record.runId || record.path || record.filePath || record.skillPath || record.artifactPath || record.name || record.title || record.artifactName || record.skillName)
+    : '';
+  return usageEventKey('operation-log', [log.id || log.targetId || log.targetName, recordId].filter(Boolean).join(':'), cleanString(log.createdAt || log.updatedAt));
+}
+
+function operationLogUsageTargetValues(log = {}, record = null) {
+  const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata : {};
+  const after = log.after && typeof log.after === 'object' ? log.after : {};
+  return [
+    ...operationLogStructuredUsageValues(metadata),
+    ...operationLogStructuredUsageValues(after),
+    ...(record && typeof record === 'object' ? operationLogStructuredUsageValues(record) : []),
+    operationLogDisplayTargetName(log),
+    log.targetName
+  ]
+    .map(cleanString)
+    .filter(Boolean)
+    .filter((value, index, array) => array.findIndex(item => usageCounterKey(item) === usageCounterKey(value)) === index);
+}
+
+function operationLogStructuredUsageValues(input = {}) {
+  if (!input || typeof input !== 'object') return [];
+  const artifactItems = [
+    ...(Array.isArray(input.selectedMaterialSnapshots) ? input.selectedMaterialSnapshots : []),
+    ...(Array.isArray(input.materials) ? input.materials : []),
+    ...(Array.isArray(input.referenceItems) ? input.referenceItems : []),
+    ...(Array.isArray(input.calledArtifacts) ? input.calledArtifacts : []),
+    ...(Array.isArray(input.matchedArtifacts) ? input.matchedArtifacts : []),
+    ...(Array.isArray(input.artifacts) ? input.artifacts : [])
+  ];
+  const artifactValues = artifactItems.flatMap(item => {
+    if (!item || typeof item !== 'object') return [item];
+    return [
+      item.path,
+      item.filePath,
+      item.relativePath,
+      item.skillPath,
+      item.artifactPath,
+      item.sourceValue,
+      item.id,
+      item.name,
+      item.title,
+      item.skillName,
+      item.artifactName
+    ];
+  });
+  return [
+    input.productName,
+    input.productDisplayName,
+    input.productFileName,
+    input.sourceTitle,
+    input.primarySkillPath,
+    input.primarySkillTitle,
+    input.skillPath,
+    input.stage,
+    input.skillName,
+    input.artifactName,
+    input.researchName,
+    input.artifactLocation,
+    input.operationName,
+    input.alias,
+    input.path,
+    input.filePath,
+    input.relativePath,
+    input.repoPath,
+    input.finalPath,
+    input.artifactPath,
+    input.sourceRef,
+    input.title,
+    ...normalizeLineList(input.showdocHints),
+    ...normalizeLineList(input.selectedMaterialHints),
+    ...(Array.isArray(input.aliases) ? input.aliases : []),
+    ...(Array.isArray(input.artifactNames) ? input.artifactNames : []),
+    ...(Array.isArray(input.artifactPaths) ? input.artifactPaths : []),
+    ...(Array.isArray(input.skillPaths) ? input.skillPaths : []),
+    ...artifactValues
+  ];
 }
 
 function usageTargetsFromRun(run = {}, options = {}) {
@@ -5490,12 +5625,15 @@ function looksLikePrimaryArtifactTarget(value = '') {
 
 function usageSearchTextFromRecord(record = {}, source = 'art-progress') {
   const metadata = record.metadata && typeof record.metadata === 'object' ? record.metadata : {};
+  const after = record.after && typeof record.after === 'object' ? record.after : {};
   const values = source === 'operation-log'
     ? [
         record.action,
         record.actionName,
         record.targetName,
+        operationLogDisplayTargetName(record),
         record.description,
+        ...operationLogStructuredUsageValues(after),
         metadata.productName,
         metadata.artifactName,
         metadata.skillName,
@@ -5563,7 +5701,10 @@ function isUsageLikeOperationLog(log = {}) {
   if (isNonUsageOperationLog(log)) return false;
   if (metadata.countAsSkillUsage === true || metadata.countAsProductUsage === true) return true;
   if (metadata.countAsSkillUsage === false || metadata.countAsProductUsage === false) return false;
-  if (['START_RUN', 'RETRY_RUN'].includes(action)) return true;
+  if (['UPDATE_LOCAL_WORKER_RUN', 'UPDATE_DIRECT_SKILL_RUN'].includes(action)) {
+    const after = log.after && typeof log.after === 'object' ? log.after : {};
+    return isUsageLikeRun(after);
+  }
   const text = `${action} ${actionName} ${targetType} ${log.targetName || ''} ${log.description || ''}`;
   return /(生成|执行|启动|复用|调用|使用|generate|execute|start|reuse|run)/i.test(text)
     && !/(删除|作废|恢复|隐藏|展示|编辑|修改|保存|登录|退出|同步任务|同步 Bug|刷新库存)/i.test(text);
@@ -5579,10 +5720,14 @@ function isNonUsageOperationLog(log = {}) {
     'LOGOUT',
     'SESSION_EXPIRED',
     'CREATE_RUN',
+    'START_RUN',
+    'RETRY_RUN',
     'CANCEL_RUN',
     'DELETE_RUN',
+    'CLAIM_LOCAL_WORKER_RUN',
+    'QUEUE_RUN_LOCAL_WORKER',
+    'RECOVER_LOCAL_WORKER_RUN',
     'CLAIM_DIRECT_SKILL_RUN',
-    'UPDATE_DIRECT_SKILL_RUN',
     'UPDATE_SKILL_ALIAS',
     'UPDATE_SKILL_VERSION',
     'HIDE_SKILL_ASSET',
