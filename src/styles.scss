@@ -9061,11 +9061,20 @@ body,
 }
 
 .skill-product-table.el-table .el-table__fixed-right,
-.skill-product-table.el-table .el-table-fixed-column--right,
-.skill-product-table.el-table .el-table-fixed-column--right .cell {
+.skill-product-table.el-table .el-table-fixed-column--right {
   background: #ffffff !important;
-  box-shadow: -8px 0 18px rgba(15, 23, 42, .06) !important;
+  box-shadow: -1px 0 0 var(--refero-line, var(--line)) !important;
   z-index: 18 !important;
+}
+
+.skill-product-table.el-table .el-table-fixed-column--right .cell {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.skill-product-table.el-table .el-table-fixed-column--right.is-first-column::before,
+.skill-product-table.el-table .el-table-fixed-column--right.is-last-column::before {
+  box-shadow: none !important;
 }
 
 .skill-product-table.el-table th.skill-actions-column,

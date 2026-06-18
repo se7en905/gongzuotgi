@@ -4906,33 +4906,34 @@ export default {
       };
     },
 
+    skillInventoryLiveRowForSnapshot(row = {}) {
+      if (!row) return null;
+      const rowKey = this.skillInventoryDedupeKey(row);
+      const rowUid = String(row.uid || row.id || '').trim();
+      return this.skillInventoryRows.find(item => {
+        const itemKey = this.skillInventoryDedupeKey(item);
+        if (rowKey && itemKey && rowKey === itemKey) return true;
+        const itemUid = String(item.uid || item.id || '').trim();
+        return Boolean(rowUid && itemUid && rowUid === itemUid);
+      }) || null;
+    },
+
     skillInventorySnapshotRowWithLiveStats(row = {}) {
-      if (!row || row.hidden === true) return row;
-      if (!this.usageCountersReadyForSkillInventory()) return row;
-      const liveRow = this.skillInventoryRows.find(item => {
-        const leftKey = this.skillInventoryDedupeKey(item);
-        const rightKey = this.skillInventoryDedupeKey(row);
-        if (leftKey && rightKey && leftKey === rightKey) return true;
-        const leftUid = String(item.uid || item.id || '').trim();
-        const rightUid = String(row.uid || row.id || '').trim();
-        return Boolean(leftUid && rightUid && leftUid === rightUid);
-      });
-      if (!liveRow) {
-        const usage = this.safeCallDisplayValue(() => this.skillInventoryUsageStatsForList(row), { usageCount: 0, rate: 0 });
+      if (!row) return row;
+      const liveRow = this.skillInventoryLiveRowForSnapshot(row);
+      if (liveRow) {
         return {
-          ...row,
-          displayUsageCount: Math.max(0, Math.round(Number(usage.usageCount || 0))),
-          displayUsageRate: this.safeCallDisplayValue(() => this.isOwnerYushengwei(row), false) ? '-' : `${Number(usage.rate || 0)}%`
+          ...this.safeDecorateSkillInventoryDisplayRow(liveRow),
+          displaySnapshotOnly: false
         };
       }
-      const decorated = this.safeDecorateSkillInventoryDisplayRow(liveRow);
+      if (row.hidden === true) return row;
+      if (!this.usageCountersReadyForSkillInventory()) return row;
+      const usage = this.safeCallDisplayValue(() => this.skillInventoryUsageStatsForList(row), { usageCount: 0, rate: 0 });
       return {
         ...row,
-        displayUsageCount: decorated.displayUsageCount ?? (row.hidden === true ? '-' : 0),
-        displayUsageRate: decorated.displayUsageRate ?? '-',
-        displayQualityScore: decorated.displayQualityScore ?? row.displayQualityScore,
-        displayQualityClass: decorated.displayQualityClass || row.displayQualityClass,
-        displayQualityText: decorated.displayQualityText || row.displayQualityText
+        displayUsageCount: Math.max(0, Math.round(Number(usage.usageCount || 0))),
+        displayUsageRate: this.safeCallDisplayValue(() => this.isOwnerYushengwei(row), false) ? '-' : `${Number(usage.rate || 0)}%`
       };
     },
 
@@ -13156,9 +13157,11 @@ export default {
       this.openSkillPreview(skill);
     },
     async openSkillInventoryDetail(row = {}) {
-      const project = this.projects.find(item => item.id === row.projectId);
+      const liveRow = row?.displaySnapshotOnly ? this.skillInventoryLiveRowForSnapshot(row) : null;
+      const targetRow = liveRow || row;
+      const project = this.projects.find(item => item.id === targetRow.projectId);
       if (project) this.selectedProjectId = project.id;
-      await this.openSkillPreview(row.skill || row);
+      await this.openSkillPreview(targetRow.skill || targetRow);
     },
 
     openDirectSkillRunDialog(row = this.skillPreview.skill || {}) {
@@ -15371,7 +15374,7 @@ export default {
       if ((skill.directoryProduct || skill.skillPath) && skill.preview) return skill.preview;
       const relativePath = String(skill.git?.relativePath || skill.relativePath || skill.path || '').replaceAll('\\', '/').replace(/^\/+/, '');
       try {
-        const projectId = this.selectedProjectId || this.selectedProject?.id || this.selectedScan?.projectId || '';
+        const projectId = skill.projectId || this.selectedProjectId || this.selectedProject?.id || this.selectedScan?.projectId || '';
         const response = projectId && relativePath
           ? await fetch(`/api/projects/${encodeURIComponent(projectId)}/file-preview?file=${encodeURIComponent(relativePath)}`)
           : await fetch(this.artifactUrl(this.resolveSkillAbsPath(skill)));

@@ -308,7 +308,7 @@
       <ElTableColumn label="产物名称" min-width="300" class-name="skill-product-name-column">
         <template #default="{ row }">
           <div class="skill-product-name-stack">
-            <button type="button" class="skill-title-cell skill-title-button" :disabled="!app.skillInventoryContentReady || row.displaySnapshotOnly" @click="app.openSkillInventoryDetail(row)">
+            <button type="button" class="skill-title-cell skill-title-button" :disabled="!app.skillInventoryContentReady" @click="app.openSkillInventoryDetail(row)">
               <strong>
                 {{ row.productDisplayName || row.productFileName || row.title || row.id }}
               </strong>
