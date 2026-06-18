@@ -93,7 +93,7 @@
       <ElTableColumn label="对象" min-width="280">
         <template #default="{ row }">
           <div class="operation-target-cell">
-            <strong>{{ row.targetName || row.targetId || '-' }}</strong>
+            <strong>{{ app.operationLogDisplayTarget(row) }}</strong>
             <span>{{ row.targetType || '-' }} · {{ row.targetId || '-' }}</span>
           </div>
         </template>
@@ -105,7 +105,7 @@
         <template #default="{ row }">{{ app.displayClientIp(row.ip) }}</template>
       </ElTableColumn>
       <ElTableColumn label="说明" min-width="320" show-overflow-tooltip>
-        <template #default="{ row }">{{ row.description || '-' }}</template>
+        <template #default="{ row }">{{ app.operationLogDisplayDescription(row) }}</template>
       </ElTableColumn>
       <ElTableColumn label="操作" width="96" fixed="right">
         <template #default="{ row }">

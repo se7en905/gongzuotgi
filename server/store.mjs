@@ -71,8 +71,9 @@ const mysqlConfigs = new Map([
 
 const useMysqlStore = process.env.AWP_USE_MYSQL === '1';
 const retentionDays = Math.max(1, Number(process.env.AWP_DATA_RETENTION_DAYS || 2) || 2);
-const usageCounterLogicVersion = 'usage-only-v6-inventory-bound-targets';
+const usageCounterLogicVersion = 'usage-only-v7-operation-log-targets';
 const taskArtBriefUsageCounterKey = 'zentaoartbriefproduct';
+const unknownUsagePersonName = '未识别使用人';
 const retentionEnabled = process.env.AWP_DATA_RETENTION_ENABLED !== '0';
 const runFigmaLogEvidenceCache = new Map();
 const staleLocalWorkerRunMs = Math.max(10 * 60 * 1000, Number(process.env.AWP_STALE_LOCAL_WORKER_RUN_MS || 20 * 60 * 1000));
@@ -1003,7 +1004,8 @@ export async function recordUsageCountersForSkillValidationOperationLog(log = {}
 
 export async function recordUsageCountersForOperationLog(log = {}) {
   if (log?._deduped === true) return { matched: 0 };
-  const targets = usageTargetsFromOperationLog(log);
+  const inventory = await usageInventoryIdentity();
+  const targets = usageTargetsFromOperationLog(log, inventory);
   if (!targets.length) return { matched: 0 };
   return await updateUsageCounters(targets);
 }
@@ -4531,26 +4533,12 @@ async function historicalUsageBucketRebuildMap(inventoryIdentity = null) {
     }
     if (!isHistoricalUsageOperationLog(log)) continue;
     if (isTaskArtBriefUsageOperationLog(log)) {
-      addTarget('zentao-art-brief-product', owners, eventKey, at, 'task-art-brief');
+      addTarget('zentao-art-brief-product', owners.length ? owners : [unknownUsagePersonName], eventKey, at, 'task-art-brief');
       continue;
     }
-    const values = [
-      log.targetName,
-      log.targetId,
-      metadata.productName,
-      metadata.artifactName,
-      metadata.skillName,
-      metadata.operationName,
-      metadata.alias,
-      metadata.path,
-      metadata.filePath,
-      metadata.skillPath,
-      metadata.artifactPath,
-      ...(Array.isArray(metadata.aliases) ? metadata.aliases : []),
-      ...(Array.isArray(metadata.artifactNames) ? metadata.artifactNames : []),
-      ...(Array.isArray(metadata.artifactPaths) ? metadata.artifactPaths : [])
-    ];
-    for (const target of values.flatMap(usageTargetCandidates)) addTarget(target, owners, eventKey, at, 'operation-log');
+    for (const target of usageTargetsFromOperationLog(log, inventory)) {
+      addTarget(target.target, target.person ? [target.person] : owners, target.eventKey || eventKey, at, 'operation-log');
+    }
   }
 
   for (const run of Array.isArray(runs) ? runs : []) {
@@ -5054,6 +5042,31 @@ function usageOwnersFromOperationLog(log = {}) {
   return primaryLogOwner ? [primaryLogOwner] : [];
 }
 
+function primaryUsageOwnerFromOperationLog(log = {}, record = null) {
+  const recordOwners = record && typeof record === 'object'
+    ? [
+        record.memberName,
+        record.memberAccount,
+        record.validator,
+        record.walkthroughOwner,
+        record.assignedToName,
+        record.developer,
+        record.createdByName,
+        record.ownerName,
+        record.username,
+        record.displayName
+      ]
+    : [];
+  const owner = [
+    ...recordOwners,
+    ...usageOwnersFromOperationLog(log)
+  ]
+    .flatMap(value => normalizeLineList(value))
+    .map(cleanString)
+    .find(value => value && !isUsageProxyPerson(value) && !looksLikeUuid(value));
+  return owner || unknownUsagePersonName;
+}
+
 function usageOwnersFromRun(run = {}) {
   const owner = [
     run.assignedToName,
@@ -5218,7 +5231,7 @@ function skillValidationEmbeddedArtifactTargets(value = '') {
   const text = cleanString(value).replace(/\\/g, '/');
   if (!text) return [];
   const matches = [
-    ...text.matchAll(/(?:^|[\s"'「『【《(\[])([^"'「『【《)\]\s，,。；;、]*skills?\/[^"'「『【《)\]\s，,。；;、]+\/SKILL\.md)(?=$|[\s"'」』】》)\]，,。；;、])/ig),
+    ...text.matchAll(/(?:^|[\s"'「『【《(\[])([^"'「『【《)\]\s，,。；;、]*(?:skills?|SKILL)\/[^"'「『【《)\]\s，,。；;、]+\/SKILL\.md)(?=$|[\s"'」』】》)\]，,。；;、])/ig),
     ...text.matchAll(/(?:^|[\s"'「『【《(\[])([^"'「『【《)\]\s，,。；;、]+\.md)(?=$|[\s"'」』】》)\]，,。；;、])/ig)
   ].map(match => cleanString(match[1]).replace(/^[#\[]+|[\]]+$/g, ''));
   return matches.filter(Boolean);

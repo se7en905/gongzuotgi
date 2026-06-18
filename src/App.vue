@@ -534,7 +534,7 @@ const RUN_LOG_RENDER_MAX_CHARS = 80 * 1024;
 const RUN_LOG_RENDER_MAX_LINES = 400;
 const RUN_LOG_LINE_MAX_CHARS = 2400;
 const SKILL_AUDIT_RULE_VERSION = '9-dimension-v2-fulltext';
-const USAGE_COUNTER_LOGIC_VERSION = 'usage-only-v6-inventory-bound-targets';
+const USAGE_COUNTER_LOGIC_VERSION = 'usage-only-v7-operation-log-targets';
 const LARGE_WORKBENCH_DISPLAY_CACHE_KEYS = new Set([
   'aiMembersSnapshot',
   'aiMembersBoardHtmlSnapshot',
@@ -6131,6 +6131,96 @@ export default {
       }
     },
 
+    normalizeOperationLogForDisplay(log = {}) {
+      if (!log || typeof log !== 'object') return log;
+      if (!this.isSkillValidationOperationLogRecord(log)) return log;
+      const targetName = this.operationLogSkillValidationTargetName(log) || String(log.targetName || '').trim();
+      if (!targetName || targetName === log.targetName) return log;
+      return {
+        ...log,
+        targetName,
+        description: this.rewriteOperationLogDescriptionTarget(log.description, log.targetName, targetName)
+      };
+    },
+
+    isSkillValidationOperationLogRecord(log = {}) {
+      return ['AUTO_UPSERT_SKILL_VALIDATION', 'UPSERT_SKILL_VALIDATION', 'BACKFILL_SKILL_VALIDATION'].includes(String(log.action || '').trim());
+    },
+
+    operationLogSkillValidationTargetName(log = {}) {
+      const after = log.after && typeof log.after === 'object' ? log.after : {};
+      const values = [
+        ...this.operationLogEmbeddedArtifactTargets(after.researchName),
+        ...this.operationLogEmbeddedArtifactTargets(after.artifactName),
+        ...this.operationLogEmbeddedArtifactTargets(after.artifactLocation),
+        after.artifactLocation,
+        after.artifactName,
+        after.researchName,
+        log.targetName
+      ].map(value => String(value || '').trim()).filter(Boolean);
+      const preferred = values.find(value => /(^|\/)SKILL\.md(?:$|[?#])/i.test(value))
+        || values.find(value => /(^|\/)skills?\//i.test(value))
+        || values.find(value => /\.(md|markdown)$/i.test(value) && !/(^|\/)(?:AGENTS|README|MEMORY)\.md$/i.test(value))
+        || values.find(value => !this.isGenericOperationLogTarget(value));
+      return this.operationLogTargetDisplayName(preferred);
+    },
+
+    operationLogEmbeddedArtifactTargets(value = '') {
+      const text = String(value || '').replace(/\\/g, '/').trim();
+      if (!text) return [];
+      const patterns = [
+        /(?:^|[\s"'「『【《(\[])([^"'「『【《)\]\s，,。；;、]*(?:skills?|SKILL)\/[^"'「『【《)\]\s，,。；;、]+\/SKILL\.md)(?=$|[\s"'」』】》)\]，,。；;、])/ig,
+        /(?:^|[\s"'「『【《(\[])([^"'「『【《)\]\s，,。；;、]+\.md)(?=$|[\s"'」』】》)\]，,。；;、])/ig
+      ];
+      return patterns
+        .flatMap(pattern => [...text.matchAll(pattern)].map(match => String(match[1] || '').replace(/^[#\[]+|[\]]+$/g, '').trim()))
+        .filter(Boolean);
+    },
+
+    operationLogTargetDisplayName(value = '') {
+      const text = String(value || '').replace(/\\/g, '/').replace(/[?#].*$/, '').trim();
+      if (!text) return '';
+      const parts = text.split('/').filter(Boolean);
+      const last = parts[parts.length - 1] || text;
+      if (/^SKILL\.md$/i.test(last) && parts.length > 1) return parts[parts.length - 2];
+      if (/^(AGENTS|README|MEMORY)\.md$/i.test(last) && parts.length <= 1) return '';
+      return last.replace(/\.(md|markdown)$/i, '').trim();
+    },
+
+    isGenericOperationLogTarget(value = '') {
+      const text = String(value || '')
+        .replace(/\\/g, '/')
+        .split('/')
+        .filter(Boolean)
+        .pop()
+        ?.replace(/\.(md|markdown)$/i, '')
+        .replace(/[_.\-:：()[\]【】「」《》<>#?&=+，,。；;、\s]+/g, '')
+        .toLowerCase() || '';
+      return !text || /^(agents|agent|readme|memory|skill|skills|md|markdown|试用|文件|说明|规范|快照执行|内容执行|已读取)$/.test(text);
+    },
+
+    rewriteOperationLogDescriptionTarget(description = '', previousTarget = '', nextTarget = '') {
+      const text = String(description || '').trim();
+      const previous = String(previousTarget || '').trim();
+      const next = String(nextTarget || '').trim();
+      if (!text || !previous || !next || previous === next) return text;
+      return text.includes(`「${previous}」`) ? text.replace(`「${previous}」`, `「${next}」`) : text;
+    },
+
+    operationLogDisplayRow(row = {}) {
+      return this.normalizeOperationLogForDisplay(row) || row || {};
+    },
+
+    operationLogDisplayTarget(row = {}) {
+      const displayRow = this.operationLogDisplayRow(row);
+      return displayRow.targetName || displayRow.targetId || '-';
+    },
+
+    operationLogDisplayDescription(row = {}) {
+      const displayRow = this.operationLogDisplayRow(row);
+      return displayRow.description || '-';
+    },
+
     hasProjectScanProducts(scans = {}) {
       if (!scans || typeof scans !== 'object') return false;
       return Object.values(scans).some(scan => {
@@ -9086,7 +9176,7 @@ export default {
         params.set('pageSize', String(this.operationLogPageSize));
         const query = params.toString();
         const result = await this.api(`/api/operation-logs${query ? `?${query}` : ''}`);
-        this.operationLogs = Array.isArray(result.items) ? result.items : [];
+        this.operationLogs = Array.isArray(result.items) ? result.items.map(log => this.normalizeOperationLogForDisplay(log)) : [];
         this.operationLogTotal = Number(result.total || 0);
         this.operationLogPage = Number(result.page || this.operationLogPage);
         this.operationLogPageSize = Number(result.pageSize || this.operationLogPageSize);
@@ -9203,9 +9293,15 @@ export default {
     },
 
     openOperationLogDetail(row) {
+      const displayRow = this.normalizeOperationLogForDisplay(row);
+      const index = this.operationLogs.findIndex(item => String(item.id || '') === String(displayRow?.id || ''));
+      if (index >= 0 && displayRow && displayRow !== this.operationLogs[index]) {
+        this.operationLogs.splice(index, 1, displayRow);
+        this.saveWorkbenchDisplayCache('operationLogs', this.operationLogs);
+      }
       this.operationLogDetail = {
         visible: true,
-        row
+        row: displayRow
       };
     },
 
