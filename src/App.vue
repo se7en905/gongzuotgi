@@ -3073,7 +3073,7 @@ export default {
           .filter(row => this.isFinishedSkillInventoryRow(row))
           .filter(row => this.skillInventoryRowBelongsToMember(row, member.name, boardProductItems, []));
         const inventoryProductItems = matchedRows
-          .map(row => this.skillInventoryRowProductName(row))
+          .map(row => this.aiMemberScoreDisplayProductNameForRow(row, boardProductItems))
           .filter(Boolean);
         const memberProductItems = this.dedupeMemberProductItems([...boardProductItems, ...inventoryProductItems]);
         return {
@@ -3085,6 +3085,7 @@ export default {
           inventorySkillCount: matchedRows.length,
           aiAssetCount: 0,
           totalSkillCount: memberProductItems.length,
+          boardProductItems,
           purposes: memberProductItems,
           productNames: memberProductItems.join('、'),
           inventoryRows: matchedRows,
@@ -8533,19 +8534,19 @@ export default {
     },
 
     aiMemberScoreProductItems(member = {}, summary = null) {
-      const boardItems = Array.isArray(summary?.purposes)
-        ? summary.purposes
+      const boardItems = Array.isArray(summary?.boardProductItems)
+        ? summary.boardProductItems
         : this.visibleAiBoardMemberProductItems(member);
-      const inventoryItems = this.aiMemberScoreInventoryProductItems(member.name || member.realname || member.account || '', summary);
+      const inventoryItems = this.aiMemberScoreInventoryProductItems(member.name || member.realname || member.account || '', summary, boardItems);
       return this.dedupeMemberProductItems([...boardItems, ...inventoryItems]);
     },
 
-    aiMemberScoreInventoryProductItems(memberName = '', summary = null) {
+    aiMemberScoreInventoryProductItems(memberName = '', summary = null, preferredItems = []) {
       const rows = Array.isArray(summary?.inventoryRows) ? summary.inventoryRows : this.aiMemberScoreProductRows(memberName, summary);
       return this.dedupeMemberProductItems(
         rows
           .filter(row => row.hidden !== true)
-          .map(row => this.skillInventoryRowProductName(row))
+          .map(row => this.aiMemberScoreDisplayProductNameForRow(row, preferredItems))
           .filter(Boolean)
       );
     },
@@ -8608,6 +8609,14 @@ export default {
         if (key && key.length >= 4 && !this.isGenericUsageNeedle(key)) return key;
       }
       return '';
+    },
+
+    aiMemberScoreDisplayProductNameForRow(row = {}, preferredItems = []) {
+      const matchedBoardItem = (Array.isArray(preferredItems) ? preferredItems : [])
+        .map(item => String(item || '').trim())
+        .find(item => item && this.skillInventoryProductNameMatchesRow(item, row));
+      if (matchedBoardItem) return matchedBoardItem;
+      return this.skillInventoryRowProductName(row);
     },
 
     aiMemberScoreUniqueProductKeyCount(values = []) {
