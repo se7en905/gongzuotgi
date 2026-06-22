@@ -12,58 +12,42 @@
     </template>
 
     <div class="maintenance-summary-grid">
-      <button
+      <article
         v-for="item in app.maintenanceOverview.storage || []"
         :key="item.key"
-        type="button"
         class="maintenance-summary-card"
         :class="`is-${item.cleanupLevel || 'caution'}`"
-        @click="handleOverviewCardClick(item)"
       >
-        <span class="maintenance-card-title">{{ item.label }}</span>
+        <button type="button" class="maintenance-card-title" @click="handleOpenPath(item)">
+          <i aria-hidden="true"></i>
+          <span>{{ item.label }}</span>
+        </button>
         <ElTag class="maintenance-level-tag" :type="cleanupLevelTagType(item.cleanupLevel)" effect="plain">{{ item.cleanupLevelLabel || '需确认' }}</ElTag>
-        <strong>{{ app.formatBytes(item.bytes) }}</strong>
-        <em v-if="Number(item.count || 0)">{{ item.count }} 项</em>
+        <button type="button" class="maintenance-card-number" @click="handleWorkbenchAction(item)">
+          <strong>{{ app.formatBytes(item.bytes) }}</strong>
+          <em v-if="Number(item.count || 0)">{{ item.count }} 项</em>
+        </button>
         <small>{{ item.note }}</small>
-        <div class="maintenance-card-actions">
-          <b>{{ item.fileActionLabel || '打开路径' }}</b>
-          <span
-            v-if="hasWorkbenchAction(item)"
-            role="button"
-            tabindex="0"
-            @click.stop="handleWorkbenchAction(item)"
-            @keydown.enter.stop.prevent="handleWorkbenchAction(item)"
-            @keydown.space.stop.prevent="handleWorkbenchAction(item)"
-          >{{ item.actionLabel }}</span>
-        </div>
-      </button>
+      </article>
     </div>
 
     <div class="maintenance-record-grid">
-      <button
+      <article
         v-for="item in app.maintenanceOverview.records || []"
         :key="item.key"
-        type="button"
         class="maintenance-record-card"
         :class="`is-${item.cleanupLevel || 'caution'}`"
-        @click="handleOverviewCardClick(item)"
       >
-        <span class="maintenance-card-title">{{ item.label }}</span>
+        <button type="button" class="maintenance-card-title" @click="handleOpenPath(item)">
+          <i aria-hidden="true"></i>
+          <span>{{ item.label }}</span>
+        </button>
         <ElTag class="maintenance-level-tag" :type="cleanupLevelTagType(item.cleanupLevel)" effect="plain">{{ item.cleanupLevelLabel || '需确认' }}</ElTag>
-        <strong>{{ item.count }}</strong>
+        <button type="button" class="maintenance-card-number" @click="handleWorkbenchAction(item)">
+          <strong>{{ item.count }}</strong>
+        </button>
         <small>{{ item.note || (item.protected ? '受保护，不参与范围清理' : item.file) }}</small>
-        <div class="maintenance-card-actions">
-          <b>{{ item.fileActionLabel || '打开路径' }}</b>
-          <span
-            v-if="hasWorkbenchAction(item)"
-            role="button"
-            tabindex="0"
-            @click.stop="handleWorkbenchAction(item)"
-            @keydown.enter.stop.prevent="handleWorkbenchAction(item)"
-            @keydown.space.stop.prevent="handleWorkbenchAction(item)"
-          >{{ item.actionLabel }}</span>
-        </div>
-      </button>
+      </article>
     </div>
   </ElCard>
 
@@ -273,15 +257,9 @@ export default {
       if (level === 'protected') return 'danger';
       return 'warning';
     },
-    hasWorkbenchAction(item = {}) {
-      return Boolean(item.route || item.maintenanceType);
-    },
-    async handleOverviewCardClick(item = {}) {
+    async handleOpenPath(item = {}) {
       const targetPath = String(item.path || item.file || '').trim();
-      if (!targetPath) {
-        this.handleWorkbenchAction(item);
-        return;
-      }
+      if (!targetPath) return;
       try {
         await this.app.api('/api/maintenance/open-path', {
           method: 'POST',
@@ -301,6 +279,7 @@ export default {
         this.$nextTick(() => {
           document.querySelector('.maintenance-action-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
+        return;
       }
     }
   }
@@ -311,7 +290,7 @@ export default {
 .maintenance-summary-grid,
 .maintenance-record-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -324,12 +303,12 @@ export default {
   border: 1px solid var(--border);
   background: var(--panel);
   border-radius: 8px;
-  padding: 14px;
+  padding: 12px;
   text-align: left;
   display: grid;
-  gap: 8px;
-  min-height: 116px;
-  cursor: pointer;
+  grid-template-rows: auto auto 1fr;
+  gap: 10px;
+  min-height: 168px;
   position: relative;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
@@ -363,62 +342,99 @@ export default {
 
 .maintenance-summary-card strong,
 .maintenance-record-card strong {
-  font-size: 24px;
+  font-size: 22px;
+  line-height: 1.1;
   color: var(--text);
 }
 
 .maintenance-summary-card span,
 .maintenance-record-card span {
-  color: var(--muted);
-  font-size: 13px;
+  color: inherit;
 }
 
 .maintenance-card-title {
-  padding-right: 92px;
+  border: 0;
+  background: color-mix(in srgb, var(--panel) 82%, var(--muted) 10%);
+  border-radius: 6px;
+  padding: 9px 88px 9px 10px;
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-align: left;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  min-width: 100%;
+  max-width: 100%;
 }
 
-.maintenance-level-tag {
-  position: absolute;
-  top: 12px;
-  right: 12px;
+.maintenance-card-title:hover span {
+  color: var(--primary);
+  text-decoration: underline;
 }
 
-.maintenance-summary-card em {
+.maintenance-card-title i {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #f59e0b;
+  flex: 0 0 auto;
+}
+
+.maintenance-card-title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.maintenance-card-number {
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 74%, var(--primary) 8%);
+  border-radius: 6px;
+  padding: 12px;
+  color: var(--text);
+  text-align: left;
+  display: grid;
+  gap: 6px;
+  cursor: pointer;
+  width: 100%;
+}
+
+.maintenance-card-number:hover {
+  border-color: var(--primary);
+  background: rgba(37, 99, 235, 0.06);
+}
+
+.maintenance-card-number em {
   color: var(--muted);
   font-size: 12px;
   font-style: normal;
 }
 
+.maintenance-card-meta {
+  padding-right: 92px;
+}
+
+.maintenance-level-tag {
+  position: absolute;
+  top: 21px;
+  right: 22px;
+  max-width: 78px;
+}
+
 .maintenance-summary-card small,
 .maintenance-record-card small {
+  background: color-mix(in srgb, var(--panel) 88%, var(--muted) 8%);
+  border-radius: 6px;
+  padding: 10px;
   color: var(--muted);
   line-height: 1.45;
   word-break: break-all;
-}
-
-.maintenance-card-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-  align-self: end;
-}
-
-.maintenance-card-actions b,
-.maintenance-card-actions span {
-  color: var(--primary);
   font-size: 12px;
-  font-weight: 600;
-}
-
-.maintenance-card-actions span {
-  border-left: 1px solid var(--border);
-  padding-left: 8px;
-  cursor: pointer;
-}
-
-.maintenance-card-actions span:hover {
-  text-decoration: underline;
 }
 
 .maintenance-action-layout {
@@ -534,12 +550,38 @@ export default {
   word-break: break-all;
 }
 
+@media (max-width: 1500px) {
+  .maintenance-summary-grid,
+  .maintenance-record-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1200px) {
+  .maintenance-summary-grid,
+  .maintenance-record-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 900px) {
+  .maintenance-summary-grid,
+  .maintenance-record-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .maintenance-action-layout {
     grid-template-columns: 1fr;
   }
 
   .maintenance-preview-metrics {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .maintenance-summary-grid,
+  .maintenance-record-grid {
     grid-template-columns: 1fr;
   }
 }

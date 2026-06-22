@@ -23918,7 +23918,9 @@ function sanitizeTaskRequirementHtml(value = '', baseUrl = '') {
         continue;
       }
       if (['href', 'src'].includes(name)) {
-        const safeUrl = safeTaskRequirementUrl(attr.value, baseUrl);
+        const safeUrl = node.tagName === 'IMG' && name === 'src'
+          ? safeTaskRequirementImageUrl(node, attr.value, baseUrl)
+          : safeTaskRequirementUrl(attr.value, baseUrl);
         if (!safeUrl) node.removeAttribute(attr.name);
         else node.setAttribute(attr.name, name === 'src' ? taskRequirementImageProxyUrl(safeUrl) : safeUrl);
       }
@@ -23935,6 +23937,22 @@ function sanitizeTaskRequirementHtml(value = '', baseUrl = '') {
   };
   Array.from(root?.childNodes || []).forEach(sanitizeNode);
   return root?.innerHTML?.trim() || '';
+}
+
+function safeTaskRequirementImageUrl(node, value = '', baseUrl = '') {
+  const raw = String(value || '').trim();
+  const direct = safeTaskRequirementUrl(raw, baseUrl);
+  if (direct && !/^\{[^}]+\}$/.test(raw)) return direct;
+  const parentHref = node?.closest?.('a')?.getAttribute?.('href') || '';
+  const parentUrl = safeTaskRequirementUrl(parentHref, baseUrl);
+  if (parentUrl) return parentUrl;
+  const altUrl = safeTaskRequirementUrl(node?.getAttribute?.('alt') || '', baseUrl);
+  if (altUrl) return altUrl;
+  const placeholder = raw.match(/^\{(\d+)\.([a-z0-9]+)\}$/i);
+  if (placeholder) {
+    return safeTaskRequirementUrl(`/index.php?m=file&f=read&t=${placeholder[2].toLowerCase()}&fileID=${placeholder[1]}`, baseUrl);
+  }
+  return direct;
 }
 
 function safeTaskRequirementUrl(value = '', baseUrl = '') {
