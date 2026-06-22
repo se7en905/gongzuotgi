@@ -8684,7 +8684,7 @@ export default {
         return String(value || '').localeCompare(String(latest || '')) > 0 ? value : latest;
       }, '');
       return [
-        'ai-score-v5-product-value-and-single-line',
+        'ai-score-v6-success-only-runs',
         this.aiScoreMonthLabel,
         sourceMembers.map(member => [member.name || member.realname || '', member.account || '', member.level || '', member.status || ''].join(':')).join('|'),
         snapshot.source?.boardUpdatedAt || '',
@@ -8760,8 +8760,8 @@ export default {
       const runScore = independentScoreMode
         ? Math.min(15, completedRunCount * 5 + completedRunSkillCount * 3 + repeatedRunBonus)
         : Math.min(15, completedRunCount * 2.5 + completedRunSkillCount * 3 + repeatedRunBonus);
-      const penalty = Math.min(12, blockedCount * 3);
-      const score = Math.max(0, Math.min(100, Math.round(productScore + usageScore + runScore - penalty)));
+      const penalty = 0;
+      const score = Math.max(0, Math.min(100, Math.round(productScore + usageScore + runScore)));
       return {
         name,
         account,
