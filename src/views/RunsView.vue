@@ -146,7 +146,7 @@
                 size="small"
                 type="danger"
                 plain
-                @click.stop="app.deleteCustomWorkflowTemplate(workflow)"
+                @click.stop="deleteTemplateFromDialog(workflow)"
               >
                 删除
               </ElButton>
@@ -777,6 +777,10 @@ export default {
         description: workflow.description || '',
         materialHints: this.app.materialHintsFromCustomWorkflow(workflow)
       };
+    },
+    async deleteTemplateFromDialog(workflow = {}) {
+      await this.app.deleteCustomWorkflowTemplate(workflow);
+      if (this.templateForm.id && this.templateForm.id === workflow?.id) this.resetTemplateForm();
     },
     normalizeTemplateMaterialHints(value = this.templateForm.materialHints) {
       const source = Array.isArray(value) ? value : [value];
@@ -3311,6 +3315,21 @@ export default {
     span {
       color: var(--muted);
       font-size: 12px;
+    }
+  }
+
+  .run-template-item-actions {
+    display: grid;
+    gap: 6px;
+    justify-items: end;
+    white-space: nowrap;
+
+    .el-button {
+      width: 58px;
+      height: 32px;
+      margin: 0;
+      padding: 0 12px;
+      justify-content: center;
     }
   }
 }
