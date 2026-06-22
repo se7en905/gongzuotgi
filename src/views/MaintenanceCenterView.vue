@@ -25,7 +25,17 @@
         <strong>{{ app.formatBytes(item.bytes) }}</strong>
         <em v-if="Number(item.count || 0)">{{ item.count }} 项</em>
         <small>{{ item.note }}</small>
-        <b>{{ item.actionLabel || '查看详情' }}</b>
+        <div class="maintenance-card-actions">
+          <b>{{ item.fileActionLabel || '打开路径' }}</b>
+          <span
+            v-if="hasWorkbenchAction(item)"
+            role="button"
+            tabindex="0"
+            @click.stop="handleWorkbenchAction(item)"
+            @keydown.enter.stop.prevent="handleWorkbenchAction(item)"
+            @keydown.space.stop.prevent="handleWorkbenchAction(item)"
+          >{{ item.actionLabel }}</span>
+        </div>
       </button>
     </div>
 
@@ -42,7 +52,17 @@
         <ElTag class="maintenance-level-tag" :type="cleanupLevelTagType(item.cleanupLevel)" effect="plain">{{ item.cleanupLevelLabel || '需确认' }}</ElTag>
         <strong>{{ item.count }}</strong>
         <small>{{ item.note || (item.protected ? '受保护，不参与范围清理' : item.file) }}</small>
-        <b>{{ item.actionLabel || '查看详情' }}</b>
+        <div class="maintenance-card-actions">
+          <b>{{ item.fileActionLabel || '打开路径' }}</b>
+          <span
+            v-if="hasWorkbenchAction(item)"
+            role="button"
+            tabindex="0"
+            @click.stop="handleWorkbenchAction(item)"
+            @keydown.enter.stop.prevent="handleWorkbenchAction(item)"
+            @keydown.space.stop.prevent="handleWorkbenchAction(item)"
+          >{{ item.actionLabel }}</span>
+        </div>
       </button>
     </div>
   </ElCard>
@@ -197,6 +217,8 @@
 </template>
 
 <script>
+import { ElMessage } from 'element-plus';
+
 export default {
   name: 'MaintenanceCenterView',
   props: {
@@ -251,7 +273,25 @@ export default {
       if (level === 'protected') return 'danger';
       return 'warning';
     },
-    handleOverviewCardClick(item = {}) {
+    hasWorkbenchAction(item = {}) {
+      return Boolean(item.route || item.maintenanceType);
+    },
+    async handleOverviewCardClick(item = {}) {
+      const targetPath = String(item.path || item.file || '').trim();
+      if (!targetPath) {
+        this.handleWorkbenchAction(item);
+        return;
+      }
+      try {
+        await this.app.api('/api/maintenance/open-path', {
+          method: 'POST',
+          body: JSON.stringify({ path: targetPath })
+        });
+      } catch (error) {
+        ElMessage.error(this.app.readApiError?.(error) || '项目路径打开失败');
+      }
+    },
+    handleWorkbenchAction(item = {}) {
       if (item.route) {
         this.app.pushRoute(item.route);
         return;
@@ -356,12 +396,29 @@ export default {
   word-break: break-all;
 }
 
-.maintenance-summary-card b,
-.maintenance-record-card b {
+.maintenance-card-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  align-self: end;
+}
+
+.maintenance-card-actions b,
+.maintenance-card-actions span {
   color: var(--primary);
   font-size: 12px;
   font-weight: 600;
-  align-self: end;
+}
+
+.maintenance-card-actions span {
+  border-left: 1px solid var(--border);
+  padding-left: 8px;
+  cursor: pointer;
+}
+
+.maintenance-card-actions span:hover {
+  text-decoration: underline;
 }
 
 .maintenance-action-layout {

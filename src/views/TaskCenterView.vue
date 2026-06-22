@@ -196,8 +196,10 @@
           <span :class="['deadline-cell', app.deadlineState(row.deadline || row.zentao?.deadline)]">{{ row.deadline || row.zentao?.deadline || '-' }}</span>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="创建时间" min-width="150">
-        <template #default="{ row }">{{ app.formatDateTime(row.zentaoCreatedAt || row.zentao?.openedDate || row.createdAt) }}</template>
+      <ElTableColumn label="创建时间" width="190">
+        <template #default="{ row }">
+          <span class="task-created-time-cell">{{ app.formatDateTime(row.zentaoCreatedAt || row.zentao?.openedDate || row.createdAt) }}</span>
+        </template>
       </ElTableColumn>
       <ElTableColumn label="操作" width="200" fixed="right" align="center">
         <template #default="{ row }">
@@ -244,8 +246,10 @@
           <span :class="['deadline-cell', app.deadlineState(row.deadline)]">{{ row.deadline || '-' }}</span>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="创建时间" min-width="150">
-        <template #default="{ row }">{{ app.formatDateTime(row.openedAt || row.createdAt) }}</template>
+      <ElTableColumn label="创建时间" width="190">
+        <template #default="{ row }">
+          <span class="task-created-time-cell">{{ app.formatDateTime(row.openedAt || row.createdAt) }}</span>
+        </template>
       </ElTableColumn>
     </ElTable>
     <div class="pagination-bar">
@@ -409,6 +413,12 @@ export default {
     grid-row: 1;
     min-width: 0;
     width: 100%;
+  }
+
+  .task-created-time-cell {
+    display: inline-block;
+    white-space: nowrap;
+    word-break: keep-all;
   }
 
   .task-metrics-shell {

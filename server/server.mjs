@@ -1267,6 +1267,32 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/maintenance/open-path') {
+    requireRole(currentUser, 'admin');
+    requirePermission(currentUser, 'api.maintenance.manage');
+    const body = await readBody(req);
+    const target = normalizeFsPath(body.path);
+    if (!target) {
+      sendJson(res, 400, { error: 'path is required' });
+      return;
+    }
+    const projectRoot = path.resolve(paths.root);
+    const resolvedTarget = path.resolve(target);
+    if (resolvedTarget !== projectRoot && !resolvedTarget.startsWith(`${projectRoot}${path.sep}`)) {
+      sendJson(res, 403, { error: '维护中心只能打开当前项目目录内的路径。' });
+      return;
+    }
+    const stat = await fs.stat(resolvedTarget).catch(() => null);
+    if (!stat) {
+      sendJson(res, 404, { error: '路径不存在。' });
+      return;
+    }
+    const openTarget = stat.isDirectory() ? resolvedTarget : path.dirname(resolvedTarget);
+    await execFileAsync('open', [openTarget]);
+    sendJson(res, 200, { ok: true, path: openTarget });
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/projects') {
     const projects = await listProjects();
     sendJson(res, 200, projects.filter(project => canAccessProject(currentUser, project.id)).map(redactProject));
