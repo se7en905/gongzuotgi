@@ -830,7 +830,7 @@ export default {
           name,
           description: String(this.templateForm.description || '').trim(),
           projectId: this.app.selectedProjectId || this.app.runForm.projectId || this.app.projects[0]?.id || '',
-          stages: materialHints.map((value, index) => this.app.runMaterialStageFromValue(value, index))
+          stages: materialHints.map((value, index) => this.app.runMaterialStageFromValue(value, index, this.app.selectedProjectId || this.app.runForm.projectId || this.app.projects[0]?.id || ''))
         };
         await this.app.api('/api/custom-workflows', {
           method: 'POST',

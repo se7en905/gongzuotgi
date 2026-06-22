@@ -614,12 +614,13 @@ function workflowInstruction(run) {
       `执行自定义工作流：${run.customWorkflowName || run.customWorkflowId || '未命名流程'}。`,
       '只按下方自定义阶段顺序推进，不自动扩展为 XS/S/M/L 完整流程。',
       '每个阶段开始和结束时仍必须输出 AGENT_WORKFLOW_STAGE_START / DONE 标记，阶段名必须和自定义阶段名称一致。',
-      '如果阶段绑定了 skillId，请优先读取目标项目 .agent-hub/skills/<skillId>/SKILL.md；如果不存在，再按规范 md、AI 产物清单和目标项目规则判断是否跳过或用通用方式执行。',
+      '如果阶段绑定了 md / SKILL 路径，请优先读取本次执行资料和 selectedMaterialSnapshots 中的内容快照；只有旧模板仅绑定 skillId 且没有路径快照时，才尝试目标项目 .agent-hub/skills/<skillId>/SKILL.md。',
       'required=true 表示必须执行，不能跳过；skippable=true 表示不适用时可以跳过，但必须在阶段执行报告中记录原因。',
       '',
       '自定义阶段清单：',
       ...stages.map(stage => [
         `${stage.no || ''}. ${stage.name}`,
+        workflowStageMaterialPaths(stage)[0] ? `material=${workflowStageMaterialPaths(stage)[0]}` : '',
         stage.skillId ? `skill=${stage.skillId}` : 'skill=未绑定',
         stage.skippable === true ? '可跳过' : '必跑',
         stage.doneCriteria ? `完成判定=${stage.doneCriteria}` : ''
@@ -1162,13 +1163,23 @@ async function validateCustomWorkflowRun(project = {}, run = {}) {
   const stages = Array.isArray(run.stages) ? run.stages : [];
   if (!stages.length) errors.push('自定义流程至少需要 1 个阶段');
   const names = new Set();
+  const materialPaths = runMaterialPaths(run);
+  const snapshotPaths = runMaterialSnapshotPaths(run);
   for (const stage of stages) {
     const name = String(stage.name || '').trim();
     if (!name) errors.push('存在未命名阶段');
     const normalizedName = normalizeStageName(name);
     if (normalizedName && names.has(normalizedName)) errors.push(`阶段名称重复：${name}`);
     if (normalizedName) names.add(normalizedName);
-    if (stage.skillId) {
+    const stageMaterialPaths = workflowStageMaterialPaths(stage);
+    const hasMaterialBinding = stageMaterialPaths.some(item => materialPathExistsInRun(item, materialPaths, snapshotPaths))
+      || materialPathExistsInRun(stage.skillId, materialPaths, snapshotPaths)
+      || materialPathExistsInRun(stage.name, materialPaths, snapshotPaths);
+    if (stageMaterialPaths.length && !hasMaterialBinding) {
+      errors.push(`阶段「${name || stage.no}」绑定的 md / Skill 文件未写入执行快照：${stageMaterialPaths[0]}`);
+      continue;
+    }
+    if (stage.skillId && !hasMaterialBinding && !looksLikeMaterialPath(stage.skillId)) {
       const skillPath = path.join(project.rootPath || '', '.agent-hub', 'skills', stage.skillId, 'SKILL.md');
       try {
         await fs.access(skillPath);
@@ -1178,6 +1189,90 @@ async function validateCustomWorkflowRun(project = {}, run = {}) {
     }
   }
   return { ok: errors.length === 0, errors };
+}
+
+function runMaterialPaths(run = {}) {
+  return normalizePathList([
+    run.primarySkillPath,
+    run.stage,
+    run.showdocHints,
+    ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : [])
+  ]);
+}
+
+function runMaterialSnapshotPaths(run = {}) {
+  return normalizePathList((Array.isArray(run.selectedMaterialSnapshots) ? run.selectedMaterialSnapshots : [])
+    .flatMap(item => [item?.path, item?.sourceValue, item?.title]));
+}
+
+function workflowStageMaterialPaths(stage = {}) {
+  return normalizePathList([
+    ...extractMaterialPaths(stage.description),
+    stage.artifactDir,
+    stage.id,
+    stage.skillId
+  ].filter(looksLikeMaterialPath));
+}
+
+function extractMaterialPaths(text = '') {
+  const source = String(text || '');
+  const paths = [];
+  const pattern = /(?:^|[\s"'`：:，,。；;（(【\[])([^"'`，,。；;）)\]】\s]+(?:SKILL\.md|README\.md|\.md|\.markdown))/gi;
+  let match = pattern.exec(source);
+  while (match) {
+    if (match[1]) paths.push(match[1]);
+    match = pattern.exec(source);
+  }
+  return paths;
+}
+
+function looksLikeMaterialPath(value = '') {
+  const text = normalizeMaterialPath(value);
+  return /(^|\/)SKILL\.md(?:$|[?#])/i.test(text) || /\.(md|markdown)(?:$|[?#])/i.test(text);
+}
+
+function normalizePathList(values = []) {
+  const seen = new Set();
+  return (Array.isArray(values) ? values : [values])
+    .flatMap(value => String(value || '').split(/\r?\n/))
+    .map(normalizeMaterialPath)
+    .filter(value => {
+      if (!value || seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
+}
+
+function normalizeMaterialPath(value = '') {
+  return String(value || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .trim();
+}
+
+function materialPathKey(value = '') {
+  return normalizeMaterialPath(value)
+    .replace(/[?#].*$/, '')
+    .replace(/\/(?:SKILL|README)\.md$/i, '')
+    .replace(/\.(?:md|markdown)$/i, '')
+    .toLowerCase();
+}
+
+function materialPathExistsInRun(value = '', materialPaths = [], snapshotPaths = []) {
+  const exact = normalizeMaterialPath(value);
+  if (!exact) return false;
+  const all = [...materialPaths, ...snapshotPaths];
+  if (all.includes(exact)) return true;
+  const key = materialPathKey(exact);
+  if (key && all.some(item => materialPathKey(item) === key)) return true;
+  const displayKey = materialDisplayKey(exact);
+  return Boolean(displayKey && all.some(item => materialDisplayKey(item) === displayKey));
+}
+
+function materialDisplayKey(value = '') {
+  const text = materialPathKey(value);
+  const parts = text.split('/').filter(Boolean);
+  return parts.pop() || text;
 }
 
 function validateCustomWorkflowCompletion(run = {}, stages = []) {

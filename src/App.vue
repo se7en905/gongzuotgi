@@ -757,7 +757,9 @@ export default {
       aiMemberScoreReady: false,
       aiMemberScoreRowsSnapshot: [],
       aiMemberScoreRowsSnapshotKey: '',
+      aiMemberScoreRowsSnapshotMonth: '',
       aiMemberScoreRowsSnapshotAt: '',
+      aiMemberMonthlyRunScoreBuckets: {},
       aiMemberScoreRefreshing: false,
       aiMembersBoardFrameReady: false,
       aiMembersBoardFrameReadyTimer: 0,
@@ -1829,11 +1831,16 @@ export default {
       const projectId = this.workflowDesigner.projectId;
       if (!projectId) return [];
       const scan = this.scans[projectId] || null;
-      return (scan?.skills || []).map(skill => ({
-        value: skill.id,
-        title: skillDisplayText(skill),
-        label: `${skill.id} · ${skillDisplayText(skill)}`
-      }));
+      return (scan?.skills || []).map(skill => {
+        const path = skill.git?.relativePath || skill.relativePath || skill.path || '';
+        const fileName = this.fileNameFromPath(path);
+        const value = path || skill.id;
+        return {
+          value,
+          title: skillDisplayText(skill),
+          label: [fileName || skill.id, skillDisplayText(skill)].filter(Boolean).join(' · ')
+        };
+      });
     },
 
     filteredWorkflowSkillOptions() {
@@ -3200,7 +3207,11 @@ export default {
     },
 
     aiMemberScoreRows() {
-      if (Array.isArray(this.aiMemberScoreRowsSnapshot) && this.aiMemberScoreRowsSnapshot.length) {
+      if (
+        Array.isArray(this.aiMemberScoreRowsSnapshot)
+        && this.aiMemberScoreRowsSnapshot.length
+        && this.isCurrentAiMemberScoreSnapshotMonth(this.aiMemberScoreRowsSnapshotMonth)
+      ) {
         return this.aiMemberScoreRowsSnapshot;
       }
       return [];
@@ -6436,11 +6447,25 @@ export default {
         const raw = localStorage.getItem(this.workbenchDisplayCacheKey('aiMemberScoreRowsSnapshot'));
         if (!raw) return false;
         const parsed = JSON.parse(raw);
-        const rows = Array.isArray(parsed?.rows) ? parsed.rows : Array.isArray(parsed?.value?.rows) ? parsed.value.rows : [];
+        const source = parsed?.value && typeof parsed.value === 'object' ? parsed.value : parsed;
+        const month = this.aiMemberScoreSnapshotMonth(source);
+        const rows = Array.isArray(source?.rows) ? source.rows : [];
+        this.aiMemberMonthlyRunScoreBuckets = this.mergeAiMemberMonthlyRunScoreBuckets(
+          this.aiMemberMonthlyRunScoreBuckets,
+          this.mergeAiMemberMonthlyRunScoreBuckets(
+            source.monthlyRunScoreBuckets || {},
+            this.aiMemberMonthlyRunScoreBucketsFromSnapshotRows(rows, month || this.aiScoreMonthLabel)
+          )
+        );
+        if (month && !this.isCurrentAiMemberScoreSnapshotMonth(month)) {
+          this.resetAiMemberScoreRowsForNewMonth();
+          return false;
+        }
         if (!rows.length) return false;
         this.aiMemberScoreRowsSnapshot = rows;
-        this.aiMemberScoreRowsSnapshotKey = parsed.key || parsed.value?.key || '';
-        this.aiMemberScoreRowsSnapshotAt = parsed.savedAt || parsed.value?.savedAt || '';
+        this.aiMemberScoreRowsSnapshotKey = source.key || '';
+        this.aiMemberScoreRowsSnapshotMonth = month || this.aiScoreMonthLabel;
+        this.aiMemberScoreRowsSnapshotAt = source.savedAt || source.updatedAt || '';
         this.aiMemberScoreReady = true;
         return true;
       } catch {
@@ -6450,17 +6475,31 @@ export default {
 
     applyAiMemberScoreSnapshotPayload(payload = {}) {
       const source = payload?.value && typeof payload.value === 'object' ? payload.value : payload;
+      const month = this.aiMemberScoreSnapshotMonth(source);
       const rows = Array.isArray(source?.rows) ? source.rows : [];
+      this.aiMemberMonthlyRunScoreBuckets = this.mergeAiMemberMonthlyRunScoreBuckets(
+        this.aiMemberMonthlyRunScoreBuckets,
+        this.mergeAiMemberMonthlyRunScoreBuckets(
+          source.monthlyRunScoreBuckets || {},
+          this.aiMemberMonthlyRunScoreBucketsFromSnapshotRows(rows, month || this.aiScoreMonthLabel)
+        )
+      );
+      if (month && !this.isCurrentAiMemberScoreSnapshotMonth(month)) {
+        this.resetAiMemberScoreRowsForNewMonth();
+        return false;
+      }
       if (!rows.length) return false;
       this.aiMemberScoreRowsSnapshot = rows;
       this.aiMemberScoreRowsSnapshotKey = source.key || '';
+      this.aiMemberScoreRowsSnapshotMonth = month || this.aiScoreMonthLabel;
       this.aiMemberScoreRowsSnapshotAt = source.savedAt || source.updatedAt || '';
       this.aiMemberScoreReady = true;
       try {
         localStorage.setItem(this.workbenchDisplayCacheKey('aiMemberScoreRowsSnapshot'), JSON.stringify({
           rows,
           key: this.aiMemberScoreRowsSnapshotKey,
-          month: source.month || this.aiScoreMonthLabel,
+          month: this.aiMemberScoreRowsSnapshotMonth,
+          monthlyRunScoreBuckets: this.aiMemberMonthlyRunScoreBuckets,
           savedAt: this.aiMemberScoreRowsSnapshotAt
         }));
       } catch {
@@ -6490,13 +6529,184 @@ export default {
         rows,
         key,
         month: this.aiScoreMonthLabel,
+        monthlyRunScoreBuckets: this.mergeAiMemberMonthlyRunScoreBuckets(
+          this.aiMemberMonthlyRunScoreBuckets,
+          this.aiMemberMonthlyRunScoreBucketsFromSnapshotRows(rows, this.aiScoreMonthLabel)
+        ),
         savedAt: new Date().toISOString()
       };
+      this.aiMemberMonthlyRunScoreBuckets = payload.monthlyRunScoreBuckets;
       const saved = await this.api('/api/ai-member-score-snapshot', {
         method: 'PUT',
         body: JSON.stringify(payload)
       });
       this.applyAiMemberScoreSnapshotPayload(saved);
+    },
+
+    normalizeAiMemberMonthlyRunScoreBuckets(input = {}) {
+      const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+      return Object.fromEntries(Object.entries(source)
+        .map(([month, people]) => {
+          const monthKey = String(month || '').trim();
+          if (!/^\d{4}-\d{2}$/.test(monthKey) || !people || typeof people !== 'object' || Array.isArray(people)) return null;
+          const normalizedPeople = Object.fromEntries(Object.entries(people)
+            .map(([person, bucket]) => {
+              const personKey = String(person || '').trim();
+              const value = bucket && typeof bucket === 'object' ? bucket : {};
+              if (!personKey) return null;
+              return [personKey, {
+                runIds: [...new Set((Array.isArray(value.runIds) ? value.runIds : []).map(item => String(item || '').trim()).filter(Boolean))],
+                completedRunCount: Math.max(0, Number(value.completedRunCount || 0) || 0, (Array.isArray(value.runIds) ? value.runIds : []).map(item => String(item || '').trim()).filter(Boolean).length),
+                completedRunSkillKeys: [...new Set((Array.isArray(value.completedRunSkillKeys) ? value.completedRunSkillKeys : []).map(item => String(item || '').trim()).filter(Boolean))],
+                completedRunSkillCount: Math.max(0, Number(value.completedRunSkillCount || 0) || 0, (Array.isArray(value.completedRunSkillKeys) ? value.completedRunSkillKeys : []).map(item => String(item || '').trim()).filter(Boolean).length),
+                blockedRunIds: [...new Set((Array.isArray(value.blockedRunIds) ? value.blockedRunIds : []).map(item => String(item || '').trim()).filter(Boolean))],
+                blockedCount: Math.max(0, Number(value.blockedCount || 0) || 0, (Array.isArray(value.blockedRunIds) ? value.blockedRunIds : []).map(item => String(item || '').trim()).filter(Boolean).length),
+                latestActivityAt: String(value.latestActivityAt || '').trim()
+              }];
+            })
+            .filter(Boolean));
+          return [monthKey, normalizedPeople];
+        })
+        .filter(Boolean));
+    },
+
+    aiScoreMonthKeyFromTime(value = '') {
+      const date = value ? new Date(value) : new Date();
+      if (Number.isNaN(date.getTime())) return this.aiScoreMonthLabel;
+      return this.aiScoreMonthKey(date);
+    },
+
+    collectAiMemberMonthlyRunScoreBucketsFromRuns(runs = this.runs || []) {
+      const buckets = {};
+      (Array.isArray(runs) ? runs : []).forEach(run => {
+        const time = run.finishedAt || run.completedAt || run.startedAt || run.createdAt || '';
+        const monthKey = this.aiScoreMonthKeyFromTime(time);
+        if (!/^\d{4}-\d{2}$/.test(monthKey)) return;
+        const people = [run.developer, run.createdBy, run.startedBy, run.ownerUserId]
+          .map(person => this.normalizeAiScorePersonKey(person))
+          .filter(Boolean);
+        if (!people.length) return;
+        if (!buckets[monthKey]) buckets[monthKey] = {};
+        const isCompleted = this.isAiScoreCompletedRun(run);
+        const blocked = /failed|blocked|失败|阻塞|不可用|不通过|返工/i.test(String(run.status || ''));
+        const skillKeys = this.aiMemberScoreRunSkillKeys(run);
+        const runKey = this.aiMemberScoreRunStableKey(run);
+        people.forEach(personKey => {
+          const bucket = buckets[monthKey][personKey] || {
+            runIds: [],
+            completedRunCount: 0,
+            completedRunSkillKeys: [],
+            completedRunSkillCount: 0,
+            blockedRunIds: [],
+            blockedCount: 0,
+            latestActivityAt: ''
+          };
+          if (isCompleted && runKey && !bucket.runIds.includes(runKey)) bucket.runIds.push(runKey);
+          bucket.completedRunCount = bucket.runIds.length;
+          if (blocked && runKey && !bucket.blockedRunIds.includes(runKey)) bucket.blockedRunIds.push(runKey);
+          bucket.blockedCount = bucket.blockedRunIds.length;
+          if (isCompleted) {
+            skillKeys.forEach(key => {
+              if (key && !bucket.completedRunSkillKeys.includes(key)) bucket.completedRunSkillKeys.push(key);
+            });
+          }
+          bucket.completedRunSkillCount = bucket.completedRunSkillKeys.length;
+          if (time && String(time).localeCompare(bucket.latestActivityAt || '') > 0) bucket.latestActivityAt = time;
+          buckets[monthKey][personKey] = bucket;
+        });
+      });
+      return this.normalizeAiMemberMonthlyRunScoreBuckets(buckets);
+    },
+
+    mergeAiMemberMonthlyRunScoreBuckets(existing = {}, incoming = {}) {
+      const next = this.normalizeAiMemberMonthlyRunScoreBuckets(existing);
+      const add = this.normalizeAiMemberMonthlyRunScoreBuckets(incoming);
+      Object.entries(add).forEach(([month, people]) => {
+        if (!next[month]) next[month] = {};
+        Object.entries(people).forEach(([person, bucket]) => {
+          const current = next[month][person] || {
+            runIds: [],
+            completedRunCount: 0,
+            completedRunSkillKeys: [],
+            completedRunSkillCount: 0,
+            blockedRunIds: [],
+            blockedCount: 0,
+            latestActivityAt: ''
+          };
+          const runIds = [...new Set([...current.runIds, ...bucket.runIds])];
+          const blockedRunIds = [...new Set([...current.blockedRunIds, ...bucket.blockedRunIds])];
+          const completedRunSkillKeys = [...new Set([...current.completedRunSkillKeys, ...bucket.completedRunSkillKeys])];
+          next[month][person] = {
+            runIds,
+            completedRunCount: Math.max(runIds.length, Number(current.completedRunCount || 0), Number(bucket.completedRunCount || 0)),
+            completedRunSkillKeys,
+            completedRunSkillCount: Math.max(completedRunSkillKeys.length, Number(current.completedRunSkillCount || 0), Number(bucket.completedRunSkillCount || 0)),
+            blockedRunIds,
+            blockedCount: Math.max(blockedRunIds.length, Number(current.blockedCount || 0), Number(bucket.blockedCount || 0)),
+            latestActivityAt: [current.latestActivityAt, bucket.latestActivityAt].filter(Boolean).sort().pop() || ''
+          };
+        });
+      });
+      return next;
+    },
+
+    syncAiMemberMonthlyRunScoreBucketsFromCurrentRuns() {
+      const fromRuns = this.collectAiMemberMonthlyRunScoreBucketsFromRuns(this.runs || []);
+      this.aiMemberMonthlyRunScoreBuckets = this.mergeAiMemberMonthlyRunScoreBuckets(this.aiMemberMonthlyRunScoreBuckets, fromRuns);
+      return this.aiMemberMonthlyRunScoreBuckets;
+    },
+
+    aiMemberMonthlyRunScoreBucketsFromSnapshotRows(rows = [], month = this.aiScoreMonthLabel) {
+      const monthKey = String(month || '').trim();
+      if (!/^\d{4}-\d{2}$/.test(monthKey)) return {};
+      const people = {};
+      (Array.isArray(rows) ? rows : []).forEach(row => {
+        const personKey = this.normalizeAiScorePersonKey(row.account || row.name);
+        if (!personKey) return;
+        const completedRunCount = Math.max(0, Number(row.monthRunCount || 0) || 0);
+        const completedRunSkillCount = Math.max(0, Number(row.monthRunSkillCount || 0) || 0);
+        const blockedCount = Math.max(0, Number(row.blockedCount || 0) || 0);
+        people[personKey] = {
+          runIds: [],
+          completedRunCount,
+          completedRunSkillKeys: [],
+          completedRunSkillCount,
+          blockedRunIds: [],
+          blockedCount,
+          latestActivityAt: String(row.latestActivityAt || '').trim()
+        };
+      });
+      return this.normalizeAiMemberMonthlyRunScoreBuckets({ [monthKey]: people });
+    },
+
+    aiMemberScoreSnapshotMonth(source = {}) {
+      const month = String(source?.month || '').trim();
+      if (/^\d{4}-\d{2}$/.test(month)) return month;
+      const savedMonth = this.aiScoreMonthKey(source?.savedAt || source?.updatedAt || '');
+      return /^\d{4}-\d{2}$/.test(savedMonth) ? savedMonth : '';
+    },
+
+    isCurrentAiMemberScoreSnapshotMonth(month = '') {
+      return String(month || '').trim() === this.aiScoreMonthLabel;
+    },
+
+    resetAiMemberScoreRowsForNewMonth() {
+      this.aiMemberScoreRowsSnapshot = [];
+      this.aiMemberScoreRowsSnapshotKey = '';
+      this.aiMemberScoreRowsSnapshotMonth = this.aiScoreMonthLabel;
+      this.aiMemberScoreRowsSnapshotAt = '';
+      this.aiMemberScoreReady = false;
+      this.clearAiMemberScoreCache();
+      try {
+        localStorage.setItem(this.workbenchDisplayCacheKey('aiMemberScoreRowsSnapshot'), JSON.stringify({
+          rows: [],
+          key: '',
+          month: this.aiScoreMonthLabel,
+          monthlyRunScoreBuckets: this.aiMemberMonthlyRunScoreBuckets,
+          savedAt: ''
+        }));
+      } catch {
+      }
     },
 
     restoreWorkbenchDisplayCacheKeyIfEmpty(key = '') {
@@ -8356,11 +8566,17 @@ export default {
       this.aiMembersViewMounted = true;
       this.aiMembersBoardFrameReady = false;
       this.cancelAiMembersDeferredWork();
-      if (Array.isArray(this.aiMemberScoreRowsSnapshot) && this.aiMemberScoreRowsSnapshot.length) {
+      if (
+        Array.isArray(this.aiMemberScoreRowsSnapshot)
+        && this.aiMemberScoreRowsSnapshot.length
+        && this.isCurrentAiMemberScoreSnapshotMonth(this.aiMemberScoreRowsSnapshotMonth)
+      ) {
         this.aiMemberScoreReady = true;
       } else {
         this.restoreAiMemberScoreSnapshot();
-        this.aiMemberScoreReady = Array.isArray(this.aiMemberScoreRowsSnapshot) && this.aiMemberScoreRowsSnapshot.length;
+        this.aiMemberScoreReady = Array.isArray(this.aiMemberScoreRowsSnapshot)
+          && this.aiMemberScoreRowsSnapshot.length
+          && this.isCurrentAiMemberScoreSnapshotMonth(this.aiMemberScoreRowsSnapshotMonth);
       }
       this.refreshAiMemberScoreSnapshotFromServer({ background: true }).catch(() => {});
       if (this.workbenchStateRestoring) return;
@@ -8413,6 +8629,7 @@ export default {
       try {
         await this.refreshAiMemberScoreDependenciesForManualRefresh();
         await new Promise(resolve => setTimeout(resolve, 0));
+        this.syncAiMemberMonthlyRunScoreBucketsFromCurrentRuns();
         this.clearAiMemberScoreCache();
         const sourceMembers = this.currentAiMemberScoreSourceMembers();
         const cacheKey = this.aiMemberScoreRowsCacheKey(sourceMembers);
@@ -8510,6 +8727,7 @@ export default {
       const monthUsageCount = monthUsageLogs.length;
       const monthValidations = independentScoreMode ? [] : this.aiMemberScoreValidationRows(name, productRows);
       const monthRuns = this.aiMemberScoreRunRows(name, account);
+      const monthRunBucket = this.aiMemberScoreMonthlyRunBucket(name, account, monthRuns);
       const productValue = this.aiMemberScoreProductValue(productRows, productItems, independentScoreMode);
       const blockedSources = independentScoreMode
         ? [
@@ -8521,18 +8739,20 @@ export default {
         ...monthUsageLogs.map(log => `${log.type || ''} ${log.content || ''} ${log.summary || ''}`),
         ...monthValidations.map(row => `${row.status || ''} ${row.validationResult || ''} ${row.notes || ''}`)
         ];
-      const blockedCount = blockedSources.filter(text => /failed|blocked|失败|阻塞|不可用|不通过|返工/i.test(String(text || ''))).length;
+      const liveBlockedCount = blockedSources.filter(text => /failed|blocked|失败|阻塞|不可用|不通过|返工/i.test(String(text || ''))).length;
+      const blockedCount = Math.max(liveBlockedCount, Number(monthRunBucket.blockedCount || 0));
 
       const productScore = productValue.score;
       const usedProductCount = this.aiMemberScoreUniqueProductKeyCount(monthUsageLogs.map(log => log.productKey || log.target).filter(Boolean));
       const validationProductCount = new Set(monthValidations.map(row => row.productKey || row.artifactKey || row.id).filter(Boolean)).size;
-      const completedRunSkillCount = this.aiMemberScoreCompletedRunSkillKeys(monthRuns).size;
+      const liveCompletedRunSkillKeys = this.aiMemberScoreCompletedRunSkillKeys(monthRuns);
+      const completedRunSkillCount = Math.max(liveCompletedRunSkillKeys.size, Number(monthRunBucket.completedRunSkillCount || 0), Number(monthRunBucket.completedRunSkillKeys?.length || 0));
       const usageResultCount = this.aiMemberScoreUsageResultCount(monthUsageLogs);
       const usagePeopleCount = this.aiMemberScoreUsagePeopleCount(productRows);
       const usageCoverageRate = this.aiMemberScoreUsageCoverageRate(usagePeopleCount);
       const usageRatioBonus = Math.min(independentScoreMode ? 4 : 6, Math.round(usageCoverageRate / 20));
       const repeatedUsageBonus = Math.min(independentScoreMode ? 6 : 10, Math.max(0, usageResultCount - usedProductCount) * (independentScoreMode ? 1.5 : 2));
-      const completedRunCount = monthRuns.length;
+      const completedRunCount = Math.max(monthRuns.length, Number(monthRunBucket.completedRunCount || 0));
       const repeatedRunBonus = Math.min(independentScoreMode ? 3 : 5, Math.max(0, completedRunCount - completedRunSkillCount) * (independentScoreMode ? 1 : 1.5));
       const usageScore = independentScoreMode
         ? Math.min(20, usedProductCount * 4 + usageResultCount * 3 + repeatedUsageBonus + usageRatioBonus)
@@ -8560,14 +8780,15 @@ export default {
         monthUsagePeopleCount: usagePeopleCount,
         monthUsageCoverageRate: usageCoverageRate,
         monthValidationCount: monthValidations.length,
-        monthRunCount: monthRuns.length,
+        monthRunCount: completedRunCount,
         monthRunSkillCount: completedRunSkillCount,
         blockedCount,
         topProducts: productItems.slice(0, 3),
         latestActivityAt: [
           ...monthUsageLogs.map(log => log.time),
           ...monthValidations.map(row => row.submittedAt || row.updatedAt || row.createdAt),
-          ...monthRuns.map(run => run.finishedAt || run.completedAt || run.startedAt || run.createdAt)
+          ...monthRuns.map(run => run.finishedAt || run.completedAt || run.startedAt || run.createdAt),
+          monthRunBucket.latestActivityAt
         ].filter(Boolean).sort().pop() || '',
         reason: independentScoreMode
           ? '独立产物口径：产物价值、个人使用和执行活跃综合计算'
@@ -8919,6 +9140,43 @@ export default {
             return key && (key === personKey || key === accountKey);
           });
         });
+    },
+
+    aiMemberScoreMonthlyRunBucket(memberName = '', account = '', liveRuns = []) {
+      const monthBuckets = this.normalizeAiMemberMonthlyRunScoreBuckets(this.aiMemberMonthlyRunScoreBuckets)[this.aiScoreMonthLabel] || {};
+      const personKeys = [memberName, account]
+        .map(person => this.normalizeAiScorePersonKey(person))
+        .filter(Boolean);
+      const existing = personKeys.map(key => monthBuckets[key]).find(Boolean) || {};
+      const liveBucket = this.collectAiMemberMonthlyRunScoreBucketsFromRuns(liveRuns || [])[this.aiScoreMonthLabel] || {};
+      const live = personKeys.map(key => liveBucket[key]).find(Boolean) || {};
+      const merged = this.mergeAiMemberMonthlyRunScoreBuckets(
+        { [this.aiScoreMonthLabel]: { current: existing } },
+        { [this.aiScoreMonthLabel]: { current: live } }
+      );
+      return merged[this.aiScoreMonthLabel]?.current || {
+        runIds: [],
+        completedRunCount: 0,
+        completedRunSkillKeys: [],
+        completedRunSkillCount: 0,
+        blockedRunIds: [],
+        blockedCount: 0,
+        latestActivityAt: ''
+      };
+    },
+
+    aiMemberScoreRunStableKey(run = {}) {
+      const direct = String(run.id || run.runId || run.uuid || '').trim();
+      if (direct) return direct;
+      return [
+        run.createdAt,
+        run.startedAt,
+        run.finishedAt,
+        run.completedAt,
+        run.title,
+        run.requirement,
+        run.status
+      ].map(value => String(value || '').trim()).filter(Boolean).join('::');
     },
 
     isAiScoreCompletedRun(run = {}) {
@@ -17753,18 +18011,11 @@ export default {
 
     customWorkflowPrimaryMaterialName(workflow = {}) {
       const stage = Array.isArray(workflow.stages) ? workflow.stages[0] || {} : {};
-      const descriptionPath = String(stage.description || '').match(/(?:^|\s)([^，。\s]+(?:SKILL\.md|README\.md|[\w\u4e00-\u9fa5\-]+\.md))/i)?.[1] || '';
-      const pathCandidate = [
-        descriptionPath,
-        stage.artifactDir,
-        stage.id,
-        stage.skillId,
-        stage.name
-      ].map(value => String(value || '').trim()).find(Boolean) || '';
-      const displayName = this.runMaterialDisplayName(pathCandidate);
+      const hint = this.runMaterialHintFromWorkflowStage(stage, workflow.projectId || this.runForm.projectId || this.selectedProjectId || '');
+      const displayName = this.runMaterialDisplayName(hint);
       if (displayName && !/^(skills?|md|skills-md|custom-stage)$/i.test(displayName)) return displayName;
       const name = String(stage.name || stage.skillId || '').trim();
-      return name || displayName || pathCandidate || '未配置 md / Skill';
+      return name || displayName || hint || '未配置 md / Skill';
     },
 
     workflowStageMode(stage = {}) {
@@ -17806,15 +18057,17 @@ export default {
         projectId: this.workflowDesigner.projectId,
         stages: this.workflowDesigner.stages.map((stage, index) => {
           const flags = normalizedWorkflowStageFlags(stage);
+          const materialHint = this.runMaterialHintFromWorkflowStage(stage, this.workflowDesigner.projectId || this.selectedProjectId || '') || stage.skillId || stage.artifactDir || stage.id || stage.name;
+          const materialStage = this.runMaterialStageFromValue(materialHint, index, this.workflowDesigner.projectId || this.selectedProjectId || '');
           return {
-            id: stage.id || stage.skillId || `custom-stage-${index + 1}`,
-            name: stage.name,
-            skillId: stage.skillId,
-            artifactDir: stage.artifactDir || stage.skillId || stage.id,
+            id: materialStage.id || stage.id || `custom-stage-${index + 1}`,
+            name: stage.name || materialStage.name,
+            skillId: materialStage.skillId,
+            artifactDir: materialStage.artifactDir,
             required: flags.required,
             skippable: flags.skippable,
             doneCriteria: stage.doneCriteria,
-            description: stage.description
+            description: materialStage.description || stage.description
           };
         })
       };
@@ -17863,8 +18116,8 @@ export default {
         workflowLevel: 'CUSTOM',
         customWorkflowId: saved.id,
         title: saved.name,
-        selectedMaterialHints: (saved.stages || []).map(stage => stage.skillId || stage.artifactDir || stage.name).filter(Boolean),
-        showdocHints: (saved.stages || []).map(stage => stage.skillId || stage.artifactDir || stage.name).filter(Boolean).join('\n'),
+        selectedMaterialHints: this.materialHintsFromCustomWorkflow(saved),
+        showdocHints: this.materialHintsFromCustomWorkflow(saved).join('\n'),
         requirement: saved.description || '请按自定义工作流模板执行，并在每个阶段记录产物与结论。',
         sourceType: 'standalone'
       });
@@ -17998,7 +18251,7 @@ export default {
         ? String(this.runForm.title || '').trim()
         : this.runMaterialTitle(this.runForm.executionMode, materialHints);
       const customStages = this.isCustomWorkflowRun
-        ? materialHints.map((value, index) => this.runMaterialStageFromValue(value, index))
+        ? materialHints.map((value, index) => this.runMaterialStageFromValue(value, index, projectId))
         : [];
       const selectedTemplate = this.isCustomWorkflowRun && this.runForm.customWorkflowId
         ? this.customWorkflows.find(item => item.id === this.runForm.customWorkflowId)
@@ -19083,41 +19336,164 @@ export default {
       }
     },
 
-    materialOptionForValue(value = '') {
-      const key = String(value || '').trim();
-      if (!key) return null;
-      return this.currentProjectExecutionMaterialOptions.find(item => item.value === key) || null;
-    },
-
-    materialSkillForValue(value = '', projectId = this.runForm.projectId || this.selectedProjectId || this.projects[0]?.id || '') {
-      const key = String(value || '').trim();
-      if (!key) return null;
-      const scan = this.scans[projectId] || null;
-      const skills = Array.isArray(scan?.skills) ? scan.skills : [];
-      return skills.find(skill => {
-        const candidates = [
-          skill.id,
-          skill.path,
-          skill.relativePath,
-          skill.git?.relativePath
-        ].map(item => String(item || '').replaceAll('\\', '/').replace(/^\/+/, '').trim()).filter(Boolean);
-        return candidates.includes(key);
-      }) || null;
-    },
-
-    async loadRunMaterialSnapshot(value = '', projectId = this.runForm.projectId || this.selectedProjectId || this.projects[0]?.id || '') {
-      const key = String(value || '').trim();
-      if (!key) return null;
-      const option = this.materialOptionForValue(key);
-      const skill = option?.skill || this.materialSkillForValue(key, projectId);
-      const relativePath = String(skill?.git?.relativePath || skill?.relativePath || skill?.path || key || '')
+    normalizeRunMaterialValue(value = '') {
+      return String(value || '')
         .replaceAll('\\', '/')
         .replace(/^\/+/, '')
         .trim();
+    },
+
+    runMaterialLooseKey(value = '') {
+      const raw = this.normalizeRunMaterialValue(value)
+        .replace(/[?#].*$/, '')
+        .replace(/\/(?:SKILL|README)\.md$/i, '')
+        .replace(/\.(?:md|markdown)$/i, '');
+      const name = this.meaningfulNameFromPath(raw) || raw;
+      return String(name || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '')
+        .trim();
+    },
+
+    runMaterialEditDistance(a = '', b = '') {
+      const left = String(a || '');
+      const right = String(b || '');
+      if (left === right) return 0;
+      if (!left) return right.length;
+      if (!right) return left.length;
+      const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+      for (let i = 1; i <= left.length; i += 1) {
+        let diagonal = previous[0];
+        previous[0] = i;
+        for (let j = 1; j <= right.length; j += 1) {
+          const temp = previous[j];
+          previous[j] = Math.min(
+            previous[j] + 1,
+            previous[j - 1] + 1,
+            diagonal + (left[i - 1] === right[j - 1] ? 0 : 1)
+          );
+          diagonal = temp;
+        }
+      }
+      return previous[right.length];
+    },
+
+    runMaterialSkillCandidates(skill = {}) {
+      const pathValues = [
+        skill.git?.relativePath,
+        skill.relativePath,
+        skill.path
+      ].map(value => this.normalizeRunMaterialValue(value)).filter(Boolean);
+      return [
+        skill.id,
+        skill.title,
+        skill.productDisplayName,
+        skill.productFileName,
+        skill.originalProductDisplayName,
+        skill.displayName,
+        ...pathValues,
+        ...pathValues.map(value => this.fileNameFromPath(value)),
+        ...pathValues.map(value => this.meaningfulNameFromPath(value))
+      ].map(value => this.normalizeRunMaterialValue(value)).filter(Boolean);
+    },
+
+    materialOptionForValue(value = '') {
+      const key = String(value || '').trim();
+      if (!key) return null;
+      const normalizedKey = this.normalizeRunMaterialValue(key);
+      const exact = this.currentProjectExecutionMaterialOptions.find(item => this.normalizeRunMaterialValue(item.value) === normalizedKey);
+      if (exact) return exact;
+      const skill = this.materialSkillForValue(normalizedKey);
+      const skillPath = this.normalizeRunMaterialValue(skill?.git?.relativePath || skill?.relativePath || skill?.path || '');
+      return skillPath
+        ? this.currentProjectExecutionMaterialOptions.find(item => this.normalizeRunMaterialValue(item.value) === skillPath) || null
+        : null;
+    },
+
+    materialSkillForValue(value = '', projectId = this.runForm.projectId || this.selectedProjectId || this.projects[0]?.id || '') {
+      const key = this.normalizeRunMaterialValue(value);
+      if (!key) return null;
+      const scan = this.scans[projectId] || null;
+      const skills = Array.isArray(scan?.skills) ? scan.skills : [];
+      const normalizedKey = key.toLowerCase();
+      const exact = skills.find(skill => this.runMaterialSkillCandidates(skill)
+        .some(candidate => candidate.toLowerCase() === normalizedKey));
+      if (exact) return exact;
+
+      const looseKey = this.runMaterialLooseKey(key);
+      if (!looseKey || looseKey.length < 6) return null;
+      const matches = skills
+        .map(skill => {
+          const distances = this.runMaterialSkillCandidates(skill)
+            .map(candidate => this.runMaterialLooseKey(candidate))
+            .filter(candidate => candidate && candidate.length >= 6)
+            .map(candidate => this.runMaterialEditDistance(looseKey, candidate));
+          const distance = distances.length ? Math.min(...distances) : Infinity;
+          return { skill, distance };
+        })
+        .filter(item => Number.isFinite(item.distance))
+        .sort((a, b) => a.distance - b.distance);
+      const best = matches[0];
+      const second = matches[1];
+      const maxDistance = looseKey.length >= 12 ? 2 : 1;
+      if (best && best.distance <= maxDistance && (!second || second.distance > best.distance)) return best.skill;
+      return null;
+    },
+
+    canonicalRunMaterialValue(value = '', projectId = this.runForm.projectId || this.selectedProjectId || this.projects[0]?.id || '') {
+      const key = this.normalizeRunMaterialValue(value);
+      if (!key) return '';
+      const skill = this.materialSkillForValue(key, projectId);
+      const skillPath = this.normalizeRunMaterialValue(skill?.git?.relativePath || skill?.relativePath || skill?.path || '');
+      if (skillPath) return skillPath;
+      return key;
+    },
+
+    runMaterialPathsFromText(text = '') {
+      const source = String(text || '');
+      const paths = [];
+      const pattern = /(?:^|[\s"'`：:，,。；;（(【\[])([^"'`，,。；;）)\]】\s]+(?:SKILL\.md|README\.md|\.md|\.markdown))/gi;
+      let match = pattern.exec(source);
+      while (match) {
+        const value = this.normalizeRunMaterialValue(match[1]);
+        if (value) paths.push(value);
+        match = pattern.exec(source);
+      }
+      return this.normalizedRunMaterialHints(paths);
+    },
+
+    workflowStageMaterialCandidates(stage = {}) {
+      return this.normalizedRunMaterialHints([
+        ...this.runMaterialPathsFromText(stage.description),
+        stage.artifactDir,
+        stage.skillId,
+        stage.id,
+        stage.name
+      ]);
+    },
+
+    runMaterialHintFromWorkflowStage(stage = {}, projectId = this.runForm.projectId || this.selectedProjectId || this.projects[0]?.id || '') {
+      const candidates = this.workflowStageMaterialCandidates(stage);
+      for (const candidate of candidates) {
+        if (/^(custom-stage|stage-\d+|skills?-?md)$/i.test(candidate)) continue;
+        const canonical = this.canonicalRunMaterialValue(candidate, projectId);
+        if (canonical && !/^(custom-stage|stage-\d+|skills?-?md)$/i.test(canonical)) return canonical;
+      }
+      return '';
+    },
+
+    async loadRunMaterialSnapshot(value = '', projectId = this.runForm.projectId || this.selectedProjectId || this.projects[0]?.id || '') {
+      const originalKey = String(value || '').trim();
+      const key = this.canonicalRunMaterialValue(originalKey, projectId);
+      if (!key) return null;
+      const option = this.materialOptionForValue(key);
+      const skill = option?.skill || this.materialSkillForValue(key, projectId);
+      const relativePath = this.normalizeRunMaterialValue(skill?.git?.relativePath || skill?.relativePath || skill?.path || key || '');
       const title = option?.label?.replace(/^(Skill|md|资料)\s*·\s*/, '').trim()
         || skill?.title
         || this.meaningfulNameFromPath(relativePath)
         || this.fileNameFromPath(relativePath)
+        || originalKey
         || key;
       let content = '';
       if (skill?.inventoryKind === 'directory' || option?.kind === 'directory') {
@@ -19126,7 +19502,7 @@ export default {
         content = String(skill.preview || '').trim();
       } else if (projectId && relativePath) {
         const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/file-preview?file=${encodeURIComponent(relativePath)}`);
-        if (!response.ok) throw new Error(`文件读取失败：${response.status}`);
+        if (!response.ok) throw new Error(`执行方式绑定的 md / Skill 文件读取失败：${relativePath}（${response.status}）`);
         content = String(await response.text()).trim();
       } else if (skill) {
         content = String(await this.loadSkillContent(skill)).trim();
@@ -19134,11 +19510,11 @@ export default {
       const fallback = String(skill?.preview || '').trim();
       if (!content && fallback) content = fallback;
       if (!content || /技能内容读取失败|文件读取失败/i.test(content)) {
-        throw new Error(`Skill / md 内容读取失败：${relativePath || key}`);
+        throw new Error(`执行方式绑定的 md / Skill 不可用：${relativePath || originalKey || key}`);
       }
       return {
         path: relativePath || key,
-        sourceValue: key,
+        sourceValue: originalKey || key,
         title,
         kind: option?.kind || this.skillInventoryKind(skill || {}),
         content
@@ -19156,22 +19532,32 @@ export default {
     runMaterialDisplayName(value = '') {
       const key = String(value || '').trim();
       if (!key) return '';
-      const option = this.materialOptionForValue(key);
+      const canonical = this.canonicalRunMaterialValue(key);
+      const option = this.materialOptionForValue(canonical || key);
       if (option?.label) return option.label.replace(/^(Skill|md|资料)\s*·\s*/, '').trim() || option.label;
-      return this.meaningfulNameFromPath(key) || this.fileNameFromPath(key) || key;
+      return this.meaningfulNameFromPath(canonical || key) || this.fileNameFromPath(canonical || key) || key;
     },
 
-    runMaterialStageFromValue(value = '', index = 0) {
-      const key = String(value || '').trim();
+    runMaterialStageDir(value = '', index = 0) {
+      const readable = this.meaningfulNameFromPath(value) || this.fileNameFromPath(value) || `custom-stage-${index + 1}`;
+      return String(readable || `custom-stage-${index + 1}`)
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 60) || `custom-stage-${index + 1}`;
+    },
+
+    runMaterialStageFromValue(value = '', index = 0, projectId = this.runForm.projectId || this.selectedProjectId || this.projects[0]?.id || '') {
+      const key = this.canonicalRunMaterialValue(value, projectId);
       const name = this.runMaterialDisplayName(key) || `自定义阶段 ${index + 1}`;
-      const skillId = key && (!/[\\/]/.test(key) || /(^|[\\/])SKILL\.md$/i.test(key))
-        ? name
-        : '';
+      const isFileMaterial = /[\\/]/.test(key) || /\.(?:md|markdown)$/i.test(key);
+      const skillId = key && !isFileMaterial ? key : '';
+      const stageDir = this.runMaterialStageDir(key || name, index);
       return {
-        id: key || `custom-stage-${index + 1}`,
+        id: stageDir,
         name,
         skillId,
-        artifactDir: key || name,
+        artifactDir: stageDir,
         required: true,
         skippable: false,
         description: key && key !== name ? `按顺序执行 ${key}` : '',
@@ -19221,15 +19607,9 @@ export default {
     },
 
     materialHintsFromCustomWorkflow(workflow = {}) {
-      return this.normalizedRunMaterialHints((workflow.stages || []).map(stage => {
-        const candidates = [
-          stage.skillId,
-          stage.artifactDir,
-          stage.id,
-          stage.name
-        ];
-        return candidates.map(value => String(value || '').trim()).find(Boolean) || '';
-      }));
+      const projectId = workflow.projectId || this.runForm.projectId || this.selectedProjectId || this.projects[0]?.id || '';
+      return this.normalizedRunMaterialHints((workflow.stages || [])
+        .map(stage => this.runMaterialHintFromWorkflowStage(stage, projectId)));
     },
 
     runMaterialTitle(mode = this.runForm.executionMode, values = this.normalizedRunMaterialHints()) {

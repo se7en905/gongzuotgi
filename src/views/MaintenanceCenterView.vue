@@ -26,6 +26,7 @@
         <button type="button" class="maintenance-card-number" @click="handleWorkbenchAction(item)">
           <strong>{{ item.metricKind === 'bytes' ? app.formatBytes(item.bytes) : item.count }}</strong>
           <em v-if="item.metricKind === 'bytes' && Number(item.count || 0)">{{ item.count }} 项</em>
+          <em v-else-if="item.metricKind === 'count'">{{ app.formatBytes(item.bytes || 0) }}</em>
         </button>
         <small>{{ item.note || (item.protected ? '受保护，不参与范围清理' : item.file) }}</small>
         <p v-if="cleanupHint(item)" class="maintenance-cleanup-hint">{{ cleanupHint(item) }}</p>

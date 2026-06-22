@@ -927,6 +927,7 @@ async function handleApi(req, res, url) {
       rows: body.rows,
       key: body.key,
       month: body.month,
+      monthlyRunScoreBuckets: body.monthlyRunScoreBuckets,
       savedAt: body.savedAt,
       savedBy: {
         id: currentUser.id || '',

@@ -274,6 +274,9 @@ export async function upsertAiMemberScoreSnapshot(input = {}) {
   const next = normalizeAiMemberScoreSnapshot({
     ...previous,
     ...input,
+    monthlyRunScoreBuckets: input.monthlyRunScoreBuckets === undefined
+      ? previous.monthlyRunScoreBuckets
+      : input.monthlyRunScoreBuckets,
     savedAt: input.savedAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   });
@@ -1718,7 +1721,13 @@ export async function maintenanceOverview() {
     artifactSize,
     outputsSize,
     artBriefOutputsSize,
-    logsSize
+    logsSize,
+    operationLogsSize,
+    runsFileSize,
+    tasksFileSize,
+    artBriefsFileSize,
+    artProgressEventsFileSize,
+    usageCountersFileSize
   ] = await Promise.all([
     readJson(paths.operationLogs, []),
     readJson(paths.runs, []),
@@ -1733,7 +1742,13 @@ export async function maintenanceOverview() {
     directorySize(paths.artifactDir),
     directorySize(path.join(paths.root, 'outputs')),
     directorySize(path.join(paths.root, 'outputs', 'art-briefs')),
-    directorySize(path.join(paths.root, 'logs'))
+    directorySize(path.join(paths.root, 'logs')),
+    fileSize(paths.operationLogs),
+    fileSize(paths.runs),
+    fileSize(paths.tasks),
+    fileSize(paths.artBriefs),
+    fileSize(paths.artProgressEvents),
+    fileSize(paths.usageCounters)
   ]);
   return {
     generatedAt: new Date().toISOString(),
@@ -1747,12 +1762,12 @@ export async function maintenanceOverview() {
       { key: 'logs', label: '运行日志 logs', path: path.join(paths.root, 'logs'), bytes: logsSize, protected: false, cleanupLevel: 'range', cleanupLevelLabel: '能删，但排障后再删', route: '/operation-logs', fileActionLabel: '打开 logs', actionLabel: '查看操作日志', note: '这里主要用于排查问题；删了不会影响工作台业务数据，但会少本机排障线索。日志文件建议排障结束后归档或截断。' }
     ],
     records: [
-      { key: 'operationLogs', label: '操作日志', count: Array.isArray(operationLogs) ? operationLogs.length : 0, file: paths.operationLogs, cleanupLevel: 'range', cleanupLevelLabel: '能删旧日志，不影响任务', maintenanceType: 'operation-logs', cleanupActionLabel: '按范围删除旧日志', cleanupActionHint: '推荐范围删除：先选开始和结束时间；不会影响执行模板、任务量级、新建执行任务和 AI 调用统计。', route: '/operation-logs', fileActionLabel: '打开日志文件目录', actionLabel: '查看日志', note: '删了只是少一段操作审计记录；不会影响执行模板、任务量级、新建执行任务，也不会扣减 AI 产物调用次数。' },
-      { key: 'runs', label: '执行记录 / AI档案', count: Array.isArray(runs) ? runs.length : 0, file: paths.runs, cleanupLevel: 'caution', cleanupLevelLabel: '慎重删，会少执行历史', maintenanceType: 'runs', cleanupActionLabel: '按范围删除执行记录', cleanupActionHint: '推荐范围删除：先按时间、状态、执行人预览；不会删除任务中心任务，但会少这段执行历史和产物证据。', route: '/ai-archive', fileActionLabel: '打开 runs 文件目录', actionLabel: '查看 AI档案', note: '删了会移除非运行中的执行档案、工作区和产物归档；不会删任务中心任务，但以后可能查不到这次执行过程。' },
-      { key: 'tasks', label: '任务中心记录', count: Array.isArray(tasks) ? tasks.length : 0, file: paths.tasks, protected: true, cleanupLevel: 'protected', cleanupLevelLabel: '不要删，会影响任务', route: '/tasks', fileActionLabel: '打开任务数据目录', actionLabel: '查看任务中心', note: '这里是任务大厅正在使用的业务数据；维护中心不提供范围删除，避免影响指派、量级和任务状态。' },
-      { key: 'artBriefs', label: '美术摘要索引', count: Array.isArray(artBriefs) ? artBriefs.length : 0, file: paths.artBriefs, cleanupLevel: 'range', cleanupLevelLabel: '能删，但要连文件一起删', maintenanceType: 'art-briefs', cleanupActionLabel: '按范围删除摘要索引', cleanupActionHint: '推荐范围删除：索引必须和摘要文件一起删；不会影响任务和禅道，但对应摘要列表记录会消失。', fileActionLabel: '打开索引文件目录', actionLabel: '定位摘要清理', note: '这是摘要列表索引；必须和 outputs/art-briefs 命中的摘要目录同步删。删了不影响任务中心和禅道，但对应摘要入口会消失。' },
-      { key: 'artProgressEvents', label: '研究同步记录', count: Array.isArray(artProgressEvents) ? artProgressEvents.length : 0, file: paths.artProgressEvents, protected: true, cleanupLevel: 'caution', cleanupLevelLabel: '慎重删，会少沉淀记录', route: '/skills/events', fileActionLabel: '打开研究同步数据目录', actionLabel: '查看研究同步', note: '这里关联 AI 产物研究沉淀和同步记录；当前不放进维护中心硬删除，避免误删团队复盘资料。' },
-      { key: 'usageCounters', label: '累计调用指标桶', count: usageCounters && typeof usageCounters === 'object' ? Object.keys(usageCounters.buckets || usageCounters).length : 0, file: paths.usageCounters, protected: true, cleanupLevel: 'protected', cleanupLevelLabel: '不要删，会影响统计', fileActionLabel: '打开指标文件目录', actionLabel: '仅查看体量', note: '这是 AI 产物累计调用次数的事实来源；无论删除什么明细，都不能回退、清零或重算这里。' }
+      { key: 'operationLogs', label: '操作日志', count: Array.isArray(operationLogs) ? operationLogs.length : 0, bytes: operationLogsSize, file: paths.operationLogs, cleanupLevel: 'range', cleanupLevelLabel: '能删旧日志，不影响任务', maintenanceType: 'operation-logs', cleanupActionLabel: '按范围删除旧日志', cleanupActionHint: '推荐范围删除：先选开始和结束时间；不会影响执行模板、任务量级、新建执行任务和 AI 调用统计。', route: '/operation-logs', fileActionLabel: '打开日志文件目录', actionLabel: '查看日志', note: '删了只是少一段操作审计记录；不会影响执行模板、任务量级、新建执行任务，也不会扣减 AI 产物调用次数。' },
+      { key: 'runs', label: '执行记录 / AI档案', count: Array.isArray(runs) ? runs.length : 0, bytes: runsFileSize, file: paths.runs, cleanupLevel: 'caution', cleanupLevelLabel: '慎重删，会少执行历史', maintenanceType: 'runs', cleanupActionLabel: '按范围删除执行记录', cleanupActionHint: '推荐范围删除：先按时间、状态、执行人预览；不会删除任务中心任务，但会少这段执行历史和产物证据。', route: '/ai-archive', fileActionLabel: '打开 runs 文件目录', actionLabel: '查看 AI档案', note: '删了会移除非运行中的执行档案、工作区和产物归档；不会删任务中心任务，但以后可能查不到这次执行过程。' },
+      { key: 'tasks', label: '任务中心记录', count: Array.isArray(tasks) ? tasks.length : 0, bytes: tasksFileSize, file: paths.tasks, protected: true, cleanupLevel: 'protected', cleanupLevelLabel: '不要删，会影响任务', route: '/tasks', fileActionLabel: '打开任务数据目录', actionLabel: '查看任务中心', note: '这里是任务大厅正在使用的业务数据；维护中心不提供范围删除，避免影响指派、量级和任务状态。' },
+      { key: 'artBriefs', label: '美术摘要索引', count: Array.isArray(artBriefs) ? artBriefs.length : 0, bytes: artBriefsFileSize, file: paths.artBriefs, cleanupLevel: 'range', cleanupLevelLabel: '能删，但要连文件一起删', maintenanceType: 'art-briefs', cleanupActionLabel: '按范围删除摘要索引', cleanupActionHint: '推荐范围删除：索引必须和摘要文件一起删；不会影响任务和禅道，但对应摘要列表记录会消失。', fileActionLabel: '打开索引文件目录', actionLabel: '定位摘要清理', note: '这是摘要列表索引；必须和 outputs/art-briefs 命中的摘要目录同步删。删了不影响任务中心和禅道，但对应摘要入口会消失。' },
+      { key: 'artProgressEvents', label: '研究同步记录', count: Array.isArray(artProgressEvents) ? artProgressEvents.length : 0, bytes: artProgressEventsFileSize, file: paths.artProgressEvents, protected: true, cleanupLevel: 'caution', cleanupLevelLabel: '慎重删，会少沉淀记录', route: '/skills/events', fileActionLabel: '打开研究同步数据目录', actionLabel: '查看研究同步', note: '这里关联 AI 产物研究沉淀和同步记录；当前不放进维护中心硬删除，避免误删团队复盘资料。' },
+      { key: 'usageCounters', label: '累计调用指标桶', count: usageCounters && typeof usageCounters === 'object' ? Object.keys(usageCounters.buckets || usageCounters).length : 0, bytes: usageCountersFileSize, file: paths.usageCounters, protected: true, cleanupLevel: 'protected', cleanupLevelLabel: '不要删，会影响统计', fileActionLabel: '打开指标文件目录', actionLabel: '仅查看体量', note: '这是 AI 产物累计调用次数的事实来源；无论删除什么明细，都不能回退、清零或重算这里。' }
     ],
     safeCleanup: safePreview,
     artBriefOutputs: summaryPreview
@@ -2106,6 +2121,11 @@ async function directorySize(dir) {
     total += await directorySize(path.join(dir, entry.name));
   }
   return total;
+}
+
+async function fileSize(file) {
+  const stat = await fs.stat(file).catch(() => null);
+  return stat?.isFile() ? stat.size : 0;
 }
 
 export async function appendRunLog(runId, chunk) {
@@ -3827,39 +3847,46 @@ function normalizeCodexConfig(input = {}) {
 
 function normalizeAiMemberScoreSnapshot(input = {}) {
   const rows = Array.isArray(input.rows) ? input.rows : [];
+  const normalizedRows = rows
+    .filter(row => row && typeof row === 'object')
+    .map(row => ({
+      name: cleanString(row.name),
+      account: cleanString(row.account),
+      level: cleanString(row.level),
+      status: cleanString(row.status),
+      score: clampNumber(row.score, 0, 100),
+      productScore: clampNumber(row.productScore, 0, 100),
+      usageScore: clampNumber(row.usageScore, 0, 100),
+      runScore: clampNumber(row.runScore, 0, 100),
+      penalty: clampNumber(row.penalty, 0, 100),
+      productCount: clampNumber(row.productCount, 0, 10000),
+      productValueScore: clampNumber(row.productValueScore, 0, 10000),
+      productValueLevel: cleanString(row.productValueLevel),
+      monthUsageCount: clampNumber(row.monthUsageCount, 0, 10000),
+      monthUsageResultCount: clampNumber(row.monthUsageResultCount, 0, 10000),
+      monthUsagePeopleCount: clampNumber(row.monthUsagePeopleCount, 0, 10000),
+      monthUsageCoverageRate: clampNumber(row.monthUsageCoverageRate, 0, 100),
+      monthValidationCount: clampNumber(row.monthValidationCount, 0, 10000),
+      monthRunCount: clampNumber(row.monthRunCount, 0, 10000),
+      monthRunSkillCount: clampNumber(row.monthRunSkillCount, 0, 10000),
+      blockedCount: clampNumber(row.blockedCount, 0, 10000),
+      topProducts: Array.isArray(row.topProducts)
+        ? row.topProducts.map(item => cleanString(item)).filter(Boolean).slice(0, 5)
+        : [],
+      latestActivityAt: cleanString(row.latestActivityAt),
+      reason: cleanString(row.reason)
+    }))
+    .filter(row => row.name || row.account);
+  const month = cleanString(input.month);
+  const monthlyRunScoreBuckets = mergeAiMemberMonthlyRunScoreBuckets(
+    normalizeAiMemberMonthlyRunScoreBuckets(input.monthlyRunScoreBuckets),
+    aiMemberMonthlyRunScoreBucketsFromSnapshotRows(normalizedRows, month)
+  );
   return {
-    rows: rows
-      .filter(row => row && typeof row === 'object')
-      .map(row => ({
-        name: cleanString(row.name),
-        account: cleanString(row.account),
-        level: cleanString(row.level),
-        status: cleanString(row.status),
-        score: clampNumber(row.score, 0, 100),
-        productScore: clampNumber(row.productScore, 0, 100),
-        usageScore: clampNumber(row.usageScore, 0, 100),
-        runScore: clampNumber(row.runScore, 0, 100),
-        penalty: clampNumber(row.penalty, 0, 100),
-        productCount: clampNumber(row.productCount, 0, 10000),
-        productValueScore: clampNumber(row.productValueScore, 0, 10000),
-        productValueLevel: cleanString(row.productValueLevel),
-        monthUsageCount: clampNumber(row.monthUsageCount, 0, 10000),
-        monthUsageResultCount: clampNumber(row.monthUsageResultCount, 0, 10000),
-        monthUsagePeopleCount: clampNumber(row.monthUsagePeopleCount, 0, 10000),
-        monthUsageCoverageRate: clampNumber(row.monthUsageCoverageRate, 0, 100),
-        monthValidationCount: clampNumber(row.monthValidationCount, 0, 10000),
-        monthRunCount: clampNumber(row.monthRunCount, 0, 10000),
-        monthRunSkillCount: clampNumber(row.monthRunSkillCount, 0, 10000),
-        blockedCount: clampNumber(row.blockedCount, 0, 10000),
-        topProducts: Array.isArray(row.topProducts)
-          ? row.topProducts.map(item => cleanString(item)).filter(Boolean).slice(0, 5)
-          : [],
-        latestActivityAt: cleanString(row.latestActivityAt),
-        reason: cleanString(row.reason)
-      }))
-      .filter(row => row.name || row.account),
+    rows: normalizedRows,
+    monthlyRunScoreBuckets,
     key: cleanString(input.key),
-    month: cleanString(input.month),
+    month,
     savedAt: cleanString(input.savedAt),
     updatedAt: cleanString(input.updatedAt),
     savedBy: {
@@ -3868,6 +3895,88 @@ function normalizeAiMemberScoreSnapshot(input = {}) {
       displayName: cleanString(input.savedBy?.displayName)
     }
   };
+}
+
+function aiMemberMonthlyRunScoreBucketsFromSnapshotRows(rows = [], month = '') {
+  const monthKey = cleanString(month);
+  if (!/^\d{4}-\d{2}$/.test(monthKey)) return {};
+  const people = {};
+  (Array.isArray(rows) ? rows : []).forEach(row => {
+    const personKey = cleanString(row.account || row.name);
+    if (!personKey) return;
+    const completedRunCount = clampNumber(row.monthRunCount, 0, 10000);
+    const completedRunSkillCount = clampNumber(row.monthRunSkillCount, 0, 10000);
+    const blockedCount = clampNumber(row.blockedCount, 0, 10000);
+    people[personKey] = {
+      runIds: [],
+      completedRunCount,
+      completedRunSkillKeys: [],
+      completedRunSkillCount,
+      blockedRunIds: [],
+      blockedCount,
+      latestActivityAt: cleanString(row.latestActivityAt)
+    };
+  });
+  return normalizeAiMemberMonthlyRunScoreBuckets({ [monthKey]: people });
+}
+
+function normalizeAiMemberMonthlyRunScoreBuckets(input = {}) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  return Object.fromEntries(Object.entries(source)
+    .map(([month, people]) => {
+      const monthKey = cleanString(month);
+      if (!/^\d{4}-\d{2}$/.test(monthKey) || !people || typeof people !== 'object' || Array.isArray(people)) return null;
+      const normalizedPeople = Object.fromEntries(Object.entries(people)
+        .map(([person, bucket]) => {
+          const personKey = cleanString(person);
+          const value = bucket && typeof bucket === 'object' ? bucket : {};
+          if (!personKey) return null;
+          return [personKey, {
+            runIds: Array.isArray(value.runIds) ? [...new Set(value.runIds.map(cleanString).filter(Boolean))].slice(0, 5000) : [],
+            completedRunCount: Math.max(clampNumber(value.completedRunCount, 0, 10000), Array.isArray(value.runIds) ? value.runIds.map(cleanString).filter(Boolean).length : 0),
+            completedRunSkillKeys: Array.isArray(value.completedRunSkillKeys) ? [...new Set(value.completedRunSkillKeys.map(cleanString).filter(Boolean))].slice(0, 10000) : [],
+            completedRunSkillCount: Math.max(clampNumber(value.completedRunSkillCount, 0, 10000), Array.isArray(value.completedRunSkillKeys) ? value.completedRunSkillKeys.map(cleanString).filter(Boolean).length : 0),
+            blockedRunIds: Array.isArray(value.blockedRunIds) ? [...new Set(value.blockedRunIds.map(cleanString).filter(Boolean))].slice(0, 5000) : [],
+            blockedCount: Math.max(clampNumber(value.blockedCount, 0, 10000), Array.isArray(value.blockedRunIds) ? value.blockedRunIds.map(cleanString).filter(Boolean).length : 0),
+            latestActivityAt: cleanString(value.latestActivityAt)
+          }];
+        })
+        .filter(Boolean));
+      return [monthKey, normalizedPeople];
+    })
+    .filter(Boolean));
+}
+
+function mergeAiMemberMonthlyRunScoreBuckets(existing = {}, incoming = {}) {
+  const next = normalizeAiMemberMonthlyRunScoreBuckets(existing);
+  const add = normalizeAiMemberMonthlyRunScoreBuckets(incoming);
+  Object.entries(add).forEach(([month, people]) => {
+    if (!next[month]) next[month] = {};
+    Object.entries(people).forEach(([person, bucket]) => {
+      const current = next[month][person] || {
+        runIds: [],
+        completedRunCount: 0,
+        completedRunSkillKeys: [],
+        completedRunSkillCount: 0,
+        blockedRunIds: [],
+        blockedCount: 0,
+        latestActivityAt: ''
+      };
+      const runIds = [...new Set([...current.runIds, ...bucket.runIds])].slice(0, 5000);
+      const completedRunSkillKeys = [...new Set([...current.completedRunSkillKeys, ...bucket.completedRunSkillKeys])].slice(0, 10000);
+      const blockedRunIds = [...new Set([...current.blockedRunIds, ...bucket.blockedRunIds])].slice(0, 5000);
+      next[month][person] = {
+        runIds,
+        completedRunCount: Math.max(runIds.length, Number(current.completedRunCount || 0), Number(bucket.completedRunCount || 0)),
+        completedRunSkillKeys,
+        completedRunSkillCount: Math.max(completedRunSkillKeys.length, Number(current.completedRunSkillCount || 0), Number(bucket.completedRunSkillCount || 0)),
+        blockedRunIds,
+        blockedCount: Math.max(blockedRunIds.length, Number(current.blockedCount || 0), Number(bucket.blockedCount || 0)),
+        latestActivityAt: [current.latestActivityAt, bucket.latestActivityAt].filter(Boolean).sort().pop() || ''
+      };
+    });
+  });
+  return next;
 }
 
 function clampNumber(value, min = 0, max = Number.MAX_SAFE_INTEGER) {
