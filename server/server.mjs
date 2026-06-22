@@ -8213,7 +8213,7 @@ function zentaoSyncErrorMessage(error) {
 function safeFileSegment(value = '') {
   return String(value || 'task')
     .trim()
-    .replace(/[^\w.-]+/g, '_')
+    .replace(/[^\p{L}\p{N}_.-]+/gu, '_')
     .replace(/^_+|_+$/g, '')
     || 'task';
 }
