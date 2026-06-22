@@ -1813,7 +1813,8 @@ async function handleApi(req, res, url) {
   const taskPatch = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
   if (req.method === 'PATCH' && taskPatch) {
     const body = await readBody(req);
-    const task = await requireTaskLike(taskPatch[1]);
+    const rawTask = await requireTaskLike(taskPatch[1]);
+    const task = await hydrateTaskForWorkloadGrouping(rawTask);
     requireProjectAccess(currentUser, task.projectId, 'admin', 'task.sync');
     if (isLowEffortArtAcceptanceTaskInput(task)) throw new HttpError(400, '设计同步单/验收单不参与 AI 量级评估。');
     const workloadLevel = normalizeTaskWorkloadLevelInput(body.workloadLevel || body.workloadEstimate?.level);
@@ -1824,7 +1825,7 @@ async function handleApi(req, res, url) {
     const snapshotProjectTasks = await listArtSnapshotTasks(task.projectId || artProjectId).catch(() => []);
     const projectTasks = mergeArtSnapshotRows(snapshotProjectTasks, storedProjectTasks);
     const targetTasks = workloadGroup
-      ? projectTasks.filter(item => taskWorkloadGroupForTask(item) === workloadGroup && isWorkbenchArtTask(item) && !isLowEffortArtAcceptanceTaskInput(item))
+      ? projectTasks.filter(item => taskMatchesWorkloadGroup(item, workloadGroup) && isWorkbenchArtTask(item) && !isLowEffortArtAcceptanceTaskInput(item))
       : [task];
     const changedAt = new Date().toISOString();
     const updatedTasks = [];
@@ -9103,6 +9104,9 @@ function isLowEffortArtAcceptanceTaskInput(task = {}) {
 
 function taskWorkloadGroupForTask(task = {}) {
   const project = cleanBriefPart(task.projectId || artProjectId);
+  if (isIndependentTitleWorkloadProjectTask(task)) {
+    return titleWorkloadGroupForTask(task);
+  }
   const demand = artBriefLinkedDemand(task);
   if (demand.id) return `demand:${project}:${demand.id}`;
   const storyId = cleanBriefPart(task.zentao?.story || task.story || task.storyId || task.storyID);
@@ -9114,6 +9118,65 @@ function taskWorkloadGroupForTask(task = {}) {
   const storyTitle = cleanBriefPart(task.zentao?.storyTitle || task.storyTitle);
   if (storyTitle) return `story-title:${project}:${safeFileSegment(storyTitle)}`;
   return '';
+}
+
+function taskMatchesWorkloadGroup(task = {}, group = '') {
+  return taskWorkloadGroupForTask(task) === group || titleWorkloadGroupForTask(task) === group;
+}
+
+function titleWorkloadGroupForTask(task = {}) {
+  const project = cleanBriefPart(task.projectId || artProjectId);
+  const title = cleanBriefPart(cleanTaskCenterWorkloadTitle(task.title || task.displayTitle || task.zentao?.title || task.zentao?.name || task.taskNo || task.id));
+  return title ? `title:${project}:${safeFileSegment(title)}` : '';
+}
+
+function isIndependentTitleWorkloadProjectTask(task = {}) {
+  const text = [
+    task.projectName,
+    task.title,
+    task.displayTitle,
+    task.summary,
+    task.requirement,
+    task.description,
+    task.desc,
+    task.storySpec,
+    task.storyVerify,
+    task.zentao?.description,
+    task.zentao?.desc,
+    task.zentao?.storySpec,
+    task.zentao?.storyVerify,
+    task.zentao?.storyTitle,
+    task.zentao?.parentName,
+    task.zentao?.executionName
+  ].map(value => String(value || '')).join('\n');
+  return /(?:^|[^A-Za-z0-9])(?:social|sg|sc)(?:[^A-Za-z0-9]|$)|所属后台[：:\s]*(?:Social|SG|SC)|后台[：:\s]*(?:Social|SG|SC)|SG版本需求|SG项目|SG翡翠绿|翡翠绿|SC项目|SC版本/i.test(text);
+}
+
+async function hydrateTaskForWorkloadGrouping(task = {}) {
+  const taskNo = String(task.taskNo || task.zentao?.id || '').trim();
+  if (!taskNo) return task;
+  if (isIndependentTitleWorkloadProjectTask(task)) return task;
+  try {
+    const payload = await callZentaoRead(({ api: zentaoApi, modules: zentao }) => zentao.getTask(zentaoApi, { id: taskNo }));
+    const result = payload.result || payload.data || payload;
+    const detail = result.task || result;
+    if (!detail || typeof detail !== 'object') return task;
+    return mergeZentaoDetailIntoArtBriefTask(task, detail);
+  } catch (error) {
+    console.warn(`ZenTao workload grouping detail fallback for ${taskNo}: ${error.message || error}`);
+    return task;
+  }
+}
+
+function cleanTaskCenterWorkloadTitle(value = '') {
+  return String(value || '')
+    .replace(/^\s*\d{3,8}\s*/g, '')
+    .replace(/【\s*(?:制作单|验收单|美术单)\s*】/g, '')
+    .replace(/\[\s*(?:制作单|验收单|美术单)\s*\]/gi, '')
+    .replace(/制作单|验收单|美术单/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[\s·:：\-—_]+|[\s·:：\-—_]+$/g, '')
+    .trim();
 }
 
 function isWorkbenchArtTask(task = {}) {
