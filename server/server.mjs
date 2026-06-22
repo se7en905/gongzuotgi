@@ -1323,6 +1323,12 @@ async function handleApi(req, res, url) {
       after: workflow,
       description: `${currentUser.displayName || currentUser.username} ${body.id ? '编辑' : '新增'}工作流模板「${workflow.name}」`
     });
+    broadcastPlatformEvent('custom-workflows.changed', {
+      module: 'custom-workflow',
+      action: body.id ? 'update' : 'create',
+      workflowId: workflow.id,
+      projectId: workflow.projectId || ''
+    });
     sendJson(res, 201, workflow);
     return;
   }
@@ -1362,6 +1368,12 @@ async function handleApi(req, res, url) {
       targetName: workflow.name,
       before: workflow,
       description: `${currentUser.displayName || currentUser.username} 删除工作流模板「${workflow.name}」`
+    });
+    broadcastPlatformEvent('custom-workflows.changed', {
+      module: 'custom-workflow',
+      action: 'delete',
+      workflowId: workflow.id,
+      projectId: workflow.projectId || ''
     });
     sendJson(res, 200, { ok: true, workflow });
     return;

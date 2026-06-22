@@ -28,12 +28,20 @@
         </ElSelect>
       </ElFormItem>
       <ElFormItem label="美术执行方式" class="is-required-field">
-        <ElSelect v-model="app.runForm.executionMode" :disabled="app.isBugFixRun">
-          <ElOption label="只执行一个规范 / Skill" value="single-skill" />
-          <ElOption label="自定义流程" value="custom-workflow" />
-          <ElOption v-if="app.isBugFixRun" label="Bug 修复" value="bug-fix" />
-        </ElSelect>
-        <div class="field-hint">只执行一个适合单独执行某个 md / Skill；自定义流程会按下方选择顺序从前到后逐个完整执行。</div>
+        <div class="run-mode-choice-grid">
+          <button
+            v-for="option in app.runExecutionModeOptions"
+            :key="option.key"
+            type="button"
+            :class="['run-mode-choice-card', { active: option.active }]"
+            :disabled="app.isBugFixRun"
+            @click="app.selectRunExecutionModeOption(option)"
+          >
+            <strong>{{ option.label }}</strong>
+            <span>{{ option.description }}</span>
+          </button>
+        </div>
+        <div class="field-hint">选择单个 md / Skill 或已保存模板后，下方只需填写 Figma 链接和 Codex 执行要求；临时多步骤请选“自定义流程”。</div>
       </ElFormItem>
       <div v-if="app.isBugFixRun && app.selectedWorkflowPlan" class="workflow-plan-preview">
         <div class="workflow-plan-head">
@@ -57,24 +65,8 @@
         <ElInput v-model="app.runForm.figmaLinks" type="textarea" :rows="3" placeholder="粘贴要执行到的具体 Frame、分区或整页 Figma 链接；每行一个。" />
         <div class="field-hint">这里是本次执行的真实目标。Codex 会按该链接解析文件、页面或 node-id，并把执行结果落到对应位置或记录阻塞原因。</div>
       </ElFormItem>
-      <ElFormItem v-if="app.isCustomWorkflowRun" label="使用已保存模板">
-        <ElSelect v-model="app.runForm.customWorkflowId" placeholder="可选择已保存模板，也可以不选直接临时自定义" clearable filterable>
-          <ElOption
-            v-for="workflow in app.runnableCustomWorkflows"
-            :key="workflow.id"
-            :label="workflow.name"
-            :value="workflow.id"
-          >
-            <div class="skill-option-row">
-              <strong>{{ workflow.name }}</strong>
-              <span>{{ app.customWorkflowSummary(workflow) }}</span>
-            </div>
-          </ElOption>
-        </ElSelect>
-        <div class="field-hint">选择模板后，会自动把模板里的 md / Skill 按保存顺序填入下方流程；仍可继续删除或补充本次执行步骤。</div>
-      </ElFormItem>
-      <template v-if="!app.isBugFixRun">
-        <ElFormItem :label="app.isCustomWorkflowRun ? '按顺序选择多个 md / Skill' : '从 Git 仓库选择 md / Skill'" class="is-required-field">
+      <template v-if="app.shouldShowRunMaterialPicker">
+        <ElFormItem :label="app.isCustomWorkflowRun ? '按顺序选择多个 md / Skill' : '选择单个 md / Skill'" class="is-required-field">
           <ElSelect
             :model-value="app.runMaterialSelectionValue"
             @update:model-value="app.updateRunMaterialSelection"

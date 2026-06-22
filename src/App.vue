@@ -734,7 +734,7 @@ export default {
       ],
       projects: [],
       projectsCatalogLoaded: false,
-      customWorkflows: [],
+      customWorkflows: readWorkbenchDisplayCacheArray('customWorkflows'),
       applyingRunWorkflowTemplate: false,
       businessTasks: readWorkbenchDisplayCacheArray('businessTasks'),
       bugs: readWorkbenchDisplayCacheArray('bugs'),
@@ -1763,6 +1763,40 @@ export default {
 
     isCustomWorkflowRun() {
       return !this.isBugFixRun && this.runForm.executionMode === 'custom-workflow';
+    },
+
+    shouldShowRunMaterialPicker() {
+      return !this.isBugFixRun && (this.runForm.executionMode === 'single-skill' || (this.runForm.executionMode === 'custom-workflow' && !this.runForm.customWorkflowId));
+    },
+
+    runExecutionModeOptions() {
+      const workflowOptions = this.runnableCustomWorkflows.map(workflow => ({
+        key: `workflow:${workflow.id}`,
+        type: 'template-workflow',
+        value: workflow.id,
+        label: workflow.name || '未命名模板',
+        description: this.customWorkflowSummary(workflow),
+        active: this.runForm.executionMode === 'custom-workflow' && this.runForm.customWorkflowId === workflow.id
+      }));
+      return [
+        {
+          key: 'single-skill',
+          type: 'single-skill',
+          value: '',
+          label: '单skill/md',
+          description: '选择一个 md / Skill 单独执行',
+          active: this.runForm.executionMode === 'single-skill'
+        },
+        ...workflowOptions,
+        {
+          key: 'custom-workflow',
+          type: 'custom-workflow',
+          value: '',
+          label: '自定义流程',
+          description: '临时选择多个 md / Skill 按顺序执行',
+          active: this.runForm.executionMode === 'custom-workflow' && !this.runForm.customWorkflowId
+        }
+      ];
     },
 
     isLevelProcessRun() {
@@ -4606,6 +4640,7 @@ export default {
       const workflow = this.customWorkflows.find(item => item.id === value);
       if (!workflow) {
         this.runForm.customWorkflowName = '';
+        this.clearWorkflowTemplateRequirementIfStale();
         return;
       }
       const hints = this.materialHintsFromCustomWorkflow(workflow);
@@ -4616,9 +4651,6 @@ export default {
         this.$nextTick(() => {
           this.applyingRunWorkflowTemplate = false;
         });
-      }
-      if (workflow.description && !String(this.runForm.requirement || '').trim()) {
-        this.runForm.requirement = workflow.description;
       }
     },
 
@@ -5339,8 +5371,10 @@ export default {
       if (view === 'runs') {
         this.restoreWorkbenchDisplayCacheKeyIfEmpty('projects');
         this.restoreWorkbenchDisplayCacheKeyIfEmpty('scans');
+        this.restoreWorkbenchDisplayCacheKeyIfEmpty('customWorkflows');
         this.restoreWorkbenchDisplayCacheKey('artProgressEvents');
         if (!this.projects.length && !this.loading.projects) this.refreshProjects().catch(() => {});
+        if (!this.customWorkflows.length || dirty) this.refreshCustomWorkflows().catch(() => {});
         if (!this.loading.runs) this.refreshRuns({ background: !dirty }).catch(() => {});
         if ((!this.agentWorkers.length || dirty) && !this.loading.agentWorkers) this.refreshAgentWorkers({ background: !dirty }).catch(() => {});
         if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
@@ -5669,6 +5703,9 @@ export default {
       try {
         if (lightRunViews.includes(this.activeView)) {
           jobs.push(['执行记录', () => this.refreshRuns()]);
+          if (this.can('menu.runs')) {
+            jobs.push(['自定义流程模板', () => this.refreshCustomWorkflows()]);
+          }
           if (['runs', 'agent-workers'].includes(this.activeView) && this.can('api.agentWorkers.read')) {
             jobs.push(['Worker 状态', () => this.refreshAgentWorkers()]);
           }
@@ -6424,7 +6461,7 @@ export default {
     restoreWorkbenchDisplayCache() {
       const path = typeof window !== 'undefined' ? window.location.pathname : '';
       if (['/runs', '/agent-workers', '/ai-archive'].includes(path)) {
-        ['runs', 'projects', 'agentWorkers'].forEach(key => this.restoreWorkbenchDisplayCacheKey(key));
+        ['runs', 'projects', 'agentWorkers', 'customWorkflows'].forEach(key => this.restoreWorkbenchDisplayCacheKey(key));
         return;
       }
       if (path === '/ai-members') {
@@ -6443,6 +6480,7 @@ export default {
         'aiAssetSheetRows',
         'aiMembersSnapshot',
         'runs',
+        'customWorkflows',
         'artProgressEvents',
         'skillValidationRows',
         'operationLogs',
@@ -6463,7 +6501,8 @@ export default {
         ['项目表格', () => this.refreshArtProjectSheet()],
         ['任务中心', () => this.refreshTasks()],
         ['Bug 列表', () => this.refreshBugs()],
-        ['任务处理记录', () => this.refreshTaskProcessingNotes()]
+        ['任务处理记录', () => this.refreshTaskProcessingNotes()],
+        ['自定义流程模板', () => this.refreshCustomWorkflows()]
       ];
       const results = await Promise.allSettled(jobs.map(([, run]) => run()));
       results.forEach((result, index) => {
@@ -6569,6 +6608,15 @@ export default {
         this.schedulePlatformRefresh('runs', async () => {
           await this.refreshRuns({ background: true, minInterval: 1500 });
         }, 300);
+      }
+      if (type === 'custom-workflows.changed' && this.can('menu.runs')) {
+        if (this.activeView !== 'runs') {
+          this.markViewDataDirty('runs', 'customWorkflows');
+          return;
+        }
+        this.schedulePlatformRefresh('custom-workflows', async () => {
+          await this.refreshCustomWorkflows();
+        }, 200);
       }
       if (type === 'tasks.changed' && this.can('menu.tasks')) {
         if (event.payload?.deleted) this.removeDeletedTaskFromLocalState(event.payload);
@@ -9008,10 +9056,12 @@ export default {
 
     async refreshCustomWorkflows() {
       try {
-        this.customWorkflows = await this.api('/api/custom-workflows');
+        const workflows = await this.api('/api/custom-workflows');
+        this.customWorkflows = Array.isArray(workflows) ? workflows : [];
+        this.saveWorkbenchDisplayCache('customWorkflows', this.customWorkflows);
         if (!this.workflowDesigner.name && this.customWorkflows[0]) this.loadCustomWorkflowToDesigner(this.customWorkflows[0]);
-      } catch {
-        this.customWorkflows = [];
+      } catch (error) {
+        console.warn('自定义流程模板读取失败，已保留当前模板列表', error);
       }
     },
 
@@ -17438,6 +17488,7 @@ export default {
     async openRunCreateDrawer(overrides = {}) {
       const form = this.newRunForm(overrides);
       this.runForm = form;
+      this.refreshCustomWorkflows().catch(() => {});
       if (form.projectId && !this.scans[form.projectId]) {
         await this.ensureRunProjectScanCache(form.projectId);
       }
@@ -17492,7 +17543,7 @@ export default {
         showdocHints: skillPath,
         selectedMaterialHints: skillPath ? [skillPath] : [],
         requirement: [
-          `请基于 AI 产物清单中的「${productName}」发起单个规范 / Skill 执行。`,
+          `请基于 AI 产物清单中的「${productName}」发起单skill/md 执行。`,
           ...sourceLines,
           '执行时优先读取该 md / SKILL.md 或产物路径，按当前对话补充要求处理，并在产物明细中保留执行依据和结果。'
         ].join('\n'),
@@ -18894,6 +18945,47 @@ export default {
       if (this.isCustomWorkflowRun && !this.applyingRunWorkflowTemplate) {
         this.runForm.customWorkflowId = '';
         this.runForm.customWorkflowName = '';
+        this.clearWorkflowTemplateRequirementIfStale();
+      }
+    },
+
+    clearWorkflowTemplateRequirementIfStale() {
+      const requirement = String(this.runForm.requirement || '').trim();
+      if (!requirement) return;
+      const templateDescriptions = new Set(
+        (this.customWorkflows || [])
+          .map(workflow => String(workflow?.description || '').trim())
+          .filter(Boolean)
+      );
+      if (templateDescriptions.has(requirement)) this.runForm.requirement = '';
+    },
+
+    selectRunExecutionModeOption(option = {}) {
+      if (!option?.type || this.isBugFixRun) return;
+      if (option.type === 'single-skill') {
+        const hints = this.normalizedRunMaterialHints();
+        this.clearWorkflowTemplateRequirementIfStale();
+        this.runForm.executionMode = 'single-skill';
+        this.runForm.workflow = 'art-single-skill';
+        this.runForm.customWorkflowId = '';
+        this.runForm.customWorkflowName = '';
+        this.runForm.selectedMaterialHints = hints.slice(0, 1);
+        return;
+      }
+      if (option.type === 'template-workflow') {
+        this.clearWorkflowTemplateRequirementIfStale();
+        this.runForm.executionMode = 'custom-workflow';
+        this.runForm.workflow = 'custom-workflow';
+        this.runForm.customWorkflowId = option.value || '';
+        return;
+      }
+      if (option.type === 'custom-workflow') {
+        this.clearWorkflowTemplateRequirementIfStale();
+        this.runForm.executionMode = 'custom-workflow';
+        this.runForm.workflow = 'custom-workflow';
+        this.runForm.customWorkflowId = '';
+        this.runForm.customWorkflowName = '';
+        return;
       }
     },
 
@@ -19062,7 +19154,7 @@ export default {
       if (mode === 'custom-workflow') {
         return `自定义流程：${names.length ? names.join(' / ') : '未选择 md / Skill'}`;
       }
-      return `只执行一个规范 / Skill：${names[0] || '未选择 md / Skill'}`;
+      return `单skill/md：${names[0] || '未选择 md / Skill'}`;
     },
 
     taskDisplayTitle(task) {

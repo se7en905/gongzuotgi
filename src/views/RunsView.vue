@@ -70,8 +70,8 @@
       <section class="run-template-create-panel">
         <div class="run-template-section-head">
           <div>
-            <strong>新建模板</strong>
-            <span>把常用的多个 md / Skill 顺序保存下来，后续新建执行时可以直接套用。</span>
+            <strong>{{ templateForm.id ? '编辑模板' : '新建模板' }}</strong>
+            <span>{{ templateForm.id ? '修改当前模板名称、说明和步骤，保存后会同步到执行方式选项。' : '把常用的多个 md / Skill 顺序保存下来，后续新建执行时可以直接套用。' }}</span>
           </div>
         </div>
         <ElForm :model="templateForm" label-position="top" @submit.prevent>
@@ -115,14 +115,14 @@
             </div>
           </ElFormItem>
           <div class="run-template-create-actions">
-            <ElButton @click="resetTemplateForm">清空</ElButton>
+            <ElButton @click="resetTemplateForm">{{ templateForm.id ? '取消编辑' : '清空' }}</ElButton>
             <ElButton
               v-if="app.can('workflow.manage') || app.can('api.workflow.manage')"
               type="primary"
               :loading="templateSubmitting"
               @click="saveTemplateFromDialog"
             >
-              保存模板
+              {{ templateForm.id ? '保存修改' : '保存模板' }}
             </ElButton>
           </div>
         </ElForm>
@@ -131,7 +131,7 @@
         <div class="run-template-section-head">
           <div>
             <strong>已保存模板</strong>
-            <span>新增模板会出现在新建美术执行弹窗的“使用已保存模板”下拉里。</span>
+            <span>新增模板会直接出现在新建美术执行弹窗的“美术执行方式”里。</span>
           </div>
         </div>
         <div v-if="app.customWorkflows.length" class="run-template-list">
@@ -140,15 +140,17 @@
               <strong>{{ workflow.name }}</strong>
               <span>{{ app.customWorkflowSummary(workflow) }}</span>
             </div>
-            <ElButton
-              v-if="app.can('workflow.manage') || app.can('api.workflow.manage')"
-              size="small"
-              type="danger"
-              plain
-              @click.stop="app.deleteCustomWorkflowTemplate(workflow)"
-            >
-              删除
-            </ElButton>
+            <div v-if="app.can('workflow.manage') || app.can('api.workflow.manage')" class="run-template-item-actions">
+              <ElButton size="small" plain @click.stop="editTemplateFromDialog(workflow)">编辑</ElButton>
+              <ElButton
+                size="small"
+                type="danger"
+                plain
+                @click.stop="app.deleteCustomWorkflowTemplate(workflow)"
+              >
+                删除
+              </ElButton>
+            </div>
           </article>
         </div>
         <div v-else class="run-template-empty">
@@ -572,6 +574,7 @@ export default {
       templateManagerVisible: false,
       templateSubmitting: false,
       templateForm: {
+        id: '',
         name: '',
         description: '',
         materialHints: []
@@ -748,6 +751,7 @@ export default {
     },
     emptyTemplateForm() {
       return {
+        id: '',
         name: '',
         description: '',
         materialHints: []
@@ -755,6 +759,7 @@ export default {
     },
     async openTemplateManagerDialog() {
       this.templateManagerVisible = true;
+      this.app.refreshCustomWorkflows().catch(() => {});
       if (!this.templateForm.name && !this.templateForm.materialHints.length) this.resetTemplateForm();
       const projectId = this.app.selectedProjectId || this.app.runForm.projectId || this.app.projects[0]?.id || '';
       if (projectId && !this.app.scans[projectId]) {
@@ -763,6 +768,15 @@ export default {
     },
     resetTemplateForm() {
       this.templateForm = this.emptyTemplateForm();
+    },
+    editTemplateFromDialog(workflow = {}) {
+      if (!workflow?.id) return;
+      this.templateForm = {
+        id: workflow.id || '',
+        name: workflow.name || '',
+        description: workflow.description || '',
+        materialHints: this.app.materialHintsFromCustomWorkflow(workflow)
+      };
     },
     normalizeTemplateMaterialHints(value = this.templateForm.materialHints) {
       const source = Array.isArray(value) ? value : [value];
@@ -798,6 +812,7 @@ export default {
       this.templateSubmitting = true;
       try {
         const payload = {
+          id: this.templateForm.id || '',
           name,
           description: String(this.templateForm.description || '').trim(),
           projectId: this.app.selectedProjectId || this.app.runForm.projectId || this.app.projects[0]?.id || '',
