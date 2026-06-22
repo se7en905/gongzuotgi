@@ -580,6 +580,15 @@ function readWorkbenchDisplayCacheArray(key = '') {
   return Array.isArray(value) ? value : [];
 }
 
+function currentFrontendAssetVersion() {
+  if (typeof document === 'undefined') return '';
+  return [...document.querySelectorAll('script[src], link[href]')]
+    .map(node => node.getAttribute('src') || node.getAttribute('href') || '')
+    .map(value => value.match(/\/assets\/index-([A-Za-z0-9_-]+)\.(?:js|css)/)?.[1] || '')
+    .filter(Boolean)
+    .join('.');
+}
+
 const roleLevelPermissionPresets = {
   4: [
     'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive', 'menu.users', 'menu.roles', 'menu.operationLogs', 'menu.maintenance',
@@ -637,6 +646,9 @@ export default {
       appBridge: null,
       authChecked: false,
       workbenchStateRestoring: false,
+      frontendVersion: currentFrontendAssetVersion(),
+      frontendVersionCheckTimer: 0,
+      frontendReloading: false,
       currentUser: null,
       loginLoading: false,
       loginError: '',
@@ -4703,7 +4715,9 @@ export default {
     this.taskArtBriefs = this.loadTaskArtBriefs();
     this.applyTheme(this.theme);
     window.addEventListener('popstate', this.syncRoute);
+    window.addEventListener('visibilitychange', this.handleVisibilityVersionCheck);
     this.bootstrapAuth();
+    this.startFrontendVersionCheck();
     this.runDurationTimer = setInterval(() => {
       if (this.isRunInProgress(this.selectedRun)) this.nowTick = Date.now();
     }, 1000);
@@ -4717,8 +4731,10 @@ export default {
     this.stopZentaoAutoSyncPolling();
     this.stopTaskBriefRealtimeSync();
     this.stopPlatformEventSync();
+    this.stopFrontendVersionCheck();
     if (this.runDurationTimer) clearInterval(this.runDurationTimer);
     window.removeEventListener('popstate', this.syncRoute);
+    window.removeEventListener('visibilitychange', this.handleVisibilityVersionCheck);
   },
 
   methods: {
@@ -5633,6 +5649,7 @@ export default {
           this.forcePasswordDialog = this.currentUser.mustChangePassword === true;
           this.syncRoute();
           await this.refreshConfig();
+          this.checkFrontendVersion({ silent: true }).catch(() => {});
           await this.restoreWorkbenchServerState();
           this.ensureActiveViewData(this.activeView);
         } else if (window.location.pathname !== '/login') {
@@ -5659,6 +5676,7 @@ export default {
         if (window.location.pathname === '/login') this.pushRoute(this.firstAllowedRoute());
         else this.syncRoute();
         await this.refreshConfig();
+        this.checkFrontendVersion({ silent: true }).catch(() => {});
         await this.restoreWorkbenchServerState();
         this.ensureActiveViewData(this.activeView);
       } catch (error) {
@@ -5799,6 +5817,46 @@ export default {
         .finally(() => {
           if (this[key] === promise) this[key] = null;
         });
+    },
+
+    startFrontendVersionCheck() {
+      if (this.frontendVersionCheckTimer || typeof window === 'undefined') return;
+      this.frontendVersionCheckTimer = window.setInterval(() => {
+        this.checkFrontendVersion({ silent: true }).catch(() => {});
+      }, 60 * 1000);
+    },
+
+    stopFrontendVersionCheck() {
+      if (!this.frontendVersionCheckTimer || typeof window === 'undefined') return;
+      window.clearInterval(this.frontendVersionCheckTimer);
+      this.frontendVersionCheckTimer = 0;
+    },
+
+    handleVisibilityVersionCheck() {
+      if (document.visibilityState === 'visible') {
+        this.checkFrontendVersion({ silent: true }).catch(() => {});
+      }
+    },
+
+    applyFrontendVersion(version = '') {
+      const nextVersion = String(version || '').trim();
+      if (!nextVersion) return;
+      if (this.frontendVersion && this.frontendVersion !== nextVersion && !this.frontendReloading) {
+        this.frontendReloading = true;
+        window.location.reload();
+        return;
+      }
+      this.frontendVersion = nextVersion;
+    },
+
+    async checkFrontendVersion(options = {}) {
+      if (this.frontendReloading || !this.currentUser) return;
+      try {
+        const config = await this.api(`/api/config?versionCheck=1&_=${Date.now()}`);
+        this.applyFrontendVersion(config?.frontendVersion || '');
+      } catch (error) {
+        if (!options.silent) console.warn('前端版本检查失败', error);
+      }
     },
 
     markViewDataDirty(view = '', key = '') {
@@ -6690,6 +6748,7 @@ export default {
         this.loading.config = true;
         try {
           this.appConfig = await this.api('/api/config');
+          this.applyFrontendVersion(this.appConfig?.frontendVersion || '');
           this.taskCenterConfigReady = true;
         } catch (error) {
           if (!this.appConfig || !Object.keys(this.appConfig).length) {
@@ -9458,7 +9517,7 @@ export default {
       }
     },
 
-    async applyMaintenanceAction() {
+    async applyMaintenanceAction(options = {}) {
       if (!this.isPlatformAdmin) {
         ElMessage.warning('只有管理员可以执行维护清理。');
         return;
@@ -9470,10 +9529,10 @@ export default {
       const count = this.maintenancePreviewCount;
       const bytes = this.formatBytes(this.maintenancePreviewBytes);
       const confirmed = await ElMessageBox.confirm(
-        `确认删除当前维护范围内 ${count} 项内容？预计释放 ${bytes}。本操作会按所选业务域彻底移除命中记录或文件，累计调用次数和禅道任务不会回退或修改。`,
-        '确认维护清理',
+        options.confirmMessage || `确认删除当前维护范围内 ${count} 项内容？预计释放 ${bytes}。本操作会按所选业务域彻底移除命中记录或文件，累计调用次数和禅道任务不会回退或修改。`,
+        options.confirmTitle || '确认维护清理',
         {
-          confirmButtonText: '确认删除',
+          confirmButtonText: options.confirmButtonText || '确认删除',
           cancelButtonText: '取消',
           type: 'warning',
           confirmButtonClass: 'el-button--danger'

@@ -28,6 +28,18 @@
           <em v-if="Number(item.count || 0)">{{ item.count }} 项</em>
         </button>
         <small>{{ item.note }}</small>
+        <ElButton
+          v-if="canCleanDirectly(item)"
+          class="maintenance-direct-clean-button"
+          type="danger"
+          plain
+          size="small"
+          :disabled="!Number(item.count || 0)"
+          :loading="app.loading.maintenancePreview || app.loading.maintenanceApply"
+          @click.stop="applyDirectSafeCleanup(item)"
+        >
+          删除这些垃圾数据
+        </ElButton>
       </article>
     </div>
 
@@ -257,6 +269,23 @@ export default {
       if (level === 'protected') return 'danger';
       return 'warning';
     },
+    canCleanDirectly(item = {}) {
+      return item.cleanupLevel === 'safe' && item.maintenanceType === 'safe-clean';
+    },
+    async applyDirectSafeCleanup(item = {}) {
+      if (!this.canCleanDirectly(item)) return;
+      this.app.setMaintenanceActionType('safe-clean');
+      await this.$nextTick();
+      const preview = await this.app.previewMaintenanceAction();
+      const count = Number(preview?.matchedCount || 0);
+      if (!count) return;
+      const bytes = this.app.formatBytes(Number(preview?.estimatedBytes || 0));
+      await this.app.applyMaintenanceAction({
+        confirmTitle: '删除安全垃圾数据',
+        confirmButtonText: '删除垃圾数据',
+        confirmMessage: `已预览到 ${count} 项可直接清理的系统垃圾，预计释放 ${bytes}。只会删除 .DS_Store、过期临时 JSON 和没有执行记录对应的孤儿工作区，不会影响任务、模板、AI档案、AI产物统计或禅道数据。确认删除后文件会被彻底销毁。`
+      });
+    },
     async handleOpenPath(item = {}) {
       const targetPath = String(item.path || item.file || '').trim();
       if (!targetPath) return;
@@ -306,7 +335,7 @@ export default {
   padding: 12px;
   text-align: left;
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto auto 1fr auto;
   gap: 10px;
   min-height: 168px;
   position: relative;
@@ -356,7 +385,7 @@ export default {
   border: 0;
   background: color-mix(in srgb, var(--panel) 82%, var(--muted) 10%);
   border-radius: 6px;
-  padding: 9px 88px 9px 10px;
+  padding: 9px 148px 9px 10px;
   margin: 0;
   color: var(--text);
   font-size: 13px;
@@ -423,7 +452,13 @@ export default {
   position: absolute;
   top: 21px;
   right: 22px;
-  max-width: 78px;
+  max-width: 134px;
+  height: auto;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.15;
+  padding: 3px 7px;
+  font-size: 11px;
 }
 
 .maintenance-summary-card small,
@@ -435,6 +470,11 @@ export default {
   line-height: 1.45;
   word-break: break-all;
   font-size: 12px;
+}
+
+.maintenance-direct-clean-button {
+  width: 100%;
+  min-height: 30px;
 }
 
 .maintenance-action-layout {

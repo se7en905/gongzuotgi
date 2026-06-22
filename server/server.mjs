@@ -166,6 +166,7 @@ const artProgressEventKeyPath = path.join(paths.dataDir, 'art-progress-event-key
 const artProjectSheetOverridesPath = path.join(paths.dataDir, 'art-project-sheet-overrides.json');
 const artProjectSheetConfigPath = path.join(paths.dataDir, 'art-project-sheet-config.json');
 const execFileAsync = promisify(execFile);
+let cachedFrontendVersion = '';
 let zentaoAutoSyncRunning = false;
 let zentaoAutoSyncState = {
   enabled: process.env.ZENTAO_AUTO_SYNC === '1',
@@ -1381,6 +1382,7 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/config') {
     sendJson(res, 200, {
+      frontendVersion: await getFrontendVersion(),
       zentaoBaseUrl,
       codex: redactCodexConfig(await getCodexConfig()),
       zentaoAutoSync: compactZentaoAutoSyncState(zentaoAutoSyncState),
@@ -9335,6 +9337,26 @@ function taskInputToBug(input = {}) {
       sourceType: 'bug'
     }
   };
+}
+
+async function getFrontendVersion() {
+  const indexFile = path.join(publicDir, 'index.html');
+  try {
+    const stat = await fs.stat(indexFile);
+    const cacheKey = `${stat.mtimeMs}:${stat.size}`;
+    if (cachedFrontendVersion.startsWith(`${cacheKey}:`)) {
+      return cachedFrontendVersion.slice(cacheKey.length + 1);
+    }
+    const html = await fs.readFile(indexFile, 'utf8');
+    const assetRefs = [...html.matchAll(/\/assets\/index-([A-Za-z0-9_-]+)\.(?:js|css)/g)]
+      .map(match => match[1])
+      .filter(Boolean);
+    const version = assetRefs.length ? assetRefs.join('.') : `${Math.round(stat.mtimeMs)}.${stat.size}`;
+    cachedFrontendVersion = `${cacheKey}:${version}`;
+    return version;
+  } catch {
+    return '';
+  }
 }
 
 async function serveStatic(res, pathname) {
