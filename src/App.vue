@@ -5850,7 +5850,7 @@ export default {
     },
 
     async checkFrontendVersion(options = {}) {
-      if (this.frontendReloading || !this.currentUser) return;
+      if (this.frontendReloading) return;
       try {
         const config = await this.api(`/api/config?versionCheck=1&_=${Date.now()}`);
         this.applyFrontendVersion(config?.frontendVersion || '');

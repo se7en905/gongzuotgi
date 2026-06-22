@@ -11,11 +11,11 @@
       </div>
     </template>
 
-    <div class="maintenance-summary-grid">
+    <div class="maintenance-overview-grid">
       <article
-        v-for="item in app.maintenanceOverview.storage || []"
+        v-for="item in maintenanceOverviewCards"
         :key="item.key"
-        class="maintenance-summary-card"
+        class="maintenance-overview-card"
         :class="`is-${item.cleanupLevel || 'caution'}`"
       >
         <button type="button" class="maintenance-card-title" @click="handleOpenPath(item)">
@@ -24,41 +24,23 @@
         </button>
         <ElTag class="maintenance-level-tag" :type="cleanupLevelTagType(item.cleanupLevel)" effect="plain">{{ item.cleanupLevelLabel || '需确认' }}</ElTag>
         <button type="button" class="maintenance-card-number" @click="handleWorkbenchAction(item)">
-          <strong>{{ app.formatBytes(item.bytes) }}</strong>
-          <em v-if="Number(item.count || 0)">{{ item.count }} 项</em>
-        </button>
-        <small>{{ item.note }}</small>
-        <ElButton
-          v-if="canCleanDirectly(item)"
-          class="maintenance-direct-clean-button"
-          type="danger"
-          plain
-          size="small"
-          :disabled="!Number(item.count || 0)"
-          :loading="app.loading.maintenancePreview || app.loading.maintenanceApply"
-          @click.stop="applyDirectSafeCleanup(item)"
-        >
-          删除这些垃圾数据
-        </ElButton>
-      </article>
-    </div>
-
-    <div class="maintenance-record-grid">
-      <article
-        v-for="item in app.maintenanceOverview.records || []"
-        :key="item.key"
-        class="maintenance-record-card"
-        :class="`is-${item.cleanupLevel || 'caution'}`"
-      >
-        <button type="button" class="maintenance-card-title" @click="handleOpenPath(item)">
-          <i aria-hidden="true"></i>
-          <span>{{ item.label }}</span>
-        </button>
-        <ElTag class="maintenance-level-tag" :type="cleanupLevelTagType(item.cleanupLevel)" effect="plain">{{ item.cleanupLevelLabel || '需确认' }}</ElTag>
-        <button type="button" class="maintenance-card-number" @click="handleWorkbenchAction(item)">
-          <strong>{{ item.count }}</strong>
+          <strong>{{ item.metricKind === 'bytes' ? app.formatBytes(item.bytes) : item.count }}</strong>
+          <em v-if="item.metricKind === 'bytes' && Number(item.count || 0)">{{ item.count }} 项</em>
         </button>
         <small>{{ item.note || (item.protected ? '受保护，不参与范围清理' : item.file) }}</small>
+        <p v-if="cleanupHint(item)" class="maintenance-cleanup-hint">{{ cleanupHint(item) }}</p>
+        <ElButton
+          v-if="canShowCleanupButton(item)"
+          class="maintenance-cleanup-button"
+          :type="canCleanDirectly(item) ? 'danger' : 'primary'"
+          plain
+          size="small"
+          :disabled="cleanupButtonDisabled(item)"
+          :loading="app.loading.maintenancePreview || app.loading.maintenanceApply"
+          @click.stop="handleCleanupButton(item)"
+        >
+          {{ item.cleanupActionLabel || (canCleanDirectly(item) ? '删除这些垃圾数据' : '按范围删除') }}
+        </ElButton>
       </article>
     </div>
   </ElCard>
@@ -224,6 +206,11 @@ export default {
     }
   },
   computed: {
+    maintenanceOverviewCards() {
+      const storage = (this.app.maintenanceOverview.storage || []).map(item => ({ ...item, metricKind: 'bytes' }));
+      const records = (this.app.maintenanceOverview.records || []).map(item => ({ ...item, metricKind: 'count' }));
+      return [...storage, ...records];
+    },
     actionOptions() {
       return [
         {
@@ -272,6 +259,26 @@ export default {
     canCleanDirectly(item = {}) {
       return item.cleanupLevel === 'safe' && item.maintenanceType === 'safe-clean';
     },
+    canShowCleanupButton(item = {}) {
+      return Boolean(item.maintenanceType && (this.canCleanDirectly(item) || item.cleanupLevel === 'range' || item.cleanupLevel === 'caution'));
+    },
+    cleanupButtonDisabled(item = {}) {
+      if (this.canCleanDirectly(item)) return !Number(item.count || 0);
+      return false;
+    },
+    cleanupHint(item = {}) {
+      if (!this.canShowCleanupButton(item)) return '';
+      if (item.cleanupActionHint) return item.cleanupActionHint;
+      if (this.canCleanDirectly(item)) return '可以直接清理：只删系统垃圾，不影响工作台业务。';
+      return '推荐范围删除：先预览命中内容，再确认删除。';
+    },
+    handleCleanupButton(item = {}) {
+      if (this.canCleanDirectly(item)) {
+        this.applyDirectSafeCleanup(item);
+        return;
+      }
+      this.focusMaintenanceAction(item);
+    },
     async applyDirectSafeCleanup(item = {}) {
       if (!this.canCleanDirectly(item)) return;
       this.app.setMaintenanceActionType('safe-clean');
@@ -303,12 +310,14 @@ export default {
         this.app.pushRoute(item.route);
         return;
       }
+      this.focusMaintenanceAction(item);
+    },
+    focusMaintenanceAction(item = {}) {
       if (item.maintenanceType) {
         this.app.setMaintenanceActionType(item.maintenanceType);
         this.$nextTick(() => {
           document.querySelector('.maintenance-action-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
-        return;
       }
     }
   }
@@ -316,68 +325,57 @@ export default {
 </script>
 
 <style scoped>
-.maintenance-summary-grid,
-.maintenance-record-grid {
+.maintenance-overview-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
   gap: 12px;
+  align-items: stretch;
 }
 
-.maintenance-record-grid {
-  margin-top: 14px;
-}
-
-.maintenance-summary-card,
-.maintenance-record-card {
+.maintenance-overview-card {
   border: 1px solid var(--border);
   background: var(--panel);
   border-radius: 8px;
   padding: 12px;
   text-align: left;
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto auto auto 1fr auto auto;
   gap: 10px;
-  min-height: 168px;
-  position: relative;
+  height: 100%;
+  min-height: 236px;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
-.maintenance-summary-card:hover,
-.maintenance-record-card:hover {
+.maintenance-overview-card:hover {
   border-color: var(--primary);
   box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
   transform: translateY(-1px);
 }
 
-.maintenance-summary-card.is-safe,
-.maintenance-record-card.is-safe {
+.maintenance-overview-card.is-safe {
   border-color: rgba(22, 163, 74, 0.35);
 }
 
-.maintenance-summary-card.is-range,
-.maintenance-record-card.is-range {
+.maintenance-overview-card.is-range {
   border-color: rgba(37, 99, 235, 0.28);
 }
 
-.maintenance-summary-card.is-caution,
-.maintenance-record-card.is-caution {
+.maintenance-overview-card.is-caution {
   border-color: rgba(245, 158, 11, 0.35);
 }
 
-.maintenance-summary-card.is-protected,
-.maintenance-record-card.is-protected {
+.maintenance-overview-card.is-protected {
   border-color: rgba(220, 38, 38, 0.3);
 }
 
-.maintenance-summary-card strong,
-.maintenance-record-card strong {
+.maintenance-overview-card strong {
   font-size: 22px;
   line-height: 1.1;
   color: var(--text);
 }
 
-.maintenance-summary-card span,
-.maintenance-record-card span {
+.maintenance-overview-card span {
   color: inherit;
 }
 
@@ -385,19 +383,20 @@ export default {
   border: 0;
   background: color-mix(in srgb, var(--panel) 82%, var(--muted) 10%);
   border-radius: 6px;
-  padding: 9px 148px 9px 10px;
+  padding: 9px 10px;
   margin: 0;
   color: var(--text);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 650;
-  line-height: 1.2;
+  line-height: 1.25;
   text-align: left;
   display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   cursor: pointer;
   min-width: 100%;
   max-width: 100%;
+  min-height: 44px;
 }
 
 .maintenance-card-title:hover span {
@@ -415,9 +414,8 @@ export default {
 
 .maintenance-card-title span {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .maintenance-card-number {
@@ -448,31 +446,56 @@ export default {
   padding-right: 92px;
 }
 
-.maintenance-level-tag {
-  position: absolute;
-  top: 21px;
-  right: 22px;
-  max-width: 134px;
+.maintenance-level-tag.el-tag {
+  justify-self: stretch;
+  max-width: 100%;
   height: auto;
   white-space: normal;
-  text-align: center;
-  line-height: 1.15;
-  padding: 3px 7px;
+  text-align: left;
+  line-height: 1.2;
+  padding: 5px 8px;
   font-size: 11px;
+  font-weight: 650;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
 }
 
-.maintenance-summary-card small,
-.maintenance-record-card small {
+.maintenance-overview-card small {
   background: color-mix(in srgb, var(--panel) 88%, var(--muted) 8%);
   border-radius: 6px;
   padding: 10px;
   color: var(--muted);
-  line-height: 1.45;
-  word-break: break-all;
-  font-size: 12px;
+  line-height: 1.42;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  min-height: 74px;
 }
 
-.maintenance-direct-clean-button {
+.maintenance-cleanup-hint {
+  border: 1px dashed rgba(37, 99, 235, 0.24);
+  background: rgba(37, 99, 235, 0.04);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.38;
+  margin: 0;
+  min-height: 46px;
+  padding: 8px 10px;
+}
+
+.maintenance-overview-card.is-safe .maintenance-cleanup-hint {
+  border-color: rgba(22, 163, 74, 0.28);
+  background: rgba(22, 163, 74, 0.05);
+}
+
+.maintenance-overview-card.is-caution .maintenance-cleanup-hint {
+  border-color: rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.maintenance-cleanup-button {
   width: 100%;
   min-height: 30px;
 }
@@ -591,22 +614,19 @@ export default {
 }
 
 @media (max-width: 1500px) {
-  .maintenance-summary-grid,
-  .maintenance-record-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+  .maintenance-overview-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 1200px) {
-  .maintenance-summary-grid,
-  .maintenance-record-grid {
+  .maintenance-overview-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 900px) {
-  .maintenance-summary-grid,
-  .maintenance-record-grid {
+  .maintenance-overview-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -620,8 +640,7 @@ export default {
 }
 
 @media (max-width: 620px) {
-  .maintenance-summary-grid,
-  .maintenance-record-grid {
+  .maintenance-overview-grid {
     grid-template-columns: 1fr;
   }
 }

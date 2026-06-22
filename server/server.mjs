@@ -313,6 +313,13 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/config' && url.searchParams.get('versionCheck') === '1') {
+    sendJson(res, 200, { frontendVersion: await getFrontendVersion() }, {
+      'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
+    });
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/api/auth/change-password') {
     requireAuth(currentUser);
     const body = await readBody(req);
@@ -10041,8 +10048,8 @@ async function readBody(req) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
-function sendJson(res, status, value) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+function sendJson(res, status, value, headers = {}) {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', ...headers });
   res.end(JSON.stringify(value, null, 2));
 }
 
