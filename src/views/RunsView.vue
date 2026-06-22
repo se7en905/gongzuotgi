@@ -20,7 +20,7 @@
     </template>
     <div class="run-list">
       <button
-        v-for="run in app.runs"
+        v-for="run in app.runListRows"
         :key="run.id"
         class="run-item"
         :class="[app.runDisplayStatusClass(run), { active: run.id === app.selectedRunId }]"
@@ -55,7 +55,7 @@
           <span v-if="run.id === app.selectedRunId" class="run-action-chip current-detail">当前明细</span>
         </div>
       </button>
-      <div v-if="!app.runs.length" class="empty-block">还没有美术执行记录，点击“新建美术执行”开始。</div>
+      <div v-if="!app.runListRows.length" class="empty-block">还没有美术执行记录，点击“新建美术执行”开始。</div>
     </div>
   </ElCard>
 

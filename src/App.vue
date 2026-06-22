@@ -1193,6 +1193,13 @@ export default {
       return this.runs.find(run => run.id === this.selectedRunId) || null;
     },
 
+    runListRows() {
+      return (this.runs || [])
+        .slice()
+        .sort((a, b) => this.runListSortTime(b) - this.runListSortTime(a))
+        .slice(0, 20);
+    },
+
     usersById() {
       return new Map((this.users || []).map(user => [String(user.id || '').trim(), user]));
     },
@@ -8879,10 +8886,11 @@ export default {
         try {
           this.runs = await this.api('/api/runs');
           this.saveWorkbenchDisplayCache('runs', this.runs);
+          const listRows = this.runListRows;
           if (this.selectedRunId && !this.runs.some(run => run.id === this.selectedRunId)) {
-            this.selectedRunId = this.runs[0]?.id || '';
+            this.selectedRunId = listRows[0]?.id || '';
           }
-          if (!this.selectedRunId && this.runs[0]) this.selectedRunId = this.runs[0].id;
+          if (!this.selectedRunId && listRows[0]) this.selectedRunId = listRows[0].id;
           if (this.selectedRunId && this.isRunInProgress(this.selectedRun)) {
             window.setTimeout(() => {
               if (this.selectedRunId) this.loadSelectedRunLog().catch(() => {});
@@ -8991,7 +8999,7 @@ export default {
         const result = await this.api(`/api/runs?${query.toString()}`, { method: 'DELETE' });
         const ids = new Set(result.deletedIds || []);
         this.runs = this.runs.filter(run => !ids.has(run.id));
-        if (this.selectedRunId && ids.has(this.selectedRunId)) this.selectedRunId = this.runs[0]?.id || null;
+        if (this.selectedRunId && ids.has(this.selectedRunId)) this.selectedRunId = this.runListRows[0]?.id || null;
         ElMessage.success(`已删除 ${result.deletedCount || ids.size || 0} 条 AI 执行明细`);
       } finally {
         this.loading.runs = false;
@@ -17999,6 +18007,22 @@ export default {
       this.selectedRunId = id;
     },
 
+    runListSortTime(run = {}) {
+      const values = [
+        run.updatedAt,
+        run.queuedAt,
+        run.startedAt,
+        run.finishedAt,
+        run.completedAt,
+        run.createdAt
+      ];
+      for (const value of values) {
+        const time = Date.parse(value || '');
+        if (Number.isFinite(time)) return time;
+      }
+      return 0;
+    },
+
     isTaskCenterLinkedRun(run = null) {
       if (!run) return false;
       return Boolean(run.taskId)
@@ -21281,7 +21305,7 @@ export default {
       );
       await this.api(`/api/runs/${encodeURIComponent(run.id)}`, { method: 'DELETE' });
       this.runs = this.runs.filter(item => item.id !== run.id);
-      this.selectedRunId = this.runs[0]?.id || null;
+      this.selectedRunId = this.runListRows[0]?.id || null;
       if (!this.selectedRunId) {
         this.logText = '选择一个任务后查看执行日志。';
         this.selectedArtifact = null;
