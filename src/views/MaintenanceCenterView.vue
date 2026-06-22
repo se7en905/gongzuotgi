@@ -17,19 +17,33 @@
         :key="item.key"
         type="button"
         class="maintenance-summary-card"
+        :class="`is-${item.cleanupLevel || 'caution'}`"
+        @click="handleOverviewCardClick(item)"
       >
-        <span>{{ item.label }}</span>
+        <span class="maintenance-card-title">{{ item.label }}</span>
+        <ElTag class="maintenance-level-tag" :type="cleanupLevelTagType(item.cleanupLevel)" effect="plain">{{ item.cleanupLevelLabel || '需确认' }}</ElTag>
         <strong>{{ app.formatBytes(item.bytes) }}</strong>
+        <em v-if="Number(item.count || 0)">{{ item.count }} 项</em>
         <small>{{ item.note }}</small>
+        <b>{{ item.actionLabel || '查看详情' }}</b>
       </button>
     </div>
 
     <div class="maintenance-record-grid">
-      <div v-for="item in app.maintenanceOverview.records || []" :key="item.key" class="maintenance-record-card">
-        <span>{{ item.label }}</span>
+      <button
+        v-for="item in app.maintenanceOverview.records || []"
+        :key="item.key"
+        type="button"
+        class="maintenance-record-card"
+        :class="`is-${item.cleanupLevel || 'caution'}`"
+        @click="handleOverviewCardClick(item)"
+      >
+        <span class="maintenance-card-title">{{ item.label }}</span>
+        <ElTag class="maintenance-level-tag" :type="cleanupLevelTagType(item.cleanupLevel)" effect="plain">{{ item.cleanupLevelLabel || '需确认' }}</ElTag>
         <strong>{{ item.count }}</strong>
-        <small>{{ item.protected ? '受保护，不参与范围清理' : item.file }}</small>
-      </div>
+        <small>{{ item.note || (item.protected ? '受保护，不参与范围清理' : item.file) }}</small>
+        <b>{{ item.actionLabel || '查看详情' }}</b>
+      </button>
     </div>
   </ElCard>
 
@@ -229,6 +243,26 @@ export default {
       if (this.app.maintenanceForm.type === 'art-briefs') return '摘要标题、任务号、目录名';
       return '关键词';
     }
+  },
+  methods: {
+    cleanupLevelTagType(level = '') {
+      if (level === 'safe') return 'success';
+      if (level === 'range') return 'primary';
+      if (level === 'protected') return 'danger';
+      return 'warning';
+    },
+    handleOverviewCardClick(item = {}) {
+      if (item.route) {
+        this.app.pushRoute(item.route);
+        return;
+      }
+      if (item.maintenanceType) {
+        this.app.setMaintenanceActionType(item.maintenanceType);
+        this.$nextTick(() => {
+          document.querySelector('.maintenance-action-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      }
+    }
   }
 };
 </script>
@@ -255,6 +289,36 @@ export default {
   display: grid;
   gap: 8px;
   min-height: 116px;
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.maintenance-summary-card:hover,
+.maintenance-record-card:hover {
+  border-color: var(--primary);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+  transform: translateY(-1px);
+}
+
+.maintenance-summary-card.is-safe,
+.maintenance-record-card.is-safe {
+  border-color: rgba(22, 163, 74, 0.35);
+}
+
+.maintenance-summary-card.is-range,
+.maintenance-record-card.is-range {
+  border-color: rgba(37, 99, 235, 0.28);
+}
+
+.maintenance-summary-card.is-caution,
+.maintenance-record-card.is-caution {
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.maintenance-summary-card.is-protected,
+.maintenance-record-card.is-protected {
+  border-color: rgba(220, 38, 38, 0.3);
 }
 
 .maintenance-summary-card strong,
@@ -269,11 +333,35 @@ export default {
   font-size: 13px;
 }
 
+.maintenance-card-title {
+  padding-right: 92px;
+}
+
+.maintenance-level-tag {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.maintenance-summary-card em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
 .maintenance-summary-card small,
 .maintenance-record-card small {
   color: var(--muted);
   line-height: 1.45;
   word-break: break-all;
+}
+
+.maintenance-summary-card b,
+.maintenance-record-card b {
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 600;
+  align-self: end;
 }
 
 .maintenance-action-layout {
