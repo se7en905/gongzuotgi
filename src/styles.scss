@@ -2674,11 +2674,20 @@ button {
   gap: 2px;
 }
 
+.art-run-dialog.el-dialog {
+  max-width: calc(100vw - 48px);
+}
+
 .art-run-dialog .run-create-top-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 220px;
   gap: 14px;
   align-items: start;
+}
+
+.art-run-dialog .field-hint {
+  max-width: 100%;
+  white-space: nowrap;
 }
 
 .art-run-dialog .art-run-source-segment.el-segmented,
@@ -2717,20 +2726,32 @@ button {
 }
 
 .art-run-dialog .run-mode-choice-grid {
+  width: 100%;
+  min-width: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
-  max-height: 260px;
+  max-height: 210px;
   overflow: auto;
   padding: 2px;
+}
+
+.art-run-dialog .run-mode-form-item,
+.art-run-dialog .run-mode-form-item .el-form-item__content {
+  width: 100%;
+  min-width: 0;
+}
+
+.art-run-dialog .run-mode-form-item .field-hint {
+  width: 100%;
 }
 
 .art-run-dialog .run-mode-choice-card {
   display: grid;
   gap: 5px;
   align-content: start;
-  min-height: 86px;
-  padding: 12px 14px;
+  min-height: 72px;
+  padding: 10px 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
@@ -2780,8 +2801,8 @@ button {
   display: inline-flex;
   align-items: center;
   max-width: 170px;
-  height: 26px;
-  padding: 0 12px;
+  height: 24px;
+  padding: 0 10px;
   border: 1px solid rgba(99, 102, 241, 0.25);
   border-radius: 999px;
   background: rgba(99, 102, 241, 0.1);
@@ -2797,9 +2818,10 @@ button {
   margin: 0;
   color: var(--text);
   font-size: 12px;
-  line-height: 1.55;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .art-run-dialog .run-mode-template-meta {
@@ -2936,6 +2958,10 @@ button {
 }
 
 @media (max-width: 720px) {
+  .art-run-dialog .field-hint {
+    white-space: normal;
+  }
+
   .art-run-dialog .run-create-top-row {
     grid-template-columns: minmax(0, 1fr);
   }

@@ -1,5 +1,5 @@
 <template>
-  <ElDialog v-model="app.runDrawer" width="760px" :title="app.runDialogTitle" class="app-dialog art-run-dialog" align-center>
+  <ElDialog v-model="app.runDrawer" width="980px" :title="app.runDialogTitle" class="app-dialog art-run-dialog" align-center>
     <ElForm :model="app.runForm" label-position="top" @submit.prevent>
       <div class="run-create-top-row">
         <ElFormItem label="执行来源" class="is-required-field">
@@ -27,7 +27,7 @@
           />
         </ElSelect>
       </ElFormItem>
-      <ElFormItem label="美术执行方式" class="is-required-field">
+      <ElFormItem label="美术执行方式" class="is-required-field run-mode-form-item">
         <div class="run-mode-choice-grid">
           <button
             v-for="option in app.runExecutionModeOptions"
@@ -43,7 +43,6 @@
                 <span class="run-mode-skill-pill">{{ option.skillName }}</span>
               </div>
               <p>{{ option.description }}</p>
-              <span class="run-mode-template-meta">{{ option.meta }}</span>
             </template>
             <template v-else>
               <strong>{{ option.label }}</strong>
