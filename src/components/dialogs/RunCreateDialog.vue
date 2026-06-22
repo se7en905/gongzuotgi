@@ -37,8 +37,18 @@
             :disabled="app.isBugFixRun"
             @click="app.selectRunExecutionModeOption(option)"
           >
-            <strong>{{ option.label }}</strong>
-            <span>{{ option.description }}</span>
+            <template v-if="option.type === 'template-workflow'">
+              <div class="run-mode-template-head">
+                <strong>{{ option.label }}</strong>
+                <span class="run-mode-skill-pill">{{ option.skillName }}</span>
+              </div>
+              <p>{{ option.description }}</p>
+              <span class="run-mode-template-meta">{{ option.meta }}</span>
+            </template>
+            <template v-else>
+              <strong>{{ option.label }}</strong>
+              <span>{{ option.description }}</span>
+            </template>
           </button>
         </div>
         <div class="field-hint">选择单个 md / Skill 或已保存模板后，下方只需填写 Figma 链接和 Codex 执行要求；临时多步骤请选“自定义流程”。</div>

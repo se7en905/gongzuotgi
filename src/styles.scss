@@ -2728,7 +2728,8 @@ button {
 .art-run-dialog .run-mode-choice-card {
   display: grid;
   gap: 5px;
-  min-height: 72px;
+  align-content: start;
+  min-height: 86px;
   padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -2750,18 +2751,64 @@ button {
   box-shadow: inset 3px 0 0 var(--primary);
 }
 
-.art-run-dialog .run-mode-choice-card strong {
+.art-run-dialog .run-mode-choice-card > strong,
+.art-run-dialog .run-mode-template-head strong {
   color: var(--heading);
   font-size: 14px;
   line-height: 1.35;
-  overflow-wrap: anywhere;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.art-run-dialog .run-mode-choice-card span {
+.art-run-dialog .run-mode-choice-card > span {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.art-run-dialog .run-mode-template-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.art-run-dialog .run-mode-skill-pill {
+  display: inline-flex;
+  align-items: center;
+  max-width: 170px;
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.1);
+  color: #3730a3;
+  font-size: 12px;
+  font-weight: 850;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.art-run-dialog .run-mode-choice-card p {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.art-run-dialog .run-mode-template-meta {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .art-run-dialog .run-selected-material-list {

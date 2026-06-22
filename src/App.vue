@@ -1775,7 +1775,9 @@ export default {
         type: 'template-workflow',
         value: workflow.id,
         label: workflow.name || '未命名模板',
-        description: this.customWorkflowSummary(workflow),
+        skillName: this.customWorkflowPrimaryMaterialName(workflow),
+        description: workflow.description || '暂无模板说明',
+        meta: this.customWorkflowMetaText(workflow),
         active: this.runForm.executionMode === 'custom-workflow' && this.runForm.customWorkflowId === workflow.id
       }));
       return [
@@ -17682,6 +17684,28 @@ export default {
       const stageNames = (workflow.stages || []).slice(0, 3).map(stage => stage.name).join(' / ');
       const more = (workflow.stages || []).length > 3 ? '...' : '';
       return `${scope} · ${workflow.stages?.length || 0} 阶段${stageNames ? ` · ${stageNames}${more}` : ''}`;
+    },
+
+    customWorkflowMetaText(workflow = {}) {
+      const scope = workflow.projectId ? this.projectName(workflow.projectId) : '通用模板';
+      const stageCount = Array.isArray(workflow.stages) ? workflow.stages.length : 0;
+      return `${scope} · ${stageCount} 阶段`;
+    },
+
+    customWorkflowPrimaryMaterialName(workflow = {}) {
+      const stage = Array.isArray(workflow.stages) ? workflow.stages[0] || {} : {};
+      const descriptionPath = String(stage.description || '').match(/(?:^|\s)([^，。\s]+(?:SKILL\.md|README\.md|[\w\u4e00-\u9fa5\-]+\.md))/i)?.[1] || '';
+      const pathCandidate = [
+        descriptionPath,
+        stage.artifactDir,
+        stage.id,
+        stage.skillId,
+        stage.name
+      ].map(value => String(value || '').trim()).find(Boolean) || '';
+      const displayName = this.runMaterialDisplayName(pathCandidate);
+      if (displayName && !/^(skills?|md|skills-md|custom-stage)$/i.test(displayName)) return displayName;
+      const name = String(stage.name || stage.skillId || '').trim();
+      return name || displayName || pathCandidate || '未配置 md / Skill';
     },
 
     workflowStageMode(stage = {}) {

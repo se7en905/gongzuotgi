@@ -136,9 +136,13 @@
         </div>
         <div v-if="app.customWorkflows.length" class="run-template-list">
           <article v-for="workflow in app.customWorkflows" :key="workflow.id" class="run-template-item">
-            <div>
-              <strong>{{ workflow.name }}</strong>
-              <span>{{ app.customWorkflowSummary(workflow) }}</span>
+            <div class="run-template-item-main">
+              <div class="run-template-title-row">
+                <strong>{{ workflow.name }}</strong>
+                <span class="run-template-skill-pill">{{ workflowPrimaryMaterialName(workflow) }}</span>
+              </div>
+              <p class="run-template-description">{{ workflow.description || '暂无模板说明' }}</p>
+              <span class="run-template-meta">{{ workflowMetaText(workflow) }}</span>
             </div>
             <div v-if="app.can('workflow.manage') || app.can('api.workflow.manage')" class="run-template-item-actions">
               <ElButton size="small" plain @click.stop="editTemplateFromDialog(workflow)">编辑</ElButton>
@@ -801,6 +805,12 @@ export default {
     },
     templateMaterialDisplayName(value = '') {
       return this.app.runMaterialDisplayName(value);
+    },
+    workflowPrimaryMaterialName(workflow = {}) {
+      return this.app.customWorkflowPrimaryMaterialName(workflow);
+    },
+    workflowMetaText(workflow = {}) {
+      return this.app.customWorkflowMetaText(workflow);
     },
     async saveTemplateFromDialog() {
       const name = String(this.templateForm.name || '').trim();
@@ -3292,29 +3302,62 @@ export default {
     border-radius: 8px;
     background: var(--soft-card);
 
-    div {
+    .run-template-item-main {
       display: grid;
-      gap: 4px;
+      gap: 7px;
       min-width: 0;
     }
 
-    strong,
-    span {
+    .run-template-title-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    strong {
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-    }
-
-    strong {
       color: var(--heading);
       font-size: 13px;
       font-weight: 850;
     }
 
-    span {
+    .run-template-skill-pill {
+      display: inline-flex;
+      align-items: center;
+      max-width: 180px;
+      height: 26px;
+      padding: 0 12px;
+      border: 1px solid rgba(99, 102, 241, 0.25);
+      border-radius: 999px;
+      background: rgba(99, 102, 241, 0.1);
+      color: #3730a3;
+      font-size: 12px;
+      font-weight: 850;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .run-template-description {
+      margin: 0;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .run-template-meta {
       color: var(--muted);
       font-size: 12px;
+      line-height: 1.4;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
   }
 
