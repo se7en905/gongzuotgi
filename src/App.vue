@@ -16532,7 +16532,8 @@ export default {
           const currentUpdated = updatedTasks.find(item => item.id === task.id) || updated;
           this.selectedBusinessTaskId = currentUpdated.id || task.id || this.selectedBusinessTaskId;
         }
-        ElMessage.success(updatedTasks.length > 1 ? `同主单 ${updatedTasks.length} 条任务 AI评估已改为 ${nextLevel}` : `AI评估已改为 ${nextLevel}`);
+        const workloadGroupLabel = updated?.workloadGroupType === 'title' ? '同标题' : '同主单';
+        ElMessage.success(updatedTasks.length > 1 ? `${workloadGroupLabel} ${updatedTasks.length} 条任务 AI评估已改为 ${nextLevel}` : `AI评估已改为 ${nextLevel}`);
       } catch (error) {
         ElMessage.error(this.readApiError(error) || 'AI评估保存失败');
       } finally {

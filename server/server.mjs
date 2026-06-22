@@ -1821,6 +1821,7 @@ async function handleApi(req, res, url) {
     if (!workloadLevel) throw new HttpError(400, '任务量级只能选择 XS、S、M、L。');
     const before = task;
     const workloadGroup = taskWorkloadGroupForTask(task);
+    const workloadGroupType = workloadGroup.startsWith('title:') ? 'title' : (workloadGroup ? 'parent' : 'single');
     const storedProjectTasks = await listTasks({ projectId: task.projectId });
     const snapshotProjectTasks = await listArtSnapshotTasks(task.projectId || artProjectId).catch(() => []);
     const projectTasks = mergeArtSnapshotRows(snapshotProjectTasks, storedProjectTasks);
@@ -1864,7 +1865,7 @@ async function handleApi(req, res, url) {
         affectedTaskCount: updatedTasks.length,
         affectedTaskNos: updatedTasks.map(item => item.taskNo || item.zentao?.id || '').filter(Boolean)
       },
-      description: `${currentUser.displayName || currentUser.username} 将任务「${task.displayTitle || task.title || task.taskNo || task.id}」${updatedTasks.length > 1 ? `等 ${updatedTasks.length} 条同主单任务` : ''}AI评估调整为 ${workloadLevel}`
+      description: `${currentUser.displayName || currentUser.username} 将任务「${task.displayTitle || task.title || task.taskNo || task.id}」${updatedTasks.length > 1 ? `等 ${updatedTasks.length} 条${workloadGroupType === 'title' ? '同标题' : '同主单'}任务` : ''}AI评估调整为 ${workloadLevel}`
     });
     broadcastPlatformEvent('tasks.changed', {
       projectId: task.projectId || artProjectId,
@@ -1873,7 +1874,7 @@ async function handleApi(req, res, url) {
       module: 'task-workload-level',
       affectedTaskIds: updatedTasks.map(item => item.id)
     });
-    sendJson(res, 200, { ...updated, updatedTasks, affectedTaskCount: updatedTasks.length, workloadGroup: workloadGroup || '' });
+    sendJson(res, 200, { ...updated, updatedTasks, affectedTaskCount: updatedTasks.length, workloadGroup: workloadGroup || '', workloadGroupType });
     return;
   }
 
@@ -7337,6 +7338,14 @@ function mergeZentaoDetailIntoArtBriefTask(task = {}, detail = {}) {
     storyTitle: detail.storyTitle || detail.story?.title || task.zentao?.storyTitle || '',
     parentName: detail.parentName || task.zentao?.parentName || '',
     executionName: detail.executionName || task.zentao?.executionName || '',
+    openedBy: accountName(detail.openedBy) || task.zentao?.openedBy || '',
+    openedByName: userName(detail.openedBy) || task.zentao?.openedByName || '',
+    createdBy: accountName(detail.openedBy || detail.createdBy) || task.zentao?.createdBy || '',
+    createdByName: userName(detail.openedBy || detail.createdBy) || task.zentao?.createdByName || '',
+    storyOpenedBy: accountName(detail.story?.openedBy || detail.storyOpenedBy) || task.zentao?.storyOpenedBy || '',
+    storyOpenedByName: userName(detail.story?.openedBy || detail.storyOpenedBy) || task.zentao?.storyOpenedByName || '',
+    productOwner: accountName(detail.productOwner || detail.story?.openedBy || detail.storyOpenedBy) || task.zentao?.productOwner || '',
+    productOwnerName: userName(detail.productOwner || detail.story?.openedBy || detail.storyOpenedBy) || task.zentao?.productOwnerName || '',
     files: detail.files || task.zentao?.files || {},
     actions: detail.actions || task.zentao?.actions || []
   };
@@ -7352,6 +7361,12 @@ function mergeZentaoDetailIntoArtBriefTask(task = {}, detail = {}) {
     requirement: detail.desc || task.requirement || task.description || '',
     storySpec: detail.storySpec || detail.story?.spec || task.storySpec || task.zentao?.storySpec || '',
     storyVerify: detail.storyVerify || detail.story?.verify || task.storyVerify || task.zentao?.storyVerify || '',
+    openedBy: accountName(detail.openedBy) || task.openedBy || '',
+    openedByName: userName(detail.openedBy) || task.openedByName || '',
+    storyOpenedBy: accountName(detail.story?.openedBy || detail.storyOpenedBy) || task.storyOpenedBy || '',
+    storyOpenedByName: userName(detail.story?.openedBy || detail.storyOpenedBy) || task.storyOpenedByName || '',
+    productOwner: accountName(detail.productOwner || detail.story?.openedBy || detail.storyOpenedBy) || task.productOwner || '',
+    productOwnerName: userName(detail.productOwner || detail.story?.openedBy || detail.storyOpenedBy) || task.productOwnerName || '',
     files: detail.files || task.files || {},
     actions: detail.actions || task.actions || [],
     brother: detail.brother || task.brother || {},
@@ -8935,6 +8950,12 @@ function normalizeZentaoTask(project, task, execution, userNames = new Map()) {
     ? 100
     : Number(task.progress ?? (estimate ? Math.round((consumed / Math.max(estimate, consumed + left)) * 100) : 0));
   const storyTitle = task.storyTitle || task.story?.title || '';
+  const openedBy = accountName(task.openedBy);
+  const openedByName = userNames.get(openedBy) || userName(task.openedBy);
+  const storyOpenedBy = accountName(task.story?.openedBy || task.storyOpenedBy);
+  const storyOpenedByName = userNames.get(storyOpenedBy) || userName(task.story?.openedBy || task.storyOpenedBy);
+  const productOwner = accountName(task.productOwner || task.story?.openedBy || task.storyOpenedBy);
+  const productOwnerName = userNames.get(productOwner) || userName(task.productOwner || task.story?.openedBy || task.storyOpenedBy);
   const executionName = task.executionName || task.execution?.name || '';
   const assignee = accountName(task.assignedTo);
   const assignedTo = userNames.get(assignee) || userName(task.assignedTo) || task.assignedToRealName || '';
@@ -8963,6 +8984,14 @@ function normalizeZentaoTask(project, task, execution, userNames = new Map()) {
     ].filter(Boolean).join('；'),
     issues: left ? `剩余工时：${left}` : '',
     requirement: task.desc || '',
+    openedBy,
+    openedByName,
+    storyOpenedBy,
+    storyOpenedByName,
+    productOwner,
+    productOwnerName,
+    storySpec: task.storySpec || task.story?.spec || '',
+    storyVerify: task.storyVerify || task.story?.verify || '',
     zentao: {
       id: Number(taskNo),
       project: task.project || '',
@@ -8970,6 +8999,16 @@ function normalizeZentaoTask(project, task, execution, userNames = new Map()) {
       executionName,
       story: task.story || task.storyID || '',
       storyTitle,
+      openedBy,
+      openedByName,
+      createdBy: openedBy,
+      createdByName: openedByName,
+      storyOpenedBy,
+      storyOpenedByName,
+      productOwner,
+      productOwnerName,
+      storySpec: task.storySpec || task.story?.spec || '',
+      storyVerify: task.storyVerify || task.story?.verify || '',
       type: task.type || '',
       pri: task.pri || '',
       estimate,
@@ -9104,7 +9143,7 @@ function isLowEffortArtAcceptanceTaskInput(task = {}) {
 
 function taskWorkloadGroupForTask(task = {}) {
   const project = cleanBriefPart(task.projectId || artProjectId);
-  if (isIndependentTitleWorkloadProjectTask(task)) {
+  if (isIndependentTitleWorkloadOwnerTask(task)) {
     return titleWorkloadGroupForTask(task);
   }
   const demand = artBriefLinkedDemand(task);
@@ -9130,32 +9169,59 @@ function titleWorkloadGroupForTask(task = {}) {
   return title ? `title:${project}:${safeFileSegment(title)}` : '';
 }
 
-function isIndependentTitleWorkloadProjectTask(task = {}) {
-  const text = [
-    task.projectName,
-    task.title,
-    task.displayTitle,
-    task.summary,
-    task.requirement,
-    task.description,
-    task.desc,
-    task.storySpec,
-    task.storyVerify,
-    task.zentao?.description,
-    task.zentao?.desc,
-    task.zentao?.storySpec,
-    task.zentao?.storyVerify,
-    task.zentao?.storyTitle,
-    task.zentao?.parentName,
-    task.zentao?.executionName
-  ].map(value => String(value || '')).join('\n');
-  return /(?:^|[^A-Za-z0-9])(?:social|sg|sc)(?:[^A-Za-z0-9]|$)|所属后台[：:\s]*(?:Social|SG|SC)|后台[：:\s]*(?:Social|SG|SC)|SG版本需求|SG项目|SG翡翠绿|翡翠绿|SC项目|SC版本/i.test(text);
+function isIndependentTitleWorkloadOwnerTask(task = {}) {
+  const ownerText = [
+    task.developer,
+    task.assignedTo,
+    task.assignedToName,
+    task.openedByName,
+    task.openedBy,
+    task.creator,
+    task.creatorName,
+    task.createdBy,
+    task.createdByName,
+    task.storyOpenedBy,
+    task.storyOpenedByName,
+    task.productOwner,
+    task.productOwnerName,
+    task.zentao?.assignedTo,
+    task.zentao?.assignedToName,
+    task.zentao?.assignedToRealName,
+    task.zentao?.openedBy,
+    task.zentao?.openedByName,
+    task.zentao?.createdBy,
+    task.zentao?.createdByName,
+    task.zentao?.creator,
+    task.zentao?.creatorName,
+    task.zentao?.storyOpenedBy,
+    task.zentao?.storyOpenedByName,
+    task.zentao?.productOwner,
+    task.zentao?.productOwnerName
+  ].map(value => String(value || '').trim()).filter(Boolean).join('\n').toLowerCase();
+  return /(?:张晓龙|郑庆有|zhangxiaolong|zhengqinyou)/i.test(ownerText);
+}
+
+function hasWorkloadOwnerSourceFields(task = {}) {
+  return Boolean(
+    task.openedBy
+    || task.openedByName
+    || task.storyOpenedBy
+    || task.storyOpenedByName
+    || task.productOwner
+    || task.productOwnerName
+    || task.zentao?.openedBy
+    || task.zentao?.openedByName
+    || task.zentao?.storyOpenedBy
+    || task.zentao?.storyOpenedByName
+    || task.zentao?.productOwner
+    || task.zentao?.productOwnerName
+  );
 }
 
 async function hydrateTaskForWorkloadGrouping(task = {}) {
   const taskNo = String(task.taskNo || task.zentao?.id || '').trim();
   if (!taskNo) return task;
-  if (isIndependentTitleWorkloadProjectTask(task)) return task;
+  if (hasWorkloadOwnerSourceFields(task) || isIndependentTitleWorkloadOwnerTask(task)) return task;
   try {
     const payload = await callZentaoRead(({ api: zentaoApi, modules: zentao }) => zentao.getTask(zentaoApi, { id: taskNo }));
     const result = payload.result || payload.data || payload;
@@ -9163,7 +9229,7 @@ async function hydrateTaskForWorkloadGrouping(task = {}) {
     if (!detail || typeof detail !== 'object') return task;
     return mergeZentaoDetailIntoArtBriefTask(task, detail);
   } catch (error) {
-    console.warn(`ZenTao workload grouping detail fallback for ${taskNo}: ${error.message || error}`);
+    console.warn(`ZenTao workload grouping owner fallback for ${taskNo}: ${error.message || error}`);
     return task;
   }
 }

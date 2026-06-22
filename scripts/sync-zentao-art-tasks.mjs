@@ -512,6 +512,12 @@ function normalizeZentaoTask(task, execution) {
         : 0;
   const description = stripHtml(task.desc || '');
   const executionName = execution?.name || '';
+  const openedBy = accountOf(task.openedBy);
+  const openedByName = userNames.get(openedBy) || userDisplayName(task.openedBy);
+  const storyOpenedBy = accountOf(task.story?.openedBy || task.storyOpenedBy);
+  const storyOpenedByName = userNames.get(storyOpenedBy) || userDisplayName(task.story?.openedBy || task.storyOpenedBy);
+  const productOwner = accountOf(task.productOwner || task.story?.openedBy || task.storyOpenedBy);
+  const productOwnerName = userNames.get(productOwner) || userDisplayName(task.productOwner || task.story?.openedBy || task.storyOpenedBy);
   return {
     id: `zentao_${taskNo}`,
     projectId,
@@ -537,6 +543,14 @@ function normalizeZentaoTask(task, execution) {
     ].filter(Boolean).join('；'),
     issues: task.left && Number(task.left) > 0 ? `剩余工时：${task.left}` : '',
     requirement: description,
+    openedBy,
+    openedByName,
+    storyOpenedBy,
+    storyOpenedByName,
+    productOwner,
+    productOwnerName,
+    storySpec: task.storySpec || task.story?.spec || '',
+    storyVerify: task.storyVerify || task.story?.verify || '',
     stageChecks: [],
     zentao: {
       id: Number(task.id),
@@ -545,6 +559,16 @@ function normalizeZentaoTask(task, execution) {
       executionName,
       story: Number(task.story || task.storyID || 0),
       storyTitle: task.storyTitle || '',
+      openedBy,
+      openedByName,
+      createdBy: openedBy,
+      createdByName: openedByName,
+      storyOpenedBy,
+      storyOpenedByName,
+      productOwner,
+      productOwnerName,
+      storySpec: task.storySpec || task.story?.spec || '',
+      storyVerify: task.storyVerify || task.story?.verify || '',
       type: task.type || '',
       pri: task.pri || '',
       estimate: Number(task.estimate || 0),
@@ -568,6 +592,13 @@ function accountOf(value) {
   if (!value) return '';
   if (typeof value === 'string') return value;
   if (typeof value === 'object') return value.account || '';
+  return String(value);
+}
+
+function userDisplayName(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') return value.realname || value.account || '';
   return String(value);
 }
 
