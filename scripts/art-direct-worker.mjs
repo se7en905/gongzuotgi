@@ -1042,7 +1042,8 @@ function buildPrompt(run = {}, workspace = {}) {
   const figmaLinks = String(run.figmaLinks || '').trim();
   const figmaWriteRequired = requiresFigmaWriteEvidence(run);
   const imageGenerationRun = isImageGenerationRun(run);
-  const explicitlyRequestedNonImage2Provider = requestsNonImage2Provider(run);
+  const imageProviderMode = imageGenerationProviderMode(run);
+  const fallbackImageProviderRequested = imageProviderMode === 'fallback';
   const imagePlacementRequired = figmaTargetIsImagePlacement(run);
   const editableFigmaRequested = requestsEditableFigmaOutput(run);
   return [
@@ -1083,11 +1084,12 @@ function buildPrompt(run = {}, workspace = {}) {
     '- 不要因为这是工作台任务就额外套用未被用户选择的流程、模板、阶段或其它 Skill。',
     '- 如果引用的是单个 Skill / md，只执行这个 Skill / md；如果引用的是模板或自定义流程，才按下方顺序执行。',
     '- Skill / md 中提到的 references、scripts、assets 如已在本地文件中出现，必须按其说明继续读取和使用。',
-    imageGenerationRun && !explicitlyRequestedNonImage2Provider ? '- 本次是生图类 Skill / md，执行要求没有明确指定其它生图工具时，默认必须调用执行人电脑上的原生 image2 / gpt-image-2 / GPT Image 2 能力进行生图创作。' : '',
-    imageGenerationRun && explicitlyRequestedNonImage2Provider ? '- 本次执行要求已明确指定非 image2 生图工具时，才按用户指定工具执行；仍必须使用执行人自己电脑上的对应工具、凭据、网络和代理。' : '',
-    imageGenerationRun ? '- 本次如果需要 gpt-image-2 / image2 / GPT Image 2，必须使用执行人自己电脑上的 Codex / OpenAI 凭据、环境变量、代理和网络；不可切到平台服务器或负责人电脑代跑。' : '',
-    imageGenerationRun ? '- 本次如果使用 gpt-image-2 / image2 / GPT Image 2 出图失败，必须直接停止并回传阻塞原因；禁止改用 Pillow、本地绘制脚本、确定性绘制、占位图、其它模型或任何非 image2 方式伪造成品图。' : '',
-    imageGenerationRun ? '- 只有 gpt-image-2 / image2 真正成功生成或编辑得到的图片，才算本次生图产物；失败时不得保存替代图片到“生成图片/”或 outputs 目录，不得标记本机已完成。' : '',
+    imageGenerationRun && !fallbackImageProviderRequested ? '- 本次生图调用方式：使用 image2。必须调用执行人电脑上的原生 image2 / gpt-image-2 / GPT Image 2 能力进行生图创作。' : '',
+    imageGenerationRun && fallbackImageProviderRequested ? '- 本次生图调用方式：兜底方案。允许使用执行人电脑上除 image2 之外的可用生图方案；仍必须使用执行人自己的工具、凭据、网络和代理。' : '',
+    imageGenerationRun && !fallbackImageProviderRequested ? '- 本次如果需要 gpt-image-2 / image2 / GPT Image 2，必须使用执行人自己电脑上的 Codex / OpenAI 凭据、环境变量、代理和网络；不可切到平台服务器或负责人电脑代跑。' : '',
+    imageGenerationRun && !fallbackImageProviderRequested ? '- 本次如果使用 gpt-image-2 / image2 / GPT Image 2 出图失败，必须直接停止并回传阻塞原因；禁止改用 Pillow、本地绘制脚本、确定性绘制、占位图、其它模型或任何非 image2 方式伪造成品图。' : '',
+    imageGenerationRun && !fallbackImageProviderRequested ? '- 只有 gpt-image-2 / image2 真正成功生成或编辑得到的图片，才算本次生图产物；失败时不得保存替代图片到“生成图片/”或 outputs 目录，不得标记本机已完成。' : '',
+    imageGenerationRun && fallbackImageProviderRequested ? '- 兜底方案下必须在最终报告里写明实际使用的生图方式或工具；只要真实生成并归档图片产物，就按实际产物状态回传。' : '',
     '',
     stages.length > 1 ? '## 模板 / 自定义流程顺序' : '',
     stages.length > 1 ? stageText : '',
@@ -1740,6 +1742,7 @@ function buildResultSummary(status, exitCode, finalText, figmaWriteResult = {}, 
 
 function evaluateImageProviderResult(run = {}, finalText = '', generatedArtifacts = []) {
   if (!isImageGenerationRun(run)) return { blocked: false, reason: '', disallowGeneratedArtifacts: false };
+  if (imageGenerationProviderMode(run) === 'fallback') return { blocked: false, reason: '', disallowGeneratedArtifacts: false };
   const text = String(finalText || '');
   const image2Failed = /(?:gpt[-_\s]?image[-_\s]?2|image\s*2|image2|GPT Image 2).{0,160}(?:APIConnectionError|Connection error|billing_hard_limit_reached|rate limit|quota|403|401|429|timeout|timed out|failed|失败|不可用|无法|报错)/i.test(text)
     || /(?:APIConnectionError|Connection error|billing_hard_limit_reached|rate limit|quota|403|401|429|timeout|timed out).{0,160}(?:gpt[-_\s]?image[-_\s]?2|image\s*2|image2|GPT Image 2)/i.test(text);
@@ -1814,7 +1817,7 @@ function isImageGenerationRun(run = {}) {
       ? run.selectedMaterialSnapshots.flatMap(item => [item?.path, item?.title, item?.name, item?.content])
       : [])
   ].filter(Boolean).join('\n');
-  return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|same[-_\s]*ip[-_\s]*image|sameipimage|gpt[-_\s]?image|imagegen|image[-_\s]*gen|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)/i.test(text);
+  return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|same[-_\s]*ip[-_\s]*image|sameipimage|gpt[-_\s]?image|imagegen|image[-_\s]*gen|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)|(?:main|key)[-_\s]*visual|concept[-_\s]*art|character[-_\s]*(?:design|art)|image[-_\s]*(?:generation|creation|editing)|text[-_\s]*to[-_\s]*image|img2img|image[-_\s]*to[-_\s]*image|visual[-_\s]*asset|game[-_\s]*asset|poster[-_\s]*(?:design|generation)|banner[-_\s]*(?:design|generation)|(?:generate|create|make|design).{0,40}(?:image|poster|banner|illustration|character|avatar|asset|texture|visual)/i.test(text);
 }
 
 function requestsNonImage2Provider(run = {}) {
@@ -1839,6 +1842,10 @@ function requestsNonImage2Provider(run = {}) {
     return false;
   }
   return !/(?:不要|禁止|不使用|不用|不可使用|不能使用|非默认|失败后不要).{0,24}(?:Midjourney|MJ|Stable\s*Diffusion|SDXL?|Flux|ComfyUI|DALL[-\s]?E|豆包|即梦|可灵|通义万相|本地模型|其它模型|其他模型|非\s*image2)/i.test(text);
+}
+
+function imageGenerationProviderMode(run = {}) {
+  return String(run.imageGenerationProviderMode || '').trim() === 'fallback' ? 'fallback' : 'image2';
 }
 
 function explicitlySkipsFigmaWrite(run = {}) {

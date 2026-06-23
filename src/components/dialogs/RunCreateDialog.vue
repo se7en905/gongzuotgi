@@ -74,6 +74,21 @@
         <ElInput v-model="app.runForm.figmaLinks" type="textarea" :rows="3" placeholder="需要处理 Figma 时粘贴具体 Frame、分区或整页链接；纯生图、本地产物或报告任务可不填。" />
         <div class="field-hint">填写后 Codex 会把它作为本次真实 Figma 目标；不填写时按当前 md / Skill 和执行要求直接产出图片、本地文件或报告。</div>
       </ElFormItem>
+      <ElFormItem v-if="app.shouldShowImageGenerationProviderMode" label="生图调用方式">
+        <div class="image-provider-choice-grid">
+          <button
+            v-for="option in app.imageGenerationProviderModeOptions"
+            :key="option.value"
+            type="button"
+            :class="['image-provider-choice-card', { active: app.runForm.imageGenerationProviderMode === option.value }]"
+            @click="app.runForm.imageGenerationProviderMode = option.value"
+          >
+            <strong>{{ option.label }}</strong>
+            <span>{{ option.description }}</span>
+          </button>
+        </div>
+        <div class="field-hint">选择后会写入执行记录；任务状态按这里选择的真实生图方式判定。</div>
+      </ElFormItem>
       <ElFormItem label="参考图 / 修改说明截图">
         <div
           class="run-paste-image-zone"

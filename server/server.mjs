@@ -2595,6 +2595,7 @@ async function handleApi(req, res, url) {
       selectedMaterialHints: source.selectedMaterialHints,
       selectedMaterialSnapshots: source.selectedMaterialSnapshots,
       figmaWriteMode: source.figmaWriteMode,
+      imageGenerationProviderMode: body.imageGenerationProviderMode || source.imageGenerationProviderMode,
       assignedToUserId: currentUser.id,
       assignedToName: currentUser.displayName || currentUser.username || currentUser.id,
       queuedForUserId: currentUser.id,

@@ -533,6 +533,42 @@ const RUN_LOG_BUFFER_MAX_CHARS = 160 * 1024;
 const RUN_LOG_RENDER_MAX_CHARS = 80 * 1024;
 const RUN_LOG_RENDER_MAX_LINES = 400;
 const RUN_LOG_LINE_MAX_CHARS = 2400;
+const DEFAULT_LIST_TIME_FIELDS = [
+  'createdAt',
+  'queuedAt',
+  'submittedAt',
+  'uploadedAt',
+  'generatedAt',
+  'reportedAt',
+  'startedAt',
+  'finishedAt',
+  'completedAt',
+  'updatedAt',
+  'lastSyncedAt',
+  'cachedAt',
+  'importedAt',
+  'time'
+];
+const RUN_LIST_TIME_FIELDS = ['createdAt', 'queuedAt', 'startedAt', 'finishedAt', 'completedAt', 'updatedAt'];
+const RUN_DISPLAY_TIME_FIELDS = ['startedAt', 'finishedAt', 'completedAt', 'queuedAt', 'createdAt', 'updatedAt'];
+const TASK_LIST_TIME_FIELDS = [
+  'createdAt',
+  'openedDate',
+  'zentaoCreatedAt',
+  'lastSyncedAt',
+  'updatedAt',
+  'deadline',
+  'latestRunAt'
+];
+const BUG_LIST_TIME_FIELDS = [
+  'openedDate',
+  'createdAt',
+  'activatedDate',
+  'resolvedDate',
+  'lastSyncedAt',
+  'updatedAt'
+];
+const ARCHIVE_LIST_TIME_FIELDS = ['latestRunAt', 'createdAt', 'generatedAt', 'submittedAt', 'updatedAt', 'startedAt', 'finishedAt'];
 const SKILL_AUDIT_RULE_VERSION = '9-dimension-v2-fulltext';
 const USAGE_COUNTER_LOGIC_VERSION = 'usage-only-v7-operation-log-targets';
 const LARGE_WORKBENCH_DISPLAY_CACHE_KEYS = new Set([
@@ -1038,6 +1074,7 @@ export default {
         developer: '',
         targetPage: '',
         figmaLinks: '',
+        imageGenerationProviderMode: 'image2',
         attachments: [],
         showdocHints: '',
         selectedMaterialHints: [],
@@ -1212,7 +1249,7 @@ export default {
     runListRows() {
       return (this.runs || [])
         .slice()
-        .sort((a, b) => this.runListSortTime(b) - this.runListSortTime(a))
+        .sort((a, b) => this.compareRunListTimeDesc(a, b))
         .slice(0, 20);
     },
 
@@ -1246,7 +1283,7 @@ export default {
         if (zentaoId) push(`zentao:${zentaoId}`, run);
       }
       for (const rows of map.values()) {
-        rows.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+        rows.sort((a, b) => this.compareRunListTimeDesc(a, b));
       }
       return map;
     },
@@ -1289,7 +1326,7 @@ export default {
         if (taskNo) push(`zentao:${taskNo}`, review);
       }
       for (const rows of map.values()) {
-        rows.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+        rows.sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ['createdAt', 'submittedAt', 'updatedAt'] }));
       }
       return map;
     },
@@ -1348,7 +1385,7 @@ export default {
     directSkillRunRows() {
       return (this.runs || [])
         .filter(run => this.isLocalWorkerRun(run))
-        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+        .sort((a, b) => this.compareRunListTimeDesc(a, b));
     },
 
     recentDirectSkillRunRows() {
@@ -1357,7 +1394,7 @@ export default {
 
     recentExecutionRunRows() {
       return [...(this.runs || [])]
-        .sort((a, b) => String(b.createdAt || b.updatedAt || b.finishedAt || b.startedAt || '').localeCompare(String(a.createdAt || a.updatedAt || a.finishedAt || a.startedAt || '')))
+        .sort((a, b) => this.compareRunListTimeDesc(a, b))
         .slice(0, 10);
     },
 
@@ -1787,6 +1824,35 @@ export default {
       return !this.isBugFixRun && (this.runForm.executionMode === 'single-skill' || (this.runForm.executionMode === 'custom-workflow' && !this.runForm.customWorkflowId));
     },
 
+    shouldShowImageGenerationProviderMode() {
+      if (this.isBugFixRun) return false;
+      const materialHints = this.normalizedRunMaterialHints();
+      return this.isImageGenerationRun({
+        requirement: this.runForm.requirement,
+        title: this.runMaterialTitle(this.runForm.executionMode, materialHints),
+        customWorkflowName: this.runForm.customWorkflowName,
+        customWorkflowDescription: this.runForm.customWorkflowDescription,
+        primarySkillPath: this.runForm.primarySkillPath || this.runForm.stage,
+        selectedMaterialHints: materialHints,
+        figmaLinks: this.runForm.figmaLinks
+      });
+    },
+
+    imageGenerationProviderModeOptions() {
+      return [
+        {
+          value: 'image2',
+          label: '使用 image2',
+          description: '严格调用执行人本机 image2；失败就按本机阻塞，不用其它方式替代。'
+        },
+        {
+          value: 'fallback',
+          label: '兜底方案',
+          description: '允许执行人本机使用非 image2 的可用生图方案；状态按实际产物归档结果判定。'
+        }
+      ];
+    },
+
     runExecutionModeOptions() {
       const workflowOptions = this.runnableCustomWorkflows.map(workflow => ({
         key: `workflow:${workflow.id}`,
@@ -2119,42 +2185,45 @@ export default {
     },
 
     businessTaskRows() {
-      return this.businessTasks.filter(task => !isBugLikeTask(task)).map(task => {
-        const project = this.projects.find(item => item.id === task.projectId);
-        const relatedRuns = this.runsForTask(task);
-        const latestRun = relatedRuns[0] || null;
-        const relatedReviews = this.reviewsForTask(task);
-        const platformStatus = this.platformStatusForTask(latestRun, relatedReviews);
-        const quality = this.taskQualityMetrics(task, relatedRuns, platformStatus);
-        const isLowEffortAcceptance = isLowEffortArtAcceptanceTask(task);
-        const savedWorkloadLevel = normalizeWorkloadLevel(task.workloadLevel || task.workloadEstimate?.level || task.zentao?.workloadLevel || task.zentao?.workloadEstimate?.level);
-        const inferredWorkloadEstimate = isLowEffortAcceptance ? null : inferTaskWorkloadLevel(task, project);
-        const workloadEstimate = isLowEffortAcceptance
-          ? null
-          : savedWorkloadLevel
-            ? { ...(inferredWorkloadEstimate || {}), ...(task.workloadEstimate || {}), level: savedWorkloadLevel }
-            : inferredWorkloadEstimate;
-        return {
-          ...task,
-          displayTitle: this.taskDisplayTitle(task),
-          isLowEffortAcceptance,
-          priorityFlags: isLowEffortAcceptance ? [] : this.taskPriorityFlags(task),
-          projectName: project?.name || task.projectId || '-',
-          sourceLabel: task.source === 'zentao-art-snapshot' ? '美术禅道快照' : task.source === 'google-sheet' ? '表格导入' : task.source === 'platform' ? '平台创建' : task.source === 'zentao' ? 'ZenTao同步' : '人工录入',
-          zentaoStatus: task.zentaoStatus || task.zentao?.status || task.zentao?.originalStatus || task.status || '',
-          isCurrent: task.isCurrent !== false,
-          syncStatus: task.syncStatus || (task.isCurrent === false ? 'non_current' : 'current'),
-          deadline: task.deadline || task.zentao?.deadline || '',
-          zentaoCreatedAt: task.zentaoCreatedAt || task.zentao?.openedDate || '',
-          completion: clampPercent(task.zentaoProgress ?? task.completion),
-          runCount: relatedRuns.length,
-          latestRun,
-          platformStatus,
-          quality,
-          workloadLevel: workloadEstimate?.level || '',
-          workloadEstimate
-        };
-      });
+      return this.businessTasks
+        .filter(task => !isBugLikeTask(task))
+        .map(task => {
+          const project = this.projects.find(item => item.id === task.projectId);
+          const relatedRuns = this.runsForTask(task);
+          const latestRun = relatedRuns[0] || null;
+          const relatedReviews = this.reviewsForTask(task);
+          const platformStatus = this.platformStatusForTask(latestRun, relatedReviews);
+          const quality = this.taskQualityMetrics(task, relatedRuns, platformStatus);
+          const isLowEffortAcceptance = isLowEffortArtAcceptanceTask(task);
+          const savedWorkloadLevel = normalizeWorkloadLevel(task.workloadLevel || task.workloadEstimate?.level || task.zentao?.workloadLevel || task.zentao?.workloadEstimate?.level);
+          const inferredWorkloadEstimate = isLowEffortAcceptance ? null : inferTaskWorkloadLevel(task, project);
+          const workloadEstimate = isLowEffortAcceptance
+            ? null
+            : savedWorkloadLevel
+              ? { ...(inferredWorkloadEstimate || {}), ...(task.workloadEstimate || {}), level: savedWorkloadLevel }
+              : inferredWorkloadEstimate;
+          return {
+            ...task,
+            displayTitle: this.taskDisplayTitle(task),
+            isLowEffortAcceptance,
+            priorityFlags: isLowEffortAcceptance ? [] : this.taskPriorityFlags(task),
+            projectName: project?.name || task.projectId || '-',
+            sourceLabel: task.source === 'zentao-art-snapshot' ? '美术禅道快照' : task.source === 'google-sheet' ? '表格导入' : task.source === 'platform' ? '平台创建' : task.source === 'zentao' ? 'ZenTao同步' : '人工录入',
+            zentaoStatus: task.zentaoStatus || task.zentao?.status || task.zentao?.originalStatus || task.status || '',
+            isCurrent: task.isCurrent !== false,
+            syncStatus: task.syncStatus || (task.isCurrent === false ? 'non_current' : 'current'),
+            deadline: task.deadline || task.zentao?.deadline || '',
+            zentaoCreatedAt: task.zentaoCreatedAt || task.zentao?.openedDate || '',
+            completion: clampPercent(task.zentaoProgress ?? task.completion),
+            runCount: relatedRuns.length,
+            latestRun,
+            platformStatus,
+            quality,
+            workloadLevel: workloadEstimate?.level || '',
+            workloadEstimate
+          };
+        })
+        .sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: TASK_LIST_TIME_FIELDS }));
     },
 
     isTasksRoute() {
@@ -2164,15 +2233,17 @@ export default {
 
 
     bugRows() {
-      return this.bugs.map(bug => {
-        const project = this.projects.find(item => item.id === bug.projectId);
-        return {
-          ...bug,
-          displayTitle: this.bugDisplayTitle(bug),
-          projectName: project?.name || bug.projectId || '-',
-          workloadEstimate: inferBugWorkloadLevel(bug, project)
-        };
-      });
+      return this.bugs
+        .map(bug => {
+          const project = this.projects.find(item => item.id === bug.projectId);
+          return {
+            ...bug,
+            displayTitle: this.bugDisplayTitle(bug),
+            projectName: project?.name || bug.projectId || '-',
+            workloadEstimate: inferBugWorkloadLevel(bug, project)
+          };
+        })
+        .sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: BUG_LIST_TIME_FIELDS }));
     },
 
     taskCenterBusinessTaskRows() {
@@ -2238,7 +2309,8 @@ export default {
         .filter(record => record.status !== 'deleted')
         .filter(record => !taskKeys.has(`${record.projectId}:${record.taskNo || record.taskId}`))
         .map(record => this.aiFlowManualOnlyArchiveRow(record));
-      return [...taskRows, ...manualOnlyRows];
+      return [...taskRows, ...manualOnlyRows]
+        .sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ARCHIVE_LIST_TIME_FIELDS }));
     },
 
     aiArtifactRows() {
@@ -2252,7 +2324,7 @@ export default {
         const qualityMatched = !this.archiveFilters.qualityStatus || statusBucket(task.status) === this.archiveFilters.qualityStatus;
         const haystack = `${task.name || ''}\n${task.projectName || ''}\n${task.path || ''}`.toLowerCase();
         return projectMatched && qualityMatched && (!keyword || haystack.includes(keyword));
-      });
+      }).sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ARCHIVE_LIST_TIME_FIELDS }));
     },
 
     pagedAiArtifactRows() {
@@ -2273,7 +2345,7 @@ export default {
         const qualityMatched = !this.archiveFilters.qualityStatus || statusBucket(task.platformStatus) === this.archiveFilters.qualityStatus;
         const haystack = `${task.taskNo || ''}\n${task.title || ''}\n${task.developer || ''}\n${task.manualFlowRecord?.agentModel || ''}\n${task.manualFlowRecord?.summaryIssues || ''}`.toLowerCase();
         return projectMatched && qualityMatched && (!keyword || haystack.includes(keyword));
-      });
+      }).sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ARCHIVE_LIST_TIME_FIELDS }));
     },
 
     pagedAiArchiveRows() {
@@ -2826,7 +2898,7 @@ export default {
         appendScanRows(projectRow, projectRow.scan);
       }
       const nextRows = this.dedupeSkillInventoryRows(rows).sort((a, b) => {
-        const timeDiff = String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || ''));
+        const timeDiff = this.compareDisplayTimeDesc(a, b, { fields: ['uploadedAt', 'committedAt', 'updatedAt', 'createdAt'] });
         return timeDiff || String(a.title || '').localeCompare(String(b.title || ''));
       });
       const productRows = this.skillInventoryUniqueProductsByName(nextRows);
@@ -2996,7 +3068,7 @@ export default {
         rows = [...rows].sort((a, b) => {
           const usageDiff = Number(b.usageCount || 0) - Number(a.usageCount || 0);
           if (usageDiff) return usageDiff;
-          return String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')) || String(a.title || '').localeCompare(String(b.title || ''));
+          return this.compareDisplayTimeDesc(a, b, { fields: ['uploadedAt', 'committedAt', 'updatedAt', 'createdAt'] }) || String(a.title || '').localeCompare(String(b.title || ''));
         });
       } else if (this.skillInventoryPreferMine) {
         const mine = this.currentAccountPrimaryPersonName || '';
@@ -3004,7 +3076,7 @@ export default {
           const aMine = this.skillInventoryRowBelongsToMember(a, mine) ? 1 : 0;
           const bMine = this.skillInventoryRowBelongsToMember(b, mine) ? 1 : 0;
           if (aMine !== bMine) return bMine - aMine;
-          return String(b.uploadedAt || '').localeCompare(String(a.uploadedAt || '')) || String(a.title || '').localeCompare(String(b.title || ''));
+          return this.compareDisplayTimeDesc(a, b, { fields: ['uploadedAt', 'committedAt', 'updatedAt', 'createdAt'] }) || String(a.title || '').localeCompare(String(b.title || ''));
         });
       }
       this.skillInventoryFilterCacheSet(cacheKey, rows);
@@ -3103,7 +3175,7 @@ export default {
           row.source
         ].join('\n').toLowerCase();
         return haystack.includes(keyword);
-      });
+      }).sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ['submittedAt', 'updatedAt', 'createdAt', 'rowUpdatedAt', 'rowCreatedAt'] }));
     },
 
     pagedAiAssetRows() {
@@ -3120,7 +3192,7 @@ export default {
         if (start && (!time || time < start)) return false;
         if (end && (!time || time > end)) return false;
         return true;
-      });
+      }).sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ['time', 'createdAt', 'updatedAt'] }));
     },
 
     pagedSkillUsageLogs() {
@@ -3576,13 +3648,14 @@ export default {
       return rows.map(row => ({
         ...row,
         validationArtifactCount: countMap.get(this.skillValidationArtifactCountKey(row)) || 1
-      }));
+      })).sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ['submittedAt', 'updatedAt', 'createdAt', 'importedAt'] }));
     },
 
     unmatchedSkillValidationRows() {
       return this.skillValidationMappedRows
         .filter(row => row.validationScopeExcluded)
-        .filter(row => !this.isDistributedConfigValidationRecord(row));
+        .filter(row => !this.isDistributedConfigValidationRecord(row))
+        .sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ['submittedAt', 'updatedAt', 'createdAt', 'importedAt'] }));
     },
 
     pagedSkillValidationMappedRows() {
@@ -3685,7 +3758,7 @@ export default {
     researchArtProgressEvents() {
       return this.artProgressEvents
         .filter(event => isResearchArtProgressEventRecord(event))
-        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+        .sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ['createdAt', 'updatedAt', 'reportedAt'] }));
     },
 
     pagedArtProgressEvents() {
@@ -3703,11 +3776,11 @@ export default {
         const operationLogs = this.artProgressOperationLogRows.map(log => decorateArtProgressOperationLogRecord(log));
         const existingEventIds = new Set(operationLogs.map(row => row.eventId || row.id).filter(Boolean));
         const operationEvents = this.artProgressOperationEventRows.filter(row => !existingEventIds.has(row.id));
-        return [...operationLogs, ...operationEvents].sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+        return [...operationLogs, ...operationEvents].sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ['createdAt', 'updatedAt'] }));
       }
       return this.artProgressLifecycleLogRows
         .map(event => decorateArtProgressEventRecord(event))
-        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+        .sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ['createdAt', 'updatedAt'] }));
     },
 
     artProgressLogMemberOptions() {
@@ -3890,14 +3963,14 @@ export default {
 
     filteredArtProjectSheetRows() {
       const keyword = String(this.artProjectSheetKeyword || '').trim().toLowerCase();
-      if (!keyword) return this.artProjectSheetRows;
-      return this.artProjectSheetRows.filter(row => {
+      const rows = !keyword ? this.artProjectSheetRows : this.artProjectSheetRows.filter(row => {
         const haystack = this.visibleArtProjectSheetFields
           .map(field => this.artProjectSheetFieldValue(row, field))
           .join('\n')
           .toLowerCase();
         return haystack.includes(keyword);
       });
+      return [...rows].sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ['updatedAt', 'createdAt', 'rowUpdatedAt', 'rowCreatedAt', 'importedAt'] }));
     },
 
     pagedArtProjectSheetRows() {
@@ -3914,7 +3987,9 @@ export default {
 
     projectTasks() {
       const tasks = this.selectedScan?.tasks;
-      return Array.isArray(tasks) ? tasks : [];
+      return Array.isArray(tasks)
+        ? [...tasks].sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ['updatedAt', 'createdAt', 'finishedAt', 'startedAt', 'importedAt'] }))
+        : [];
     },
 
     pagedProjectTasks() {
@@ -3963,8 +4038,7 @@ export default {
           status: task.audit?.status || 'unknown'
         }));
       }).sort((a, b) => {
-        const statusWeight = status => ({ blocked: 0, failed: 1, conditional: 2, unknown: 3, passed: 4 })[status] ?? 3;
-        return statusWeight(a.status) - statusWeight(b.status) || a.completion - b.completion;
+        return this.compareDisplayTimeDesc(a, b, { fields: ['updatedAt', 'createdAt', 'finishedAt', 'startedAt', 'importedAt'] });
       });
     },
 
@@ -4362,7 +4436,7 @@ export default {
     imageReviewRecordList() {
       return Object.values(this.imageReviewRecords)
         .filter(record => this.auditImages.some(image => image.path === record.imagePath))
-        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        .sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ['createdAt', 'updatedAt'] }));
     },
 
     selectedStageIssues() {
@@ -4381,7 +4455,7 @@ export default {
       if (!this.selectedTask) return [];
       return this.manualReviewRecords
         .filter(record => record.taskPath === this.selectedTask.path)
-        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+        .sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ['createdAt', 'updatedAt'] }));
     },
 
     currentReviewRecords() {
@@ -8047,7 +8121,7 @@ export default {
       } else {
         this.artProgressEvents.unshift(event);
       }
-      this.artProgressEvents = [...this.artProgressEvents].sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      this.artProgressEvents = [...this.artProgressEvents].sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ['createdAt', 'updatedAt', 'reportedAt'] }));
       this.clearSkillUsageLogCache();
     },
 
@@ -13674,12 +13748,14 @@ export default {
       }
       const assignee = this.directSkillAssigneeOptions.find(user => user.id === dialog.assignedToUserId) || this.currentUser || {};
       const productName = row.productDisplayName || row.productFileName || row.title || this.fileNameFromPath(skillPath) || 'AI 产物';
+      const imageGenerationProviderMode = this.inferDefaultImageGenerationProviderMode(skillPath, row.preview || row.skill?.preview || String(dialog.requirement || '').trim());
       const requirement = this.ensureFigmaTargetInRunRequirement({
         requirement: String(dialog.requirement || '').trim(),
         materialNames: [productName],
         materialPaths: [skillPath],
         figmaLinks,
-        writeMode: dialog.figmaWriteMode || 'target-node'
+        writeMode: dialog.figmaWriteMode || 'target-node',
+        imageGenerationProviderMode
       });
       let primarySkillContent = this.skillContentCache[row.id] || row.preview || row.skill?.preview || this.skillPreviewText || '';
       if (!primarySkillContent || /技能内容读取失败/i.test(primarySkillContent)) {
@@ -13717,6 +13793,7 @@ export default {
               content: primarySkillContent
             }],
             figmaLinks,
+            imageGenerationProviderMode,
             figmaWriteMode: dialog.figmaWriteMode || 'target-node',
             assignedToUserId: assignee.id || this.currentUser?.id || '',
             assignedToName: assignee.displayName || assignee.username || this.defaultRunDeveloperName,
@@ -17937,6 +18014,7 @@ export default {
         zentaoId: task.taskNo || '',
         developer: this.defaultRunDeveloperName,
         figmaLinks: task.figmaLinks || '',
+        imageGenerationProviderMode: 'image2',
         requirement: executionInstructionForTask(task),
         sourceType: 'task-center',
         createTaskForRun: true
@@ -17971,6 +18049,7 @@ export default {
         developer: this.defaultRunDeveloperName,
         targetPage: skillPath || productName,
         showdocHints: skillPath,
+        imageGenerationProviderMode: this.inferDefaultImageGenerationProviderMode(skillPath, row.preview || row.skill?.preview || ''),
         selectedMaterialHints: skillPath ? [skillPath] : [],
         requirement: [
           `请基于 AI 产物清单中的「${productName}」发起单skill/md 执行。`,
@@ -17996,6 +18075,7 @@ export default {
         developer: this.defaultRunDeveloperName,
         targetPage: bug.targetPage || '',
         figmaLinks: bug.figmaLinks || '',
+        imageGenerationProviderMode: 'image2',
         showdocHints: bug.showdocHints || '',
         requirement: [
           `修复 Bug：${this.bugDisplayTitle(bug)}`,
@@ -18261,6 +18341,7 @@ export default {
         title: saved.name,
         selectedMaterialHints: this.materialHintsFromCustomWorkflow(saved),
         showdocHints: this.materialHintsFromCustomWorkflow(saved).join('\n'),
+        imageGenerationProviderMode: this.inferDefaultImageGenerationProviderMode(saved.name || '', `${saved.description || ''}\n${this.materialHintsFromCustomWorkflow(saved).join('\n')}`),
         requirement: saved.description || '请按自定义工作流模板执行，并在每个阶段记录产物与结论。',
         sourceType: 'standalone'
       });
@@ -18411,12 +18492,25 @@ export default {
           return;
         }
       }
+      const imageGenerationProviderMode = this.isImageGenerationRun({
+        requirement,
+        title: generatedTitle,
+        customWorkflowName: selectedTemplate?.name || this.runForm.customWorkflowName,
+        customWorkflowDescription: selectedTemplate?.description || this.runForm.customWorkflowDescription,
+        primarySkillPath: primaryMaterial,
+        selectedMaterialHints: materialHints,
+        selectedMaterialSnapshots,
+        figmaLinks
+      })
+        ? this.normalizedImageGenerationProviderMode(this.runForm.imageGenerationProviderMode)
+        : 'image2';
       const effectiveRequirement = this.ensureFigmaTargetInRunRequirement({
         requirement,
         materialNames: selectedMaterialSnapshots.map(item => item.title || this.runMaterialDisplayName(item.path || item.sourceValue)),
         materialPaths: materialHints,
         figmaLinks,
-        writeMode: this.runForm.figmaWriteMode || 'target-node'
+        writeMode: this.runForm.figmaWriteMode || 'target-node',
+        imageGenerationProviderMode
       });
       const payload = {
         ...this.runForm,
@@ -18430,6 +18524,7 @@ export default {
         workerExecution: true,
         title: generatedTitle,
         figmaLinks,
+        imageGenerationProviderMode,
         attachments: (this.runForm.attachments || []).map(item => ({
           id: item.id,
           name: item.name,
@@ -18498,6 +18593,7 @@ export default {
               '请基于上一轮执行的产物、资料.md、Figma 线索、规范 md / Skill 线索继续处理；不要重复无关步骤，结果继续写入本次新的 artifactRoot。'
             ].filter(Boolean).join('\n'),
             figmaLinks: sourceRun.figmaLinks || '',
+            imageGenerationProviderMode: sourceRun.imageGenerationProviderMode || 'image2',
             showdocHints: sourceRun.showdocHints || '',
             targetPage: sourceRun.targetPage || '',
             stage: sourceRun.stage || '',
@@ -18545,20 +18641,46 @@ export default {
       this.selectedRunId = id;
     },
 
-    runListSortTime(run = {}) {
-      const values = [
-        run.updatedAt,
-        run.queuedAt,
-        run.startedAt,
-        run.finishedAt,
-        run.completedAt,
-        run.createdAt
-      ];
-      for (const value of values) {
-        const time = Date.parse(value || '');
-        if (Number.isFinite(time)) return time;
+    displayListTime(row = {}, options = {}) {
+      const fields = Array.isArray(options.fields) && options.fields.length ? options.fields : DEFAULT_LIST_TIME_FIELDS;
+      for (const field of fields) {
+        const value = typeof field === 'function' ? field(row) : row?.[field];
+        const time = this.parseDisplayListTime(value);
+        if (time) return time;
       }
       return 0;
+    },
+
+    parseDisplayListTime(value = '') {
+      if (!value) return 0;
+      if (value instanceof Date) {
+        const time = value.getTime();
+        return Number.isFinite(time) ? time : 0;
+      }
+      const text = String(value || '').trim();
+      if (!text) return 0;
+      const localDateMatch = text.match(/^(\d{4}-\d{2}-\d{2})$/);
+      if (localDateMatch) {
+        const time = Date.parse(`${localDateMatch[1]}T00:00:00+08:00`);
+        return Number.isFinite(time) ? time : 0;
+      }
+      const parsed = Date.parse(text);
+      if (Number.isFinite(parsed)) return parsed;
+      return 0;
+    },
+
+    compareDisplayTimeDesc(a = {}, b = {}, options = {}) {
+      const diff = this.displayListTime(b, options) - this.displayListTime(a, options);
+      if (diff) return diff;
+      return String(b?.id || '').localeCompare(String(a?.id || ''));
+    },
+
+    runListSortTime(run = {}) {
+      return this.displayListTime(run, { fields: RUN_LIST_TIME_FIELDS });
+    },
+
+    compareRunListTimeDesc(a = {}, b = {}) {
+      return this.compareDisplayTimeDesc(a, b, { fields: RUN_LIST_TIME_FIELDS });
     },
 
     isTaskCenterLinkedRun(run = null) {
@@ -18583,7 +18705,7 @@ export default {
           seen.add(id);
           return true;
         })
-        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+        .sort((a, b) => this.compareRunListTimeDesc(a, b));
     },
 
     runAttemptNumber(run = {}) {
@@ -18598,7 +18720,7 @@ export default {
         if (seen.has(id)) return false;
         seen.add(id);
         return true;
-      }).sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+      }).sort((a, b) => this.compareRunListTimeDesc(b, a));
       const index = related.findIndex(item => item.id === run.id);
       return index >= 0 ? index + 1 : 1;
     },
@@ -19925,7 +20047,7 @@ export default {
       };
     },
 
-    defaultSkillRunRequirement({ materialNames = [], materialPaths = [], figmaLinks = '', writeMode = 'target-node' } = {}) {
+    defaultSkillRunRequirement({ materialNames = [], materialPaths = [], figmaLinks = '', writeMode = 'target-node', imageGenerationProviderMode = 'image2' } = {}) {
       const names = this.normalizedRunMaterialHints(materialNames).filter(Boolean);
       const paths = this.normalizedRunMaterialHints(materialPaths).filter(Boolean);
       const materialText = names.length
@@ -19935,8 +20057,15 @@ export default {
       const figmaText = String(figmaLinks || '').trim();
       const runContext = { requirement: '', title: materialText, primarySkillPath: paths.join('\n'), selectedMaterialHints: paths, figmaLinks: figmaText };
       const isImagePlacement = Boolean(figmaText && this.runFigmaTargetIsImagePlacement(runContext));
+      const providerMode = this.normalizedImageGenerationProviderMode(imageGenerationProviderMode);
+      const providerText = this.isImageGenerationRun(runContext)
+        ? providerMode === 'fallback'
+          ? '生图调用方式：兜底方案。允许执行人本机使用非 image2 的可用生图方案，按真实产物归档结果判定状态。'
+          : '生图调用方式：使用 image2。必须调用执行人本机原生 image2 / gpt-image-2，失败就回传本机阻塞，不得改用其它方式替代。'
+        : '';
       return [
         `使用${materialText ? `「${materialText}」` : '当前选择的 md / Skill'}。`,
+        providerText,
         `执行资料路径：${pathText}。`,
         figmaText
           ? `Figma 链接：${figmaText}。`
@@ -19958,9 +20087,9 @@ export default {
       };
     },
 
-    ensureFigmaTargetInRunRequirement({ requirement = '', materialNames = [], materialPaths = [], figmaLinks = '', writeMode = 'target-node' } = {}) {
+    ensureFigmaTargetInRunRequirement({ requirement = '', materialNames = [], materialPaths = [], figmaLinks = '', writeMode = 'target-node', imageGenerationProviderMode = 'image2' } = {}) {
       const text = String(requirement || '').trim();
-      if (!text) return this.defaultSkillRunRequirement({ materialNames, materialPaths, figmaLinks, writeMode });
+      if (!text) return this.defaultSkillRunRequirement({ materialNames, materialPaths, figmaLinks, writeMode, imageGenerationProviderMode });
       const figmaText = String(figmaLinks || '').trim();
       if (!figmaText || this.requirementContainsFigmaLink(text)) return text;
       const names = this.normalizedRunMaterialHints(materialNames).filter(Boolean);
@@ -20266,7 +20395,19 @@ export default {
           ? run.selectedMaterialSnapshots.flatMap(item => [item?.path, item?.title, item?.name, item?.content])
           : [])
       ].filter(Boolean).join('\n');
-      return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|same[-_\s]*ip[-_\s]*image|sameipimage|gpt[-_\s]?image|imagegen|image[-_\s]*gen|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)/i.test(text);
+      return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|same[-_\s]*ip[-_\s]*image|sameipimage|gpt[-_\s]?image|imagegen|image[-_\s]*gen|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)|(?:main|key)[-_\s]*visual|concept[-_\s]*art|character[-_\s]*(?:design|art)|image[-_\s]*(?:generation|creation|editing)|text[-_\s]*to[-_\s]*image|img2img|image[-_\s]*to[-_\s]*image|visual[-_\s]*asset|game[-_\s]*asset|poster[-_\s]*(?:design|generation)|banner[-_\s]*(?:design|generation)|(?:generate|create|make|design).{0,40}(?:image|poster|banner|illustration|character|avatar|asset|texture|visual)/i.test(text);
+    },
+
+    normalizedImageGenerationProviderMode(value = '') {
+      return String(value || '').trim() === 'fallback' ? 'fallback' : 'image2';
+    },
+
+    inferDefaultImageGenerationProviderMode(...parts) {
+      const text = parts.map(item => String(item || '')).join('\n');
+      if (!this.isImageGenerationRun({ requirement: text, title: text })) return 'image2';
+      return /兜底方案|非\s*image2|不用\s*image2|不要\s*image2|本地模型|Midjourney|MJ|Stable\s*Diffusion|SDXL?|Flux|ComfyUI|DALL[-\s]?E|豆包|即梦|可灵|通义万相/i.test(text)
+        ? 'fallback'
+        : 'image2';
     },
 
     runExplicitlySkipsFigmaWrite(run = {}) {
@@ -20375,7 +20516,7 @@ export default {
             .includes(userId);
         })
         .filter(run => {
-          const time = Date.parse(run.createdAt || run.updatedAt || run.finishedAt || run.startedAt || '');
+          const time = this.displayListTime(run, { fields: RUN_LIST_TIME_FIELDS });
           if (from && (!time || time < from)) return false;
           if (to && (!time || time > to)) return false;
           return true;
@@ -20395,7 +20536,7 @@ export default {
             this.runDisplayStatusLabel(run)
           ].map(value => String(value || '').toLowerCase()).join(' ').includes(keyword);
         })
-        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+        .sort((a, b) => this.compareRunListTimeDesc(a, b));
     },
 
     isAiExecutionArchiveMetricActive(metric = {}) {
@@ -21520,7 +21661,7 @@ export default {
       const taskNo = this.runChainTaskNo(run);
       return (this.taskReviews || [])
         .filter(review => review.runId === run?.id || (task?.id && review.taskId === task.id) || (taskNo && review.taskNo === taskNo))
-        .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+        .sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ['createdAt', 'submittedAt', 'updatedAt'] }));
     },
 
     runChainSkillActions(run = this.selectedRun) {
@@ -21977,13 +22118,15 @@ export default {
         if (seen.has(id)) return false;
         seen.add(id);
         return true;
-      }).sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      }).sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ['createdAt', 'submittedAt', 'updatedAt'] }));
     },
 
     bugsForTask(task) {
       const taskNo = String(task?.taskNo || task?.zentao?.id || '').trim();
       if (!taskNo) return [];
-      return this.bugs.filter(bug => String(bug.zentao?.task || bug.taskNo || '').trim() === taskNo);
+      return this.bugs
+        .filter(bug => String(bug.zentao?.task || bug.taskNo || '').trim() === taskNo)
+        .sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: BUG_LIST_TIME_FIELDS }));
     },
 
     taskStageCompletion(task, relatedRuns = []) {
@@ -22082,7 +22225,7 @@ export default {
     },
 
     runDisplayTime(run = {}) {
-      return run.startedAt || run.finishedAt || run.completedAt || run.updatedAt || run.createdAt;
+      return RUN_DISPLAY_TIME_FIELDS.map(field => run?.[field]).find(Boolean) || '';
     },
 
     qualityScoreClass(score) {
@@ -22349,6 +22492,7 @@ export default {
             title: sourceRun.title,
             requirement: sourceRun.requirement,
             figmaLinks: sourceRun.figmaLinks || '',
+            imageGenerationProviderMode: sourceRun.imageGenerationProviderMode || 'image2',
             attachments: sourceRun.attachments || sourceRun.referenceImages || [],
             showdocHints: sourceRun.showdocHints || '',
             targetPage: sourceRun.targetPage || '',
@@ -23719,6 +23863,7 @@ function emptyRunForm() {
     developer: '',
     targetPage: '',
     figmaLinks: '',
+    imageGenerationProviderMode: 'image2',
     attachments: [],
     showdocHints: '',
     selectedMaterialHints: [],

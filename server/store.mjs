@@ -942,6 +942,22 @@ export async function ensureTaskForRun(input) {
   return upsertTask(task);
 }
 
+const runListTimeFields = ['createdAt', 'queuedAt', 'startedAt', 'finishedAt', 'completedAt', 'updatedAt'];
+
+function compareRunListTimeDesc(a = {}, b = {}) {
+  const diff = displayRunListTime(b) - displayRunListTime(a);
+  if (diff) return diff;
+  return cleanString(b.id).localeCompare(cleanString(a.id));
+}
+
+function displayRunListTime(run = {}) {
+  for (const field of runListTimeFields) {
+    const time = Date.parse(cleanString(run?.[field]));
+    if (Number.isFinite(time) && time > 0) return time;
+  }
+  return 0;
+}
+
 export async function listRuns() {
   const runs = await reconcileStaleLocalWorkerRuns();
   const artifactRuns = await Promise.all(runs.map(enrichRunGeneratedArtifactEvidence));
@@ -949,7 +965,7 @@ export async function listRuns() {
   const figmaEnrichedRuns = await Promise.all(hydratedRuns.map(enrichRunWithFigmaLogEvidence));
   const enrichedRuns = await Promise.all(figmaEnrichedRuns.map(enrichRunWithImageGenerationEvidence));
   await persistRunReadReconciliations(runs, enrichedRuns);
-  return enrichedRuns.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  return enrichedRuns.sort(compareRunListTimeDesc);
 }
 
 export async function getCodexConfig() {
@@ -1155,6 +1171,7 @@ export async function createRun(input) {
     primarySkillTitle: input.primarySkillTitle || '',
     primarySkillContent: input.primarySkillContent || input.skillContent || '',
     figmaWriteMode: input.figmaWriteMode || '',
+    imageGenerationProviderMode: normalizeImageGenerationProviderMode(input.imageGenerationProviderMode),
     assignedToUserId: input.assignedToUserId || input.assigneeUserId || '',
     assignedToName: input.assignedToName || input.assigneeName || input.developer || task?.developer || '',
     claimedByDeviceId: input.claimedByDeviceId || '',
@@ -1485,7 +1502,7 @@ async function enrichRunWithImageGenerationEvidence(run = null) {
     ...(Array.isArray(run.workerResult?.generatedArtifacts) ? run.workerResult.generatedArtifacts : [])
   ]);
   const imageEvidence = await readRunImageGenerationEvidenceText(run);
-  const providerResult = evaluateImageProviderLogEvidence(imageEvidence, generatedArtifacts);
+  const providerResult = evaluateImageProviderLogEvidence(imageEvidence, generatedArtifacts, run);
   if (providerResult.blocked) {
     return blockRunForImageGenerationEvidence(run, providerResult.reason, {
       generatedArtifacts,
@@ -1589,7 +1606,10 @@ function isReadOnlyImageEvidenceCommand(command = '') {
   return /^(?:cat|sed|grep|rg|wc|find|ls|file|base64)\b/i.test(normalized);
 }
 
-function evaluateImageProviderLogEvidence(text = '', generatedArtifacts = []) {
+function evaluateImageProviderLogEvidence(text = '', generatedArtifacts = [], run = {}) {
+  if (normalizeImageGenerationProviderMode(run.imageGenerationProviderMode) === 'fallback') {
+    return { blocked: false, reason: '', disallowGeneratedArtifacts: false };
+  }
   const source = String(text || '');
   const image2Failed = /(?:gpt[-_\s]?image[-_\s]?2|GPT Image 2|image\s*2|image2).{0,220}(?:APIConnectionError|Connection error|unsupported_country_region_territory|request_forbidden|billing_hard_limit_reached|rate limit|quota|403|401|429|timeout|timed out|failed|失败|不可用|无法|报错|拒绝)/i.test(source)
     || /(?:APIConnectionError|Connection error|unsupported_country_region_territory|request_forbidden|billing_hard_limit_reached|rate limit|quota|403|401|429|timeout|timed out).{0,220}(?:gpt[-_\s]?image[-_\s]?2|GPT Image 2|image\s*2|image2|出图|生图)/i.test(source)
@@ -1618,6 +1638,10 @@ function hasPositiveFallbackImageEvidence(text = '') {
     /(?:已改用|改用).{0,80}(?:Figma MCP|use_figma|矢量|本机).{0,80}(?:绘制|完成交付|生成|替换)/i
   ];
   return patterns.some(pattern => pattern.test(source));
+}
+
+function normalizeImageGenerationProviderMode(value = '') {
+  return cleanString(value) === 'fallback' ? 'fallback' : 'image2';
 }
 
 function blockRunForImageGenerationEvidence(run = {}, reason = '', options = {}) {
@@ -1839,6 +1863,7 @@ export async function cloneRunForRetry(id, overrides = {}) {
     primarySkillTitle: source.primarySkillTitle,
     primarySkillContent: source.primarySkillContent,
     figmaWriteMode: source.figmaWriteMode,
+    imageGenerationProviderMode: source.imageGenerationProviderMode,
     requirement: source.requirement,
     sourceType: source.sourceType,
     executionMode: source.executionMode,
@@ -6880,7 +6905,7 @@ function isImageGenerationRun(run = {}) {
       ? run.selectedMaterialSnapshots.flatMap(item => [item?.path, item?.title, item?.name, item?.content])
       : [])
   ].filter(Boolean).join('\n');
-  return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|same[-_\s]*ip[-_\s]*image|sameipimage|gpt[-_\s]?image|imagegen|image[-_\s]*gen|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)/i.test(text);
+  return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|same[-_\s]*ip[-_\s]*image|sameipimage|gpt[-_\s]?image|imagegen|image[-_\s]*gen|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)|(?:main|key)[-_\s]*visual|concept[-_\s]*art|character[-_\s]*(?:design|art)|image[-_\s]*(?:generation|creation|editing)|text[-_\s]*to[-_\s]*image|img2img|image[-_\s]*to[-_\s]*image|visual[-_\s]*asset|game[-_\s]*asset|poster[-_\s]*(?:design|generation)|banner[-_\s]*(?:design|generation)|(?:generate|create|make|design).{0,40}(?:image|poster|banner|illustration|character|avatar|asset|texture|visual)/i.test(text);
 }
 
 function runExplicitlySkipsFigmaWrite(run = {}) {
