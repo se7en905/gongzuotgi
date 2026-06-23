@@ -650,6 +650,7 @@
   - 平台服务器不得保存 Figma OAuth token、OpenAI API Key、gpt-image2 / Image2 凭据或代理配置；不得代替组员执行 Figma 写入、Codex 执行或图片生成，不得依赖工作台管理者 admin 的本机 Codex、Figma、OpenAI 或网络环境。
   - 直接执行没有平台侧“开始”按钮；启动动作只能来自被指派执行人电脑上的本机 Worker 自动领取。
   - 组员本机 Worker 必须使用执行人自己电脑上的 Codex CLI、Figma MCP、Figma OAuth、Figma 文件权限、OpenAI / gpt-image2 凭据、环境变量、代理、网络和本机工具配置。
+  - 当前已确认组员电脑都按会话 `019e68af-96c8-7f10-905f-4810393552d4` 配置了各自本机 `image2` 和各自的 OpenAI/Image2 key；平台排查生图失败时，默认按“执行人本机 Worker 是否读到同一套配置、代理、网络、地区、额度和权限是否可用”定位，不得改成使用平台服务器、负责人电脑或 admin 密钥代跑。
   - 工作台使用 `gpt-image-2`、`image2`、GPT Image 2 或其它生图工具时，也必须在当前领取任务的组员电脑上通过其本机 Codex 和本机凭据执行；平台服务器、负责人电脑和工作台管理者账号不得代跑、转发或兜底使用自己的密钥。
   - 生图类执行没有明确指定其它工具时，Worker 下发给 Codex 的任务提示必须写明默认走执行人本机原生 `image2` / `gpt-image-2`；不得让 Codex 自行选择 Pillow、本地绘制、其它模型或平台侧工具。
   - 组员电脑默认没有负责人本机的项目代码，Worker 启动命令不得依赖负责人本机路径、相对 `scripts/` 路径或整套项目代码。
@@ -930,6 +931,7 @@
   - 当前已确认 Figma 授权失效典型错误为 `Auth required`；出现该错误时，说明执行人本机 Figma MCP OAuth 或文件权限需要恢复，不是平台服务器可以代替完成。
 - 图片生成工具规则：
   - 遇到“生成图片 / Image2 / GPT Image / image_gen / 宠物形象 / 概念图 / 参考图”等任务时，先确认当前会话工具列表里是否存在可执行的内置 `image_gen` 工具；只看到 `imagegen` 技能卡不代表内置工具已注入。
+  - 工作台美术执行台的生图任务不走当前对话的 image2，也不走负责人或平台密钥；必须通过领取任务的执行人本机 Worker 调用其本机 Codex/image2 配置。当前会话里手动生图才适用本条后续内置 `image_gen` 或全局 `gpt-image` CLI 规则。
   - 如果当前会话存在内置 `image_gen` 工具，优先使用内置工具生成或编辑图片，并把最终资产移动或保存到当前项目输出目录。
   - 如果当前会话没有内置 `image_gen` 工具，使用全局 `gpt-image` 技能的原生 GPT Image 2 CLI 作为兜底：`uv run /Users/se7en/.codex/skills/gpt-image/scripts/generate.py --model gpt-image-2 ...`
   - 全局 `gpt-image` CLI 自动读取 `OPENAI_API_KEY`：当前进程环境、当前项目 `.env`、用户 `~/.env`、Codex 认证文件 `~/.codex/auth.json`。

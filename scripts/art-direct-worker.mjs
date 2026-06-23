@@ -51,8 +51,10 @@ let offlineQueueOperation = Promise.resolve();
 let localChecks = {
   codexReady: false,
   figmaMcpReady: false,
+  image2Ready: false,
   codexMessage: '',
-  figmaMessage: ''
+  figmaMessage: '',
+  image2Message: ''
 };
 
 main().catch(error => {
@@ -70,6 +72,7 @@ async function main() {
   console.log(`[worker] 已连接 ${apiBase}，当前账号：${currentUser?.displayName || currentUser?.username || username}`);
   console.log(`[worker] Codex: ${localChecks.codexMessage}`);
   console.log(`[worker] Figma MCP: ${localChecks.figmaMessage}`);
+  console.log(`[worker] Image2: ${localChecks.image2Message}`);
   await heartbeat(true);
   startPlatformEventSync();
   while (true) {
@@ -1168,10 +1171,12 @@ function workerPayload() {
     onlineGraceMs: onlineHeartbeatGraceMs,
     capabilities: [
       localChecks.codexReady ? 'codex.exec' : '',
-      localChecks.figmaMcpReady ? 'figma.mcp.write' : ''
+      localChecks.figmaMcpReady ? 'figma.mcp.write' : '',
+      localChecks.image2Ready ? 'image2.config.detected' : ''
     ].filter(Boolean),
     codexReady: localChecks.codexReady,
     figmaMcpReady: localChecks.figmaMcpReady,
+    image2Ready: localChecks.image2Ready,
     checks: localChecks
   };
 }
@@ -1197,12 +1202,71 @@ async function runLocalChecks() {
     ? await runCommand(codexPath, ['mcp', 'list'], { timeoutMs: localCheckTimeoutMs })
     : { code: -1, stdout: '', stderr: '', error: 'Codex 不可用，跳过 Figma MCP 自检' };
   const figmaReady = mcp.code === 0 && /figma/i.test(`${mcp.stdout}\n${mcp.stderr}`);
+  const image2 = await checkLocalImage2Config();
   return {
     codexReady: codex.code === 0,
     figmaMcpReady: figmaReady,
+    image2Ready: image2.ready,
     codexMessage: codex.code === 0 ? '可用' : `不可用：${codex.stderr || codex.error || codex.code}`,
-    figmaMessage: figmaReady ? '已发现 figma MCP 配置' : '未发现 figma MCP 配置，请先在本机 Codex 完成 Figma MCP 授权'
+    figmaMessage: figmaReady ? '已发现 figma MCP 配置' : '未发现 figma MCP 配置，请先在本机 Codex 完成 Figma MCP 授权',
+    image2Message: image2.message,
+    image2Sources: image2.sources
   };
+}
+
+async function checkLocalImage2Config() {
+  const sources = [];
+  if (String(process.env.OPENAI_API_KEY || '').trim()) sources.push('当前 Worker 进程环境 OPENAI_API_KEY');
+  const cwdEnv = await hasEnvKey(path.join(process.cwd(), '.env'), 'OPENAI_API_KEY');
+  if (cwdEnv) sources.push('当前执行目录 .env');
+  const projectEnv = await hasEnvKey(path.join(defaultProjectRoot, '.env'), 'OPENAI_API_KEY');
+  if (projectEnv && !sources.includes('当前执行目录 .env')) sources.push('Worker 项目目录 .env');
+  const homeEnv = await hasEnvKey(path.join(os.homedir(), '.env'), 'OPENAI_API_KEY');
+  if (homeEnv) sources.push('用户 ~/.env');
+  const codexAuth = await hasReadableFile(path.join(os.homedir(), '.codex', 'auth.json'));
+  if (codexAuth) sources.push('用户 ~/.codex/auth.json');
+  const bundledSkillScript = path.join(os.homedir(), '.codex', 'skills', 'gpt-image', 'scripts', 'generate.py');
+  const bundledScriptReady = await hasReadableFile(bundledSkillScript);
+  if (bundledScriptReady) sources.push('gpt-image 技能脚本');
+  const uv = await runCommand('uv', ['--version'], { timeoutMs: Math.min(localCheckTimeoutMs, 5000) });
+  if (uv.code === 0) sources.push('uv 可用');
+  const hasCredential = sources.some(item => /OPENAI_API_KEY|\.env|auth\.json/.test(item));
+  const hasTool = bundledScriptReady || uv.code === 0;
+  if (hasCredential && hasTool) {
+    return {
+      ready: true,
+      sources,
+      message: `已发现执行人本机 Image2 配置来源：${sources.join('、')}。未发起真实出图请求，不消耗额度。`
+    };
+  }
+  const missing = [
+    hasCredential ? '' : '未在当前 Worker 进程、~/.env 或 ~/.codex/auth.json 发现 OpenAI/Image2 凭据来源',
+    hasTool ? '' : '未发现 gpt-image 技能脚本或 uv'
+  ].filter(Boolean).join('；');
+  return {
+    ready: false,
+    sources,
+    message: `${missing || 'Worker 进程尚未验证可读取本机 Image2 配置'}。本检查不消耗额度；组员电脑已配置 image2/key 时，请确认当前 Worker 进程能读取同一套本机配置和代理。`
+  };
+}
+
+async function hasEnvKey(file = '', key = '') {
+  try {
+    const text = await readFile(file, 'utf8');
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`^\\s*(?:export\\s+)?${escaped}\\s*=\\s*.+`, 'm').test(text);
+  } catch {
+    return false;
+  }
+}
+
+async function hasReadableFile(file = '') {
+  try {
+    const info = await stat(file);
+    return info.isFile() && info.size >= 0;
+  } catch {
+    return false;
+  }
 }
 
 function runCommand(command, args = [], options = {}) {

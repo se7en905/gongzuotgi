@@ -946,7 +946,8 @@ export async function listRuns() {
   const runs = await reconcileStaleLocalWorkerRuns();
   const artifactRuns = await Promise.all(runs.map(enrichRunGeneratedArtifactEvidence));
   const hydratedRuns = await Promise.all(artifactRuns.map(hydrateRunStages));
-  const enrichedRuns = await Promise.all(hydratedRuns.map(enrichRunWithFigmaLogEvidence));
+  const figmaEnrichedRuns = await Promise.all(hydratedRuns.map(enrichRunWithFigmaLogEvidence));
+  const enrichedRuns = await Promise.all(figmaEnrichedRuns.map(enrichRunWithImageGenerationEvidence));
   await persistRunReadReconciliations(runs, enrichedRuns);
   return enrichedRuns.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
@@ -1102,8 +1103,9 @@ export async function getRun(id) {
   const artifactRun = await enrichRunGeneratedArtifactEvidence(run);
   const hydrated = await hydrateRunStages(artifactRun);
   const enriched = await enrichRunWithFigmaLogEvidence(hydrated);
-  await persistRunReadReconciliations(run ? [run] : [], enriched ? [enriched] : []);
-  return enriched;
+  const imageReconciled = await enrichRunWithImageGenerationEvidence(enriched);
+  await persistRunReadReconciliations(run ? [run] : [], imageReconciled ? [imageReconciled] : []);
+  return imageReconciled;
 }
 
 export async function createRun(input) {
@@ -1471,6 +1473,208 @@ async function enrichRunGeneratedArtifactEvidence(run = null) {
       ...(Array.isArray(withRoot.generatedArtifacts) ? withRoot.generatedArtifacts : []),
       ...scanned
     ])
+  };
+}
+
+async function enrichRunWithImageGenerationEvidence(run = null) {
+  if (!run || !isImageGenerationRun(run)) return run;
+  if (!isFinishedRun(run.status) && !isFinishedRun(run.workerStatus)) return run;
+  const generatedArtifacts = dedupeRunArtifacts([
+    ...(Array.isArray(run.generatedArtifacts) ? run.generatedArtifacts : []),
+    ...(Array.isArray(run.resultSummary?.generatedArtifacts) ? run.resultSummary.generatedArtifacts : []),
+    ...(Array.isArray(run.workerResult?.generatedArtifacts) ? run.workerResult.generatedArtifacts : [])
+  ]);
+  const imageEvidence = await readRunImageGenerationEvidenceText(run);
+  const providerResult = evaluateImageProviderLogEvidence(imageEvidence, generatedArtifacts);
+  if (providerResult.blocked) {
+    return blockRunForImageGenerationEvidence(run, providerResult.reason, {
+      generatedArtifacts,
+      disallowGeneratedArtifacts: providerResult.disallowGeneratedArtifacts,
+      imageEvidenceText: imageEvidence
+    });
+  }
+  const requiresLocalImageArtifact = !cleanString(run.figmaLinks);
+  const hasGeneratedImage = generatedArtifacts.some(item => !item?.uploadFailed && cleanString(item?.relativePath || item?.path));
+  const statusText = `${cleanString(run.status)} ${cleanString(run.workerStatus)}`.toLowerCase();
+  if (requiresLocalImageArtifact && /completed|done|success|passed/.test(statusText) && !hasGeneratedImage) {
+    return blockRunForImageGenerationEvidence(run, '本次是纯生图且未填写 Figma 链接，但执行结束后未检测到可下载的生成图片产物；不能按本机已完成展示。', {
+      generatedArtifacts,
+      imageEvidenceText: imageEvidence
+    });
+  }
+  return run;
+}
+
+async function readRunImageGenerationEvidenceText(run = {}) {
+  const logChunks = [];
+  const logFiles = [
+    cleanString(run.logPath),
+    run.id ? path.join(getRunWorkspace(run.id), 'run.log') : ''
+  ].filter(Boolean);
+  for (const file of [...new Set(logFiles)]) {
+    const text = await readTextTail(file, 180000).catch(() => '');
+    const parsed = text ? parseRunLogImageGenerationEvidence(text) : '';
+    if (parsed) logChunks.push(parsed);
+  }
+  const existingSummary = run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {};
+  const generatedByImageReconcile = cleanString(existingSummary.generatedArtifactPolicy) === 'image2-failed-fallback-review'
+    || /Image2 \/ GPT Image 2 出图未成功，本次不能按本机已完成展示/.test(cleanString(existingSummary.summary));
+  const chunks = [
+    generatedByImageReconcile ? '' : existingSummary.summary,
+    generatedByImageReconcile ? '' : existingSummary.blockerReason,
+    generatedByImageReconcile ? '' : existingSummary.nextStep,
+    run.workerResult?.summary,
+    run.workerResult?.blockerReason,
+    ...logChunks
+  ];
+  if (!logChunks.length) {
+    chunks.push(existingSummary.finalText, run.workerResult?.finalText);
+  }
+  return chunks.filter(Boolean).join('\n').slice(-260000);
+}
+
+function parseRunLogImageGenerationEvidence(text = '') {
+  const chunks = [];
+  String(text || '').split(/\r?\n/).forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    try {
+      const event = JSON.parse(trimmed);
+      const item = event?.item || {};
+      if (item.type === 'agent_message' && item.text) {
+        chunks.push(String(item.text));
+        return;
+      }
+      if (item.type === 'command_execution') {
+        const command = String(item.command || '');
+        const output = String(item.aggregated_output || '');
+        if (!shouldUseCommandForImageGenerationEvidence(command, output)) return;
+        chunks.push([
+          command,
+          output,
+          item.exit_code === undefined || item.exit_code === null ? '' : `exit_code=${item.exit_code}`,
+          item.status
+        ].filter(Boolean).join('\n'));
+        return;
+      }
+      if (event.message || event.text || event.delta) {
+        chunks.push(String(event.message || event.text || event.delta));
+      }
+    } catch {
+      if (/(?:APIConnectionError|unsupported_country_region_territory|request_forbidden|billing_hard_limit_reached|gpt[-_\s]?image|GPT Image 2|image2|Pillow|PIL|兜底|已落盘|同主题)/i.test(trimmed)) {
+        chunks.push(trimmed);
+      }
+    }
+  });
+  return chunks.join('\n').slice(-180000);
+}
+
+function shouldUseCommandForImageGenerationEvidence(command = '', output = '') {
+  const source = `${command}\n${output}`;
+  if (isReadOnlyImageEvidenceCommand(command)) return false;
+  if (/(?:gpt[-_\s]?image|GPT Image 2|image2|generate\.py|OPENAI_API_KEY|unsupported_country_region_territory|APIConnectionError|billing_hard_limit_reached|request_forbidden)/i.test(source)) {
+    return true;
+  }
+  if (/(?:Pillow|PIL|Image\.new|ImageDraw|ImageOps|\.save\(|outputs\/|生成图片\/)/i.test(source)
+    && !/^\s*\/bin\/(?:z)?sh\s+-lc\s+['"]?(?:cat|sed|grep|rg|wc|find|ls|file)\b/i.test(command)) {
+    return true;
+  }
+  return false;
+}
+
+function isReadOnlyImageEvidenceCommand(command = '') {
+  const text = String(command || '').replace(/\s+/g, ' ').trim();
+  const normalized = text.replace(/^\/bin\/(?:z)?sh\s+-lc\s+['"]?/i, '').trim();
+  if (/(?:generate\.py|gpt[-_\s]?image|GPT Image 2|OPENAI_API_KEY|image2|python|node|uv\b|codex\b)/i.test(normalized)) return false;
+  return /^(?:cat|sed|grep|rg|wc|find|ls|file|base64)\b/i.test(normalized);
+}
+
+function evaluateImageProviderLogEvidence(text = '', generatedArtifacts = []) {
+  const source = String(text || '');
+  const image2Failed = /(?:gpt[-_\s]?image[-_\s]?2|GPT Image 2|image\s*2|image2).{0,220}(?:APIConnectionError|Connection error|unsupported_country_region_territory|request_forbidden|billing_hard_limit_reached|rate limit|quota|403|401|429|timeout|timed out|failed|失败|不可用|无法|报错|拒绝)/i.test(source)
+    || /(?:APIConnectionError|Connection error|unsupported_country_region_territory|request_forbidden|billing_hard_limit_reached|rate limit|quota|403|401|429|timeout|timed out).{0,220}(?:gpt[-_\s]?image[-_\s]?2|GPT Image 2|image\s*2|image2|出图|生图)/i.test(source)
+    || /(?:gpt[-_\s]?image|图像生成|生图|出图).{0,220}(?:uv\s*缺失|缺\s*(?:dotenv|openai)|未能执行|无法执行|没有执行|未生成位图文件|未生成成品图)/i.test(source)
+    || /正式\s*CLI.{0,120}(?:未能执行|没有执行|无法执行)/i.test(source)
+    || /GPT\s*图像生成\s*CLI.{0,120}(?:接口区域限制|拒绝|失败)/i.test(source)
+    || /调用\s*GPT Image 2\s*失败/i.test(source);
+  if (!image2Failed) return { blocked: false, reason: '', disallowGeneratedArtifacts: false };
+  const fallbackGenerated = hasPositiveFallbackImageEvidence(source)
+    || generatedArtifacts.some(item => /pillow|pil|fallback|deterministic|兜底|替代/i.test(`${item?.source || ''}\n${item?.name || ''}\n${item?.path || ''}\n${item?.relativePath || ''}`));
+  return {
+    blocked: true,
+    disallowGeneratedArtifacts: fallbackGenerated,
+    reason: fallbackGenerated
+      ? 'Image2 / GPT Image 2 出图失败后检测到复用旧图、本地绘制、Pillow、脚本或其它替代产物；按当前规则不能算完成，必须修复执行人本机 Image2 后重新执行。'
+      : 'Image2 / GPT Image 2 出图失败，必须修复执行人本机连接、代理、地区、额度或权限后重新执行。'
+  };
+}
+
+function hasPositiveFallbackImageEvidence(text = '') {
+  const source = String(text || '');
+  const patterns = [
+    /当前交付图为.{0,80}(?:Pillow|PIL|本地|兜底|替代).{0,80}(?:成品|PNG|图片|图)/i,
+    /(?:使用|采用|改用).{0,60}(?:Pillow|PIL|Image\.new|ImageDraw|本地脚本|本地绘制|确定性绘制).{0,80}(?:生成|绘制|交付|保存|成品)/i,
+    /(?:使用|复用|采用).{0,40}(?:已落盘|已有|历史|同主题).{0,80}(?:成品图|图片|图像|位图|产物)/i,
+    /(?:已改用|改用).{0,80}(?:Figma MCP|use_figma|矢量|本机).{0,80}(?:绘制|完成交付|生成|替换)/i
+  ];
+  return patterns.some(pattern => pattern.test(source));
+}
+
+function blockRunForImageGenerationEvidence(run = {}, reason = '', options = {}) {
+  const now = new Date().toISOString();
+  const generatedArtifacts = options.generatedArtifacts || run.generatedArtifacts || [];
+  const existingSummary = run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {};
+  const existingWorkerResult = run.workerResult && typeof run.workerResult === 'object' ? run.workerResult : {};
+  const finishedAt = cleanString(run.finishedAt || run.completedAt || run.updatedAt || now);
+  const startedAt = cleanString(run.startedAt || run.claimedAt || run.queuedAt || run.createdAt);
+  const durationMs = normalizeDurationMs(run.durationMs, startedAt, finishedAt, run.durationMs);
+  const stages = Array.isArray(run.stages)
+    ? run.stages.map(stage => {
+      const status = cleanString(stage.status).toLowerCase();
+      if (/failed|blocked|cancelled|canceled/.test(status)) return stage;
+      return {
+        ...stage,
+        status: 'blocked',
+        finishedAt: stage.finishedAt || finishedAt,
+        durationMs: normalizeDurationMs(stage.durationMs, stage.startedAt || startedAt, stage.finishedAt || finishedAt, stage.durationMs)
+      };
+    })
+    : run.stages;
+  return {
+    ...run,
+    status: 'blocked',
+    workerStatus: 'blocked',
+    currentStage: 'Image2 出图阻塞',
+    finishedAt,
+    ...(durationMs > 0 ? { durationMs } : {}),
+    generatedArtifacts,
+    blocker: {
+      ...(run.blocker && typeof run.blocker === 'object' ? run.blocker : {}),
+      reason
+    },
+    resultSummary: {
+      ...existingSummary,
+      status: 'blocked',
+      statusText: 'blocked',
+      summary: generatedArtifacts.length
+        ? 'Image2 / GPT Image 2 出图未成功，本次不能按本机已完成展示；已归档图片仍保留在产物区供复核和下载。'
+        : 'Image2 / GPT Image 2 出图未成功，本次不能按本机已完成展示。',
+      blockerReason: reason,
+      needsHumanReview: true,
+      generatedArtifacts,
+      artifacts: Array.isArray(existingSummary.artifacts) ? existingSummary.artifacts : [],
+      generatedArtifactPolicy: options.disallowGeneratedArtifacts === true ? 'image2-failed-fallback-review' : 'normal',
+      nextStep: '修复当前执行人本机 Image2 / GPT Image 2 连接、代理、地区、额度或权限后重新执行；不要使用 Pillow、本地绘制或其它方式替代。',
+      parsedAt: now
+    },
+    workerResult: {
+      ...existingWorkerResult
+    },
+    figmaWriteResult: run.figmaWriteResult,
+    stages,
+    localWorkerStale: false,
+    localWorkerStaleDetectedAt: '',
+    updatedAt: now
   };
 }
 
@@ -6455,6 +6659,7 @@ function normalizeAgentWorker(input = {}) {
     platform: cleanString(input.platform || os.platform()),
     codexReady: input.codexReady === true || capabilities.includes('codex.exec'),
     figmaMcpReady: input.figmaMcpReady === true || capabilities.includes('figma.mcp.write'),
+    image2Ready: input.image2Ready === true || capabilities.includes('image2.config.detected'),
     capabilities,
     checks,
     currentRunId: cleanString(input.currentRunId),

@@ -1465,6 +1465,7 @@ export default {
             completedRuns: runGroups.completed,
             codexReady: worker?.codexReady === true,
             figmaMcpReady: worker?.figmaMcpReady === true,
+            image2Ready: worker?.image2Ready === true,
             ready: online && worker?.codexReady === true && worker?.figmaMcpReady === true
           };
         });
@@ -1503,6 +1504,7 @@ export default {
           completedRuns: runGroups.completed,
           codexReady: worker?.codexReady === true,
           figmaMcpReady: worker?.figmaMcpReady === true,
+          image2Ready: worker?.image2Ready === true,
           ready: online && worker?.codexReady === true && worker?.figmaMcpReady === true
         });
       }
@@ -19044,7 +19046,8 @@ export default {
       const online = this.directSkillWorkerOnline(worker);
       const figma = worker.figmaMcpReady ? 'Figma MCP 已就绪' : 'Figma MCP 未就绪';
       const codex = worker.codexReady ? 'Codex 已就绪' : 'Codex 未就绪';
-      return `${this.directSkillWorkerDisplayName(worker)} · ${online ? '在线' : '离线'} · ${codex} · ${figma}`;
+      const image2 = worker.image2Ready ? 'Image2 配置已发现' : 'Image2 配置待读取';
+      return `${this.directSkillWorkerDisplayName(worker)} · ${online ? '在线' : '离线'} · ${codex} · ${figma} · ${image2}`;
     },
 
     directSkillWorkerIssueText(worker = null) {
@@ -19054,6 +19057,7 @@ export default {
       const messages = [];
       if (worker.codexReady !== true) messages.push(checks.codexMessage || 'Codex 未就绪，请确认组员电脑上能运行 codex --help。');
       if (worker.figmaMcpReady !== true) messages.push(checks.figmaMessage || 'Figma MCP 未就绪，请确认组员电脑上的 Codex 已完成 Figma MCP 授权。');
+      if (worker.image2Ready !== true) messages.push(checks.image2Message || 'Image2 配置待读取：组员电脑已配置 image2/key 时，请确认 Worker 进程能读取执行人本机 image2/OpenAI 配置和代理。');
       if (!messages.length) return 'Worker 已在线并可自动领取。';
       return messages.join('；');
     },
