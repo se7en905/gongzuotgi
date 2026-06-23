@@ -1133,6 +1133,7 @@ export async function createRun(input) {
     workflowLevel,
     customWorkflowId: customWorkflow?.id || input.customWorkflowId || '',
     customWorkflowName: customWorkflow?.name || input.customWorkflowName || '',
+    customWorkflowDescription: customWorkflow?.description || input.customWorkflowDescription || '',
     customWorkflowStrict: workflow === 'custom-workflow',
     stage: input.stage || '',
     targetPage: input.targetPage || '',
@@ -1480,6 +1481,7 @@ export async function cloneRunForRetry(id, overrides = {}) {
     workflowLevel: source.workflowLevel,
     customWorkflowId: source.customWorkflowId,
     customWorkflowName: source.customWorkflowName,
+    customWorkflowDescription: source.customWorkflowDescription,
     customStages: retryCustomStages,
     stage: source.stage,
     targetPage: source.targetPage,
@@ -2284,6 +2286,7 @@ async function resolveCustomWorkflowForRun(input = {}) {
     return {
       id: input.customWorkflowId || '',
       name: input.customWorkflowName || '临时自定义流程',
+      description: input.customWorkflowDescription || '',
       stages: normalizeCustomStages(input.customStages)
     };
   }
@@ -3143,7 +3146,7 @@ function findLastFigmaWriteLineIndex(lines = []) {
     if (/^__FIGMA_WRITE_EVENT__\b/.test(lines[index] || '')) return index;
   }
   for (let index = lines.length - 1; index >= 0; index -= 1) {
-    if (/createdNodeIds|mutatedNodeIds/i.test(lines[index] || '')) return index;
+    if (/createdNodeIds|mutatedNodeIds/i.test(lines[index] || '') || hasAffirmativeFigmaImagePlacementText(lines[index])) return index;
   }
   return -1;
 }
@@ -3153,7 +3156,7 @@ function findFirstFigmaWriteLineIndex(lines = []) {
     if (/^__FIGMA_WRITE_EVENT__\b/.test(lines[index] || '')) return index;
   }
   for (let index = 0; index < lines.length; index += 1) {
-    if (/createdNodeIds|mutatedNodeIds/i.test(lines[index] || '')) return index;
+    if (/createdNodeIds|mutatedNodeIds/i.test(lines[index] || '') || hasAffirmativeFigmaImagePlacementText(lines[index])) return index;
   }
   return -1;
 }

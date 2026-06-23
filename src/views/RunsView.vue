@@ -28,10 +28,20 @@
         @click="app.selectRunFromList(run)"
       >
         <div class="run-item-head">
-          <a v-if="app.runTaskUrl(run)" :href="app.runTaskUrl(run)" target="_blank" rel="noopener noreferrer" class="task-title-link" @click.stop>{{ app.runGroupTitle(run) }}</a>
-          <strong v-else>{{ app.runGroupTitle(run) }}</strong>
+          <div v-if="app.isSavedTemplateWorkflowRun(run)" class="run-template-list-title">
+            <a v-if="app.runTaskUrl(run)" :href="app.runTaskUrl(run)" target="_blank" rel="noopener noreferrer" class="task-title-link" @click.stop>{{ app.runTemplateTitle(run) }}</a>
+            <strong v-else>{{ app.runTemplateTitle(run) }}</strong>
+            <span class="run-template-skill-pill">{{ app.runTemplateSkillName(run) }}</span>
+          </div>
+          <template v-else>
+            <a v-if="app.runTaskUrl(run)" :href="app.runTaskUrl(run)" target="_blank" rel="noopener noreferrer" class="task-title-link" @click.stop>{{ app.runGroupTitle(run) }}</a>
+            <strong v-else>{{ app.runGroupTitle(run) }}</strong>
+          </template>
           <span class="run-status-tag">{{ app.runDisplayStatusLabel(run) }}</span>
         </div>
+        <p v-if="app.isSavedTemplateWorkflowRun(run) && app.runTemplateDescription(run)" class="run-item-template-description">
+          {{ app.runTemplateDescription(run) }}
+        </p>
         <div class="run-item-meta">
           <span>第 {{ app.runAttemptNumber(run) }} 次执行</span>
           <small>{{ app.workflowRunLabel(run) }}</small>
@@ -1111,6 +1121,48 @@ export default {
 
   .run-item .task-title-link:hover {
     text-decoration: underline;
+  }
+
+  .run-template-list-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .run-template-list-title strong,
+  .run-template-list-title .task-title-link {
+    flex: 0 1 auto;
+  }
+
+  .run-template-list-title .run-template-skill-pill {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 1 auto;
+    max-width: 160px;
+    height: 24px;
+    padding: 0 10px;
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    border-radius: 999px;
+    background: rgba(99, 102, 241, 0.1);
+    color: #3730a3;
+    font-size: 12px;
+    font-weight: 850;
+    line-height: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .run-item-template-description {
+    margin: -2px 0 0;
+    color: var(--text);
+    font-size: 12px;
+    line-height: 1.45;
+    overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .run-item .run-item-meta {

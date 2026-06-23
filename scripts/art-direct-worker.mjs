@@ -1748,6 +1748,8 @@ function findEffectiveLastFigmaWriteOrder(source = '', toolEvents = [], fallback
     .filter(event => event.createdNodeIds.length || event.mutatedNodeIds.length)
     .map(event => event.order);
   if (toolWriteOrders.length) return Math.max(...toolWriteOrders);
+  const imagePlacementOrders = extractAffirmativeFigmaImagePlacementLines(source).map(item => item.index);
+  if (imagePlacementOrders.length) return Math.max(...imagePlacementOrders);
   return fallbackOrder;
 }
 
@@ -1756,9 +1758,11 @@ function findFirstFigmaWriteOrder(source = '', toolEvents = [], fallbackOrder = 
     .filter(event => event.createdNodeIds.length || event.mutatedNodeIds.length)
     .map(event => event.order);
   if (toolWriteOrders.length) return Math.min(...toolWriteOrders);
+  const imagePlacementOrders = extractAffirmativeFigmaImagePlacementLines(source).map(item => item.index);
+  if (imagePlacementOrders.length) return Math.min(...imagePlacementOrders);
   const lines = String(source || '').split(/\r?\n/);
   for (let index = 0; index < lines.length; index += 1) {
-    if (/createdNodeIds|mutatedNodeIds/i.test(lines[index] || '')) return index;
+    if (/createdNodeIds|mutatedNodeIds/i.test(lines[index] || '') || hasAffirmativeFigmaImagePlacementText(lines[index])) return index;
   }
   return fallbackOrder;
 }

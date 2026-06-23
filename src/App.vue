@@ -1029,6 +1029,7 @@ export default {
         workflowLevel: 'XS',
         customWorkflowId: '',
         customWorkflowName: '',
+        customWorkflowDescription: '',
         customStages: [],
         title: '',
         stage: '',
@@ -4657,6 +4658,7 @@ export default {
       if (value !== 'custom-workflow') {
         this.runForm.customWorkflowId = '';
         this.runForm.customWorkflowName = '';
+        this.runForm.customWorkflowDescription = '';
       }
     },
 
@@ -4665,11 +4667,13 @@ export default {
       const workflow = this.customWorkflows.find(item => item.id === value);
       if (!workflow) {
         this.runForm.customWorkflowName = '';
+        this.runForm.customWorkflowDescription = '';
         this.clearWorkflowTemplateRequirementIfStale();
         return;
       }
       const hints = this.materialHintsFromCustomWorkflow(workflow);
       this.runForm.customWorkflowName = workflow.name || '';
+      this.runForm.customWorkflowDescription = workflow.description || '';
       if (hints.length) {
         this.applyingRunWorkflowTemplate = true;
         this.runForm.selectedMaterialHints = hints;
@@ -18122,6 +18126,38 @@ export default {
       return name || displayName || hint || '未配置 md / Skill';
     },
 
+    isSavedTemplateWorkflowRun(run = null) {
+      return Boolean(run && normalizeWorkflowId(run.workflow) === 'custom-workflow' && String(run.customWorkflowId || '').trim());
+    },
+
+    customWorkflowForRun(run = {}) {
+      const id = String(run.customWorkflowId || '').trim();
+      if (!id) return null;
+      return this.customWorkflows.find(workflow => String(workflow.id || '').trim() === id) || null;
+    },
+
+    runTemplateTitle(run = {}) {
+      const workflow = this.customWorkflowForRun(run);
+      return String(run.customWorkflowName || workflow?.name || run.title || '未命名模板').trim();
+    },
+
+    runTemplateSkillName(run = {}) {
+      const workflow = this.customWorkflowForRun(run);
+      const workflowSkillName = workflow ? this.customWorkflowPrimaryMaterialName(workflow) : '';
+      if (workflowSkillName && workflowSkillName !== '未配置 md / Skill') return workflowSkillName;
+      const hint = [
+        ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
+        run.primarySkillPath,
+        run.stage
+      ].find(value => String(value || '').trim());
+      return this.runMaterialDisplayName(hint) || '未配置 md / Skill';
+    },
+
+    runTemplateDescription(run = {}) {
+      const workflow = this.customWorkflowForRun(run);
+      return String(workflow?.description || run.customWorkflowDescription || '').trim();
+    },
+
     workflowStageMode(stage = {}) {
       return normalizedWorkflowStageFlags(stage).skippable ? 'skippable' : 'required';
     },
@@ -18401,6 +18437,7 @@ export default {
         showdocHints: materialHints.join('\n'),
         customWorkflowId: this.isCustomWorkflowRun ? (selectedTemplate?.id || '') : this.runForm.customWorkflowId,
         customWorkflowName: this.isCustomWorkflowRun ? (selectedTemplate?.name || generatedTitle) : this.runForm.customWorkflowName,
+        customWorkflowDescription: this.isCustomWorkflowRun ? (selectedTemplate?.description || '') : this.runForm.customWorkflowDescription,
         customStages,
         sourceType: this.runForm.taskId
           ? 'task-center'
@@ -19385,6 +19422,7 @@ export default {
       if (this.isCustomWorkflowRun && !this.applyingRunWorkflowTemplate) {
         this.runForm.customWorkflowId = '';
         this.runForm.customWorkflowName = '';
+        this.runForm.customWorkflowDescription = '';
         this.clearWorkflowTemplateRequirementIfStale();
       }
     },
@@ -19409,6 +19447,7 @@ export default {
         this.runForm.workflow = 'art-single-skill';
         this.runForm.customWorkflowId = '';
         this.runForm.customWorkflowName = '';
+        this.runForm.customWorkflowDescription = '';
         this.runForm.selectedMaterialHints = hints.slice(0, 1);
         return;
       }
@@ -19425,6 +19464,7 @@ export default {
         this.runForm.workflow = 'custom-workflow';
         this.runForm.customWorkflowId = '';
         this.runForm.customWorkflowName = '';
+        this.runForm.customWorkflowDescription = '';
         return;
       }
     },
@@ -19437,6 +19477,7 @@ export default {
       if (this.isCustomWorkflowRun && !this.applyingRunWorkflowTemplate) {
         this.runForm.customWorkflowId = '';
         this.runForm.customWorkflowName = '';
+        this.runForm.customWorkflowDescription = '';
       }
     },
 
@@ -22137,6 +22178,7 @@ export default {
             selectedMaterialSnapshots,
             customWorkflowId: sourceRun.customWorkflowId || '',
             customWorkflowName: sourceRun.customWorkflowName || '',
+            customWorkflowDescription: sourceRun.customWorkflowDescription || '',
             customStages: sourceRun.stages || [],
             figmaWriteMode: sourceRun.figmaWriteMode || '',
             codexRequest: sourceRun.codexRequest || {}
@@ -23482,6 +23524,7 @@ function emptyRunForm() {
     workflowLevel: 'XS',
     customWorkflowId: '',
     customWorkflowName: '',
+    customWorkflowDescription: '',
     customStages: [],
     title: '',
     stage: '',

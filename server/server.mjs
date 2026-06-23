@@ -2553,6 +2553,7 @@ async function handleApi(req, res, url) {
       workflowLevel: source.workflowLevel,
       customWorkflowId: source.customWorkflowId,
       customWorkflowName: source.customWorkflowName,
+      customWorkflowDescription: source.customWorkflowDescription,
       customStages: source.stages,
       executionMode: source.executionMode,
       sourceType: source.sourceType,
