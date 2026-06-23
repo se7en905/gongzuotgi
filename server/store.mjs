@@ -1496,36 +1496,48 @@ async function enrichRunGeneratedArtifactEvidence(run = null) {
 async function enrichRunWithImageGenerationEvidence(run = null) {
   if (!run || !isImageGenerationRun(run)) return run;
   if (!isFinishedRun(run.status) && !isFinishedRun(run.workerStatus)) return run;
+  let workingRun = run;
+  const importedArtifacts = await importLocalGeneratedImageArtifactsForRun(workingRun);
+  if (importedArtifacts.length) {
+    workingRun = mergeGeneratedArtifactsIntoRun(workingRun, importedArtifacts);
+  }
   const generatedArtifacts = dedupeRunArtifacts([
-    ...(Array.isArray(run.generatedArtifacts) ? run.generatedArtifacts : []),
-    ...(Array.isArray(run.resultSummary?.generatedArtifacts) ? run.resultSummary.generatedArtifacts : []),
-    ...(Array.isArray(run.workerResult?.generatedArtifacts) ? run.workerResult.generatedArtifacts : [])
+    ...(Array.isArray(workingRun.generatedArtifacts) ? workingRun.generatedArtifacts : []),
+    ...(Array.isArray(workingRun.resultSummary?.generatedArtifacts) ? workingRun.resultSummary.generatedArtifacts : []),
+    ...(Array.isArray(workingRun.workerResult?.generatedArtifacts) ? workingRun.workerResult.generatedArtifacts : [])
   ]);
   const hasGeneratedImage = hasGeneratedImageArtifacts(generatedArtifacts);
-  const imageEvidence = await readRunImageGenerationEvidenceText(run);
-  const providerResult = evaluateImageProviderLogEvidence(imageEvidence, generatedArtifacts, run);
+  const imageEvidence = await readRunImageGenerationEvidenceText(workingRun);
+  const providerResult = evaluateImageProviderLogEvidence(imageEvidence, generatedArtifacts, workingRun);
   if (providerResult.blocked) {
-    if (shouldAcceptLegacyGeneratedImageRun(run, providerResult, generatedArtifacts)) {
-      return reconcileLegacyGeneratedImageRun(run, generatedArtifacts, {
+    if (shouldAcceptLegacyGeneratedImageRun(workingRun, providerResult, generatedArtifacts)) {
+      return reconcileLegacyGeneratedImageRun(workingRun, generatedArtifacts, {
         originalBlockerReason: providerResult.reason,
         imageEvidenceText: imageEvidence
       });
     }
-    return blockRunForImageGenerationEvidence(run, providerResult.reason, {
+    if (hasImage2SuccessfulArtifactEvidence(imageEvidence, generatedArtifacts) && !providerResult.disallowGeneratedArtifacts) {
+      return reconcileGeneratedImageRun(workingRun, generatedArtifacts, {
+        summary: '已检测到 Image2 / GPT Image 2 成功生成并归档图片产物，按已产出结果展示；请以产物区图片为准复核和下载。',
+        policy: 'image2-generated-image-artifacts-accepted',
+        originalBlockerReason: providerResult.reason
+      });
+    }
+    return blockRunForImageGenerationEvidence(workingRun, providerResult.reason, {
       generatedArtifacts,
       disallowGeneratedArtifacts: providerResult.disallowGeneratedArtifacts,
       imageEvidenceText: imageEvidence
     });
   }
   const requiresLocalImageArtifact = !cleanString(run.figmaLinks);
-  const statusText = `${cleanString(run.status)} ${cleanString(run.workerStatus)}`.toLowerCase();
+  const statusText = `${cleanString(workingRun.status)} ${cleanString(workingRun.workerStatus)}`.toLowerCase();
   if (requiresLocalImageArtifact && /completed|done|success|passed/.test(statusText) && !hasGeneratedImage) {
-    return blockRunForImageGenerationEvidence(run, '本次是纯生图且未填写 Figma 链接，但执行结束后未检测到可下载的生成图片产物；不能按本机已完成展示。', {
+    return blockRunForImageGenerationEvidence(workingRun, '本次是纯生图且未填写 Figma 链接，但执行结束后未检测到可下载的生成图片产物；不能按本机已完成展示。', {
       generatedArtifacts,
       imageEvidenceText: imageEvidence
     });
   }
-  return run;
+  return workingRun;
 }
 
 async function readRunImageGenerationEvidenceText(run = {}) {
@@ -1650,6 +1662,160 @@ function normalizeImageGenerationProviderMode(value = '') {
   return cleanString(value) === 'fallback' ? 'fallback' : 'image2';
 }
 
+async function importLocalGeneratedImageArtifactsForRun(run = {}) {
+  if (!run?.artifactRoot || !isPathInsideStore(run.artifactRoot, paths.artifactDir)) return [];
+  if (!isImageGenerationRun(run)) return [];
+  const cwd = cleanString(run.workerResult?.cwd);
+  if (!cwd || !path.isAbsolute(cwd)) return [];
+  const cwdStat = await fs.stat(cwd).catch(() => null);
+  if (!cwdStat?.isDirectory()) return [];
+  const existingLocalPaths = new Set([
+    ...(Array.isArray(run.generatedArtifacts) ? run.generatedArtifacts : []),
+    ...(Array.isArray(run.resultSummary?.generatedArtifacts) ? run.resultSummary.generatedArtifacts : []),
+    ...(Array.isArray(run.workerResult?.generatedArtifacts) ? run.workerResult.generatedArtifacts : [])
+  ].flatMap(item => [
+    cleanString(item?.localPath),
+    cleanString(item?.path),
+    cleanString(item?.relativePath)
+  ]).filter(Boolean));
+  const localFiles = await scanLocalGeneratedImageFiles(cwd);
+  const candidates = localFiles.filter(item => {
+    const key = cleanString(item.path);
+    return key && !existingLocalPaths.has(key);
+  });
+  if (!candidates.length) return [];
+  return copyLocalGeneratedRunArtifacts(run, candidates.map((item, index) => ({
+    id: `${cleanString(run.id) || 'run'}-local-generated-${index + 1}-${Math.round(item.mtimeMs || Date.now())}`,
+    name: item.name,
+    type: item.type,
+    size: item.size,
+    path: item.path,
+    relativePath: item.relativePath,
+    createdAt: new Date(item.mtimeMs || Date.now()).toISOString()
+  })));
+}
+
+async function copyLocalGeneratedRunArtifacts(run = {}, input = []) {
+  const items = Array.isArray(input) ? input.slice(0, 12) : [];
+  if (!items.length || !run.artifactRoot) return [];
+  const dir = path.join(run.artifactRoot, '生成图片');
+  await fs.mkdir(dir, { recursive: true });
+  const saved = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index] || {};
+    const sourcePath = cleanString(item.path);
+    const sourceStat = sourcePath ? await fs.stat(sourcePath).catch(() => null) : null;
+    const ext = sourcePath ? path.extname(sourcePath).replace(/^\./, '').toLowerCase().replace('jpeg', 'jpg') : '';
+    const mime = item.type || runAttachmentMimeFromExt(ext);
+    if (!sourceStat?.isFile() || sourceStat.size <= 0 || sourceStat.size > 8 * 1024 * 1024 || !mime) continue;
+    const title = cleanString(item.name || `生成图片-${index + 1}.${ext}`) || `生成图片-${index + 1}.${ext}`;
+    const baseName = safePathSegment(title.replace(/\.[^.]+$/, '')) || `generated-${index + 1}`;
+    const fileName = `${String(index + 1).padStart(2, '0')}-${baseName}.${ext || 'png'}`;
+    const filePath = await uniqueFilePath(dir, fileName);
+    await fs.copyFile(sourcePath, filePath);
+    saved.push({
+      id: cleanString(item.id) || randomUUID(),
+      name: title,
+      type: mime,
+      size: sourceStat.size,
+      path: filePath,
+      relativePath: path.relative(paths.root, filePath).replaceAll(path.sep, '/'),
+      role: 'generated-image',
+      source: 'local-worker-reconciled',
+      localPath: sourcePath,
+      createdAt: cleanString(item.createdAt) || new Date(sourceStat.mtimeMs || Date.now()).toISOString()
+    });
+  }
+  return saved;
+}
+
+async function scanLocalGeneratedImageFiles(cwd = '') {
+  const roots = ['生成图片', 'outputs']
+    .map(name => path.join(cwd, name))
+    .filter(dir => isPathInsideStore(dir, cwd));
+  const rows = [];
+  for (const dir of roots) {
+    await walkLocalGeneratedImageFiles(dir, cwd, rows, 0);
+  }
+  return rows
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .slice(0, 12);
+}
+
+async function walkLocalGeneratedImageFiles(dir = '', cwd = '', rows = [], depth = 0) {
+  if (depth > 3 || rows.length >= 48) return rows;
+  let entries = [];
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return rows;
+  }
+  for (const entry of entries) {
+    if (!entry?.name || entry.name.startsWith('.DS_Store')) continue;
+    const filePath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await walkLocalGeneratedImageFiles(filePath, cwd, rows, depth + 1);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    const ext = path.extname(entry.name).replace(/^\./, '').toLowerCase().replace('jpeg', 'jpg');
+    const type = runAttachmentMimeFromExt(ext);
+    if (!type) continue;
+    const stat = await fs.stat(filePath).catch(() => null);
+    if (!stat?.isFile() || stat.size <= 0 || stat.size > 8 * 1024 * 1024) continue;
+    rows.push({
+      name: entry.name,
+      type,
+      size: stat.size,
+      path: filePath,
+      relativePath: path.relative(cwd, filePath).replaceAll(path.sep, '/'),
+      mtimeMs: stat.mtimeMs
+    });
+  }
+  return rows;
+}
+
+function mergeGeneratedArtifactsIntoRun(run = {}, artifacts = []) {
+  const saved = dedupeRunArtifacts(artifacts);
+  if (!saved.length) return run;
+  const existingSummary = run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {};
+  const existingWorkerResult = run.workerResult && typeof run.workerResult === 'object' ? run.workerResult : {};
+  const artifactPaths = saved.map(item => cleanString(item.relativePath || item.path)).filter(Boolean);
+  return {
+    ...run,
+    generatedArtifacts: dedupeRunArtifacts([
+      ...(Array.isArray(run.generatedArtifacts) ? run.generatedArtifacts : []),
+      ...saved
+    ]),
+    resultSummary: {
+      ...existingSummary,
+      artifacts: [...new Set([
+        ...(Array.isArray(existingSummary.artifacts) ? existingSummary.artifacts : []),
+        ...artifactPaths
+      ])],
+      generatedArtifacts: dedupeRunArtifacts([
+        ...(Array.isArray(existingSummary.generatedArtifacts) ? existingSummary.generatedArtifacts : []),
+        ...saved
+      ])
+    },
+    workerResult: {
+      ...existingWorkerResult,
+      generatedArtifacts: dedupeRunArtifacts([
+        ...(Array.isArray(existingWorkerResult.generatedArtifacts) ? existingWorkerResult.generatedArtifacts : []),
+        ...saved
+      ])
+    },
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function hasImage2SuccessfulArtifactEvidence(text = '', generatedArtifacts = []) {
+  if (!hasGeneratedImageArtifacts(generatedArtifacts)) return false;
+  const source = String(text || '');
+  if (!/(?:gpt[-_\s]?image[-_\s]?2|GPT Image 2|image\s*2|image2)/i.test(source)) return false;
+  return /(?:exit_code["':=\s]+0|exit_code=0|成功|已(?:由|通过)?.{0,30}(?:gpt[-_\s]?image[-_\s]?2|GPT Image 2|image2).{0,100}(?:生成|落盘|保存)|(?:gpt[-_\s]?image[-_\s]?2|GPT Image 2|image2).{0,100}(?:成功|生成|落盘|保存)|outputs\/[^\s"'，。；]+?\.(?:png|jpe?g|webp|gif)|生成图片\/[^\s"'，。；]+?\.(?:png|jpe?g|webp|gif))/i.test(source);
+}
+
 function hasExplicitImageGenerationProviderMode(run = {}) {
   if (!Object.prototype.hasOwnProperty.call(run || {}, 'imageGenerationProviderMode')) return false;
   return /^(?:image2|fallback)$/.test(cleanString(run.imageGenerationProviderMode));
@@ -1667,6 +1833,15 @@ function shouldAcceptLegacyGeneratedImageRun(run = {}, providerResult = {}, gene
 }
 
 function reconcileLegacyGeneratedImageRun(run = {}, generatedArtifacts = [], options = {}) {
+  return reconcileGeneratedImageRun(run, generatedArtifacts, {
+    ...options,
+    summary: '历史生图执行已检测到生成图片产物，按已产出结果展示；请以产物区图片为准复核和下载。',
+    policy: 'legacy-generated-image-artifacts-accepted',
+    nextStep: '查看生成图片产物，按需要人工复核；后续新执行按创建时选择的生图调用方式严格判定。'
+  });
+}
+
+function reconcileGeneratedImageRun(run = {}, generatedArtifacts = [], options = {}) {
   const now = new Date().toISOString();
   const existingSummary = run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {};
   const existingWorkerResult = run.workerResult && typeof run.workerResult === 'object' ? run.workerResult : {};
@@ -1703,7 +1878,7 @@ function reconcileLegacyGeneratedImageRun(run = {}, generatedArtifacts = [], opt
       ...existingSummary,
       status: 'conditional_pass',
       statusText: 'conditional_pass',
-      summary: '历史生图执行已检测到生成图片产物，按已产出结果展示；请以产物区图片为准复核和下载。',
+      summary: options.summary || '生图执行已检测到生成图片产物，按已产出结果展示；请以产物区图片为准复核和下载。',
       blockerReason: '',
       needsHumanReview: true,
       generatedArtifacts,
@@ -1711,9 +1886,9 @@ function reconcileLegacyGeneratedImageRun(run = {}, generatedArtifacts = [], opt
         ...(Array.isArray(existingSummary.artifacts) ? existingSummary.artifacts : []),
         ...artifactPaths
       ])],
-      generatedArtifactPolicy: 'legacy-generated-image-artifacts-accepted',
+      generatedArtifactPolicy: options.policy || 'generated-image-artifacts-accepted',
       originalBlockerReason: options.originalBlockerReason || '',
-      nextStep: '查看生成图片产物，按需要人工复核；后续新执行按创建时选择的生图调用方式严格判定。',
+      nextStep: options.nextStep || '查看生成图片产物，按需要人工复核；后续新执行按创建时选择的生图调用方式严格判定。',
       parsedAt: now
     },
     workerResult: {

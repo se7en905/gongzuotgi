@@ -531,10 +531,8 @@ async function executeRun(run) {
   const localLogText = await readLocalRunLogForSync(run.id);
   const combinedText = [finalText, rawStdoutText, localLogText, stderrText].filter(Boolean).join('\n');
   const figmaWriteResult = extractFigmaWriteEvidence(combinedText, run);
-  const imageProviderResult = evaluateImageProviderResult(run, combinedText, []);
-  const generatedArtifacts = imageProviderResult.blocked
-    ? []
-    : await collectAndUploadGeneratedArtifacts(run, workspace, combinedText);
+  const generatedArtifacts = await collectAndUploadGeneratedArtifacts(run, workspace, combinedText);
+  const imageProviderResult = evaluateImageProviderResult(run, combinedText, generatedArtifacts);
   const effectiveExitCode = killedByWatchdog ? -1 : exitCode;
   const imageArtifactResult = evaluateImageArtifactResult(run, generatedArtifacts, imageProviderResult);
   const status = resolveWorkerFinalStatus(effectiveExitCode, figmaWriteResult, imageArtifactResult);
@@ -1747,8 +1745,11 @@ function evaluateImageProviderResult(run = {}, finalText = '', generatedArtifact
   const image2Failed = /(?:gpt[-_\s]?image[-_\s]?2|image\s*2|image2|GPT Image 2).{0,160}(?:APIConnectionError|Connection error|billing_hard_limit_reached|rate limit|quota|403|401|429|timeout|timed out|failed|失败|不可用|无法|报错)/i.test(text)
     || /(?:APIConnectionError|Connection error|billing_hard_limit_reached|rate limit|quota|403|401|429|timeout|timed out).{0,160}(?:gpt[-_\s]?image[-_\s]?2|image\s*2|image2|GPT Image 2)/i.test(text);
   const fallbackGenerated = /(?:Pillow|PIL|Image\.new|ImageDraw|本地\s*(?:Pillow|脚本|绘制)|确定性绘制|兜底(?:生成|绘制|出图)|改用本机|非\s*image2|占位图)/i.test(text)
-    || generatedArtifacts.some(item => /pillow|local|fallback|deterministic|本地|兜底/i.test(`${item?.source || ''}\n${item?.name || ''}\n${item?.path || ''}\n${item?.relativePath || ''}`));
+    || generatedArtifacts.some(item => /pillow|pil|fallback|deterministic|兜底|替代/i.test(`${item?.source || ''}\n${item?.name || ''}\n${item?.path || ''}\n${item?.relativePath || ''}`));
   if (!image2Failed) return { blocked: false, reason: '', disallowGeneratedArtifacts: false };
+  if (hasImage2SuccessEvidence(text, generatedArtifacts) && !fallbackGenerated) {
+    return { blocked: false, reason: '', disallowGeneratedArtifacts: false };
+  }
   return {
     blocked: true,
     reason: fallbackGenerated
@@ -1756,6 +1757,16 @@ function evaluateImageProviderResult(run = {}, finalText = '', generatedArtifact
       : 'Image2 / GPT Image 2 出图失败，必须修复连接、额度、代理或权限后重新执行，不允许使用其它生成方式替代。',
     disallowGeneratedArtifacts: fallbackGenerated
   };
+}
+
+function hasImage2SuccessEvidence(finalText = '', generatedArtifacts = []) {
+  const hasArtifact = (Array.isArray(generatedArtifacts) ? generatedArtifacts : [])
+    .some(item => !item?.uploadFailed && (item?.relativePath || item?.path));
+  if (!hasArtifact) return false;
+  const text = String(finalText || '');
+  const hasImage2Mention = /(?:gpt[-_\s]?image[-_\s]?2|GPT Image 2|image\s*2|image2)/i.test(text);
+  if (!hasImage2Mention) return false;
+  return /(?:exit_code["':=\s]+0|exit_code=0|成功|已(?:由|通过)?.{0,30}(?:gpt[-_\s]?image[-_\s]?2|GPT Image 2|image2).{0,80}(?:生成|落盘|保存)|(?:gpt[-_\s]?image[-_\s]?2|GPT Image 2|image2).{0,80}(?:成功|生成|落盘|保存)|outputs\/[^\s"'，。；]+?\.(?:png|jpe?g|webp|gif)|生成图片\/[^\s"'，。；]+?\.(?:png|jpe?g|webp|gif))/i.test(text);
 }
 
 function evaluateImageArtifactResult(run = {}, generatedArtifacts = [], imageProviderResult = {}) {

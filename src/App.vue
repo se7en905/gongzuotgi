@@ -23035,6 +23035,47 @@ export default {
       if (path) this.openArtifactByPath(path);
     },
 
+    handleRunLogContentClick(event) {
+      const target = event.target.closest('[data-local-path],[data-artifact-path]');
+      if (!target) return;
+      const filePath = target.dataset.localPath || target.dataset.artifactPath || '';
+      if (!filePath) return;
+      if (this.shouldOpenRunLocalPath(filePath)) {
+        event.preventDefault();
+        this.openRunLocalPath(filePath);
+        return;
+      }
+      if (target.dataset.artifactPath) {
+        event.preventDefault();
+        this.openArtifactByPath(filePath);
+      }
+    },
+
+    shouldOpenRunLocalPath(path) {
+      const text = String(path || '').trim();
+      if (!text) return false;
+      if (/^\/Users\//.test(text) || /^~\//.test(text)) return true;
+      if (/^(?:outputs|生成图片|workspace\/outputs|\.\/outputs)\//i.test(text)) return true;
+      const cwd = String(this.selectedRun?.workerResult?.cwd || '').trim().replace(/\/+$/, '');
+      return Boolean(cwd && text.startsWith(`${cwd}/`));
+    },
+
+    async openRunLocalPath(path) {
+      if (!this.selectedRun?.id) {
+        ElMessage.warning('请先选择执行记录');
+        return;
+      }
+      try {
+        await this.api(`/api/runs/${encodeURIComponent(this.selectedRun.id)}/open-local-path`, {
+          method: 'POST',
+          body: JSON.stringify({ path })
+        });
+        ElMessage.success('已在本机打开文件位置');
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || '打开本机路径失败');
+      }
+    },
+
     openArtifactByPath(path) {
       const artifact = this.findArtifactByPath(path) || this.createArtifactFromPath(path);
       if (artifact.type === 'image') {
@@ -24969,7 +25010,8 @@ function inlineMarkdown(value, sourceDir) {
   return escapeHtml(value)
     .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, src) => {
       const resolved = resolveArtifactPath(src, sourceDir);
-      return `<button type="button" class="inlineEvidence" data-artifact-path="${escapeHtml(resolved)}"><img src="/api/artifact?path=${encodeURIComponent(resolved)}" alt="${escapeHtml(alt)}" /><span>${escapeHtml(src)}</span></button>`;
+      const localAttr = localPathDataAttribute(src);
+      return `<button type="button" class="inlineEvidence" data-artifact-path="${escapeHtml(resolved)}"${localAttr}><img src="/api/artifact?path=${encodeURIComponent(resolved)}" alt="${escapeHtml(alt)}" /><span>${escapeHtml(src)}</span></button>`;
     })
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, href) => renderMarkdownLink(label, href, sourceDir))
     .replace(/`([^`]+)`/g, (_, code) => renderInlineCode(code, sourceDir))
@@ -24981,7 +25023,7 @@ function renderMarkdownLink(label = '', href = '', sourceDir = '') {
   const cleanHref = decodeHtmlEntities(href).trim();
   if (/^https?:\/\//i.test(cleanHref)) return renderExternalLink(cleanHref, label);
   const resolved = resolveArtifactPath(cleanHref, sourceDir);
-  return `<button type="button" class="mdLink file-link" data-artifact-path="${escapeHtml(resolved)}">${label}</button>`;
+  return `<button type="button" class="mdLink file-link" data-artifact-path="${escapeHtml(resolved)}"${localPathDataAttribute(cleanHref)}>${label}</button>`;
 }
 
 function renderExternalLink(href = '', label = '') {
@@ -25009,11 +25051,19 @@ function renderInlineCode(value = '', sourceDir = '') {
   const type = evidenceItemType(name);
   const resolved = resolveArtifactPath(text, sourceDir);
   return [
-    `<button type="button" class="md-inline-code file ${type}" data-artifact-path="${escapeHtml(resolved)}">`,
+    `<button type="button" class="md-inline-code file ${type}" data-artifact-path="${escapeHtml(resolved)}"${localPathDataAttribute(text)}>`,
     dir ? `<small>${dir}</small>` : '',
     `<strong>${name}</strong>`,
     '</button>'
   ].join('');
+}
+
+function localPathDataAttribute(value = '') {
+  const text = decodeHtmlEntities(value).trim();
+  if (/^(?:\/Users\/|~\/|outputs\/|\.\/outputs\/|生成图片\/|workspace\/outputs\/)/i.test(text)) {
+    return ` data-local-path="${escapeHtml(text)}"`;
+  }
+  return '';
 }
 
 function resolveArtifactPath(src, sourceDir) {

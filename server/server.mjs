@@ -2490,6 +2490,39 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  const runOpenLocalPath = url.pathname.match(/^\/api\/runs\/([^/]+)\/open-local-path$/);
+  if (req.method === 'POST' && runOpenLocalPath) {
+    const body = await readBody(req);
+    const run = await getRun(runOpenLocalPath[1]);
+    if (!run) {
+      sendJson(res, 404, { error: '执行记录不存在。' });
+      return;
+    }
+    await requireRunViewAccess(currentUser, run);
+    const resolved = resolveRunLocalOpenPath(run, body.path || body.file || '');
+    if (!resolved.path) {
+      sendJson(res, resolved.status || 400, { error: resolved.error || '路径不在当前执行记录允许打开的范围内。' });
+      return;
+    }
+    const stat = await fs.stat(resolved.path).catch(() => null);
+    if (!stat) {
+      sendJson(res, 404, { error: '路径不在当前本机或文件已经不存在。', path: resolved.path });
+      return;
+    }
+    if (stat.isDirectory()) {
+      await execFileAsync('open', [resolved.path]);
+      sendJson(res, 200, { ok: true, path: resolved.path, opened: resolved.path });
+      return;
+    }
+    if (!stat.isFile()) {
+      sendJson(res, 400, { error: '该路径不是可打开的文件或目录。', path: resolved.path });
+      return;
+    }
+    await execFileAsync('open', ['-R', resolved.path]);
+    sendJson(res, 200, { ok: true, path: resolved.path, opened: path.dirname(resolved.path) });
+    return;
+  }
+
   if (req.method === 'DELETE' && url.pathname === '/api/runs') {
     requirePermission(currentUser, 'api.aiArchive.delete');
     const filters = Object.fromEntries(url.searchParams.entries());
@@ -6059,6 +6092,69 @@ function artifactAccessRootsForRun(run = {}) {
     if (resolved) roots.push(path.dirname(resolved));
   }
   return [...new Set(roots.map(item => path.resolve(item)).filter(Boolean))];
+}
+
+function runLocalOpenRoots(run = {}) {
+  const roots = [
+    run.artifactRoot,
+    run.workerResult?.cwd,
+    run.workerResult?.localLogPath ? path.dirname(run.workerResult.localLogPath) : '',
+    run.workerLocalLogPath ? path.dirname(run.workerLocalLogPath) : '',
+    run.logPath ? path.dirname(run.logPath) : '',
+    run.id ? path.join(paths.workspaceDir, run.id) : ''
+  ];
+  for (const item of [
+    ...(Array.isArray(run.generatedArtifacts) ? run.generatedArtifacts : []),
+    ...(Array.isArray(run.resultSummary?.generatedArtifacts) ? run.resultSummary.generatedArtifacts : []),
+    ...(Array.isArray(run.workerResult?.generatedArtifacts) ? run.workerResult.generatedArtifacts : []),
+    ...(Array.isArray(run.attachments) ? run.attachments : [])
+  ]) {
+    const value = item?.path || item?.localPath || item?.relativePath || '';
+    const resolved = resolveRunLocalCandidatePath(run, value);
+    if (resolved) roots.push(path.dirname(resolved));
+  }
+  return [...new Set(roots
+    .map(item => normalizeFsPath(item))
+    .filter(Boolean)
+    .map(item => path.resolve(item)))];
+}
+
+function resolveRunLocalOpenPath(run = {}, value = '') {
+  const raw = normalizeFsPath(value);
+  if (!raw || /^https?:\/\//i.test(raw) || raw.includes('\0')) {
+    return { path: '', status: 400, error: '请提供当前执行记录日志里的本机路径。' };
+  }
+  if (/^[A-Za-z]:[\\/]/.test(raw)) {
+    return { path: '', status: 400, error: '这是其它系统格式路径，不在当前 Mac 本机，无法打开。' };
+  }
+  const target = resolveRunLocalCandidatePath(run, raw);
+  if (!target) return { path: '', status: 403, error: '路径不在当前执行记录的工作区、产物目录或日志目录内。' };
+  const roots = runLocalOpenRoots(run);
+  if (!roots.some(root => isPathInside(target, root))) {
+    return { path: '', status: 403, error: '路径不在当前执行记录允许打开的范围内。' };
+  }
+  return { path: target };
+}
+
+function resolveRunLocalCandidatePath(run = {}, value = '') {
+  const raw = normalizeFsPath(value);
+  if (!raw || /^https?:\/\//i.test(raw) || raw.includes('\0')) return '';
+  const normalized = raw.replaceAll('\\', '/');
+  if (path.isAbsolute(raw)) return path.resolve(raw);
+  const artifactPath = resolveArtifactRequestPath(raw);
+  if (artifactPath) return artifactPath;
+  const relative = normalized.replace(/^\.\/+/, '').replace(/^\/+/, '');
+  const bases = [
+    run.workerResult?.cwd,
+    run.artifactRoot,
+    run.id ? path.join(paths.workspaceDir, run.id) : '',
+    paths.root
+  ].map(normalizeFsPath).filter(Boolean);
+  for (const base of bases) {
+    const candidate = path.resolve(base, relative);
+    if (isPathInside(candidate, base)) return candidate;
+  }
+  return '';
 }
 
 async function requireRunArtifactAccess(user = {}, run = {}) {

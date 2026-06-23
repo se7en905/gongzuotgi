@@ -574,6 +574,7 @@
       <article
         ref="runLogBody"
         :class="['run-log-drawer-markdown', 'log-markdown', 'markdown-report', { 'is-live': app.isRunInProgress(app.selectedRun) }]"
+        @click="app.handleRunLogContentClick"
         v-html="app.logHtml"
       ></article>
     </div>
