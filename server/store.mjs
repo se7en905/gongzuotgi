@@ -6610,11 +6610,17 @@ function isImageGenerationRun(run = {}) {
     run.title,
     run.sourceTitle,
     run.customWorkflowName,
+    run.customWorkflowDescription,
     run.primarySkillPath,
+    run.primarySkillTitle,
     run.stage,
-    ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : [])
+    run.primarySkillContent,
+    ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
+    ...(Array.isArray(run.selectedMaterialSnapshots)
+      ? run.selectedMaterialSnapshots.flatMap(item => [item?.path, item?.title, item?.name, item?.content])
+      : [])
   ].filter(Boolean).join('\n');
-  return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|gpt[-_\s]?image|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)/i.test(text);
+  return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|same[-_\s]*ip[-_\s]*image|sameipimage|gpt[-_\s]?image|imagegen|image[-_\s]*gen|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)/i.test(text);
 }
 
 function runExplicitlySkipsFigmaWrite(run = {}) {

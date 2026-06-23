@@ -64,6 +64,7 @@
           <span v-if="app.isRunSourceDeleted(run)" class="run-action-chip source-deleted">来源已删除</span>
           <span v-if="run.id === app.selectedRunId" class="run-action-chip current-detail">当前明细</span>
         </div>
+        <span class="run-item-executor">{{ app.runListExecutorName(run) }}</span>
       </button>
       <div v-if="!app.runListRows.length" class="empty-block">还没有美术执行记录，点击“新建美术执行”开始。</div>
     </div>
@@ -938,9 +939,10 @@ export default {
   }
 
   .run-item {
+    position: relative;
     display: grid;
     gap: 10px;
-    padding: 14px 16px;
+    padding: 14px 16px 22px;
     border: 1px solid var(--line);
     border-radius: 8px;
     background: var(--row-bg);
@@ -1227,7 +1229,23 @@ export default {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+    padding-right: 96px;
     min-height: 0;
+  }
+
+  .run-item-executor {
+    position: absolute;
+    right: 16px;
+    bottom: 12px;
+    max-width: 92px;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .run-action-chip {

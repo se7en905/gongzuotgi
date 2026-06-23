@@ -18859,6 +18859,36 @@ export default {
       return '当前账号执行';
     },
 
+    runListExecutorName(run = null) {
+      if (!run) return '-';
+      const claimedDevice = String(run.claimedByDeviceId || '').trim();
+      const claimedWorker = claimedDevice ? this.agentWorkersByDeviceId.get(claimedDevice) : null;
+      const userIds = [
+        claimedWorker?.userId,
+        run.queuedForUserId,
+        run.assignedToUserId,
+        run.ownerUserId,
+        run.startedBy,
+        run.createdBy
+      ].map(value => String(value || '').trim()).filter(Boolean);
+      for (const userId of userIds) {
+        const user = this.usersById.get(userId) || (String(this.currentUser?.id || '').trim() === userId ? this.currentUser : null);
+        const username = String(user?.username || user?.account || '').trim();
+        if (username) return username;
+      }
+      const workerAccount = String(claimedWorker?.userName || claimedWorker?.username || claimedWorker?.account || '').trim();
+      if (workerAccount) return workerAccount;
+      return [
+        run.queuedForAccount,
+        run.assignedToAccount,
+        run.startedByAccount,
+        run.createdByAccount,
+        run.queuedForName,
+        run.assignedToName,
+        run.developer
+      ].map(value => String(value || '').trim()).find(Boolean) || '-';
+    },
+
     directSkillWorkerDisplayName(worker = null) {
       if (!worker) return '未启动 Worker';
       return worker.deviceAlias || worker.deviceName || worker.deviceId || '未命名设备';
@@ -20222,11 +20252,17 @@ export default {
         run.title,
         run.sourceTitle,
         run.customWorkflowName,
+        run.customWorkflowDescription,
         run.primarySkillPath,
+        run.primarySkillTitle,
         run.stage,
-        ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : [])
+        run.primarySkillContent,
+        ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
+        ...(Array.isArray(run.selectedMaterialSnapshots)
+          ? run.selectedMaterialSnapshots.flatMap(item => [item?.path, item?.title, item?.name, item?.content])
+          : [])
       ].filter(Boolean).join('\n');
-      return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|gpt[-_\s]?image|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)/i.test(text);
+      return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|same[-_\s]*ip[-_\s]*image|sameipimage|gpt[-_\s]?image|imagegen|image[-_\s]*gen|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)/i.test(text);
     },
 
     runExplicitlySkipsFigmaWrite(run = {}) {
@@ -20597,9 +20633,14 @@ export default {
     runGeneratedImageArtifacts(run = {}) {
       const pools = [
         run.generatedArtifacts,
+        run.images,
         run.workerResult?.generatedArtifacts,
+        run.workerResult?.images,
+        run.workerResult?.artifacts,
         run.resultSummary?.generatedArtifacts,
-        run.resultSummary?.artifacts
+        run.resultSummary?.images,
+        run.resultSummary?.artifacts,
+        run.changeSummary?.artifacts
       ];
       const rows = [];
       const seen = new Set();

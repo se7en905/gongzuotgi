@@ -6045,7 +6045,12 @@ function artifactAccessRootsForRun(run = {}) {
     run.materialPath,
     ...(Array.isArray(run.attachments) ? run.attachments.map(item => item?.path || item?.relativePath) : []),
     ...(Array.isArray(run.generatedArtifacts) ? run.generatedArtifacts.map(item => item?.path || item?.relativePath) : []),
+    ...(Array.isArray(run.images) ? run.images.map(item => item?.path || item?.relativePath || item) : []),
+    ...(Array.isArray(run.resultSummary?.artifacts) ? run.resultSummary.artifacts : []),
     ...(Array.isArray(run.resultSummary?.generatedArtifacts) ? run.resultSummary.generatedArtifacts.map(item => item?.path || item?.relativePath) : []),
+    ...(Array.isArray(run.resultSummary?.images) ? run.resultSummary.images.map(item => item?.path || item?.relativePath || item) : []),
+    ...(Array.isArray(run.workerResult?.artifacts) ? run.workerResult.artifacts : []),
+    ...(Array.isArray(run.workerResult?.images) ? run.workerResult.images.map(item => item?.path || item?.relativePath || item) : []),
     ...(Array.isArray(run.workerResult?.generatedArtifacts) ? run.workerResult.generatedArtifacts.map(item => item?.path || item?.relativePath) : [])
   ]) {
     const resolved = resolveArtifactRequestPath(file);
