@@ -13617,10 +13617,6 @@ export default {
         ElMessage.warning('当前产物缺少可执行的 Skill 或 md 路径');
         return;
       }
-      if (!this.isBugFixRun && !figmaLinks) {
-        ElMessage.warning('请填写 Figma 链接');
-        return;
-      }
       const assignee = this.directSkillAssigneeOptions.find(user => user.id === dialog.assignedToUserId) || this.currentUser || {};
       const productName = row.productDisplayName || row.productFileName || row.title || this.fileNameFromPath(skillPath) || 'AI 产物';
       const requirement = this.ensureFigmaTargetInRunRequirement({
@@ -18252,10 +18248,6 @@ export default {
         ElMessage.warning('当前没有可用项目，请先接入项目后再创建执行');
         return;
       }
-      if (!figmaLinks) {
-        ElMessage.warning('请填写 Figma 链接');
-        return;
-      }
       if (this.isBugFixRun && !String(this.runForm.title || '').trim()) {
         ElMessage.warning('请填写 Bug 标题');
         return;
@@ -19691,13 +19683,14 @@ export default {
         : paths.map(item => this.runMaterialDisplayName(item) || item).filter(Boolean).join('、');
       const pathText = paths.length ? paths.join('、') : '当前选择的 md / Skill';
       return [
-        `请对上方填写的 Figma 链接使用${materialText ? `「${materialText}」` : '当前选择的 md / Skill'}。`,
+        `使用${materialText ? `「${materialText}」` : '当前选择的 md / Skill'}。`,
         `执行资料路径：${pathText}。`,
-        `Figma 目标链接：${String(figmaLinks || '').trim() || '以本次创建任务填写的 Figma 链接为准'}。`,
-        `默认操作口径：根据该 md / Skill 的要求，对该 Figma 目标进行写入、重新创建或修改；${writeMode === 'create-page' ? '如需新建页面 / Frame 则按当前写入方式处理' : '如需写入现有节点则按当前 Figma 链接中的 node-id 处理'}。`,
-        '只处理该 Figma 链接对应的目标节点、分区或页面，不扩展到无关文件、无关页面或无关设计内容。',
-        '完成后必须在最终报告里写明读取的 md / Skill、写入的 Figma 节点和人工复核点。',
-        '只有 Figma 写入工具真实返回 createdNodeIds 或 mutatedNodeIds，才允许判定完成；没有这些证据必须回传阻塞或失败原因。'
+        String(figmaLinks || '').trim()
+          ? `Figma 链接：${String(figmaLinks || '').trim()}。`
+          : 'Figma 链接：未填写；本次按当前 md / Skill 和执行要求直接产出图片、本地文件、报告或其它结果。',
+        String(figmaLinks || '').trim()
+          ? `按该 md / Skill 的原始要求处理本次 Figma 目标；${writeMode === 'create-page' ? '如技能要求新建内容，则可新建页面或 Frame。' : '如技能要求修改内容，则优先处理 Figma 链接中的目标节点。'}`
+          : '如果该 md / Skill 本身要求生成图片、创建本地产物或输出说明，按原始要求完整执行，不强制 Figma 写入。'
       ].join('\n');
     },
 
@@ -19712,11 +19705,10 @@ export default {
         ? names.join('、')
         : paths.map(item => this.runMaterialDisplayName(item) || item).filter(Boolean).join('、');
       return [
-        '## Figma 目标绑定',
-        `本次执行要求未单独写 Figma 链接，默认必须对上方填写的 Figma 链接进行操作：${figmaText}`,
-        `请使用${materialText ? `「${materialText}」` : '当前选择的 md / Skill'}处理该 Figma 目标，可按技能要求写入、修改、重新设计或重新创建，但不得扩展到无关页面、无关文件或无关设计内容。`,
+        text,
         '',
-        text
+        `Figma 链接：${figmaText}`,
+        `使用${materialText ? `「${materialText}」` : '当前选择的 md / Skill'}处理该 Figma 目标。`
       ].join('\n');
     },
 

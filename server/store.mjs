@@ -1259,12 +1259,15 @@ export async function claimNextAgentRun(input = {}) {
   const deviceId = String(input.deviceId || '').trim();
   if (!userId || !deviceId) return null;
   const capabilities = normalizeLineList(input.capabilities);
-  if (!capabilities.includes('codex.exec') || !capabilities.includes('figma.mcp.write')) return null;
+  if (!capabilities.includes('codex.exec')) return null;
   const allowedProjectIds = normalizeLineList(input.allowedProjectIds);
   const canAccessAllProjects = input.canAccessAllProjects === true || allowedProjectIds.includes('*');
   const runs = await readJson(paths.runs, []);
   const now = new Date().toISOString();
-  const candidateIndex = runs.findIndex(run => isClaimableAgentRun(run, userId, { allowedProjectIds, canAccessAllProjects }));
+  const candidateIndex = runs.findIndex(run => (
+    isClaimableAgentRun(run, userId, { allowedProjectIds, canAccessAllProjects })
+    && workerCanExecuteRun(run, capabilities)
+  ));
   if (candidateIndex === -1) return null;
   const baseRun = normalizeActiveLocalWorkerRun(runs[candidateIndex], 'claimed');
   const run = {
@@ -1290,12 +1293,16 @@ export async function claimRecoverableAgentRun(input = {}) {
   const runId = cleanString(input.runId);
   if (!userId || !deviceId) return null;
   const capabilities = normalizeLineList(input.capabilities);
-  if (!capabilities.includes('codex.exec') || !capabilities.includes('figma.mcp.write')) return null;
+  if (!capabilities.includes('codex.exec')) return null;
   const allowedProjectIds = normalizeLineList(input.allowedProjectIds);
   const canAccessAllProjects = input.canAccessAllProjects === true || allowedProjectIds.includes('*');
   const runs = await readJson(paths.runs, []);
   const now = new Date().toISOString();
-  const candidateIndex = runs.findIndex(run => (!runId || cleanString(run.id) === runId) && isRecoverableAgentRun(run, userId, deviceId, { allowedProjectIds, canAccessAllProjects }));
+  const candidateIndex = runs.findIndex(run => (
+    (!runId || cleanString(run.id) === runId)
+    && isRecoverableAgentRun(run, userId, deviceId, { allowedProjectIds, canAccessAllProjects })
+    && workerCanExecuteRun(run, capabilities)
+  ));
   if (candidateIndex === -1) return null;
   const existing = runs[candidateIndex];
   const alreadyRunning = isWorkerRunStarted(existing);
@@ -6179,6 +6186,12 @@ function isWorkerExecutableRun(run = {}) {
     || run.executionMode === 'direct-skill'
     || run.executionHost === 'local-worker'
     || run.workerExecution === true;
+}
+
+function workerCanExecuteRun(run = {}, capabilities = []) {
+  if (!normalizeLineList(capabilities).includes('codex.exec')) return false;
+  if (!runRequiresFigmaWriteEvidence(run)) return true;
+  return normalizeLineList(capabilities).includes('figma.mcp.write');
 }
 
 function normalizeWorkerRunStatus(value = '') {

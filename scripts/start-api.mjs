@@ -73,7 +73,12 @@ async function stopExistingProjectServer(targetPort) {
     if (pid === process.pid) continue;
     await stopProcess(pid);
   }
-  await waitForPortFree(targetPort, 5000);
+  const portFree = await waitForPortFree(targetPort, 10000);
+  if (!portFree) {
+    const remainingPids = (await listeningPids(targetPort)).filter(pid => pid !== process.pid);
+    console.error(`Port ${targetPort} is still occupied after stopping old project server: ${remainingPids.join(', ') || 'unknown'}`);
+    process.exit(1);
+  }
 }
 
 async function listeningPids(targetPort) {
@@ -151,7 +156,8 @@ async function waitForPortFree(targetPort, timeoutMs) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const pids = await listeningPids(targetPort);
-    if (!pids.length || pids.every(pid => pid === process.pid)) return;
+    if (!pids.length || pids.every(pid => pid === process.pid)) return true;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
+  return false;
 }

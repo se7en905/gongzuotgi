@@ -138,7 +138,7 @@ async function heartbeat(force = false) {
 
 async function claimNextRun() {
   await refreshLocalChecks(true);
-  if (!localChecks.codexReady || !localChecks.figmaMcpReady) return null;
+  if (!localChecks.codexReady) return null;
   const result = await fetchJson('/api/agent-runs/next', {
     method: 'POST',
     body: workerPayload()
@@ -148,7 +148,7 @@ async function claimNextRun() {
 
 async function claimRecoverableRun(runId = '') {
   await refreshLocalChecks(true);
-  if (!localChecks.codexReady || !localChecks.figmaMcpReady) return null;
+  if (!localChecks.codexReady) return null;
   const result = await fetchJson('/api/agent-runs/recover', {
     method: 'POST',
     body: {
@@ -764,62 +764,70 @@ function buildPrompt(run = {}, workspace = {}) {
       stage.doneCriteria ? `   - 完成标准：${stage.doneCriteria}` : ''
     ].filter(Boolean).join('\n')).join('\n')
     : '- 平台未提供阶段列表，按本次执行要求完成。';
+  const materialPaths = workspace.snapshotPaths || [];
+  const primaryMaterial = run.primarySkillPath || run.stage || materialPaths[0] || '';
+  const materialInstruction = buildClientEquivalentMaterialInstruction(run, materialPaths, primaryMaterial);
   return [
-    '# 美术工作台本机执行任务',
+    '# Codex 客户端等价执行',
     '',
-    '你正在执行一个由当前操作人电脑领取的美术执行台任务。必须严格按输入操作，不扩展无关范围。',
+    '把本次任务当成用户在本机 Codex 客户端里直接引用 Skill / md 后发起的一次对话来执行。不要把工作台当成另一个流程引擎，不要自行降级为摘要执行。',
+    '先完整理解并执行被引用的 Skill / md；用户没有额外写上下文时，就只按 Skill / md 与本次 Figma 链接处理。',
     '',
-    '## 输入',
+    '## 本次用户指令',
     '',
-    `- runId: ${run.id}`,
-    `- 标题: ${run.title}`,
-    `- 执行模式: ${run.workflow || run.executionMode || ''}`,
-    `- 主执行 Skill / md: ${run.primarySkillPath || run.stage || ''}`,
-    `- Figma 链接: ${run.figmaLinks || ''}`,
-    `- 写入方式: ${run.figmaWriteMode || 'target-node'}`,
-    `- 本机任务资料: ${workspace.materialPath || '任务资料.md'}`,
-    `- 本机执行目录: ${workspace.cwd || ''}`,
-    `- 本机已落地 Skill / md: ${(workspace.snapshotPaths || []).join('、') || '无'}`,
-    `- 平台产物目录记录: ${run.artifactRoot || ''}`,
-    `- 排队给: ${run.queuedForName || run.assignedToName || run.developer || currentUser?.displayName || currentUser?.username || ''}`,
+    materialInstruction,
     '',
-    '## 执行步骤',
+    run.requirement || '按上方引用的 Skill / md 执行本次任务。',
     '',
-    stageText,
+    `Figma 链接：${run.figmaLinks || '无'}`,
     '',
-    '## 平台任务资料 / Skill / md 内容快照',
+    '## 必读本地文件',
     '',
     [
-      `请先读取本机任务资料：${workspace.materialPath || '任务资料.md'}`,
-      ...(workspace.snapshotPaths || []).map(item => `请读取并执行：${item}`),
-      '',
-      run.primarySkillContent || '平台未提供主 Skill / md 内容快照。若本机无法读取任务中的路径线索，必须停止并回传阻塞原因。'
-    ].join('\n'),
+      workspace.materialPath ? `- ${workspace.materialPath}` : '',
+      ...materialPaths.map(item => `- ${item}`)
+    ].filter(Boolean).join('\n') || '- 平台未下发 Skill / md 快照，必须停止并回传阻塞原因。',
     '',
-    '## 执行要求',
+    '## 执行口径',
     '',
-    run.requirement || '',
+    '- 按 Codex 客户端直接使用该 Skill / md 的方式执行：该读文件就读文件，该生成图就生成图，该写 Figma 就写 Figma。',
+    '- 不要因为这是工作台任务就额外套用未被用户选择的流程、模板、阶段或其它 Skill。',
+    '- 如果引用的是单个 Skill / md，只执行这个 Skill / md；如果引用的是模板或自定义流程，才按下方顺序执行。',
+    '- Skill / md 中提到的 references、scripts、assets 如已在本地文件中出现，必须按其说明继续读取和使用。',
     '',
-    '## 本机授权规则',
+    stages.length > 1 ? '## 模板 / 自定义流程顺序' : '',
+    stages.length > 1 ? stageText : '',
     '',
-    '- 必须使用当前操作人本机 Codex 会话里的 Figma MCP。',
-    '- 必须使用当前操作人自己的 Figma 授权和 Figma 文件权限。',
+    '## 工作台回传要求',
+    '',
+    `- runId：${run.id}`,
+    `- 本机执行目录：${workspace.cwd || ''}`,
+    `- 平台产物目录记录：${run.artifactRoot || ''}`,
+    `- 写入方式：${run.figmaWriteMode || 'target-node'}`,
+    '- 必须使用当前操作人本机 Codex 会话里的 Figma MCP 和 Figma 授权。',
     '- 不得依赖负责人电脑、本机 figma-write-local 插件或平台服务器 Figma token。',
-    '- 如果当前 Codex 工具列表缺少 Figma 写入工具，或者 Figma OAuth 失效，必须停止并说明阻塞原因。',
-    '- 必须优先使用上方平台任务资料和 Skill / md 内容快照执行；Skill 中写到的 C:\\Users\\Administrator\\UIdesign、/Users、/Volumes 等历史本机路径，只能作为说明线索，必须先映射到本机执行目录中同名的已落地快照。',
-    '- 如果某个模板依赖的 md / Skill 没有出现在“本机已落地 Skill / md”列表里，不要归因成组员电脑缺文件；必须回传“模板资料快照缺失”，并写明缺失的依赖路径。',
-    '- 如果是自定义流程，必须按“执行步骤”从前到后逐个完整执行。',
-    '- 只有 Figma 写入工具成功返回 createdNodeIds 或 mutatedNodeIds，才算写入完成；没有这些证据时不得报告完成。',
-    '- 每次 Figma 写入后必须做回读验证；最后一次写入后必须再次回读目标节点，并尽量截图确认没有遮挡、截断、换行或漏改。',
-    '- 如果写入后最终回读、复扫或截图因为 Auth required、OAuth、权限、MCP 断开等原因失败，即使前面已经返回 mutatedNodeIds，也必须报告为阻塞，不能声称整条任务完成。',
-    '- 最终回答必须原文写出 Figma 写入证据，例如 createdNodeIds、mutatedNodeIds 或 figmaWriteResult，并明确写出“最终回读/截图验收：已完成/未完成”。',
+    '- 如果当前 Codex 工具列表缺少 Figma 写入工具、Figma OAuth 失效、目标文件无权限或快照缺失，必须停止并说明具体阻塞原因。',
+    '- 涉及 Figma 写入时，只有写入工具成功返回 createdNodeIds 或 mutatedNodeIds，才允许判定为已写入。',
+    '- 如果 Skill / md 任务本身是生成图片或本地产物，不强制要求 Figma 写入完成；最终报告写明产物路径、使用的 Skill / md 和复核点。',
+    '- 如果已经写入 Figma，最后必须尽量回读目标节点或截图确认；如果回读失败，说明写入证据和回读失败原因。',
+    '- 最终回答用中文简短总结结果，必须写明：使用的 Skill / md、Figma 链接、产物或写入节点、阻塞原因或复核建议。',
     '',
-    '## 交付',
+    '## 快照内容兜底',
     '',
-    '- 如果本机能访问平台产物目录，可以把报告写入该目录；否则必须在最终回答中完整输出报告，Worker 会回传到平台日志。',
-    '- 报告必须包含：读取的 Skill/md、Figma 链接、写入节点、阻塞原因、人工复核建议。',
-    '- 最终回答用中文简短总结结果。'
-  ].join('\n');
+    run.primarySkillContent || '平台未提供主 Skill / md 内容快照。若本机无法读取任务中的路径线索，必须停止并回传阻塞原因。',
+  ].filter(line => line !== '').join('\n');
+}
+
+function buildClientEquivalentMaterialInstruction(run = {}, materialPaths = [], primaryMaterial = '') {
+  const paths = [...new Set([primaryMaterial, ...materialPaths].map(item => String(item || '').trim()).filter(Boolean))];
+  const display = paths.length ? paths.join('、') : '当前选择的 Skill / md';
+  if (run.workflow === 'custom-workflow' && paths.length > 1) {
+    return [
+      `请按顺序使用这些 Skill / md：${display}`,
+      '每一步都按它原本在 Codex 客户端里被引用时的要求执行。'
+    ].join('\n');
+  }
+  return `请使用 ${display}。`;
 }
 
 async function resolveExecutionCwd(run = {}) {

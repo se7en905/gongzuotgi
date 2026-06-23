@@ -2401,7 +2401,7 @@ async function handleApi(req, res, url) {
       return;
     }
     requireProjectAccess(currentUser, project.id, 'developer', 'api.runs.execute');
-    validateFigmaRunTarget(body);
+    validateFigmaRunTarget(body, { required: false });
     if (body.executionMode === 'single-skill' || body.executionMode === 'custom-workflow' || normalizeRunMaterialSnapshotsForRequest(body.selectedMaterialSnapshots).length) {
       validateSkillSnapshotForRun(body, { requireSnapshot: true });
     }
@@ -2804,9 +2804,12 @@ function isUsableSkillContent(value = '') {
   return text.length >= 20 && !/技能内容读取失败|文件读取失败|cannot find path|no such file/i.test(text);
 }
 
-function validateFigmaRunTarget(body = {}) {
+function validateFigmaRunTarget(body = {}, { required = true } = {}) {
   const figmaLinks = String(body.figmaLinks || body.figmaUrl || '').trim();
-  if (!figmaLinks) throw new HttpError(400, '请先填写 Figma 链接。');
+  if (!figmaLinks) {
+    if (required) throw new HttpError(400, '请先填写 Figma 链接。');
+    return;
+  }
   if (!/figma\.com\/(design|file|proto|board|slides|make)\//i.test(figmaLinks)) {
     throw new HttpError(400, 'Figma 链接必须是有效的 figma.com 文件、Frame、分区或页面链接。');
   }
@@ -2848,7 +2851,7 @@ async function createDirectSkillRunFromBody(req, project, body = {}, currentUser
   const figmaLinks = String(body.figmaLinks || body.figmaUrl || '').trim();
   const primarySkillPath = String(body.primarySkillPath || body.skillPath || body.stage || '').trim();
   const primarySkillContent = String(body.primarySkillContent || body.skillContent || '').trim().slice(0, 60000);
-  validateFigmaRunTarget(body);
+  validateFigmaRunTarget(body, { required: false });
   validateSkillSnapshotForRun(body, { requireSnapshot: true });
   const assigneeUserId = String(body.assignedToUserId || body.assigneeUserId || currentUser.id || '').trim();
   const assigneeName = String(body.assignedToName || body.assigneeName || body.developer || currentUser.displayName || currentUser.username || '').trim();
