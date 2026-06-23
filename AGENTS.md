@@ -355,6 +355,7 @@
   - 有 Figma 链接也不等于必须把结果转为可编辑 Figma 图层。只有执行要求或 Skill/md 行为明确包含写入、修改、创建、清理、重命名、更新 Figma 节点/Frame/页面等动作，或纯生图需要落到 Figma 目标时，才要求 Figma 变更证据；纯参考、分析或无链接的本地产物任务不得因为没有 Figma 放置/替换/写入证据被判失败。
   - 纯生图 Skill/md 填写了 Figma 链接时，必须视为需要在 Figma 目标处放置或替换生成成品图；证据可以是 `use_figma` 返回的 `createdNodeIds` / `mutatedNodeIds`，也可以是图片上传、放置或替换工具返回的等价成功记录，但必须能证明成品图已落到该 Figma 目标。
   - 纯生图 Skill/md 未填写 Figma 链接时，本机 Worker 必须要求 Codex 把生成图片保存到本机执行目录，并在执行结束后扫描新增图片产物，上传归档到本次执行 `artifactRoot/生成图片/`；执行记录只保存路径、名称、类型、大小等元信息，不得把图片 base64 长期写入 `runs.json`。
+  - 工作台读取历史执行记录时，如果执行记录缺少 `generatedArtifacts` 但本次 `artifactRoot/生成图片/` 目录下真实存在图片文件，服务端必须轻量补齐生成图片产物元信息并写回记录；不得把 `artifactRoot/执行附件/` 里的参考图、说明截图或粘贴图误当成生成成品图展示。
   - 纯生图 Skill/md 未填写 Figma 链接时，只有检测并归档到至少一个生成图片产物后，才允许显示 `本机已完成`；如果 Codex 退出码为 0 但没有生成图片产物，必须回传并展示为 `本机阻塞` 或待继续状态，阻塞原因写明“未检测到生成图片产物”，不得用绿色完成误导负责人。
   - 纯生图 Skill/md 指定使用 `gpt-image-2`、`image2` 或 GPT Image 2 时，如果该工具返回 `APIConnectionError`、`Connection error`、额度、计费、限流、权限、超时或其它调用失败，必须直接回传 `本机阻塞` 并写明真实失败原因；禁止改用 Pillow、本地绘制脚本、确定性绘制、占位图、其它模型或任何非 image2 方式生成替代图，禁止把替代图归档为生成图片产物，也不得显示 `本机已完成`。
   - 纯生图本机归档图片入口必须同时覆盖 `美术执行台` 和 `AI档案`；负责人和有权限组员都必须能在工作台查看、打开和下载本次生成成品图，不得只把图片留在本机日志或执行目录里。
@@ -392,7 +393,7 @@
   - 每条执行记录必须能在 AI档案当前页面直接查看明细，不得因点击明细跳回美术执行台或任务中心。
   - 明细必须展示该次执行的成功数量、失败数量、扫描点数量和具体数据类；数据优先来自 `run.resultSummary`、`stages`、`changeSummary`、验证命令、产物证据和 Figma 链接等结构化字段。
   - 执行明细必须按负责人易读方式组织，优先展示交付结论、执行对象、执行环境、问题与待处理、本次检查内容、产物与证据；不得重复展示同一字段，也不得默认展示 `thread.started`、`item.completed` 等模型事件串。
-  - AI档案明细必须展示本次执行归档的生成图片产物；图片产物必须支持缩略图预览、打开原图和下载，数据源优先复用执行记录里的 `generatedArtifacts`、`workerResult.generatedArtifacts`、`resultSummary.generatedArtifacts`，以及图片类 `resultSummary.artifacts`。
+  - AI档案明细和美术执行台详情必须展示本次执行归档的生成图片产物；图片产物必须支持缩略图预览、打开原图和下载，数据源优先复用执行记录里的 `generatedArtifacts`、`workerResult.generatedArtifacts`、`resultSummary.generatedArtifacts`，以及图片类 `resultSummary.artifacts`。
   - AI档案明细默认不得读取或渲染整段原始日志；原始日志只能按需、轻量、尾部读取，避免点击查看档案卡顿。
   - AI档案列表必须分页或虚拟化，默认只渲染当前页，避免执行记录变多后切换页面和打开明细卡顿。
   - 支持按当前筛选时间范围删除明细；删除必须清理后端 `runs` 执行记录、对应工作区和产物目录，不得只是前端隐藏。
@@ -708,7 +709,8 @@
   - 本机执行状态页的待领取/执行中/已完成统计必须覆盖所有本机 Worker 执行单，包含 `direct-skill`、`executionHost=local-worker`、`workerExecution=true` 和美术执行台 `single-skill/custom-workflow` 创建的本机执行记录；不得只统计直接执行记录导致负责人误判。
   - 如果某条执行单的排队时间晚于该执行人 Worker 最近心跳时间，但该 Worker 仍处于 40 分钟在线窗口且 Codex/Figma MCP 已就绪，前端必须按实时事件唤醒口径显示 `正在启动本机执行`；不得把正常在线就绪的任务显示为 `等待下一次心跳/轮询`。只有实时事件连接断开、Worker 离线或自检未就绪时，才把 5 分钟任务轮询作为兜底原因展示。
   - 平台创建或更新本机 Worker 执行单时，必须通过带 `targetUserId` 和 `wakeWorker=true` 的实时事件只唤醒对应执行人的 Worker 立即检查任务；`targetUserId` 只能是当前点击账号，不得使用原执行人或负责人账号兜底；不得广播唤醒所有组员 Worker。
-  - 同一条本机 Worker 执行记录被 `继续执行` 或 `我来继续执行` 重新排队时，平台必须清空上一轮执行证据字段，包括 `claimedByDeviceId`、`claimedAt`、`startedAt`、`finishedAt`、`completedAt`、`workerResult`、`workerLocalLogPath`、`workerLocalLogSize`、`logPath`、`promptPath`、`artifactRoot`、`stages`、`blocker`、`resultSummary`、`figmaWriteResult`、`exitCode`、`pid`、`localWorkerStale`、`workerEventIds` 等；不得让 `queued/claimed/running` 因旧证据被误判为本机回传异常。
+  - 同一条本机 Worker 执行记录被 `继续执行` 或 `我来继续执行` 重新排队时，平台必须清空上一轮运行证据字段，包括 `claimedByDeviceId`、`claimedAt`、`startedAt`、`finishedAt`、`completedAt`、`workerResult`、`workerLocalLogPath`、`workerLocalLogSize`、`logPath`、`promptPath`、`stages`、`blocker`、`resultSummary`、`figmaWriteResult`、`exitCode`、`pid`、`localWorkerStale`、`workerEventIds` 等；不得让 `queued/claimed/running` 因旧证据被误判为本机回传异常。
+  - 同一条本机 Worker 执行记录被 `继续执行`、`我来继续执行` 或换人继续时，必须保留创建时输入资料和可追溯上下文，包括 `artifactRoot`、`materialPath`、`attachments`、`figmaLinks`、`requirement`、`selectedMaterialHints`、`selectedMaterialSnapshots`、`primarySkillPath`、`primarySkillTitle`、`primarySkillContent`、`showdocHints`、模板/自定义流程信息和 `codexRequest`；不得把粘贴图、Skill/md 快照、Figma 链接或执行要求丢给新执行人。
   - 本机 Worker 执行记录处于 `queued/claimed/running` 这类非最终状态时，服务端读取、领取、状态回传和离线事件补传都必须做活跃状态归一化：非最终状态不得继承上一轮 `finishedAt`、`workerResult`、已结束阶段、旧 Figma 写入结果或旧阻塞信息；只有 `completed/failed/blocked/cancelled` 才允许保存最终证据。
   - 如果 Worker 心跳仍在线且 `currentRunId` 指向某条 `claimed/running` 执行记录，负责人或执行人再次点击开始/继续按钮时，后端必须幂等返回当前记录，不得重新排队、清空领取设备、覆盖当前执行状态或中断已经启动的本机 Codex/Figma 进程。
   - Worker 本机 `state/runs/<runId>/state.json` 只能恢复排队时间之后启动且未完成的同一次本机执行；若平台重新排队时间晚于本机旧 `startedAt`，Worker 必须清空旧 state 的 `startedAt/finishedAt/duration/events/syncedEventIds` 后作为新一轮执行开始，不得复用上一轮开始时间、阶段耗时或离线事件。

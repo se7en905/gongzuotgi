@@ -944,9 +944,10 @@ export async function ensureTaskForRun(input) {
 
 export async function listRuns() {
   const runs = await reconcileStaleLocalWorkerRuns();
-  const hydratedRuns = await Promise.all(runs.map(hydrateRunStages));
+  const artifactRuns = await Promise.all(runs.map(enrichRunGeneratedArtifactEvidence));
+  const hydratedRuns = await Promise.all(artifactRuns.map(hydrateRunStages));
   const enrichedRuns = await Promise.all(hydratedRuns.map(enrichRunWithFigmaLogEvidence));
-  await persistRunReadReconciliations(hydratedRuns, enrichedRuns);
+  await persistRunReadReconciliations(runs, enrichedRuns);
   return enrichedRuns.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 }
 
@@ -1098,9 +1099,10 @@ export function redactCodexConfig(config = {}) {
 export async function getRun(id) {
   const runs = await reconcileStaleLocalWorkerRuns();
   const run = runs.find(item => item.id === id) || null;
-  const hydrated = await hydrateRunStages(run);
+  const artifactRun = await enrichRunGeneratedArtifactEvidence(run);
+  const hydrated = await hydrateRunStages(artifactRun);
   const enriched = await enrichRunWithFigmaLogEvidence(hydrated);
-  await persistRunReadReconciliations(hydrated ? [hydrated] : [], enriched ? [enriched] : []);
+  await persistRunReadReconciliations(run ? [run] : [], enriched ? [enriched] : []);
   return enriched;
 }
 
@@ -1457,6 +1459,57 @@ export async function saveAgentRunGeneratedArtifacts(runId, input = []) {
   };
 }
 
+async function enrichRunGeneratedArtifactEvidence(run = null) {
+  if (!run) return null;
+  const withRoot = ensureRunArtifactRootFromExistingFiles(run);
+  if (!withRoot.artifactRoot) return withRoot;
+  const scanned = await scanRunGeneratedImageArtifacts(withRoot);
+  if (!scanned.length) return withRoot;
+  return {
+    ...withRoot,
+    generatedArtifacts: dedupeRunArtifacts([
+      ...(Array.isArray(withRoot.generatedArtifacts) ? withRoot.generatedArtifacts : []),
+      ...scanned
+    ])
+  };
+}
+
+async function scanRunGeneratedImageArtifacts(run = {}) {
+  const rootDir = cleanString(run.artifactRoot);
+  if (!rootDir || !isPathInsideStore(rootDir, paths.artifactDir)) return [];
+  const generatedDir = path.join(rootDir, '生成图片');
+  let entries = [];
+  try {
+    entries = await fs.readdir(generatedDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const rows = [];
+  for (const entry of entries) {
+    if (!entry?.isFile?.() || entry.name.startsWith('.DS_Store')) continue;
+    const ext = path.extname(entry.name).replace(/^\./, '').toLowerCase().replace('jpeg', 'jpg');
+    const type = runAttachmentMimeFromExt(ext);
+    if (!type) continue;
+    const filePath = path.join(generatedDir, entry.name);
+    const stat = await fs.stat(filePath).catch(() => null);
+    if (!stat || !stat.isFile() || stat.size <= 0) continue;
+    const relativePath = path.relative(paths.root, filePath).replaceAll(path.sep, '/');
+    const key = createHash('sha1').update(relativePath).digest('hex').slice(0, 12);
+    rows.push({
+      id: `${cleanString(run.id) || 'run'}-generated-${key}`,
+      name: entry.name,
+      type,
+      size: stat.size,
+      path: filePath,
+      relativePath,
+      role: 'generated-image',
+      source: 'artifact-root-scan',
+      createdAt: new Date(stat.mtimeMs || Date.now()).toISOString()
+    });
+  }
+  return rows.sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh-Hans-CN'));
+}
+
 function ensureRunArtifactRootFromExistingFiles(run = {}) {
   if (run.artifactRoot) return run;
   const root = inferRunArtifactRootFromExistingFiles(run);
@@ -1622,7 +1675,7 @@ export async function queueRunForLocalWorker(id, input = {}) {
   const index = runs.findIndex(item => item.id === id);
   if (index === -1) return null;
   const now = new Date().toISOString();
-  const existing = await ensureRunMaterialSnapshotsForQueue(runs[index]);
+  const existing = ensureRunArtifactRootFromExistingFiles(await ensureRunMaterialSnapshotsForQueue(runs[index]));
   const queuedForUserId = cleanString(input.queuedForUserId || input.userId || existing.queuedForUserId || existing.assignedToUserId || existing.ownerUserId);
   const queuedForName = cleanString(input.queuedForName || input.userName || existing.queuedForName || existing.assignedToName || existing.developer);
   const materialSnapshot = await readRunMaterialSnapshot(existing);
@@ -1657,7 +1710,7 @@ export async function queueRunForLocalWorker(id, input = {}) {
     workerLocalLogSize: 0,
     logPath: '',
     promptPath: '',
-    artifactRoot: '',
+    artifactRoot: existing.artifactRoot || '',
     stages: [],
     updatedAt: now
   };
@@ -3169,8 +3222,11 @@ function hasRunReadReconciliationChange(before = {}, after = {}) {
   const keys = [
     'status',
     'workerStatus',
+    'artifactRoot',
+    'generatedArtifacts',
     'blocker',
     'resultSummary',
+    'workerResult',
     'figmaWriteResult',
     'stages',
     'finishedAt',
@@ -6511,7 +6567,6 @@ function normalizeActiveLocalWorkerRun(run = {}, statusHint = '') {
     next.workerLocalLogSize = 0;
     next.logPath = '';
     next.promptPath = '';
-    next.artifactRoot = '';
     next.workerEventIds = [];
   } else if (!keepWorkerResult) {
     next.workerResult = null;

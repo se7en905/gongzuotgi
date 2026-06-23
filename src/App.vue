@@ -22302,7 +22302,6 @@ export default {
           workerLocalLogSize: 0,
           logPath: '',
           promptPath: '',
-          artifactRoot: '',
           stages: [],
           blocker: null,
           cancelledBy: ''
