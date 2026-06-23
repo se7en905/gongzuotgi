@@ -1682,7 +1682,12 @@ function normalizeKnownMaterialDependencyPath(value = '', sourceDir = '') {
   text = text.replace(/^\[+/, '').replace(/\]+$/, '');
   if (/^(?:skills\/)?platform-interaction-spec\/SKILL\.md$/i.test(text)) text = 'skills/平台交互规范skill/SKILL.md';
   if (/^(?:skills\/)?命名规范MD\.md$/i.test(text)) text = 'skills/界面架构与命名规范.md';
-  if (/^references\//i.test(text) && sourceDir) text = `${sourceDir}/${text}`;
+  if (/^references\//i.test(text) && sourceDir) {
+    const skillRoot = /\/references$/i.test(sourceDir)
+      ? sourceDir.replace(/\/references$/i, '')
+      : sourceDir;
+    text = `${skillRoot}/${text}`;
+  }
   if (!/^skills\//i.test(text) && /^(figma-layer-cleanup|平台交互规范skill|ui-finalize|弹窗缩放清洗规则)\/SKILL\.md$/i.test(text)) {
     text = `skills/${text}`;
   }
@@ -6242,7 +6247,7 @@ function normalizeActiveLocalWorkerRun(run = {}, statusHint = '') {
 }
 
 function activeLocalWorkerStages(run = {}, status = '') {
-  const stageName = normalizeWorkerStageName(run.currentStage || run.stage || '本机 Codex 执行');
+  const stageName = '本机 Codex 执行';
   if (/queued|pending|created|claimed/.test(status)) return [];
   return [{
     no: 1,
@@ -6419,7 +6424,7 @@ function mergeAgentRunStageEvent(run = {}, event = {}) {
   const stageName = normalizeWorkerStageName(event.stageName);
   if (!stageName) return run;
   const status = normalizeWorkerRunStatus(event.status || (event.phase === 'end' ? 'completed' : 'running'));
-  const stages = normalizeRunStagesForWorkerEvents(run.stages, stageName);
+  const stages = normalizeRunStagesForWorkerEvents(run.stages, stageName, status);
   const index = findRunStageIndex(stages, stageName);
   const eventAt = cleanString(event.at);
   const previous = stages[index] || { no: index + 1, name: stageName };
@@ -6464,10 +6469,14 @@ function normalizeWorkerTimingPatch(input = {}, existing = {}) {
   };
 }
 
-function normalizeRunStagesForWorkerEvents(stages = [], fallbackName = '') {
-  const rows = Array.isArray(stages) && stages.length ? stages.map((stage, index) => ({ no: stage.no || index + 1, ...stage })) : [];
-  if (!findRunStage(stages, fallbackName)) rows.push({ no: rows.length + 1, name: fallbackName, status: 'pending' });
-  return rows;
+function normalizeRunStagesForWorkerEvents(stages = [], fallbackName = '', incomingStatus = '') {
+  let rows = Array.isArray(stages) && stages.length ? stages.map((stage, index) => ({ no: stage.no || index + 1, ...stage })) : [];
+  const matched = findRunStage(rows, fallbackName);
+  if (!matched) rows.push({ no: rows.length + 1, name: fallbackName, status: 'pending' });
+  if (isLocalWorkerExecutionStageName(fallbackName) || isFinalWorkerRunStatus(incomingStatus)) {
+    rows = mergeDuplicateLocalWorkerExecutionStages(rows, fallbackName);
+  }
+  return renumberRunStages(rows);
 }
 
 function mergeWorkerStages(existingStages = [], inputStages = []) {
@@ -6475,7 +6484,7 @@ function mergeWorkerStages(existingStages = [], inputStages = []) {
   for (const raw of Array.isArray(inputStages) ? inputStages : []) {
     const name = cleanString(raw?.name || raw?.stageName);
     if (!name) continue;
-    stages = normalizeRunStagesForWorkerEvents(stages, name);
+    stages = normalizeRunStagesForWorkerEvents(stages, name, raw.status);
     const index = findRunStageIndex(stages, name);
     const previous = stages[index] || {};
     stages[index] = {
@@ -6487,6 +6496,78 @@ function mergeWorkerStages(existingStages = [], inputStages = []) {
     };
   }
   return stages;
+}
+
+function renumberRunStages(stages = []) {
+  return (Array.isArray(stages) ? stages : []).map((stage, index) => ({ ...stage, no: index + 1 }));
+}
+
+function mergeDuplicateLocalWorkerExecutionStages(stages = [], fallbackName = '') {
+  const rows = Array.isArray(stages) ? stages : [];
+  const indexes = rows
+    .map((stage, index) => ({ stage, index }))
+    .filter(({ stage }) => isLocalWorkerExecutionStage(stage, fallbackName));
+  if (indexes.length <= 1) return rows;
+  const best = indexes
+    .map(({ stage, index }) => ({ stage, index, score: localWorkerStageEvidenceScore(stage, fallbackName) }))
+    .sort((a, b) => b.score - a.score)[0];
+  const merged = indexes.reduce((acc, { stage }) => mergeLocalWorkerStage(acc, stage, fallbackName), { ...best.stage });
+  const duplicateIndexes = new Set(indexes.map(item => item.index));
+  return rows
+    .map((stage, index) => index === best.index ? merged : stage)
+    .filter((stage, index) => index === best.index || !duplicateIndexes.has(index));
+}
+
+function mergeLocalWorkerStage(base = {}, stage = {}, fallbackName = '') {
+  const startedAt = earliestIso(base.startedAt, stage.startedAt);
+  const finishedAt = latestIso(base.finishedAt, stage.finishedAt);
+  const status = isFinalWorkerRunStatus(stage.status) ? stage.status : isFinalWorkerRunStatus(base.status) ? base.status : (stage.status || base.status || 'running');
+  return {
+    ...base,
+    ...stage,
+    name: isLocalWorkerExecutionStageName(base.name) ? base.name : isLocalWorkerExecutionStageName(stage.name) ? stage.name : fallbackName || base.name || stage.name || '本机 Codex 执行',
+    status,
+    startedAt,
+    finishedAt,
+    durationMs: normalizeDurationMs(Math.max(Number(base.durationMs || 0), Number(stage.durationMs || 0)), startedAt, finishedAt)
+  };
+}
+
+function localWorkerStageEvidenceScore(stage = {}, fallbackName = '') {
+  return (isLocalWorkerExecutionStageName(stage.name) ? 10 : 0)
+    + (normalizeStageName(stage.name) === normalizeStageName(fallbackName) ? 5 : 0)
+    + (Number(stage.durationMs || 0) > 0 ? 4 : 0)
+    + (stage.finishedAt ? 3 : 0)
+    + (stage.startedAt ? 1 : 0);
+}
+
+function isLocalWorkerExecutionStage(stage = {}, fallbackName = '') {
+  return isLocalWorkerExecutionStageName(stage.name)
+    || normalizeStageName(stage.name) === normalizeStageName(fallbackName)
+    || (isLocalWorkerExecutionStageName(fallbackName) && looksLikeMaterialStageName(stage.name) && Number(stage.durationMs || 0) > 0);
+}
+
+function isLocalWorkerExecutionStageName(value = '') {
+  return /本机\s*Codex\s*执行|本机执行|local\s*worker|codex/i.test(cleanString(value));
+}
+
+function looksLikeMaterialStageName(value = '') {
+  const text = cleanString(value).replace(/\\/g, '/');
+  return /^skills\/.+\/SKILL\.md$/i.test(text) || /^skills\/.+\.md$/i.test(text) || /\.(md|markdown)$/i.test(text);
+}
+
+function earliestIso(a = '', b = '') {
+  const left = Date.parse(a || '');
+  const right = Date.parse(b || '');
+  if (left && right) return left <= right ? a : b;
+  return a || b || '';
+}
+
+function latestIso(a = '', b = '') {
+  const left = Date.parse(a || '');
+  const right = Date.parse(b || '');
+  if (left && right) return left >= right ? a : b;
+  return a || b || '';
 }
 
 function findRunStage(stages = [], name = '') {

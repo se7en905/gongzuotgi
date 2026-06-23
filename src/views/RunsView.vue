@@ -225,6 +225,7 @@
             <span>{{ step.summary }}</span>
             <small class="focused-step-status">{{ step.label }}</small>
             <small class="focused-step-duration">{{ step.durationClockText }}</small>
+            <small v-if="step.timeRangeText" class="focused-step-time">{{ step.timeRangeText }}</small>
           </div>
         </article>
       </div>
@@ -1275,7 +1276,7 @@ export default {
 
   .focused-run-step-flow {
     display: grid;
-    grid-auto-columns: minmax(180px, 1fr);
+    grid-auto-columns: minmax(190px, 1fr);
     grid-auto-flow: column;
     gap: 0;
     width: 100%;
@@ -1289,9 +1290,9 @@ export default {
   .focused-run-step {
     position: relative;
     display: grid;
-    grid-template-rows: 34px minmax(112px, auto);
+    grid-template-rows: 34px minmax(128px, auto);
     justify-items: center;
-    min-width: 180px;
+    min-width: 190px;
     color: #64748b;
 
     &::before {
@@ -1392,7 +1393,7 @@ export default {
     display: grid;
     gap: 6px;
     justify-items: center;
-    width: 164px;
+    width: 176px;
     min-width: 0;
     padding-top: 6px;
     text-align: center;
@@ -1437,6 +1438,13 @@ export default {
       color: currentColor;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
       font-weight: 850;
+    }
+
+    .focused-step-time {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 650;
+      line-height: 1.35;
     }
   }
 

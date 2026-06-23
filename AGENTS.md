@@ -82,6 +82,7 @@
   - 权限只能控制操作能力，例如 `run.create` 控制是否显示 `新建美术执行`，`workflow.manage` / `api.workflow.manage` 控制是否能新增、编辑、删除模板；不得用权限分支改变已确认的执行台信息架构、模板展示样式或弹窗基础结构。
   - 修改执行台、`RunCreateDialog.vue`、模板管理或全局执行方式后，必须同时按负责人账号和美术执行人账号核对界面；至少确认成员端能看到同一版执行方式卡片、已保存模板、模板说明、主要 md/Skill 胶囊和新建弹窗结构。
   - 生产服务使用 `dist/` 静态包时，前端 UI 改动必须执行 `npm run build` 并重启平台 LaunchAgent / 服务进程后才算对成员生效；只改 `src/` 或只在开发服务看到新版，不代表成员端已经更新。
+  - 平台 LaunchAgent / `scripts/start-api.mjs` 重启服务时，必须先停止上一轮子进程 `server/server.mjs`，并等待 `4288` 端口释放后再启动新进程；不得留下孤儿 Node 进程导致 `EADDRINUSE`、启动循环或成员端仍访问旧服务。
   - `/api/config?versionCheck=1` 是前端版本自检专用轻量接口，必须允许未登录访问，只返回 `frontendVersion`，并设置 `Cache-Control: no-store, no-cache, must-revalidate, max-age=0`；完整 `/api/config` 仍必须保持登录后访问。
   - 前端版本检查不得依赖 `currentUser` 存在；登录页、未登录旧标签页、成员长期开着的旧页面都必须能读取轻量版本接口并在发现资源哈希变化时自动刷新到新版。
   - `index.html` 必须保持 `no-store`，构建产物 JS/CSS 必须使用带哈希文件名；发布后必须验证首页引用的新资产哈希和 `/api/config?versionCheck=1` 返回的 `frontendVersion` 一致，避免成员继续加载旧执行台。
@@ -151,6 +152,7 @@
   - 创建执行前必须为每个选中的 md / Skill 读取并保存 `selectedMaterialSnapshots`；Worker 启动前的自定义流程预检必须优先校验执行记录里的真实 `selectedMaterialHints` 和快照，不得只按 `.agent-hub/skills/<skillId>/SKILL.md` 判断并误报阻塞。
   - 使用已保存模板创建、继续执行或重新执行时，必须真实使用模板 stages 里保存的 md / Skill 路径和内容快照；不得只使用模板名称、胶囊展示名、模板说明、`skillId`、`artifactDir` 或阶段名代替真实文件。
   - 复合 Skill 如果会串联其它 md / Skill 或 `references/` 规范文件，例如 `ui-finalize` 依赖 `figma-layer-cleanup`、`平台交互规范skill`、`平台交互规范2.0.md` 和命名规范，平台必须在创建或排队执行前把这些依赖作为 `selectedMaterialSnapshots` 一并下发到组员 Worker 工作区；不得要求组员机器本地存在负责人电脑路径或历史 Windows 路径。
+  - 单 `skill/md` 和复合 Skill 解析依赖路径时，`references/...` 必须按所属 Skill 根目录解析；如果当前来源文件已经在 `<skill>/references/` 下，不得再次拼接 `references/`，不得生成 `references/references/...` 这类重复路径。依赖加入快照前必须规范化为真实存在的项目相对路径并完成校验。
   - 模板或复合 Skill 依赖路径缺失、别名无法映射到真实文件、文件读取失败时，前端和服务端必须明确提示“模板配置错误 / 执行方式绑定的 md / Skill 不可用 / 模板资料快照缺失”；不得显示成本机 Worker 异常、回传异常或组员机器问题。
   - 如果执行方式绑定的 md / Skill 路径确实不存在或无法从扫描清单唯一匹配，前端必须提示明确的“执行方式绑定的 md / Skill 不可用 / 文件读取失败”，服务端必须标记为模板配置错误或预检阻塞；不得把这类配置错误显示成本机 Worker 异常、回传异常或无日志执行失败。
   - 新建美术执行弹窗里模板管理保存的全部模板必须直接展示在 `美术执行方式` 选项区；新建多个模板时，多个模板都必须可选，不得按当前项目过滤导致部分模板不可见。

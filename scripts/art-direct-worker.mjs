@@ -872,8 +872,7 @@ function resolveCodexPath() {
 }
 
 function workerStageName(run = {}) {
-  const firstStage = Array.isArray(run.stages) ? run.stages.find(stage => stage?.name) : null;
-  return firstStage?.name || run.stage || run.primarySkillPath || '本机执行';
+  return '本机 Codex 执行';
 }
 
 async function runLocalChecks() {

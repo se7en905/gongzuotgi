@@ -19629,7 +19629,12 @@ export default {
       if (/^platform-interaction-spec\/SKILL\.md$/i.test(text)) text = 'skills/平台交互规范skill/SKILL.md';
       if (/^(?:skills\/)?platform-interaction-spec\/SKILL\.md$/i.test(text)) text = 'skills/平台交互规范skill/SKILL.md';
       if (/^(?:skills\/)?命名规范MD\.md$/i.test(text)) text = 'skills/界面架构与命名规范.md';
-      if (/^references\//i.test(text) && sourceDir) text = `${sourceDir}/${text}`;
+      if (/^references\//i.test(text) && sourceDir) {
+        const skillRoot = /\/references$/i.test(sourceDir)
+          ? sourceDir.replace(/\/references$/i, '')
+          : sourceDir;
+        text = `${skillRoot}/${text}`;
+      }
       if (!/^skills\//i.test(text) && /^(figma-layer-cleanup|平台交互规范skill|ui-finalize|弹窗缩放清洗规则)\/SKILL\.md$/i.test(text)) {
         text = `skills/${text}`;
       }
@@ -20730,7 +20735,8 @@ export default {
     stageStepLabel(status = '') {
       const value = String(status || '').toLowerCase();
       if (/conditional|有条件/.test(value)) return '有条件通过';
-      if (/failed|error|阻塞|❌/.test(value)) return '执行失败';
+      if (/blocked|阻塞|❌/.test(value)) return '已阻塞';
+      if (/failed|error/.test(value)) return '执行失败';
       if (/running|in_progress/.test(value)) return '执行中';
       if (/done|success|passed|completed|通过|✅/.test(value)) return '已完成';
       if (/skipped|skip|跳过/.test(value)) return '已跳过';
@@ -20867,10 +20873,12 @@ export default {
       const displayStages = this.selectedRun?.id === run.id ? this.selectedRunDisplayStages : this.displayRunStages(run);
       const isDirect = this.isDirectSkillRun(run);
       const actualStages = displayStages.length ? displayStages : isDirect ? this.directSkillRunDisplayStages(run) : [];
+      const isLocalWorkerRun = this.isLocalWorkerRun(run);
       const statusText = this.runDisplayStatusValue(run);
       const isPending = /pending|created|queued/.test(statusText) || !statusText;
       const isRunning = this.isRunInProgress(run) || /claimed/.test(statusText);
-      const isFailed = /failed|error|blocked/.test(`${statusText} ${run.workerStatus || ''}`);
+      const isBlocked = /blocked/.test(`${statusText} ${run.workerStatus || ''}`);
+      const isFailed = /failed|error/.test(`${statusText} ${run.workerStatus || ''}`);
       const isDone = /done|success|passed|completed|finished|conditional/.test(statusText) || Boolean(run.resultSummary);
       const targetName = this.focusedRunContentName(run);
       const kind = this.directSkillRunContentKind(run);
@@ -20889,6 +20897,9 @@ export default {
       const codexStage = actualStages[codexStageIndex] || firstStage;
       const resultStageIndex = isDirect && actualStages[3] ? 3 : lastStageIndex >= 0 ? lastStageIndex : -1;
       const resultStage = resultStageIndex >= 0 ? actualStages[resultStageIndex] : null;
+      const workerExecStage = this.focusedRunWorkerExecutionStage(run, actualStages);
+      const workerStartedAt = workerExecStage?.startedAt || run.startedAt || '';
+      const workerFinishedAt = workerExecStage?.finishedAt || run.finishedAt || run.completedAt || '';
       const currentStageName = run.currentStage || actualStages.find(stage => /running|in_progress/i.test(stage.displayStatus || stage.status || ''))?.name || firstStage.name || '';
       const stageStatus = (index, fallback = 'pending') => {
         const stage = actualStages[index] || {};
@@ -20896,15 +20907,21 @@ export default {
       };
       const normalize = status => {
         const value = String(status || '').toLowerCase();
-        if (/failed|error|blocked|阻塞|失败/.test(value)) return 'failed';
+        if (/blocked|阻塞/.test(value)) return 'blocked';
+        if (/failed|error|失败/.test(value)) return 'failed';
         if (/conditional|有条件|skipped|skip|跳过/.test(value)) return 'conditional';
         if (/running|in_progress|claimed/.test(value)) return 'running';
         if (/done|success|passed|completed|finished|通过|完成/.test(value)) return 'completed';
         return 'pending';
       };
-      const codexStatus = isFailed ? 'failed' : isDone ? 'completed' : isRunning ? 'running' : 'pending';
-      const resultStatus = isFailed ? 'failed' : isDone ? 'completed' : 'pending';
-      const preflightStatus = isDirect
+      const codexStatus = isBlocked ? 'blocked' : isFailed ? 'failed' : isDone ? 'completed' : isRunning ? 'running' : 'pending';
+      const resultStatus = isBlocked ? 'blocked' : isFailed ? 'failed' : isDone ? 'completed' : 'pending';
+      const workerStageStatus = workerExecStage?.displayStatus || workerExecStage?.status || '';
+      const codexStepStatus = normalize(workerStageStatus || codexStatus);
+      const resultStepStatus = isRunning ? 'pending' : resultStatus;
+      const preflightStatus = isLocalWorkerRun
+        ? this.focusedRunLocalWorkerPreflightStatus(run, { isPending, isRunning, isFailed, isBlocked, workerStartedAt })
+        : isDirect
         ? normalize(stageStatus(preflightStageIndex, isPending ? 'pending' : 'completed'))
         : actualStages.length
           ? normalize(stageStatus(preflightStageIndex, isPending && !run.startedAt ? 'pending' : 'completed'))
@@ -20913,11 +20930,9 @@ export default {
         startedAt: run.createdAt || '',
         finishedAt: run.startedAt || run.claimedAt || run.createdAt || ''
       });
-      const preflightDurationMs = preflightStageIndex >= 0 ? this.focusedRunStepDurationMs(run, preflightStage, preflightStageIndex) : 0;
-      const resultDurationMs = resultStageIndex >= 0 ? this.focusedRunStepDurationMs(run, resultStage, resultStageIndex) : this.focusedRunStepDurationMs(run, {
-        startedAt: run.finishedAt || '',
-        finishedAt: run.updatedAt || run.finishedAt || ''
-      });
+      const preflightDurationMs = this.focusedRunPreflightDurationMs(run, preflightStage, preflightStageIndex, workerStartedAt);
+      const resultDurationMs = this.focusedRunResultDurationMs(run, resultStage, resultStageIndex);
+      const codexDurationMs = this.focusedRunWorkerExecutionDurationMs(run, workerExecStage, codexStage, codexStageIndex);
       const steps = [
         {
           key: 'target',
@@ -20940,6 +20955,8 @@ export default {
           title: '执行自检',
           summary: isDirect ? '检查执行人本机 Codex 与 Figma MCP' : '检查项目、路径和执行参数',
           status: preflightStatus,
+          startedAt: run.claimedAt || run.startedAt || '',
+          finishedAt: workerStartedAt || preflightStage?.finishedAt || '',
           time: preflightStage?.startedAt || run.startedAt || run.claimedAt || '',
           durationMs: preflightDurationMs
         },
@@ -20947,23 +20964,27 @@ export default {
           key: 'codex',
           title: 'Codex 执行',
           summary: currentStageName || (this.isSkillOrMdFocusedRun(run) ? '按当前 md/Skill 执行' : '按当前任务步骤执行'),
-          status: normalize(stageStatus(codexStageIndex, codexStatus)),
-          time: run.startedAt || run.claimedAt || '',
-          durationMs: this.focusedRunStepDurationMs(run, codexStage, codexStageIndex)
+          status: codexStepStatus,
+          startedAt: workerStartedAt || run.startedAt || run.claimedAt || '',
+          finishedAt: workerFinishedAt || '',
+          time: workerStartedAt || run.startedAt || run.claimedAt || '',
+          durationMs: codexDurationMs
         },
         {
           key: 'result',
           title: '结果回传',
           summary: this.resultStatusLabel(this.effectiveResultStatus(run)),
-          status: normalize(resultStageIndex >= 0 ? stageStatus(resultStageIndex, resultStatus) : isFailed ? 'failed' : isDone ? 'completed' : isRunning ? 'pending' : resultStatus),
+          status: normalize(resultStepStatus),
+          startedAt: workerFinishedAt || run.finishedAt || '',
+          finishedAt: run.updatedAt || run.finishedAt || workerFinishedAt || '',
           time: run.finishedAt || run.updatedAt || '',
           durationMs: resultDurationMs
         },
         {
           key: 'archive',
           title: '归档验收',
-          summary: isDone || isFailed ? '可进入 AI档案查看明细' : '等待执行完成后归档',
-          status: isFailed ? 'failed' : isDone ? 'completed' : 'pending',
+          summary: isDone || isFailed || isBlocked ? '可进入 AI档案查看明细' : '等待执行完成后归档',
+          status: isBlocked ? 'blocked' : isFailed ? 'failed' : isDone ? 'completed' : 'pending',
           time: run.finishedAt || '',
           durationMs: 0
         }
@@ -20978,9 +20999,67 @@ export default {
           label: this.stageStepLabel(status),
           className: this.focusedRunStepClass(status, current),
           durationClockText: this.formatClockDuration(step.durationMs),
+          timeRangeText: this.focusedRunStepTimeRangeText(step),
           timeText: step.time ? this.formatDateTime(step.time) : ''
         };
       });
+    },
+
+    focusedRunWorkerExecutionStage(run = null, stages = []) {
+      const rows = Array.isArray(stages) ? stages.filter(stage => stage && typeof stage === 'object') : [];
+      if (!rows.length) return null;
+      const named = rows.find(stage => /本机\s*Codex\s*执行|本机执行|codex/i.test(String(stage.name || stage.currentStage || '')));
+      const withDuration = rows.find(stage => Number(stage.durationMs || 0) > 0 && (stage.startedAt || stage.finishedAt));
+      if (withDuration && (!named || Number(named.durationMs || 0) <= 0)) return withDuration;
+      return named || withDuration || null;
+    },
+
+    focusedRunLocalWorkerPreflightStatus(run = null, context = {}) {
+      const { isPending, isRunning, isFailed, isBlocked, workerStartedAt } = context;
+      if (workerStartedAt || run?.startedAt) return 'completed';
+      if (isFailed) return 'failed';
+      if (isBlocked) return 'blocked';
+      if (run?.claimedAt || isRunning) return 'running';
+      return isPending ? 'pending' : 'completed';
+    },
+
+    focusedRunWorkerExecutionDurationMs(run = null, workerStage = null, fallbackStage = {}, fallbackIndex = -1) {
+      const explicitRunDuration = Number(run?.durationMs || 0);
+      if (!this.isRunInProgress(run) && explicitRunDuration > 0) return explicitRunDuration;
+      const workerDuration = this.focusedRunStepDurationMs(run, workerStage, fallbackIndex);
+      if (workerDuration > 0) return workerDuration;
+      const fallbackDuration = this.focusedRunStepDurationMs(run, fallbackStage, fallbackIndex);
+      if (fallbackDuration > 0) return fallbackDuration;
+      const start = Date.parse(run?.startedAt || '');
+      const end = this.isRunInProgress(run) ? this.nowTick : Date.parse(run?.finishedAt || run?.completedAt || run?.updatedAt || '');
+      return start && end && end >= start ? end - start : 0;
+    },
+
+    focusedRunResultDurationMs(run = null, resultStage = {}, resultStageIndex = -1) {
+      const start = Date.parse(run?.finishedAt || run?.completedAt || '');
+      const end = Date.parse(run?.updatedAt || '');
+      if (this.isLocalWorkerRun(run)) return start && end && end > start ? end - start : 0;
+      const value = resultStageIndex >= 0 ? this.focusedRunStepDurationMs(run, resultStage, resultStageIndex) : 0;
+      if (value > 0) return value;
+      return start && end && end >= start ? end - start : 0;
+    },
+
+    focusedRunPreflightDurationMs(run = null, stage = {}, index = -1, workerStartedAt = '') {
+      const claimedAt = Date.parse(run?.claimedAt || '');
+      const startedAt = Date.parse(workerStartedAt || run?.startedAt || '');
+      if (claimedAt && startedAt && startedAt >= claimedAt) return startedAt - claimedAt;
+      const value = this.focusedRunStepDurationMs(run, stage, index);
+      return value > 0 ? value : 0;
+    },
+
+    focusedRunStepTimeRangeText(step = {}) {
+      const start = step.startedAt || '';
+      const finish = step.finishedAt || '';
+      const startText = start ? this.formatDateTime(start) : '';
+      const finishText = finish ? this.formatDateTime(finish) : '';
+      if (startText && finishText && startText !== '-' && finishText !== '-') return `${startText} → ${finishText}`;
+      const timeText = step.time ? this.formatDateTime(step.time) : '';
+      return timeText && timeText !== '-' ? timeText : '';
     },
 
     focusedRunStepDurationMs(run = null, stage = {}, index = -1) {
@@ -21009,7 +21088,7 @@ export default {
     focusedRunStepClass(status = '', current = false) {
       if (current) return 'is-current';
       const value = String(status || '').toLowerCase();
-      if (/failed|error|blocked/.test(value)) return 'is-failed';
+      if (/failed|error|blocked|阻塞/.test(value)) return 'is-failed';
       if (/conditional|skipped/.test(value)) return 'is-warning';
       if (/done|success|passed|completed|finished/.test(value)) return 'is-done';
       return 'is-pending';

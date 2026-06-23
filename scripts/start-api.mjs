@@ -10,6 +10,7 @@ const serverEntry = path.join(root, 'server', 'server.mjs');
 const port = Number(process.env.API_PORT || process.env.PORT || 4288);
 
 await stopExistingProjectServer(port);
+await new Promise(resolve => setTimeout(resolve, 200));
 
 const child = spawn(process.execPath, [serverEntry], {
   cwd: root,
@@ -21,9 +22,37 @@ const child = spawn(process.execPath, [serverEntry], {
 });
 
 child.on('exit', (code, signal) => {
+  if (shuttingDown) return;
   if (signal) process.kill(process.pid, signal);
   process.exit(code ?? 0);
 });
+
+let shuttingDown = false;
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+  process.on(signal, () => {
+    void shutdown(signal);
+  });
+}
+
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  if (child && !child.killed) {
+    try {
+      child.kill('SIGTERM');
+    } catch {
+    }
+    await waitForExit(child.pid, 3000);
+    if (await isAlive(child.pid)) {
+      try {
+        child.kill('SIGKILL');
+      } catch {
+      }
+      await waitForExit(child.pid, 1000);
+    }
+  }
+  process.exit(signal ? 0 : 0);
+}
 
 async function stopExistingProjectServer(targetPort) {
   const pids = await listeningPids(targetPort);
@@ -44,7 +73,7 @@ async function stopExistingProjectServer(targetPort) {
     if (pid === process.pid) continue;
     await stopProcess(pid);
   }
-  await waitForPortFree(targetPort, 3000);
+  await waitForPortFree(targetPort, 5000);
 }
 
 async function listeningPids(targetPort) {
