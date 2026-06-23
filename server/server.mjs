@@ -2496,6 +2496,7 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, run);
       return;
     }
+    validateRunMaterialSnapshotsReady(run);
     const startMode = ['resume', 'restart'].includes(String(body.mode || '').trim()) ? String(body.mode).trim() : 'start';
     const targetUserId = String(currentUser.id || '').trim();
     const targetUser = currentUser;
@@ -2821,6 +2822,25 @@ function validateSkillSnapshotForRun(body = {}, { requireSnapshot = false } = {}
   if (!primarySkillPath) throw new HttpError(400, '请先选择要执行的 Skill 或 md。');
   if (requireSnapshot && !isUsableSkillContent(primarySkillContent) && !snapshots.some(item => isUsableSkillContent(item.content))) {
     throw new HttpError(400, '未读取到可执行的 Skill / md 内容快照，不能创建执行。请重新选择 Git 仓库里的 md / Skill。');
+  }
+}
+
+function validateRunMaterialSnapshotsReady(run = {}) {
+  if (run.sourceType === 'bug' || run.workflow === 'bug-fix') return;
+  const hints = Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : [];
+  const snapshots = normalizeRunMaterialSnapshotsForRequest(run.selectedMaterialSnapshots);
+  const hasPrimarySnapshot = isUsableSkillContent(run.primarySkillContent) || snapshots.some(item => isUsableSkillContent(item.content));
+  if ((run.executionMode === 'single-skill' || run.workflow === 'art-single-skill' || run.workflow === 'custom-workflow' || hints.length) && !hasPrimarySnapshot) {
+    throw new HttpError(409, '执行方式绑定的 md / Skill 内容快照缺失，不能启动。请重新选择模板或重新执行，让平台重新读取真实 Skill / md。');
+  }
+  if (run.workflow === 'custom-workflow' && hints.length) {
+    const snapshotKeys = new Set(snapshots.map(item => normalizeGitPath(item.path || item.sourceValue || '')).filter(Boolean));
+    const missing = hints
+      .map(item => normalizeGitPath(item))
+      .filter(item => item && !snapshotKeys.has(item));
+    if (missing.length) {
+      throw new HttpError(409, `自定义流程模板资料快照不完整，缺少：${missing.join('、')}。请重新执行，让平台重新读取模板里的真实 md / Skill。`);
+    }
   }
 }
 

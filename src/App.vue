@@ -18292,12 +18292,15 @@ export default {
       let selectedMaterialSnapshots = [];
       if (!this.isBugFixRun && materialHints.length) {
         try {
-          selectedMaterialSnapshots = await this.loadRunMaterialSnapshots(materialHints, projectId);
+          selectedMaterialSnapshots = await this.loadRunMaterialSnapshotsWithDependencies(materialHints, projectId);
         } catch (error) {
           ElMessage.error(this.readApiError(error) || error.message || 'Skill / md 内容读取失败，不能创建执行');
           return;
         }
-        if (selectedMaterialSnapshots.length !== materialHints.length) {
+        const missingMaterialHints = materialHints.filter(hint => !selectedMaterialSnapshots.some(snapshot => (
+          this.normalizeRunMaterialValue(snapshot.path || snapshot.sourceValue) === this.canonicalRunMaterialValue(hint, projectId)
+        )));
+        if (missingMaterialHints.length) {
           ElMessage.error('Skill / md 内容快照不完整，不能创建执行');
           return;
         }
@@ -19531,7 +19534,7 @@ export default {
       let content = '';
       if (skill?.inventoryKind === 'directory' || option?.kind === 'directory') {
         content = String(skill?.preview || `产物目录：${title}\n路径：${relativePath || key}`).trim();
-      } else if ((skill?.directoryProduct || skill?.skillPath) && skill?.preview) {
+      } else if ((skill?.directoryProduct || skill?.skillPath) && skill?.preview && option) {
         content = String(skill.preview || '').trim();
       } else if (projectId && relativePath) {
         const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/file-preview?file=${encodeURIComponent(relativePath)}`);
@@ -19560,6 +19563,83 @@ export default {
         snapshots.push(await this.loadRunMaterialSnapshot(value, projectId));
       }
       return snapshots;
+    },
+
+    async loadRunMaterialSnapshotsWithDependencies(values = [], projectId = this.runForm.projectId || this.selectedProjectId || this.projects[0]?.id || '') {
+      const snapshots = [];
+      const queue = this.normalizedRunMaterialHints(values);
+      const seen = new Set();
+      for (let index = 0; index < queue.length; index += 1) {
+        const value = queue[index];
+        const canonical = this.canonicalRunMaterialValue(value, projectId);
+        const key = this.normalizeRunMaterialValue(canonical || value);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        const snapshot = await this.loadRunMaterialSnapshot(key, projectId);
+        snapshots.push(snapshot);
+        for (const dependency of this.runMaterialDependenciesFromSnapshot(snapshot, projectId)) {
+          const dependencyKey = this.normalizeRunMaterialValue(dependency);
+          if (dependencyKey && !seen.has(dependencyKey) && !queue.includes(dependencyKey)) queue.push(dependencyKey);
+        }
+      }
+      return snapshots;
+    },
+
+    runMaterialDependenciesFromSnapshot(snapshot = {}, projectId = this.runForm.projectId || this.selectedProjectId || this.projects[0]?.id || '') {
+      const sourcePath = this.normalizeRunMaterialValue(snapshot.path || snapshot.sourceValue || '');
+      const sourceDir = sourcePath.includes('/') ? sourcePath.split('/').slice(0, -1).join('/') : '';
+      const candidates = [
+        ...this.runMaterialPathsFromText(snapshot.content),
+        ...this.knownRunMaterialDependencies(sourcePath, snapshot.content)
+      ];
+      const normalized = [];
+      for (const candidate of candidates) {
+        const expanded = this.expandRunMaterialDependencyPath(candidate, sourceDir);
+        const canonical = this.canonicalRunMaterialValue(expanded, projectId);
+        const key = this.normalizeRunMaterialValue(canonical || expanded);
+        if (key && key !== sourcePath && this.shouldIncludeRunMaterialDependency(key)) normalized.push(key);
+      }
+      return this.normalizedRunMaterialHints(normalized);
+    },
+
+    knownRunMaterialDependencies(pathValue = '', content = '') {
+      const text = `${pathValue}\n${content || ''}`;
+      const dependencies = [];
+      if (/ui-finalize/i.test(text) || /界面收尾/.test(text)) {
+        dependencies.push(
+          'skills/figma-layer-cleanup/SKILL.md',
+          'skills/平台交互规范skill/SKILL.md',
+          'skills/平台交互规范skill/references/平台交互规范2.0.md',
+          'skills/界面架构与命名规范.md'
+        );
+      }
+      if (/平台交互规范skill|platform-interaction-spec/i.test(text)) {
+        dependencies.push('skills/平台交互规范skill/references/平台交互规范2.0.md');
+      }
+      return dependencies;
+    },
+
+    expandRunMaterialDependencyPath(value = '', sourceDir = '') {
+      let text = this.normalizeRunMaterialValue(value)
+        .replace(/^.*?UIdesign\/skills\//i, 'skills/')
+        .replace(/^.*?UIdesign\\skills\\/i, 'skills/')
+        .replace(/^.*?\.codex\/skills\//i, 'skills/');
+      if (!text) return '';
+      text = text.replace(/^\[+/, '').replace(/\]+$/, '');
+      if (/^platform-interaction-spec\/SKILL\.md$/i.test(text)) text = 'skills/平台交互规范skill/SKILL.md';
+      if (/^(?:skills\/)?platform-interaction-spec\/SKILL\.md$/i.test(text)) text = 'skills/平台交互规范skill/SKILL.md';
+      if (/^(?:skills\/)?命名规范MD\.md$/i.test(text)) text = 'skills/界面架构与命名规范.md';
+      if (/^references\//i.test(text) && sourceDir) text = `${sourceDir}/${text}`;
+      if (!/^skills\//i.test(text) && /^(figma-layer-cleanup|平台交互规范skill|ui-finalize|弹窗缩放清洗规则)\/SKILL\.md$/i.test(text)) {
+        text = `skills/${text}`;
+      }
+      return this.normalizeRunMaterialValue(text);
+    },
+
+    shouldIncludeRunMaterialDependency(value = '') {
+      const text = this.normalizeRunMaterialValue(value);
+      if (!text || text === 'SKILL.md' || text === 'README.md') return false;
+      return /^skills\/.+\.(?:md|markdown)$/i.test(text);
     },
 
     runMaterialDisplayName(value = '') {
@@ -21820,6 +21900,12 @@ export default {
       if (!sourceRun || this.startConfirm.submitting) return;
       this.startConfirm.submitting = true;
       try {
+        const materialHints = this.normalizedRunMaterialHints(sourceRun.selectedMaterialHints?.length
+          ? sourceRun.selectedMaterialHints
+          : this.runMaterialPathsFromText(sourceRun.showdocHints || sourceRun.primarySkillPath || sourceRun.stage || ''));
+        const selectedMaterialSnapshots = materialHints.length
+          ? await this.loadRunMaterialSnapshotsWithDependencies(materialHints, sourceRun.projectId || this.selectedProjectId || '')
+          : sourceRun.selectedMaterialSnapshots || [];
         const retryRun = await this.api(`/api/runs/${encodeURIComponent(sourceRun.id)}/retry`, {
           method: 'POST',
           body: JSON.stringify({
@@ -21834,10 +21920,10 @@ export default {
             executionMode: sourceRun.executionMode || '',
             sourceType: sourceRun.sourceType || '',
             primarySkillPath: sourceRun.primarySkillPath || '',
-            primarySkillTitle: sourceRun.primarySkillTitle || '',
-            primarySkillContent: sourceRun.primarySkillContent || '',
-            selectedMaterialHints: sourceRun.selectedMaterialHints || [],
-            selectedMaterialSnapshots: sourceRun.selectedMaterialSnapshots || [],
+            primarySkillTitle: selectedMaterialSnapshots[0]?.title || sourceRun.primarySkillTitle || '',
+            primarySkillContent: selectedMaterialSnapshots[0]?.content || sourceRun.primarySkillContent || '',
+            selectedMaterialHints: materialHints.length ? materialHints : sourceRun.selectedMaterialHints || [],
+            selectedMaterialSnapshots,
             customWorkflowId: sourceRun.customWorkflowId || '',
             customWorkflowName: sourceRun.customWorkflowName || '',
             customStages: sourceRun.stages || [],

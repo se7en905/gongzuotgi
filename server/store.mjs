@@ -1540,7 +1540,7 @@ export async function queueRunForLocalWorker(id, input = {}) {
   const index = runs.findIndex(item => item.id === id);
   if (index === -1) return null;
   const now = new Date().toISOString();
-  const existing = runs[index];
+  const existing = await ensureRunMaterialSnapshotsForQueue(runs[index]);
   const queuedForUserId = cleanString(input.queuedForUserId || input.userId || existing.queuedForUserId || existing.assignedToUserId || existing.ownerUserId);
   const queuedForName = cleanString(input.queuedForName || input.userName || existing.queuedForName || existing.assignedToName || existing.developer);
   const materialSnapshot = await readRunMaterialSnapshot(existing);
@@ -1581,6 +1581,130 @@ export async function queueRunForLocalWorker(id, input = {}) {
   };
   await writeJson(paths.runs, runs);
   return hydrateRunStages(runs[index]);
+}
+
+async function ensureRunMaterialSnapshotsForQueue(run = {}) {
+  if (run.sourceType === 'bug' || run.workflow === 'bug-fix') return run;
+  const hints = normalizeLineList(run.selectedMaterialHints);
+  if (!hints.length && normalizeRunMaterialSnapshots(run.selectedMaterialSnapshots).length) return run;
+  const projects = await readJson(paths.projects, []);
+  const project = projects.find(item => cleanString(item.id) === cleanString(run.projectId));
+  const rootPath = cleanString(project?.rootPath);
+  if (!rootPath) return run;
+  const existingSnapshots = normalizeRunMaterialSnapshots(run.selectedMaterialSnapshots);
+  const snapshots = [...existingSnapshots];
+  const snapshotKeys = new Set(snapshots.map(item => normalizeMaterialSnapshotPath(item.path || item.sourceValue)).filter(Boolean));
+  const queue = hints.length ? hints : normalizeLineList([run.primarySkillPath, run.stage, run.showdocHints]);
+  for (let index = 0; index < queue.length; index += 1) {
+    const rawPath = queue[index];
+    const relativePath = normalizeKnownMaterialDependencyPath(rawPath);
+    if (!relativePath || snapshotKeys.has(relativePath)) continue;
+    const snapshot = await readProjectMaterialSnapshot(rootPath, relativePath);
+    if (!snapshot) continue;
+    snapshots.push(snapshot);
+    snapshotKeys.add(relativePath);
+    for (const dependency of materialDependenciesFromContent(relativePath, snapshot.content)) {
+      const dependencyPath = normalizeKnownMaterialDependencyPath(dependency, path.posix.dirname(relativePath));
+      if (dependencyPath && !snapshotKeys.has(dependencyPath) && !queue.includes(dependencyPath)) queue.push(dependencyPath);
+    }
+  }
+  if (!snapshots.length || snapshots.length === existingSnapshots.length) return run;
+  const primary = snapshots[0] || {};
+  return {
+    ...run,
+    selectedMaterialSnapshots: snapshots,
+    primarySkillPath: run.primarySkillPath || primary.path || '',
+    primarySkillTitle: run.primarySkillTitle || primary.title || '',
+    primarySkillContent: run.primarySkillContent || primary.content || '',
+    showdocHints: run.showdocHints || hints.join('\n')
+  };
+}
+
+async function readProjectMaterialSnapshot(rootPath = '', relativePath = '') {
+  const safePath = normalizeMaterialSnapshotPath(relativePath);
+  if (!safePath) return null;
+  const abs = path.resolve(rootPath, safePath);
+  const root = path.resolve(rootPath);
+  if (!abs.startsWith(`${root}${path.sep}`) && abs !== root) return null;
+  try {
+    const stat = await fs.stat(abs);
+    if (!stat.isFile()) return null;
+    const content = String(await fs.readFile(abs, 'utf8')).trim();
+    if (!content) return null;
+    return {
+      path: safePath,
+      sourceValue: safePath,
+      title: materialTitleFromPath(safePath),
+      kind: /(?:^|\/)SKILL\.md$/i.test(safePath) ? 'skill' : 'document',
+      content: content.slice(0, 60000)
+    };
+  } catch {
+    return null;
+  }
+}
+
+function materialDependenciesFromContent(relativePath = '', content = '') {
+  const sourceDir = path.posix.dirname(normalizeMaterialSnapshotPath(relativePath));
+  const text = String(content || '');
+  const dependencies = [];
+  if (/ui-finalize/i.test(relativePath) || /界面收尾/.test(text)) {
+    dependencies.push(
+      'skills/figma-layer-cleanup/SKILL.md',
+      'skills/平台交互规范skill/SKILL.md',
+      'skills/平台交互规范skill/references/平台交互规范2.0.md',
+      'skills/界面架构与命名规范.md'
+    );
+  }
+  if (/平台交互规范skill|platform-interaction-spec/i.test(text)) {
+    dependencies.push('skills/平台交互规范skill/references/平台交互规范2.0.md');
+  }
+  const pattern = /(?:^|[\s"'`：:，,。；;（(【\[])([^"'`，,。；;）)\]】\s]+(?:SKILL\.md|README\.md|\.md|\.markdown))/gi;
+  let match = pattern.exec(text);
+  while (match) {
+    const dependency = normalizeKnownMaterialDependencyPath(match[1], sourceDir);
+    if (dependency && shouldIncludeMaterialDependency(dependency)) dependencies.push(dependency);
+    match = pattern.exec(text);
+  }
+  return normalizeLineList(dependencies);
+}
+
+function shouldIncludeMaterialDependency(relativePath = '') {
+  const text = normalizeMaterialSnapshotPath(relativePath);
+  if (!text || text === 'SKILL.md' || text === 'README.md') return false;
+  return /^skills\/.+\.(?:md|markdown)$/i.test(text);
+}
+
+function normalizeKnownMaterialDependencyPath(value = '', sourceDir = '') {
+  let text = normalizeMaterialSnapshotPath(value)
+    .replace(/^.*?UIdesign\/skills\//i, 'skills/')
+    .replace(/^.*?\.codex\/skills\//i, 'skills/');
+  if (!text) return '';
+  text = text.replace(/^\[+/, '').replace(/\]+$/, '');
+  if (/^(?:skills\/)?platform-interaction-spec\/SKILL\.md$/i.test(text)) text = 'skills/平台交互规范skill/SKILL.md';
+  if (/^(?:skills\/)?命名规范MD\.md$/i.test(text)) text = 'skills/界面架构与命名规范.md';
+  if (/^references\//i.test(text) && sourceDir) text = `${sourceDir}/${text}`;
+  if (!/^skills\//i.test(text) && /^(figma-layer-cleanup|平台交互规范skill|ui-finalize|弹窗缩放清洗规则)\/SKILL\.md$/i.test(text)) {
+    text = `skills/${text}`;
+  }
+  return normalizeMaterialSnapshotPath(text);
+}
+
+function normalizeMaterialSnapshotPath(value = '') {
+  const text = cleanString(value)
+    .replace(/\\/g, '/')
+    .replace(/[?#].*$/, '')
+    .replace(/^\/+/, '');
+  if (!text || text.includes('\0')) return '';
+  const normalized = path.posix.normalize(text);
+  if (!normalized || normalized === '.' || normalized === '..' || normalized.startsWith('../') || path.posix.isAbsolute(normalized)) return '';
+  return normalized;
+}
+
+function materialTitleFromPath(relativePath = '') {
+  const parts = normalizeMaterialSnapshotPath(relativePath).split('/').filter(Boolean);
+  const fileName = parts.at(-1) || '';
+  if (/^(SKILL|README)\.md$/i.test(fileName) && parts.length > 1) return parts.at(-2) || fileName;
+  return fileName.replace(/\.(?:md|markdown)$/i, '') || fileName || relativePath;
 }
 
 async function readRunMaterialSnapshot(run = {}) {

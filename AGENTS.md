@@ -149,6 +149,9 @@
   - 执行方式、单 `skill/md`、自定义流程和已保存模板的可执行值必须统一保存为扫描清单中的真实相对路径，例如 `skills/reverse-ui-prompt/SKILL.md` 或 `skills/界面架构与命名规范.md`；模板名称、阶段名称、`skillId`、slug、`custom-stage`、`skills-md`、文件夹展示名和胶囊文案只能用于展示，不得作为读取文件的最终路径。
   - 自定义流程模板阶段如果历史数据里同时存在 `description` 内真实路径和 `skillId` / `artifactDir` 占位值，创建执行和回填模板时必须优先解析 `description` 中的真实 md / SKILL 路径，再用扫描清单规范化；不得让错误拼写、展示名或占位目录覆盖真实路径。
   - 创建执行前必须为每个选中的 md / Skill 读取并保存 `selectedMaterialSnapshots`；Worker 启动前的自定义流程预检必须优先校验执行记录里的真实 `selectedMaterialHints` 和快照，不得只按 `.agent-hub/skills/<skillId>/SKILL.md` 判断并误报阻塞。
+  - 使用已保存模板创建、继续执行或重新执行时，必须真实使用模板 stages 里保存的 md / Skill 路径和内容快照；不得只使用模板名称、胶囊展示名、模板说明、`skillId`、`artifactDir` 或阶段名代替真实文件。
+  - 复合 Skill 如果会串联其它 md / Skill 或 `references/` 规范文件，例如 `ui-finalize` 依赖 `figma-layer-cleanup`、`平台交互规范skill`、`平台交互规范2.0.md` 和命名规范，平台必须在创建或排队执行前把这些依赖作为 `selectedMaterialSnapshots` 一并下发到组员 Worker 工作区；不得要求组员机器本地存在负责人电脑路径或历史 Windows 路径。
+  - 模板或复合 Skill 依赖路径缺失、别名无法映射到真实文件、文件读取失败时，前端和服务端必须明确提示“模板配置错误 / 执行方式绑定的 md / Skill 不可用 / 模板资料快照缺失”；不得显示成本机 Worker 异常、回传异常或组员机器问题。
   - 如果执行方式绑定的 md / Skill 路径确实不存在或无法从扫描清单唯一匹配，前端必须提示明确的“执行方式绑定的 md / Skill 不可用 / 文件读取失败”，服务端必须标记为模板配置错误或预检阻塞；不得把这类配置错误显示成本机 Worker 异常、回传异常或无日志执行失败。
   - 新建美术执行弹窗里模板管理保存的全部模板必须直接展示在 `美术执行方式` 选项区；新建多个模板时，多个模板都必须可选，不得按当前项目过滤导致部分模板不可见。
   - 模板管理里新增、删除或修改模板后，`美术执行方式` 选项区里的模板名称必须实时响应最新模板库；不得需要刷新页面才看到模板变化。
