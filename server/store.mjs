@@ -1501,9 +1501,16 @@ async function enrichRunWithImageGenerationEvidence(run = null) {
     ...(Array.isArray(run.resultSummary?.generatedArtifacts) ? run.resultSummary.generatedArtifacts : []),
     ...(Array.isArray(run.workerResult?.generatedArtifacts) ? run.workerResult.generatedArtifacts : [])
   ]);
+  const hasGeneratedImage = hasGeneratedImageArtifacts(generatedArtifacts);
   const imageEvidence = await readRunImageGenerationEvidenceText(run);
   const providerResult = evaluateImageProviderLogEvidence(imageEvidence, generatedArtifacts, run);
   if (providerResult.blocked) {
+    if (shouldAcceptLegacyGeneratedImageRun(run, providerResult, generatedArtifacts)) {
+      return reconcileLegacyGeneratedImageRun(run, generatedArtifacts, {
+        originalBlockerReason: providerResult.reason,
+        imageEvidenceText: imageEvidence
+      });
+    }
     return blockRunForImageGenerationEvidence(run, providerResult.reason, {
       generatedArtifacts,
       disallowGeneratedArtifacts: providerResult.disallowGeneratedArtifacts,
@@ -1511,7 +1518,6 @@ async function enrichRunWithImageGenerationEvidence(run = null) {
     });
   }
   const requiresLocalImageArtifact = !cleanString(run.figmaLinks);
-  const hasGeneratedImage = generatedArtifacts.some(item => !item?.uploadFailed && cleanString(item?.relativePath || item?.path));
   const statusText = `${cleanString(run.status)} ${cleanString(run.workerStatus)}`.toLowerCase();
   if (requiresLocalImageArtifact && /completed|done|success|passed/.test(statusText) && !hasGeneratedImage) {
     return blockRunForImageGenerationEvidence(run, '本次是纯生图且未填写 Figma 链接，但执行结束后未检测到可下载的生成图片产物；不能按本机已完成展示。', {
@@ -1642,6 +1648,83 @@ function hasPositiveFallbackImageEvidence(text = '') {
 
 function normalizeImageGenerationProviderMode(value = '') {
   return cleanString(value) === 'fallback' ? 'fallback' : 'image2';
+}
+
+function hasExplicitImageGenerationProviderMode(run = {}) {
+  if (!Object.prototype.hasOwnProperty.call(run || {}, 'imageGenerationProviderMode')) return false;
+  return /^(?:image2|fallback)$/.test(cleanString(run.imageGenerationProviderMode));
+}
+
+function hasGeneratedImageArtifacts(generatedArtifacts = []) {
+  return (Array.isArray(generatedArtifacts) ? generatedArtifacts : [])
+    .some(item => !item?.uploadFailed && cleanString(item?.relativePath || item?.path));
+}
+
+function shouldAcceptLegacyGeneratedImageRun(run = {}, providerResult = {}, generatedArtifacts = []) {
+  if (hasExplicitImageGenerationProviderMode(run)) return false;
+  if (!hasGeneratedImageArtifacts(generatedArtifacts)) return false;
+  return providerResult?.blocked === true && /(?:Image2|GPT Image 2|image2|gpt[-_\s]?image[-_\s]?2)/i.test(providerResult.reason || '');
+}
+
+function reconcileLegacyGeneratedImageRun(run = {}, generatedArtifacts = [], options = {}) {
+  const now = new Date().toISOString();
+  const existingSummary = run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {};
+  const existingWorkerResult = run.workerResult && typeof run.workerResult === 'object' ? run.workerResult : {};
+  const finishedAt = cleanString(run.finishedAt || run.completedAt || run.updatedAt || now);
+  const startedAt = cleanString(run.startedAt || run.claimedAt || run.queuedAt || run.createdAt);
+  const durationMs = normalizeDurationMs(run.durationMs, startedAt, finishedAt, run.durationMs);
+  const artifactPaths = generatedArtifacts.map(item => cleanString(item.relativePath || item.path)).filter(Boolean);
+  const stages = Array.isArray(run.stages)
+    ? run.stages.map(stage => {
+      const status = cleanString(stage.status).toLowerCase();
+      if (!/blocked/.test(status)) return stage;
+      return {
+        ...stage,
+        status: 'completed',
+        finishedAt: stage.finishedAt || finishedAt,
+        durationMs: normalizeDurationMs(stage.durationMs, stage.startedAt || startedAt, stage.finishedAt || finishedAt, stage.durationMs)
+      };
+    })
+    : run.stages;
+  return {
+    ...run,
+    status: 'completed',
+    workerStatus: 'completed',
+    currentStage: '生成图片已归档',
+    finishedAt,
+    ...(durationMs > 0 ? { durationMs } : {}),
+    generatedArtifacts,
+    blocker: {
+      ...(run.blocker && typeof run.blocker === 'object' ? run.blocker : {}),
+      reason: '',
+      legacyImageProviderReason: options.originalBlockerReason || ''
+    },
+    resultSummary: {
+      ...existingSummary,
+      status: 'conditional_pass',
+      statusText: 'conditional_pass',
+      summary: '历史生图执行已检测到生成图片产物，按已产出结果展示；请以产物区图片为准复核和下载。',
+      blockerReason: '',
+      needsHumanReview: true,
+      generatedArtifacts,
+      artifacts: [...new Set([
+        ...(Array.isArray(existingSummary.artifacts) ? existingSummary.artifacts : []),
+        ...artifactPaths
+      ])],
+      generatedArtifactPolicy: 'legacy-generated-image-artifacts-accepted',
+      originalBlockerReason: options.originalBlockerReason || '',
+      nextStep: '查看生成图片产物，按需要人工复核；后续新执行按创建时选择的生图调用方式严格判定。',
+      parsedAt: now
+    },
+    workerResult: {
+      ...existingWorkerResult,
+      generatedArtifacts
+    },
+    stages,
+    localWorkerStale: false,
+    localWorkerStaleDetectedAt: '',
+    updatedAt: now
+  };
 }
 
 function blockRunForImageGenerationEvidence(run = {}, reason = '', options = {}) {
