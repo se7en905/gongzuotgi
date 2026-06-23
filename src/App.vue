@@ -5419,7 +5419,7 @@ export default {
       }
       if (view === 'operation-logs') {
         if (!this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
-        if (!this.operationLogs.length && !this.loading.operationLogs) this.refreshOperationLogs().catch(() => {});
+        if ((!this.operationLogs.length || dirty) && !this.loading.operationLogs) this.refreshOperationLogs().catch(() => {});
       }
       if (view === 'maintenance-center') {
         if (this.isPlatformAdmin && !this.loading.maintenance) this.refreshMaintenanceOverview().catch(() => {});
@@ -5651,7 +5651,44 @@ export default {
         || this.isArtDeptPerson(bug.zentao?.resolvedByName);
     },
 
+    browserTabAuthSessionKey() {
+      return 'awp-browser-tab-auth-session';
+    },
+
+    hasBrowserTabAuthSession() {
+      return sessionStorage.getItem(this.browserTabAuthSessionKey()) === 'active';
+    },
+
+    markBrowserTabAuthSession() {
+      sessionStorage.setItem(this.browserTabAuthSessionKey(), 'active');
+    },
+
+    clearBrowserTabAuthSession() {
+      sessionStorage.removeItem(this.browserTabAuthSessionKey());
+    },
+
+    ensureBrowserTabAuthSession() {
+      if (window.location.pathname === '/login') return;
+      if (!this.hasBrowserTabAuthSession()) this.clearWorkbenchSessionCookie();
+    },
+
+    clearWorkbenchSessionCookie() {
+      document.cookie = 'awp_session=; Path=/; Max-Age=0; SameSite=Lax';
+    },
+
+    async expireBrowserAuthSession() {
+      await this.api('/api/auth/logout', { method: 'POST' }, { allowUnauthorized: true }).catch(() => {});
+      this.clearBrowserTabAuthSession();
+      this.clearWorkbenchSessionCookie();
+    },
+
     async bootstrapAuth() {
+      if (!this.hasBrowserTabAuthSession()) {
+        await this.expireBrowserAuthSession();
+        this.authChecked = true;
+        if (window.location.pathname !== '/login') this.pushRoute('/login');
+        return;
+      }
       try {
         const result = await this.api('/api/auth/me', {}, { allowUnauthorized: true });
         this.currentUser = result.user || null;
@@ -5681,6 +5718,7 @@ export default {
           method: 'POST',
           body: JSON.stringify(this.loginForm)
         }, { allowUnauthorized: true });
+        this.markBrowserTabAuthSession();
         this.currentUser = result.user;
         this.loginForm.password = '';
         this.forcePasswordDialog = this.currentUser?.mustChangePassword === true;
@@ -5699,6 +5737,7 @@ export default {
 
     async logout() {
       await this.api('/api/auth/logout', { method: 'POST' }, { allowUnauthorized: true }).catch(() => { });
+      this.clearBrowserTabAuthSession();
       this.stopTaskBriefRealtimeSync();
       this.stopPlatformEventSync();
       this.currentUser = null;
@@ -6917,6 +6956,15 @@ export default {
         this.schedulePlatformRefresh('access-control-users', async () => {
           await this.refreshUsers();
         }, 400);
+      }
+      if (type === 'operation-logs.changed' && this.can('api.operationLogs.read')) {
+        if (this.activeView !== 'operation-logs') {
+          this.markViewDataDirty('operation-logs', 'operationLogs');
+          return;
+        }
+        this.schedulePlatformRefresh('operation-logs', async () => {
+          await this.refreshOperationLogs();
+        }, 300);
       }
       if (type === 'ai-member-score-snapshot.changed' && this.can('api.aiMembers.score.read')) {
         if (this.activeView !== 'ai-members') {
@@ -13667,6 +13715,7 @@ export default {
             assignedToName: assignee.displayName || assignee.username || this.defaultRunDeveloperName,
             developer: assignee.displayName || assignee.username || this.defaultRunDeveloperName,
             requirement,
+            codexRequest: this.defaultRunCodexRequest('direct-skill'),
             sourceType: 'direct-skill',
             executionMode: 'direct-skill'
           })
@@ -15845,8 +15894,34 @@ export default {
     },
 
     recordWorkbenchViewLog(view = '', route = '') {
-      void view;
-      void route;
+      if (!this.currentUser || !view || view === 'operation-logs') return;
+      const now = Date.now();
+      const key = `${view}:${route}`;
+      if (this._lastWorkbenchViewLogKey === key && now - Number(this._lastWorkbenchViewLogAt || 0) < 3000) return;
+      this._lastWorkbenchViewLogKey = key;
+      this._lastWorkbenchViewLogAt = now;
+      const viewName = {
+        tasks: '任务中心',
+        'skill-assets': 'AI 产物清单',
+        'skill-inventory': 'AI 产物清单',
+        'skii-repository': 'AI 产物清单',
+        'ai-members': 'AI部门看板',
+        'codex-config': 'Codex 配置',
+        runs: '美术执行台',
+        'agent-workers': '本机执行状态',
+        'ai-archive': 'AI档案',
+        'user-access': '用户管理',
+        'role-management': '角色管理',
+        'maintenance-center': '维护中心'
+      }[view] || view;
+      this.api('/api/operation-logs/view', {
+        method: 'POST',
+        body: JSON.stringify({
+          view,
+          viewName,
+          path: route
+        })
+      }).catch(() => {});
     },
 
     goProjectList() {
@@ -18333,6 +18408,7 @@ export default {
             ? 'bug'
             : 'standalone',
         createTaskForRun: Boolean(this.runForm.taskId),
+        codexRequest: this.defaultRunCodexRequest('run-create'),
         workflow
       };
       const run = await this.api('/api/runs', {
@@ -19682,16 +19758,30 @@ export default {
         ? names.join('、')
         : paths.map(item => this.runMaterialDisplayName(item) || item).filter(Boolean).join('、');
       const pathText = paths.length ? paths.join('、') : '当前选择的 md / Skill';
+      const figmaText = String(figmaLinks || '').trim();
+      const runContext = { requirement: '', title: materialText, primarySkillPath: paths.join('\n'), selectedMaterialHints: paths, figmaLinks: figmaText };
+      const isImagePlacement = Boolean(figmaText && this.runFigmaTargetIsImagePlacement(runContext));
       return [
         `使用${materialText ? `「${materialText}」` : '当前选择的 md / Skill'}。`,
         `执行资料路径：${pathText}。`,
-        String(figmaLinks || '').trim()
-          ? `Figma 链接：${String(figmaLinks || '').trim()}。`
+        figmaText
+          ? `Figma 链接：${figmaText}。`
           : 'Figma 链接：未填写；本次按当前 md / Skill 和执行要求直接产出图片、本地文件、报告或其它结果。',
-        String(figmaLinks || '').trim()
-          ? `按该 md / Skill 的原始要求处理本次 Figma 目标；${writeMode === 'create-page' ? '如技能要求新建内容，则可新建页面或 Frame。' : '如技能要求修改内容，则优先处理 Figma 链接中的目标节点。'}`
+        figmaText && isImagePlacement
+          ? '按该 md / Skill 的原始要求生成成品图，并将最终图片按比例放置或替换到该 Figma 目标；默认保留位图成品效果，不拉伸变形，不转为可编辑图层。'
+          : figmaText
+            ? `按该 md / Skill 的原始要求处理本次 Figma 目标；${writeMode === 'create-page' ? '如技能要求新建内容，则可新建页面或 Frame。' : '如技能要求修改内容，则优先处理 Figma 链接中的目标节点。'}`
           : '如果该 md / Skill 本身要求生成图片、创建本地产物或输出说明，按原始要求完整执行，不强制 Figma 写入。'
       ].join('\n');
+    },
+
+    defaultRunCodexRequest(source = 'run-create') {
+      return {
+        model: String(this.codexConfigForm?.model || this.runChatForm?.model || 'gpt-5.5').trim(),
+        reasoningEffort: String(this.runChatForm?.reasoningEffort || 'xhigh').trim(),
+        requestStandard: '按本机 Codex 客户端直接引用当前 md / Skill 的质量执行；工作台只负责派单、回传日志和记录结果，不额外降低或替代 Skill 要求。',
+        source
+      };
     },
 
     ensureFigmaTargetInRunRequirement({ requirement = '', materialNames = [], materialPaths = [], figmaLinks = '', writeMode = 'target-node' } = {}) {
@@ -19704,11 +19794,21 @@ export default {
       const materialText = names.length
         ? names.join('、')
         : paths.map(item => this.runMaterialDisplayName(item) || item).filter(Boolean).join('、');
+      const runContext = {
+        requirement: text,
+        title: materialText,
+        primarySkillPath: paths.join('\n'),
+        selectedMaterialHints: paths,
+        figmaLinks: figmaText
+      };
+      const targetInstruction = this.runFigmaTargetIsImagePlacement(runContext)
+        ? '该 Figma 链接表示生成成品图的放置或替换目标；默认保留位图成品效果，按比例展示，不拉伸变形，不转为可编辑图层。'
+        : `使用${materialText ? `「${materialText}」` : '当前选择的 md / Skill'}处理该 Figma 目标。`;
       return [
         text,
         '',
         `Figma 链接：${figmaText}`,
-        `使用${materialText ? `「${materialText}」` : '当前选择的 md / Skill'}处理该 Figma 目标。`
+        targetInstruction
       ].join('\n');
     },
 
@@ -19956,8 +20056,48 @@ export default {
     },
 
     runRequiresFigmaWriteEvidence(run = {}) {
-      return Boolean(String(run?.figmaLinks || '').trim())
-        && (this.isLocalWorkerRun(run) || this.isSkillOrMdFocusedRun(run) || run.executionMode === 'single-skill' || run.workflow === 'art-single-skill' || run.workflow === 'custom-workflow');
+      if (!String(run?.figmaLinks || '').trim()) return false;
+      if (this.runExplicitlySkipsFigmaWrite(run)) return false;
+      if (!(this.isLocalWorkerRun(run) || this.isSkillOrMdFocusedRun(run) || run.executionMode === 'single-skill' || run.workflow === 'art-single-skill' || run.workflow === 'custom-workflow')) return false;
+      if (this.runFigmaTargetIsImagePlacement(run)) return true;
+      const text = [
+        run.requirement,
+        run.title,
+        run.sourceTitle,
+        run.customWorkflowName,
+        run.figmaWriteMode
+      ].filter(Boolean).join('\n');
+      if (!String(text || '').trim()) return false;
+      if (/报告|说明|总结|提示词|prompt|参考|分析|复盘/i.test(text)) return false;
+      return /写入|修改|改名|重命名|清理|整理|创建|新建|更新|覆盖|替换|应用|落到|同步到|放置|插入|填充|上传|还原|复刻|生成.*(?:Figma|Frame|节点|图层)|Figma.*(?:写入|修改|创建|新建|更新|节点|图层|Frame|页面|放置|替换|填充)|use_figma|upload_assets|createdNodeIds|mutatedNodeIds/i.test(text);
+    },
+
+    runFigmaTargetIsImagePlacement(run = {}) {
+      return Boolean(String(run?.figmaLinks || '').trim() && this.isImageGenerationRun(run) && !this.runExplicitlySkipsFigmaWrite(run));
+    },
+
+    isImageGenerationRun(run = {}) {
+      const text = [
+        run.requirement,
+        run.title,
+        run.sourceTitle,
+        run.customWorkflowName,
+        run.primarySkillPath,
+        run.stage,
+        ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : [])
+      ].filter(Boolean).join('\n');
+      return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|gpt[-_\s]?image|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)/i.test(text);
+    },
+
+    runExplicitlySkipsFigmaWrite(run = {}) {
+      const text = [
+        run.requirement,
+        run.title,
+        run.sourceTitle,
+        run.customWorkflowName,
+        run.figmaWriteMode
+      ].filter(Boolean).join('\n');
+      return /不写入\s*Figma|无需写入\s*Figma|不需要写入\s*Figma|不要写入\s*Figma|不放(?:入|到)\s*Figma|无需放(?:入|到)\s*Figma|不要替换\s*Figma|仅(?:生成|输出|保存).{0,20}(?:本地|文件|产物)|只(?:生成|输出|保存).{0,20}(?:本地|文件|产物)/i.test(text);
     },
 
     runHasFinishedAsSuccess(run = {}) {
@@ -19977,7 +20117,7 @@ export default {
     isFigmaWriteEvidenceText(value = '') {
       const text = String(value || '').trim();
       if (!text) return false;
-      return /createdNodeIds|mutatedNodeIds|figmaWriteResult.*written["']?\s*[:=]\s*true|use_figma\s+写入成功|日志识别到\s*(?:createdNodeIds|mutatedNodeIds)/i.test(text);
+      return /createdNodeIds|mutatedNodeIds|figmaWriteResult.*written["']?\s*[:=]\s*true|use_figma\s+写入成功|日志识别到\s*(?:createdNodeIds|mutatedNodeIds)|(?:图片|成品图|位图).{0,80}(?:放置|替换|填充|插入).{0,80}(?:成功|完成|已)|(?:放置|替换|填充|插入).{0,80}(?:Figma|目标|节点).{0,80}(?:成功|完成|已)/i.test(text);
     },
 
     hasFigmaPostWriteVerification(run = {}) {
@@ -20410,8 +20550,8 @@ export default {
       if (run.figmaLinks) rows.push({ label: 'Figma 数据', value: '已记录目标链接' });
       if (this.runRequiresFigmaWriteEvidence(run)) {
         rows.push({
-          label: 'Figma 写入',
-          value: this.hasFigmaWriteEvidence(run) ? '已检测到节点写入证据' : '未检测到节点写入证据'
+          label: 'Figma 结果落点',
+          value: this.hasFigmaWriteEvidence(run) ? '已检测到放置 / 替换 / 写入证据' : '未检测到放置 / 替换 / 写入证据'
         });
         rows.push({
           label: '写入后验收',
@@ -20568,7 +20708,7 @@ export default {
       if (!this.runRequiresFigmaWriteEvidence(run)) return '';
       if (!this.hasFigmaWriteEvidence(run)) {
         if (!this.runHasFinishedAsSuccess(run) && this.effectiveResultStatus(run) !== 'failed') return '';
-        return '未检测到 Figma 写入证据。必须有 use_figma 返回 createdNodeIds 或 mutatedNodeIds 后，才能判定任务完成。';
+        return '未检测到 Figma 放置、替换或写入证据。必须有 createdNodeIds / mutatedNodeIds，或等价图片放置/替换工具证据后，才能判定任务完成。';
       }
       if (this.hasFigmaPostWriteVerification(run)) return '';
       const result = run.figmaWriteResult || {};

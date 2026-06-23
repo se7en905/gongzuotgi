@@ -37,13 +37,13 @@
       </div>
       <article class="markdown-report skill-preview-content" v-html="app.skillPreviewHtml || '<div class=&quot;empty-block&quot;>正在读取技能内容...</div>'"></article>
     </div>
-    <ElDialog v-model="app.directSkillRunDialog.visible" title="直接执行到 Figma" width="520px" class="app-dialog" append-to-body align-center>
+    <ElDialog v-model="app.directSkillRunDialog.visible" title="直接执行 Skill / md" width="520px" class="app-dialog" append-to-body align-center>
       <ElForm label-position="top" @submit.prevent>
         <ElFormItem label="执行产物">
           <ElInput :model-value="app.directSkillRunDialog.row?.title || app.directSkillRunDialog.row?.productDisplayName || app.directSkillRunDialog.row?.id || '-'" disabled />
         </ElFormItem>
-        <ElFormItem label="Figma 链接" class="is-required-field">
-          <ElInput v-model="app.directSkillRunDialog.figmaLinks" type="textarea" :rows="3" placeholder="粘贴带 node-id 的 Figma Frame 或节点链接" />
+        <ElFormItem label="Figma 链接">
+          <ElInput v-model="app.directSkillRunDialog.figmaLinks" type="textarea" :rows="3" placeholder="需要处理 Figma 时粘贴带 node-id 的 Frame 或节点链接；纯生图、本地产物可不填" />
         </ElFormItem>
         <ElFormItem label="写入方式">
           <ElSelect v-model="app.directSkillRunDialog.figmaWriteMode">
@@ -62,7 +62,7 @@
           </ElSelect>
         </ElFormItem>
         <ElFormItem label="补充要求">
-          <ElInput v-model="app.directSkillRunDialog.requirement" type="textarea" :rows="4" placeholder="补充 Figma 放置说明、状态范围或验收要求；不填则按该 Skill / md 默认规则执行。" />
+          <ElInput v-model="app.directSkillRunDialog.requirement" type="textarea" :rows="4" placeholder="像在本机 Codex 里引用该 Skill / md 后一样，直接说明要做什么。" />
         </ElFormItem>
       </ElForm>
       <template #footer>

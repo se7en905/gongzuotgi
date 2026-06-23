@@ -342,17 +342,19 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/auth/me') {
     if (expiredSession) {
+      const expiredUser = (await listPublicUsers().catch(() => []))
+        .find(user => String(user.id || '') === String(expiredSession.userId || '')) || null;
       await writeOperationLog(req, {
+        user: expiredUser || undefined,
         userId: expiredSession.userId || '',
-        username: 'expired-session',
-        displayName: '登录态已过期',
+        username: expiredUser?.username || 'expired-session',
+        displayName: expiredUser?.displayName || '登录态已过期',
         module: 'auth',
         action: 'SESSION_EXPIRED',
         actionName: '强制重新登录',
         targetType: 'session',
         targetId: expiredSession.id || '',
         targetName: expiredSession.userId || '',
-        result: 'fail',
         description: '登录态过期或长时间未活跃，已要求重新登录',
         metadata: {
           createdAt: expiredSession.createdAt || '',

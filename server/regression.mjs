@@ -237,9 +237,10 @@ function testOperationLogDeleteDoesNotMutateUsageCounters() {
 }
 
 function testOperationLogKeepsOnlyImportantActions() {
-  assert.equal(shouldKeepOperationLog({ module: 'auth', action: 'LOGIN', result: 'success' }), false, '成功登录不得写入操作日志');
-  assert.equal(shouldKeepOperationLog({ module: 'auth', action: 'LOGOUT', result: 'success' }), false, '退出登录不得写入操作日志');
-  assert.equal(shouldKeepOperationLog({ module: 'workbench', action: 'VIEW_PAGE', result: 'success' }), false, '切换页面不得写入操作日志');
+  assert.equal(shouldKeepOperationLog({ module: 'auth', action: 'LOGIN', result: 'success', user: { role: 'admin', username: 'admin' } }), false, '负责人成功登录不得写入操作日志');
+  assert.equal(shouldKeepOperationLog({ module: 'workbench', action: 'VIEW_PAGE', result: 'success', user: { username: 'zhangqw', displayName: '张倩文' } }), false, '负责人切换页面不得写入操作日志');
+  assert.equal(shouldKeepOperationLog({ module: 'auth', action: 'LOGIN', result: 'success', user: { role: 'developer', username: 'lanhj' } }), true, '组员成功登录必须写入操作日志');
+  assert.equal(shouldKeepOperationLog({ module: 'workbench', action: 'VIEW_PAGE', result: 'success', user: { role: 'developer', username: 'lanhj' } }), true, '组员切换页面必须写入操作日志');
   assert.equal(shouldKeepOperationLog({ module: 'auth', action: 'LOGIN', result: 'fail' }), true, '失败登录必须保留排障日志');
   assert.equal(shouldKeepOperationLog({ module: 'run', action: 'QUEUE_RUN_LOCAL_WORKER', result: 'success' }), true, '执行台启动执行必须保留操作日志');
   assert.equal(shouldKeepOperationLog({ module: 'run', action: 'DELETE_RUN_RANGE', result: 'success' }), true, '范围删除执行明细必须保留操作日志');

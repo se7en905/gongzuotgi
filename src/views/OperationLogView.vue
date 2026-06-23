@@ -55,8 +55,10 @@
           placeholder="不限"
         />
       </label>
-      <div class="operation-filter-actions">
+      <div class="operation-filter-reset">
         <ElButton plain @click="app.resetOperationLogFilters">重置</ElButton>
+      </div>
+      <div class="operation-filter-danger">
         <ElButton v-if="app.can('api.operationLogs.delete')" type="danger" plain :loading="app.loading.operationLogs" @click="app.deleteOperationLogsByCurrentFilters">删除当前范围</ElButton>
       </div>
     </div>
@@ -313,16 +315,17 @@ export default {
     flex: 1 1 260px;
   }
 
-  .operation-filter-actions {
+  .operation-filter-reset,
+  .operation-filter-danger {
     display: flex;
     flex: 0 0 auto;
     align-self: end;
     justify-content: flex-end;
-    gap: 8px;
     white-space: nowrap;
   }
 
-  .operation-filter-actions .el-button {
+  .operation-filter-reset .el-button,
+  .operation-filter-danger .el-button {
     margin-left: 0;
   }
 
@@ -449,7 +452,8 @@ export default {
       flex-wrap: wrap;
     }
 
-    .operation-filter-actions {
+    .operation-filter-reset,
+    .operation-filter-danger {
       justify-content: flex-start;
     }
   }

@@ -418,6 +418,7 @@ async function executeRun(run) {
   }
   const args = [
     'exec',
+    ...codexRunArgs(run),
     '--json',
     '--cd',
     cwd,
@@ -767,11 +768,15 @@ function buildPrompt(run = {}, workspace = {}) {
   const materialPaths = workspace.snapshotPaths || [];
   const primaryMaterial = run.primarySkillPath || run.stage || materialPaths[0] || '';
   const materialInstruction = buildClientEquivalentMaterialInstruction(run, materialPaths, primaryMaterial);
+  const figmaLinks = String(run.figmaLinks || '').trim();
+  const figmaWriteRequired = requiresFigmaWriteEvidence(run);
+  const imagePlacementRequired = figmaTargetIsImagePlacement(run);
+  const editableFigmaRequested = requestsEditableFigmaOutput(run);
   return [
     '# Codex 客户端等价执行',
     '',
     '把本次任务当成用户在本机 Codex 客户端里直接引用 Skill / md 后发起的一次对话来执行。不要把工作台当成另一个流程引擎，不要自行降级为摘要执行。',
-    '先完整理解并执行被引用的 Skill / md；用户没有额外写上下文时，就只按 Skill / md 与本次 Figma 链接处理。',
+    '先完整理解并执行被引用的 Skill / md；用户没有额外写上下文时，就只按 Skill / md 与本次执行要求处理。',
     '',
     '## 本次用户指令',
     '',
@@ -779,7 +784,7 @@ function buildPrompt(run = {}, workspace = {}) {
     '',
     run.requirement || '按上方引用的 Skill / md 执行本次任务。',
     '',
-    `Figma 链接：${run.figmaLinks || '无'}`,
+    figmaLinks ? `Figma 链接：${figmaLinks}` : 'Figma 链接：未填写，本次不强制读取或写入 Figma。',
     '',
     '## 必读本地文件',
     '',
@@ -803,13 +808,19 @@ function buildPrompt(run = {}, workspace = {}) {
     `- runId：${run.id}`,
     `- 本机执行目录：${workspace.cwd || ''}`,
     `- 平台产物目录记录：${run.artifactRoot || ''}`,
-    `- 写入方式：${run.figmaWriteMode || 'target-node'}`,
-    '- 必须使用当前操作人本机 Codex 会话里的 Figma MCP 和 Figma 授权。',
-    '- 不得依赖负责人电脑、本机 figma-write-local 插件或平台服务器 Figma token。',
-    '- 如果当前 Codex 工具列表缺少 Figma 写入工具、Figma OAuth 失效、目标文件无权限或快照缺失，必须停止并说明具体阻塞原因。',
-    '- 涉及 Figma 写入时，只有写入工具成功返回 createdNodeIds 或 mutatedNodeIds，才允许判定为已写入。',
-    '- 如果 Skill / md 任务本身是生成图片或本地产物，不强制要求 Figma 写入完成；最终报告写明产物路径、使用的 Skill / md 和复核点。',
-    '- 如果已经写入 Figma，最后必须尽量回读目标节点或截图确认；如果回读失败，说明写入证据和回读失败原因。',
+    figmaLinks ? `- 写入方式：${run.figmaWriteMode || 'target-node'}` : '',
+    figmaLinks ? '- 如需读取或写入 Figma，必须使用当前操作人本机 Codex 会话里的 Figma MCP 和 Figma 授权。' : '',
+    figmaLinks ? '- 不得依赖负责人电脑、本机 figma-write-local 插件或平台服务器 Figma token。' : '',
+    figmaLinks ? '- 如果当前 Codex 工具列表缺少 Figma 写入工具、Figma OAuth 失效、目标文件无权限或快照缺失，必须停止并说明具体阻塞原因。' : '',
+    imagePlacementRequired ? '- 本次是纯生图并填写了 Figma 链接：生成完成后，必须把成品图作为图片放置或替换到该 Figma 目标；该链接不是默认转可编辑图层的要求。' : '',
+    imagePlacementRequired ? '- 图片落到 Figma 时必须保持成品图比例和视觉效果，不得拉伸变形；默认不拆成可编辑图层。' : '',
+    imagePlacementRequired && !editableFigmaRequested ? '- 除非用户明确要求“转为可编辑 / 可编辑图层 / 矢量重建”，否则保留位图成品展示。' : '',
+    figmaWriteRequired ? '- 涉及 Figma 写入、图片放置或图片替换时，必须回传 createdNodeIds / mutatedNodeIds，或可证明图片已放置/替换到目标 Figma 的等价工具证据。' : '',
+    !figmaLinks ? '- 本次没有 Figma 链接时，不要因为缺少 Figma MCP、Figma OAuth 或 Figma 写入工具而判定阻塞。' : '',
+    imagePlacementRequired
+      ? '- 最终报告必须写明生成图片产物路径、Figma 放置/替换目标、使用的 Skill / md 和复核点。'
+      : '- 如果 Skill / md 任务本身是生成图片或本地产物且本次没有要求落到 Figma，不强制要求 Figma 写入完成；最终报告写明产物路径、使用的 Skill / md 和复核点。',
+    figmaLinks ? '- 如果已经写入 Figma，最后必须尽量回读目标节点或截图确认；如果回读失败，说明写入证据和回读失败原因。' : '',
     '- 最终回答用中文简短总结结果，必须写明：使用的 Skill / md、Figma 链接、产物或写入节点、阻塞原因或复核建议。',
     '',
     '## 快照内容兜底',
@@ -828,6 +839,16 @@ function buildClientEquivalentMaterialInstruction(run = {}, materialPaths = [], 
     ].join('\n');
   }
   return `请使用 ${display}。`;
+}
+
+function codexRunArgs(run = {}) {
+  const request = run.codexRequest && typeof run.codexRequest === 'object' ? run.codexRequest : {};
+  const args = [];
+  const model = String(request.model || process.env.ART_WORKER_CODEX_MODEL || '').trim();
+  const reasoningEffort = String(request.reasoningEffort || request.modelReasoningEffort || process.env.ART_WORKER_CODEX_REASONING_EFFORT || '').trim();
+  if (model) args.push('-m', model);
+  if (reasoningEffort) args.push('-c', `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`);
+  return args;
 }
 
 async function resolveExecutionCwd(run = {}) {
@@ -1318,14 +1339,14 @@ function safePathSegment(value = '') {
 
 function buildResultSummary(status, exitCode, finalText, figmaWriteResult = {}) {
   const figmaBlocker = figmaWriteResult.required && (!figmaWriteResult.written || figmaWriteResult.partialWrite)
-    ? figmaWriteResult.blockerReason || '未检测到 Figma 写入证据。'
+    ? figmaWriteResult.blockerReason || '未检测到 Figma 放置、替换或写入证据。'
     : '';
   const failureReason = status === 'completed' ? '' : figmaBlocker || extractFailureReason(finalText) || `Codex 退出码：${exitCode}`;
   const completedSummary = figmaWriteResult.required
-    ? '本机直接执行已完整完成，已检测到 Figma 写入证据和写入后的回读/截图验收证据。'
+    ? '本机直接执行已完整完成，已检测到 Figma 放置、替换或写入证据，以及写入后的回读/截图验收证据。'
     : '本机直接执行已完成。';
   const failedSummary = figmaWriteResult.partialWrite
-    ? 'Figma 已有部分写入，但写入后的最终回读/截图验收未闭环，请恢复授权后继续执行。'
+    ? 'Figma 已有部分放置、替换或写入，但最终回读/截图验收未闭环，请恢复授权后继续执行。'
     : '本机直接执行失败，请查看阻塞原因和原始日志。';
   return {
     status,
@@ -1348,7 +1369,57 @@ function buildResultSummary(status, exitCode, finalText, figmaWriteResult = {}) 
 }
 
 function requiresFigmaWriteEvidence(run = {}) {
-  return Boolean(String(run.figmaLinks || '').trim());
+  if (!String(run.figmaLinks || '').trim()) return false;
+  if (explicitlySkipsFigmaWrite(run)) return false;
+  if (figmaTargetIsImagePlacement(run)) return true;
+  const text = [
+    run.requirement,
+    run.title,
+    run.sourceTitle,
+    run.customWorkflowName,
+    run.figmaWriteMode
+  ].filter(Boolean).join('\n');
+  if (!text.trim()) return false;
+  if (/报告|说明|总结|提示词|prompt|参考|分析|复盘/i.test(text)) return false;
+  return /写入|修改|改名|重命名|清理|整理|创建|新建|更新|覆盖|替换|应用|落到|同步到|放置|插入|填充|上传|还原|复刻|生成.*(?:Figma|Frame|节点|图层)|Figma.*(?:写入|修改|创建|新建|更新|节点|图层|Frame|页面|放置|替换|填充)|use_figma|upload_assets|createdNodeIds|mutatedNodeIds/i.test(text);
+}
+
+function figmaTargetIsImagePlacement(run = {}) {
+  return Boolean(String(run.figmaLinks || '').trim() && isImageGenerationRun(run) && !explicitlySkipsFigmaWrite(run));
+}
+
+function isImageGenerationRun(run = {}) {
+  const text = [
+    run.requirement,
+    run.title,
+    run.sourceTitle,
+    run.customWorkflowName,
+    run.primarySkillPath,
+    run.stage,
+    ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : [])
+  ].filter(Boolean).join('\n');
+  return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|gpt[-_\s]?image|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)/i.test(text);
+}
+
+function explicitlySkipsFigmaWrite(run = {}) {
+  const text = [
+    run.requirement,
+    run.title,
+    run.sourceTitle,
+    run.customWorkflowName,
+    run.figmaWriteMode
+  ].filter(Boolean).join('\n');
+  return /不写入\s*Figma|无需写入\s*Figma|不需要写入\s*Figma|不要写入\s*Figma|不放(?:入|到)\s*Figma|无需放(?:入|到)\s*Figma|不要替换\s*Figma|仅(?:生成|输出|保存).{0,20}(?:本地|文件|产物)|只(?:生成|输出|保存).{0,20}(?:本地|文件|产物)/i.test(text);
+}
+
+function requestsEditableFigmaOutput(run = {}) {
+  const text = [
+    run.requirement,
+    run.title,
+    run.sourceTitle,
+    run.customWorkflowName
+  ].filter(Boolean).join('\n');
+  return /转(?:成|为)?可编辑|可编辑图层|可编辑结构|矢量(?:化|重建)?|vector|拆(?:成|为).{0,12}图层|重建.{0,12}(?:Figma|图层|节点)|还原.{0,12}(?:Figma|图层|节点)/i.test(text);
 }
 
 function resolveWorkerFinalStatus(exitCode, figmaWriteResult = {}) {
@@ -1375,6 +1446,12 @@ function extractFigmaWriteEvidence(text = '', run = {}) {
       evidence.push(formatFigmaWriteEvidence(event));
     }
   }
+  const imagePlacementLines = extractAffirmativeFigmaImagePlacementLines(source);
+  for (const item of imagePlacementLines) {
+    evidence.push(item.line.slice(0, 500));
+    lastWriteOrder = Math.max(lastWriteOrder, item.index);
+    if (evidence.length >= 8) break;
+  }
   const lines = affirmativeWriteText.split(/\r?\n/).map((line, index) => ({ line: line.trim(), index })).filter(item => item.line);
   for (const line of lines) {
     if (!/createdNodeIds|mutatedNodeIds|figmaWriteResult|use_figma/i.test(line.line)) continue;
@@ -1384,7 +1461,7 @@ function extractFigmaWriteEvidence(text = '', run = {}) {
   }
   const createdNodeIds = [...createdSet].slice(0, 80);
   const mutatedNodeIds = [...mutatedSet].slice(0, 120);
-  const written = createdNodeIds.length > 0 || mutatedNodeIds.length > 0 || evidence.some(line => /figmaWriteResult.*written["']?\s*[:=]\s*true/i.test(line));
+  const written = createdNodeIds.length > 0 || mutatedNodeIds.length > 0 || evidence.some(line => /figmaWriteResult.*written["']?\s*[:=]\s*true|(?:图片|成品图|位图).{0,80}(?:放置|替换|填充|插入).{0,80}(?:成功|完成|已)|(?:放置|替换|填充|插入).{0,80}(?:Figma|目标|节点).{0,80}(?:成功|完成|已)/i.test(line));
   const postWriteVerificationRequired = Boolean(required && written);
   const postWriteBlockers = postWriteVerificationRequired
     ? extractPostWriteFigmaBlockers(source, toolEvents, lastWriteOrder)
@@ -1397,7 +1474,7 @@ function extractFigmaWriteEvidence(text = '', run = {}) {
     : false;
   const partialWrite = Boolean(postWriteVerificationRequired && !verifiedAfterWrite);
   const blockerReason = required && !written
-    ? 'Codex 进程结束，但未检测到 Figma 写入证据。必须有 use_figma 返回 createdNodeIds 或 mutatedNodeIds 后才算完成。'
+    ? 'Codex 进程结束，但未检测到 Figma 写入、图片放置或图片替换证据。必须有 createdNodeIds / mutatedNodeIds，或等价图片放置/替换工具证据后才算完成。'
     : partialWrite
       ? (postWriteBlockers[0] || 'Figma 已写入，但写入后未检测到最终回读或截图验收证据，不能判定整条任务完成。')
       : '';
@@ -1414,6 +1491,26 @@ function extractFigmaWriteEvidence(text = '', run = {}) {
     partialWrite,
     blockerReason
   };
+}
+
+function extractAffirmativeFigmaImagePlacementLines(source = '') {
+  const lines = String(source || '').split(/\r?\n/);
+  const results = [];
+  lines.forEach((line, index) => {
+    for (const text of figmaEvidenceLineTexts(line)) {
+      if (!hasAffirmativeFigmaImagePlacementText(text)) continue;
+      results.push({ line: text, index });
+      if (results.length >= 8) return;
+    }
+  });
+  return results.slice(0, 8);
+}
+
+function hasAffirmativeFigmaImagePlacementText(text = '') {
+  const value = String(text || '').trim();
+  if (!value) return false;
+  if (/未(?:完成|检测到|放置|替换|上传|写入)|没有(?:完成|放置|替换|上传|写入)|失败|error|failed|blocked|阻塞|不可用|no\s+(?:placement|upload|mutation)/i.test(value)) return false;
+  return /(?:upload_assets|use_figma|Figma|节点|目标).{0,120}(?:图片|成品图|位图|image|asset).{0,120}(?:已|成功|完成).{0,120}(?:放置|替换|填充|插入|上传|落到|写入)|(?:图片|成品图|位图|image|asset).{0,120}(?:已|成功|完成).{0,120}(?:放置|替换|填充|插入|上传|落到|写入).{0,120}(?:Figma|节点|目标)|(?:放置|替换|填充|插入).{0,80}(?:Figma|目标|节点).{0,80}(?:成功|完成|已)/i.test(value);
 }
 
 function extractAffirmativeFigmaWriteText(source = '') {

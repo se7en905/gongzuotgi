@@ -363,13 +363,28 @@ export function shouldKeepOperationLog(log = {}) {
   const module = cleanText(log.module);
   const result = cleanText(log.result).toLowerCase();
   if (!action) return false;
+  if (isOwnerRoutineAccessOperationLog(log)) return false;
   if (action === 'LOGIN' && result === 'fail') return true;
-  if ([
-    'VIEW_PAGE',
-    'LOGIN',
-    'LOGOUT',
-    'SESSION_EXPIRED'
-  ].includes(action)) return false;
-  if (module === 'workbench' && /^VIEW_/.test(action)) return false;
   return true;
+}
+
+export function isOwnerRoutineAccessOperationLog(log = {}) {
+  if (!isRoutineAccessOperationLog(log)) return false;
+  return isOwnerOperationLogUser(log);
+}
+
+export function isRoutineAccessOperationLog(log = {}) {
+  const action = cleanText(log.action).toUpperCase();
+  const module = cleanText(log.module);
+  return ['VIEW_PAGE', 'LOGIN', 'LOGOUT', 'SESSION_EXPIRED'].includes(action)
+    || (module === 'workbench' && /^VIEW_/.test(action));
+}
+
+function isOwnerOperationLogUser(log = {}) {
+  const role = cleanText(log.user?.role || log.role || log.metadata?.role).toLowerCase();
+  const username = cleanText(log.user?.username || log.username).toLowerCase();
+  const displayName = cleanText(log.user?.displayName || log.displayName);
+  return role === 'admin'
+    || ['admin', 'zhangqw'].includes(username)
+    || /张倩文|美术负责人|负责人|管理者/.test(displayName);
 }

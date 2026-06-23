@@ -7,7 +7,7 @@ import { listRolesRaw, listSessionsRaw, listUsersRaw, paths, writeRolesRaw, writ
 const scrypt = promisify(scryptCallback);
 const sessionCookieName = 'awp_session';
 const sessionMaxAgeMs = Number(process.env.AWP_SESSION_MAX_AGE_MS || 12 * 60 * 60 * 1000);
-const sessionIdleMaxAgeMs = Number(process.env.AWP_SESSION_IDLE_MAX_AGE_MS || 4 * 60 * 60 * 1000);
+const sessionIdleMaxAgeMs = Number(process.env.AWP_SESSION_IDLE_MAX_AGE_MS || 2 * 60 * 60 * 1000);
 const roleRank = {
   viewer: 1,
   reviewer: 2,
@@ -149,7 +149,8 @@ const defaultRoles = [
 ];
 export const authConfig = {
   sessionCookieName,
-  sessionMaxAgeMs
+  sessionMaxAgeMs,
+  sessionIdleMaxAgeMs
 };
 
 export async function ensureDefaultAdmin() {
