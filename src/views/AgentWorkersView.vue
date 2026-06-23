@@ -86,6 +86,24 @@
         </div>
       </div>
     </template>
+    <div class="agent-worker-impact-panel">
+      <div>
+        <strong>当前执行影响</strong>
+        <p>生图类 Skill/md 默认走执行人电脑上的原生 image2 / gpt-image-2；平台服务器、负责人电脑和 admin 凭据不代跑。</p>
+      </div>
+      <div>
+        <strong>命令影响</strong>
+        <p>本次没有修改 Worker 启动命令；已安装开机自启的组员不需要重新替换命令，等待 Worker 自更新或下一次领取即可。</p>
+      </div>
+      <div>
+        <strong>需要组员操作</strong>
+        <p>仅手动启动旧终端需要关闭后重新启动；如果后续改到启动命令、账号、地址、安装器或 runner，这里会明确提示组员重新复制执行。</p>
+      </div>
+      <div>
+        <strong>已运行任务</strong>
+        <p>已领取并正在执行的任务不中途切换；新规则从下一次领取、继续执行或重新执行开始生效。</p>
+      </div>
+    </div>
     <div class="agent-worker-list">
       <article v-for="row in app.agentWorkerHeartbeatRows" :key="row.user.id || row.worker?.id || row.worker?.deviceId" :class="['agent-worker-card', { online: row.online, ready: row.ready, blocked: !row.ready, syncing: row.runningWhileDisconnected }]">
         <div class="agent-worker-card-head">
@@ -277,6 +295,37 @@ export default {
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.agent-worker-impact-panel {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 14px 0;
+  padding: 12px;
+  border: 1px solid rgba(37, 99, 235, 0.16);
+  border-radius: 8px;
+  background: #f8fbff;
+
+  > div {
+    min-width: 0;
+    padding: 10px;
+    border-radius: 6px;
+    background: #ffffff;
+  }
+
+  strong {
+    display: block;
+    color: var(--heading);
+    font-size: 13px;
+  }
+
+  p {
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.55;
+  }
 }
 
 .agent-worker-summary-head {
@@ -552,10 +601,15 @@ export default {
   .agent-worker-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .agent-worker-impact-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
   .agent-worker-guide-grid,
+  .agent-worker-impact-panel,
   .agent-worker-list,
   .agent-worker-state-grid {
     grid-template-columns: 1fr;

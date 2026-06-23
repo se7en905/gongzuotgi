@@ -1039,6 +1039,7 @@ function buildPrompt(run = {}, workspace = {}) {
   const figmaLinks = String(run.figmaLinks || '').trim();
   const figmaWriteRequired = requiresFigmaWriteEvidence(run);
   const imageGenerationRun = isImageGenerationRun(run);
+  const explicitlyRequestedNonImage2Provider = requestsNonImage2Provider(run);
   const imagePlacementRequired = figmaTargetIsImagePlacement(run);
   const editableFigmaRequested = requestsEditableFigmaOutput(run);
   return [
@@ -1074,9 +1075,14 @@ function buildPrompt(run = {}, workspace = {}) {
     '## 执行口径',
     '',
     '- 按 Codex 客户端直接使用该 Skill / md 的方式执行：该读文件就读文件，该生成图就生成图，该写 Figma 就写 Figma。',
+    '- 本次实际执行必须使用当前领取任务的执行人电脑：Codex、Skill/md 快照、本机工具、网络、代理、API Key、Figma MCP 和授权都以执行人本机为准。',
+    '- 工作台只负责派单、下发资料和接收回传；不得依赖平台服务器、负责人电脑或工作台管理者 admin 的 Codex、OpenAI / gpt-image2 凭据、代理、Figma MCP 或 Figma 授权。',
     '- 不要因为这是工作台任务就额外套用未被用户选择的流程、模板、阶段或其它 Skill。',
     '- 如果引用的是单个 Skill / md，只执行这个 Skill / md；如果引用的是模板或自定义流程，才按下方顺序执行。',
     '- Skill / md 中提到的 references、scripts、assets 如已在本地文件中出现，必须按其说明继续读取和使用。',
+    imageGenerationRun && !explicitlyRequestedNonImage2Provider ? '- 本次是生图类 Skill / md，执行要求没有明确指定其它生图工具时，默认必须调用执行人电脑上的原生 image2 / gpt-image-2 / GPT Image 2 能力进行生图创作。' : '',
+    imageGenerationRun && explicitlyRequestedNonImage2Provider ? '- 本次执行要求已明确指定非 image2 生图工具时，才按用户指定工具执行；仍必须使用执行人自己电脑上的对应工具、凭据、网络和代理。' : '',
+    imageGenerationRun ? '- 本次如果需要 gpt-image-2 / image2 / GPT Image 2，必须使用执行人自己电脑上的 Codex / OpenAI 凭据、环境变量、代理和网络；不可切到平台服务器或负责人电脑代跑。' : '',
     imageGenerationRun ? '- 本次如果使用 gpt-image-2 / image2 / GPT Image 2 出图失败，必须直接停止并回传阻塞原因；禁止改用 Pillow、本地绘制脚本、确定性绘制、占位图、其它模型或任何非 image2 方式伪造成品图。' : '',
     imageGenerationRun ? '- 只有 gpt-image-2 / image2 真正成功生成或编辑得到的图片，才算本次生图产物；失败时不得保存替代图片到“生成图片/”或 outputs 目录，不得标记本机已完成。' : '',
     '',
@@ -1090,7 +1096,7 @@ function buildPrompt(run = {}, workspace = {}) {
     `- 平台产物目录记录：${run.artifactRoot || ''}`,
     figmaLinks ? `- 写入方式：${run.figmaWriteMode || 'target-node'}` : '',
     figmaLinks ? '- 如需读取或写入 Figma，必须使用当前操作人本机 Codex 会话里的 Figma MCP 和 Figma 授权。' : '',
-    figmaLinks ? '- 不得依赖负责人电脑、本机 figma-write-local 插件或平台服务器 Figma token。' : '',
+    figmaLinks ? '- 不得依赖负责人电脑、本机 figma-write-local 插件、平台服务器 Figma token 或工作台管理者 admin 的 Figma 授权。' : '',
     figmaLinks ? '- 如果当前 Codex 工具列表缺少 Figma 写入工具、Figma OAuth 失效、目标文件无权限或快照缺失，必须停止并说明具体阻塞原因。' : '',
     imagePlacementRequired ? '- 本次是纯生图并填写了 Figma 链接：生成完成后，必须把成品图作为图片放置或替换到该 Figma 目标；该链接不是默认转可编辑图层的要求。' : '',
     imagePlacementRequired ? '- 图片落到 Figma 时必须保持成品图比例和视觉效果，不得拉伸变形；默认不拆成可编辑图层。' : '',
@@ -1745,6 +1751,30 @@ function isImageGenerationRun(run = {}) {
       : [])
   ].filter(Boolean).join('\n');
   return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|same[-_\s]*ip[-_\s]*image|sameipimage|gpt[-_\s]?image|imagegen|image[-_\s]*gen|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)/i.test(text);
+}
+
+function requestsNonImage2Provider(run = {}) {
+  const text = [
+    run.requirement,
+    run.title,
+    run.sourceTitle,
+    run.customWorkflowName,
+    run.customWorkflowDescription,
+    run.primarySkillPath,
+    run.primarySkillTitle,
+    run.stage,
+    run.primarySkillContent,
+    ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
+    ...(Array.isArray(run.selectedMaterialSnapshots)
+      ? run.selectedMaterialSnapshots.flatMap(item => [item?.path, item?.title, item?.name, item?.content])
+      : [])
+  ].filter(Boolean).join('\n');
+  if (!text.trim()) return false;
+  if (!/(?:使用|调用|改用|通过|指定|走|用)\s*(?:Midjourney|MJ|Stable\s*Diffusion|SDXL?|Flux|ComfyUI|DALL[-\s]?E|豆包|即梦|可灵|通义万相|本地模型|其它模型|其他模型|非\s*image2)/i.test(text)
+    && !/(?:Midjourney|MJ|Stable\s*Diffusion|SDXL?|Flux|ComfyUI|DALL[-\s]?E|豆包|即梦|可灵|通义万相|本地模型).{0,24}(?:生成|生图|出图|图片)/i.test(text)) {
+    return false;
+  }
+  return !/(?:不要|禁止|不使用|不用|不可使用|不能使用|非默认|失败后不要).{0,24}(?:Midjourney|MJ|Stable\s*Diffusion|SDXL?|Flux|ComfyUI|DALL[-\s]?E|豆包|即梦|可灵|通义万相|本地模型|其它模型|其他模型|非\s*image2)/i.test(text);
 }
 
 function explicitlySkipsFigmaWrite(run = {}) {
