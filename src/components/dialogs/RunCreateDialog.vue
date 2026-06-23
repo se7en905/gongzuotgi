@@ -74,6 +74,30 @@
         <ElInput v-model="app.runForm.figmaLinks" type="textarea" :rows="3" placeholder="需要处理 Figma 时粘贴具体 Frame、分区或整页链接；纯生图、本地产物或报告任务可不填。" />
         <div class="field-hint">填写后 Codex 会把它作为本次真实 Figma 目标；不填写时按当前 md / Skill 和执行要求直接产出图片、本地文件或报告。</div>
       </ElFormItem>
+      <ElFormItem label="参考图 / 修改说明截图">
+        <div
+          class="run-paste-image-zone"
+          tabindex="0"
+          @paste.prevent="app.handleRunAttachmentPaste"
+        >
+          <div class="run-paste-image-head">
+            <strong>点击这里后直接粘贴截图</strong>
+            <span>支持截图、参考图、修改说明图；Codex 会按执行要求判断用途。</span>
+          </div>
+          <ElButton size="small" plain @click.stop="app.pasteRunAttachmentFromClipboard">从剪贴板读取</ElButton>
+        </div>
+        <div v-if="app.runForm.attachments.length" class="run-attachment-grid">
+          <article v-for="attachment in app.runForm.attachments" :key="attachment.id" class="run-attachment-card">
+            <img :src="attachment.previewUrl" :alt="attachment.name" />
+            <div>
+              <strong>{{ attachment.name }}</strong>
+              <span>{{ app.formatRunAttachmentSize(attachment.size) }}</span>
+            </div>
+            <button type="button" @click="app.removeRunAttachment(attachment.id)">删除</button>
+          </article>
+        </div>
+        <div class="field-hint">最多 6 张，单张不超过 8MB；创建执行后会保存到本次执行附件，不会把大图写进执行清单 JSON。</div>
+      </ElFormItem>
       <template v-if="app.shouldShowRunMaterialPicker">
         <ElFormItem :label="app.isCustomWorkflowRun ? '按顺序选择多个 md / Skill' : '选择单个 md / Skill'" class="is-required-field">
           <ElSelect

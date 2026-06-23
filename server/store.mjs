@@ -1141,6 +1141,7 @@ export async function createRun(input) {
     developer: input.developer || task?.developer || '',
     agentModel: input.agentModel || task?.agentModel || '',
     figmaLinks: input.figmaLinks || '',
+    attachments: [],
     showdocHints: input.showdocHints || '',
     selectedMaterialHints: normalizeLineList(input.selectedMaterialHints),
     selectedMaterialSnapshots: normalizeRunMaterialSnapshots(input.selectedMaterialSnapshots),
@@ -1184,6 +1185,7 @@ export async function createRun(input) {
   run.artifactRoot = project ? buildRunArtifactRoot(project, run) : '';
   run.materialPath = run.artifactRoot ? path.join(run.artifactRoot, '资料.md') : '';
   if (run.artifactRoot) await prepareInitialRunArtifacts(project, run, task || {});
+  if (run.artifactRoot) run.attachments = await saveRunAttachments(run, input.attachments);
   runs.push(run);
   await writeJson(paths.runs, runs);
   await fs.mkdir(getRunWorkspace(run.id), { recursive: true });
@@ -1489,6 +1491,7 @@ export async function cloneRunForRetry(id, overrides = {}) {
     developer: source.developer,
     agentModel: source.agentModel,
     figmaLinks: source.figmaLinks,
+    attachments: source.attachments,
     showdocHints: source.showdocHints,
     selectedMaterialHints: source.selectedMaterialHints,
     selectedMaterialSnapshots: source.selectedMaterialSnapshots,
@@ -2300,6 +2303,90 @@ async function resolveCustomWorkflowForRun(input = {}) {
 async function prepareInitialRunArtifacts(project, run, task) {
   await fs.mkdir(run.artifactRoot, { recursive: true });
   await fs.writeFile(run.materialPath, await buildRunMaterial(project, run, task));
+}
+
+async function saveRunAttachments(run = {}, input = []) {
+  const items = Array.isArray(input) ? input.slice(0, 6) : [];
+  if (!items.length || !run.artifactRoot) return [];
+  const dir = path.join(run.artifactRoot, '执行附件');
+  await fs.mkdir(dir, { recursive: true });
+  const saved = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index] || {};
+    const parsed = parseRunAttachmentDataUrl(item.dataUrl || '');
+    const sourcePath = parsed ? '' : resolveRunAttachmentSourcePath(item.path || item.relativePath || '');
+    const sourceStat = sourcePath ? await fs.stat(sourcePath).catch(() => null) : null;
+    const sourceExt = sourcePath ? path.extname(sourcePath).replace(/^\./, '').toLowerCase().replace('jpeg', 'jpg') : '';
+    const ext = parsed ? runAttachmentExt(parsed.mime) : sourceExt;
+    const mime = parsed?.mime || runAttachmentMimeFromExt(ext);
+    const size = parsed?.buffer?.length || Number(sourceStat?.size || 0);
+    if (!ext || !mime || !['png', 'jpg', 'webp', 'gif'].includes(ext) || size <= 0 || size > 8 * 1024 * 1024) continue;
+    const title = cleanString(item.name || `粘贴截图-${index + 1}.${ext}`) || `粘贴截图-${index + 1}.${ext}`;
+    const baseName = safePathSegment(title.replace(/\.[^.]+$/, '')) || `attachment-${index + 1}`;
+    const fileName = `${String(index + 1).padStart(2, '0')}-${baseName}.${ext}`;
+    const filePath = path.join(dir, fileName);
+    if (parsed) await fs.writeFile(filePath, parsed.buffer);
+    else await fs.copyFile(sourcePath, filePath);
+    saved.push({
+      id: cleanString(item.id) || randomUUID(),
+      name: title,
+      type: mime,
+      size,
+      path: filePath,
+      relativePath: path.relative(paths.root, filePath).replaceAll(path.sep, '/'),
+      role: 'reference-or-instruction',
+      source: 'run-create-paste',
+      createdAt: run.createdAt || new Date().toISOString()
+    });
+  }
+  return saved;
+}
+
+function resolveRunAttachmentSourcePath(value = '') {
+  const text = String(value || '').trim();
+  if (!text || /^https?:\/\//i.test(text) || text.includes('\0')) return '';
+  const normalized = text.replaceAll('\\', '/').replace(/^\/+/, '');
+  const abs = path.isAbsolute(text)
+    ? path.resolve(text)
+    : path.resolve(paths.root, normalized);
+  const relativeArtifact = normalized.startsWith('platform-artifacts/')
+    ? path.resolve(paths.artifactDir, normalized.replace(/^platform-artifacts\/+/, ''))
+    : '';
+  const target = relativeArtifact || abs;
+  return isPathInsideStore(target, paths.artifactDir) || isPathInsideStore(target, paths.workspaceDir) ? target : '';
+}
+
+function isPathInsideStore(target, rootDir) {
+  if (!target || !rootDir) return false;
+  const resolvedTarget = path.resolve(target);
+  const resolvedRoot = path.resolve(rootDir);
+  const relative = path.relative(resolvedRoot, resolvedTarget);
+  return relative === '' || (relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function parseRunAttachmentDataUrl(value = '') {
+  const match = String(value || '').match(/^data:(image\/(?:png|jpe?g|webp|gif));base64,([A-Za-z0-9+/=\s]+)$/i);
+  if (!match) return null;
+  const mime = match[1].toLowerCase().replace('image/jpg', 'image/jpeg');
+  const buffer = Buffer.from(match[2].replace(/\s+/g, ''), 'base64');
+  if (!buffer.length) return null;
+  return { mime, buffer };
+}
+
+function runAttachmentExt(mime = '') {
+  if (mime === 'image/png') return 'png';
+  if (mime === 'image/jpeg') return 'jpg';
+  if (mime === 'image/webp') return 'webp';
+  if (mime === 'image/gif') return 'gif';
+  return '';
+}
+
+function runAttachmentMimeFromExt(ext = '') {
+  if (ext === 'png') return 'image/png';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'gif') return 'image/gif';
+  return '';
 }
 
 async function buildRunMaterial(project = {}, run = {}, task = {}) {

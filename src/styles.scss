@@ -2824,6 +2824,117 @@ button {
   white-space: nowrap;
 }
 
+.art-run-dialog .run-paste-image-zone {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 76px;
+  padding: 12px 14px;
+  border: 1px dashed rgba(37, 99, 235, 0.35);
+  border-radius: 8px;
+  background: #f8fbff;
+  outline: none;
+}
+
+.art-run-dialog .run-paste-image-zone:focus {
+  border-color: rgba(37, 99, 235, 0.62);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.art-run-dialog .run-paste-image-head {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.art-run-dialog .run-paste-image-head strong {
+  color: var(--heading);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.art-run-dialog .run-paste-image-head span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+
+.art-run-dialog .run-attachment-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+  margin-top: 10px;
+}
+
+.art-run-dialog .run-attachment-card {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.art-run-dialog .run-attachment-card img {
+  width: 56px;
+  height: 44px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--soft-card);
+}
+
+.art-run-dialog .run-attachment-card div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.art-run-dialog .run-attachment-card strong,
+.art-run-dialog .run-attachment-card span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.art-run-dialog .run-attachment-card strong {
+  color: var(--heading);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.art-run-dialog .run-attachment-card span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.art-run-dialog .run-attachment-card button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid rgba(220, 38, 38, 0.42);
+  border-radius: 999px;
+  background: #fff;
+  color: #dc2626;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.art-run-dialog .run-attachment-card button:hover {
+  background: #dc2626;
+  color: #fff;
+}
+
 .art-run-dialog .run-mode-template-meta {
   color: var(--muted);
   font-size: 12px;
@@ -2972,6 +3083,15 @@ button {
 
   .art-run-dialog .run-mode-choice-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .art-run-dialog .run-paste-image-zone,
+  .art-run-dialog .run-attachment-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .art-run-dialog .run-paste-image-head span {
+    white-space: normal;
   }
 
   .art-run-dialog .run-selected-material-step-line::before,

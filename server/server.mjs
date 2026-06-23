@@ -10070,7 +10070,13 @@ function cleanHtmlText(value = '') {
 
 async function readBody(req) {
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let total = 0;
+  const maxBytes = 64 * 1024 * 1024;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > maxBytes) throw new HttpError(413, '请求内容过大，粘贴图片请控制在 6 张以内且单张不超过 8MB。');
+    chunks.push(chunk);
+  }
   if (!chunks.length) return {};
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }

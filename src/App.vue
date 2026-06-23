@@ -1038,6 +1038,7 @@ export default {
         developer: '',
         targetPage: '',
         figmaLinks: '',
+        attachments: [],
         showdocHints: '',
         selectedMaterialHints: [],
         requirement: '',
@@ -18427,6 +18428,13 @@ export default {
         workerExecution: true,
         title: generatedTitle,
         figmaLinks,
+        attachments: (this.runForm.attachments || []).map(item => ({
+          id: item.id,
+          name: item.name,
+          type: item.type,
+          size: item.size,
+          dataUrl: item.dataUrl
+        })),
         requirement: effectiveRequirement,
         stage: this.isBugFixRun ? this.runForm.stage : primaryMaterial,
         primarySkillPath: this.isBugFixRun ? this.runForm.primarySkillPath || this.runForm.stage : primaryMaterial,
@@ -19479,6 +19487,97 @@ export default {
         this.runForm.customWorkflowName = '';
         this.runForm.customWorkflowDescription = '';
       }
+    },
+
+    async handleRunAttachmentPaste(event) {
+      const files = Array.from(event?.clipboardData?.files || []);
+      const imageFiles = files.filter(file => /^image\//i.test(file.type || ''));
+      if (!imageFiles.length) {
+        ElMessage.warning('剪贴板里没有可用图片');
+        return;
+      }
+      await this.addRunAttachmentFiles(imageFiles);
+    },
+
+    async pasteRunAttachmentFromClipboard() {
+      if (!navigator.clipboard?.read) {
+        ElMessage.warning('当前浏览器不支持直接读取图片剪贴板，请点击粘贴区域后按 Command+V / Ctrl+V');
+        return;
+      }
+      try {
+        const items = await navigator.clipboard.read();
+        const files = [];
+        for (const item of items) {
+          const imageType = item.types.find(type => /^image\//i.test(type));
+          if (!imageType) continue;
+          const blob = await item.getType(imageType);
+          files.push(new File([blob], `剪贴截图-${Date.now()}.${this.runAttachmentExtFromType(imageType)}`, { type: imageType }));
+        }
+        if (!files.length) {
+          ElMessage.warning('剪贴板里没有可用图片');
+          return;
+        }
+        await this.addRunAttachmentFiles(files);
+      } catch {
+        ElMessage.warning('剪贴板读取失败，请点击粘贴区域后按 Command+V / Ctrl+V');
+      }
+    },
+
+    async addRunAttachmentFiles(files = []) {
+      const maxCount = 6;
+      const maxSize = 8 * 1024 * 1024;
+      const current = Array.isArray(this.runForm.attachments) ? this.runForm.attachments : [];
+      const next = [...current];
+      for (const file of files) {
+        if (next.length >= maxCount) {
+          ElMessage.warning(`最多只能添加 ${maxCount} 张图`);
+          break;
+        }
+        if (!/^image\//i.test(file.type || '')) continue;
+        if (Number(file.size || 0) > maxSize) {
+          ElMessage.warning(`${file.name || '图片'} 超过 8MB，未添加`);
+          continue;
+        }
+        const dataUrl = await this.fileToDataUrl(file);
+        const id = `run-attachment-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        next.push({
+          id,
+          name: file.name || `粘贴截图-${next.length + 1}.${this.runAttachmentExtFromType(file.type)}`,
+          type: file.type || 'image/png',
+          size: file.size || 0,
+          dataUrl,
+          previewUrl: dataUrl
+        });
+      }
+      this.runForm.attachments = next;
+    },
+
+    removeRunAttachment(id = '') {
+      this.runForm.attachments = (this.runForm.attachments || []).filter(item => item.id !== id);
+    },
+
+    fileToDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('图片读取失败'));
+        reader.readAsDataURL(file);
+      });
+    },
+
+    runAttachmentExtFromType(type = '') {
+      const value = String(type || '').toLowerCase();
+      if (value.includes('jpeg') || value.includes('jpg')) return 'jpg';
+      if (value.includes('webp')) return 'webp';
+      if (value.includes('gif')) return 'gif';
+      return 'png';
+    },
+
+    formatRunAttachmentSize(size = 0) {
+      const value = Number(size || 0);
+      if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+      if (value >= 1024) return `${Math.max(1, Math.round(value / 1024))} KB`;
+      return `${value || 0} B`;
     },
 
     normalizeRunMaterialValue(value = '') {
@@ -22164,6 +22263,7 @@ export default {
             title: sourceRun.title,
             requirement: sourceRun.requirement,
             figmaLinks: sourceRun.figmaLinks || '',
+            attachments: sourceRun.attachments || sourceRun.referenceImages || [],
             showdocHints: sourceRun.showdocHints || '',
             targetPage: sourceRun.targetPage || '',
             stage: sourceRun.stage || '',
@@ -23533,6 +23633,7 @@ function emptyRunForm() {
     developer: '',
     targetPage: '',
     figmaLinks: '',
+    attachments: [],
     showdocHints: '',
     selectedMaterialHints: [],
     requirement: '',

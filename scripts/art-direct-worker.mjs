@@ -669,7 +669,8 @@ async function prepareRunWorkspace(run = {}) {
     snapshotPaths.push(relativePath);
   }
   const materialPath = path.join(cwd, '任务资料.md');
-  await writeFile(materialPath, buildLocalTaskMaterial(run, snapshots, snapshotPaths), 'utf8');
+  const attachmentPaths = await downloadRunAttachments(run, cwd);
+  await writeFile(materialPath, buildLocalTaskMaterial(run, snapshots, snapshotPaths, attachmentPaths), 'utf8');
   if (run.primarySkillPath && !snapshotPaths.includes(safeRelativePath(run.primarySkillPath))) {
     const primaryPath = safeRelativePath(run.primarySkillPath);
     if (primaryPath && run.primarySkillContent) {
@@ -682,7 +683,7 @@ async function prepareRunWorkspace(run = {}) {
   if (requiresFigmaWriteEvidence(run) && !snapshotPaths.length) {
     throw new Error('平台未下发可用 Skill / md 内容快照。');
   }
-  return { cwd, materialPath, snapshotPaths };
+  return { cwd, materialPath, snapshotPaths, attachmentPaths };
 }
 
 function normalizeRunMaterialSnapshots(run = {}) {
@@ -697,7 +698,45 @@ function normalizeRunMaterialSnapshots(run = {}) {
     .filter(item => item.content);
 }
 
-function buildLocalTaskMaterial(run = {}, snapshots = [], snapshotPaths = []) {
+async function downloadRunAttachments(run = {}, cwd = '') {
+  const items = Array.isArray(run.attachments) ? run.attachments : [];
+  if (!items.length || !cwd) return [];
+  const dir = path.join(cwd, '执行附件');
+  await mkdir(dir, { recursive: true });
+  const saved = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index] || {};
+    const source = String(item.relativePath || item.path || '').trim();
+    if (!source) continue;
+    const ext = path.extname(item.name || source) || '.png';
+    const targetName = `${String(index + 1).padStart(2, '0')}-${safeFileName(item.name || `附件${index + 1}${ext}`)}`;
+    const targetPath = path.join(dir, targetName);
+    try {
+      const buffer = await fetchBinary(`/api/artifact?path=${encodeURIComponent(source)}`);
+      await writeFile(targetPath, buffer);
+      saved.push({
+        name: item.name || targetName,
+        path: targetPath,
+        relativePath: path.relative(cwd, targetPath).replace(/\\/g, '/'),
+        type: item.type || '',
+        size: buffer.length
+      });
+    } catch (error) {
+      await appendLocalRunLog(run.id, `[worker] 执行附件下载失败：${source} ${error.message}\n`);
+    }
+  }
+  return saved;
+}
+
+function safeFileName(value = '') {
+  return String(value || 'attachment')
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80) || 'attachment.png';
+}
+
+function buildLocalTaskMaterial(run = {}, snapshots = [], snapshotPaths = [], attachmentPaths = []) {
   return [
     '# 美术工作台本机执行资料',
     '',
@@ -717,6 +756,15 @@ function buildLocalTaskMaterial(run = {}, snapshots = [], snapshotPaths = []) {
     '## 给 Codex 的执行要求',
     '',
     run.requirement || '',
+    '',
+    '## 粘贴图片附件',
+    '',
+    attachmentPaths.length
+      ? [
+        '以下图片来自新建美术执行时粘贴的截图，可能是参考图，也可能是修改说明图；必须结合“给 Codex 的执行要求”判断用途。',
+        ...attachmentPaths.map((item, index) => `${index + 1}. ${item.relativePath || item.path}（${item.name || '未命名图片'}）`)
+      ].join('\n')
+      : '- 无',
     '',
     '## 快照摘要',
     '',
@@ -766,6 +814,7 @@ function buildPrompt(run = {}, workspace = {}) {
     ].filter(Boolean).join('\n')).join('\n')
     : '- 平台未提供阶段列表，按本次执行要求完成。';
   const materialPaths = workspace.snapshotPaths || [];
+  const attachmentPaths = Array.isArray(workspace.attachmentPaths) ? workspace.attachmentPaths : [];
   const primaryMaterial = run.primarySkillPath || run.stage || materialPaths[0] || '';
   const materialInstruction = buildClientEquivalentMaterialInstruction(run, materialPaths, primaryMaterial);
   const figmaLinks = String(run.figmaLinks || '').trim();
@@ -790,8 +839,17 @@ function buildPrompt(run = {}, workspace = {}) {
     '',
     [
       workspace.materialPath ? `- ${workspace.materialPath}` : '',
-      ...materialPaths.map(item => `- ${item}`)
+      ...materialPaths.map(item => `- ${item}`),
+      ...attachmentPaths.map(item => `- ${item.path || item.relativePath}`)
     ].filter(Boolean).join('\n') || '- 平台未下发 Skill / md 快照，必须停止并回传阻塞原因。',
+    '',
+    attachmentPaths.length ? '## 粘贴图片附件' : '',
+    attachmentPaths.length
+      ? [
+        '这些图片来自新建美术执行时粘贴的截图，可能是参考图，也可能是修改说明图；必须结合“本次用户指令”和图片内容判断用途。',
+        ...attachmentPaths.map((item, index) => `${index + 1}. ${item.path || item.relativePath}（${item.name || '未命名图片'}）`)
+      ].join('\n')
+      : '',
     '',
     '## 执行口径',
     '',
@@ -1912,6 +1970,26 @@ async function fetchText(url) {
   const text = await response.text();
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
   return text;
+}
+
+async function fetchBinary(pathname) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+  let response;
+  try {
+    const url = /^https?:\/\//i.test(pathname) ? pathname : `${apiBase}${pathname}`;
+    response = await fetch(url, {
+      headers: cookie ? { Cookie: cookie } : {},
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error(`平台请求超时 ${requestTimeoutMs}ms：${pathname}`);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  return Buffer.from(await response.arrayBuffer());
 }
 
 function parseSetCookie(value = '') {
