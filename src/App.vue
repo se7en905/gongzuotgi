@@ -8684,7 +8684,7 @@ export default {
         return String(value || '').localeCompare(String(latest || '')) > 0 ? value : latest;
       }, '');
       return [
-        'ai-score-v6-success-only-runs',
+        'ai-score-v7-decayed-repeat-success',
         this.aiScoreMonthLabel,
         sourceMembers.map(member => [member.name || member.realname || '', member.account || '', member.level || '', member.status || ''].join(':')).join('|'),
         snapshot.source?.boardUpdatedAt || '',
@@ -8748,18 +8748,22 @@ export default {
       const liveCompletedRunSkillKeys = this.aiMemberScoreCompletedRunSkillKeys(monthRuns);
       const completedRunSkillCount = Math.max(liveCompletedRunSkillKeys.size, Number(monthRunBucket.completedRunSkillCount || 0), Number(monthRunBucket.completedRunSkillKeys?.length || 0));
       const usageResultCount = this.aiMemberScoreUsageResultCount(monthUsageLogs);
+      const normalizedUsedProductCount = Math.min(usageResultCount, Math.max(usedProductCount, usageResultCount > 0 ? 1 : 0));
       const usagePeopleCount = this.aiMemberScoreUsagePeopleCount(productRows);
       const usageCoverageRate = this.aiMemberScoreUsageCoverageRate(usagePeopleCount);
       const usageRatioBonus = Math.min(independentScoreMode ? 4 : 6, Math.round(usageCoverageRate / 20));
-      const repeatedUsageBonus = Math.min(independentScoreMode ? 6 : 10, Math.max(0, usageResultCount - usedProductCount) * (independentScoreMode ? 1.5 : 2));
       const completedRunCount = Math.max(monthRuns.length, Number(monthRunBucket.completedRunCount || 0));
-      const repeatedRunBonus = Math.min(independentScoreMode ? 3 : 5, Math.max(0, completedRunCount - completedRunSkillCount) * (independentScoreMode ? 1 : 1.5));
+      const normalizedCompletedRunSkillCount = Math.min(completedRunCount, Math.max(completedRunSkillCount, completedRunCount > 0 ? 1 : 0));
+      const repeatedUsageCount = Math.max(0, usageResultCount - normalizedUsedProductCount);
+      const repeatedUsageBonus = this.aiMemberScoreRepeatedUsageBonus(repeatedUsageCount, independentScoreMode);
+      const repeatedRunCount = Math.max(0, completedRunCount - normalizedCompletedRunSkillCount);
+      const repeatedRunBonus = this.aiMemberScoreRepeatedRunBonus(repeatedRunCount, independentScoreMode);
       const usageScore = independentScoreMode
-        ? Math.min(20, usedProductCount * 4 + usageResultCount * 3 + repeatedUsageBonus + usageRatioBonus)
-        : Math.min(30, usedProductCount * 4 + usageResultCount * 2 + repeatedUsageBonus + usageRatioBonus + validationProductCount * 3);
+        ? Math.min(20, normalizedUsedProductCount * 7 + repeatedUsageBonus + usageRatioBonus)
+        : Math.min(30, normalizedUsedProductCount * 6 + repeatedUsageBonus + usageRatioBonus + validationProductCount * 3);
       const runScore = independentScoreMode
-        ? Math.min(15, completedRunCount * 5 + completedRunSkillCount * 3 + repeatedRunBonus)
-        : Math.min(15, completedRunCount * 2.5 + completedRunSkillCount * 3 + repeatedRunBonus);
+        ? Math.min(15, normalizedCompletedRunSkillCount * 8 + repeatedRunBonus)
+        : Math.min(15, normalizedCompletedRunSkillCount * 5.5 + repeatedRunBonus);
       const penalty = 0;
       const score = Math.max(0, Math.min(100, Math.round(productScore + usageScore + runScore)));
       return {
@@ -8794,6 +8798,35 @@ export default {
           ? '独立产物口径：产物价值、个人使用和执行活跃综合计算'
           : '常规口径：按有效产物价值、闭环使用、互验去重和执行活跃综合计算'
       };
+    },
+
+    aiMemberScoreDecayBonus(count = 0, weights = [], tailWeight = 0, cap = Number.MAX_SAFE_INTEGER) {
+      const totalCount = Math.max(0, Number(count || 0) || 0);
+      if (!totalCount) return 0;
+      let total = 0;
+      for (let index = 0; index < totalCount; index += 1) {
+        const weight = Number(weights[index] ?? tailWeight);
+        total += Number.isFinite(weight) ? weight : 0;
+      }
+      return Math.min(cap, Math.round(total * 10) / 10);
+    },
+
+    aiMemberScoreRepeatedUsageBonus(repeatCount = 0, independentScoreMode = false) {
+      return this.aiMemberScoreDecayBonus(
+        repeatCount,
+        independentScoreMode ? [1.5, 1, 0.75, 0.5] : [2, 1.5, 1, 0.5],
+        0.25,
+        independentScoreMode ? 6 : 10
+      );
+    },
+
+    aiMemberScoreRepeatedRunBonus(repeatCount = 0, independentScoreMode = false) {
+      return this.aiMemberScoreDecayBonus(
+        repeatCount,
+        independentScoreMode ? [3, 2, 1, 0.5] : [2.5, 1.5, 1, 0.5],
+        0.25,
+        independentScoreMode ? 6 : 5
+      );
     },
 
     aiMemberScoreProductValue(productRows = [], productItems = [], independentScoreMode = false) {
