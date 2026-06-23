@@ -91,6 +91,7 @@ import {
   recordUsageCountersForSkillAliases,
   queueRunForLocalWorker,
   reconcileZentaoTaskSnapshot,
+  saveAgentRunGeneratedArtifacts,
   upsertBugs,
   redactCodexConfig,
   upsertCodexConfig,
@@ -1662,6 +1663,35 @@ async function handleApi(req, res, url) {
     });
     broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, run: stableUpdated, module: 'agent-run-status' });
     sendJson(res, 200, stableUpdated);
+    return;
+  }
+
+  const agentRunArtifacts = url.pathname.match(/^\/api\/agent-runs\/([^/]+)\/artifacts$/);
+  if (req.method === 'POST' && agentRunArtifacts) {
+    const run = await requireRun(agentRunArtifacts[1]);
+    requireProjectAccess(currentUser, run.projectId, 'developer', 'api.agentRuns.status');
+    ensureWorkerCanUpdateRun(currentUser, run);
+    const body = await readBody(req).catch(() => ({}));
+    const updated = await saveAgentRunGeneratedArtifacts(run.id, body.artifacts || body.images || []);
+    const savedArtifacts = updated.savedGeneratedArtifacts || [];
+    const { savedGeneratedArtifacts, ...stableUpdated } = updated;
+    await writeOperationLog(req, {
+      user: currentUser,
+      module: 'run',
+      action: 'UPLOAD_AGENT_RUN_ARTIFACTS',
+      actionName: '回传生成图片产物',
+      targetType: 'run',
+      targetId: run.id,
+      targetName: run.title,
+      before: run,
+      after: stableUpdated,
+      metadata: {
+        artifactCount: savedArtifacts.length
+      },
+      description: `${currentUser.displayName || currentUser.username} 回传「${run.title}」生成图片产物 ${savedArtifacts.length} 个`
+    });
+    broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, run: stableUpdated, module: 'agent-run-artifacts' });
+    sendJson(res, 200, { ok: true, artifacts: savedArtifacts, run: stableUpdated });
     return;
   }
 

@@ -1406,6 +1406,56 @@ export async function updateAgentRunFromWorker(runId, input = {}) {
   };
 }
 
+export async function saveAgentRunGeneratedArtifacts(runId, input = []) {
+  const runs = await readJson(paths.runs, []);
+  const index = runs.findIndex(item => item.id === runId);
+  if (index === -1) return null;
+  const run = runs[index];
+  if (!run.artifactRoot) return await hydrateRunStages(run);
+  const saved = await saveGeneratedRunArtifacts(run, input);
+  if (!saved.length) return await hydrateRunStages(run);
+  const now = new Date().toISOString();
+  const existingSummary = run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {};
+  const existingWorkerResult = run.workerResult && typeof run.workerResult === 'object' ? run.workerResult : {};
+  const artifactEvidence = saved.map(item => item.relativePath || item.path).filter(Boolean);
+  const nextSummaryArtifacts = [
+    ...(Array.isArray(existingSummary.artifacts) ? existingSummary.artifacts : []),
+    ...artifactEvidence
+  ].filter(Boolean);
+  const nextGeneratedArtifacts = dedupeRunArtifacts([
+    ...(Array.isArray(existingSummary.generatedArtifacts) ? existingSummary.generatedArtifacts : []),
+    ...saved
+  ]);
+  const nextWorkerGeneratedArtifacts = dedupeRunArtifacts([
+    ...(Array.isArray(existingWorkerResult.generatedArtifacts) ? existingWorkerResult.generatedArtifacts : []),
+    ...saved
+  ]);
+  const nextRun = {
+    ...run,
+    generatedArtifacts: dedupeRunArtifacts([
+      ...(Array.isArray(run.generatedArtifacts) ? run.generatedArtifacts : []),
+      ...saved
+    ]),
+    resultSummary: {
+      ...existingSummary,
+      artifacts: [...new Set(nextSummaryArtifacts)],
+      generatedArtifacts: nextGeneratedArtifacts
+    },
+    workerResult: {
+      ...existingWorkerResult,
+      generatedArtifacts: nextWorkerGeneratedArtifacts
+    },
+    updatedAt: now
+  };
+  runs[index] = nextRun;
+  await writeJson(paths.runs, runs);
+  const hydrated = await hydrateRunStages(nextRun);
+  return {
+    ...hydrated,
+    savedGeneratedArtifacts: saved
+  };
+}
+
 export async function applyAgentRunEvents(runId, input = {}) {
   const runs = await readJson(paths.runs, []);
   const index = runs.findIndex(item => item.id === runId);
@@ -2340,6 +2390,94 @@ async function saveRunAttachments(run = {}, input = []) {
     });
   }
   return saved;
+}
+
+async function saveGeneratedRunArtifacts(run = {}, input = []) {
+  const items = Array.isArray(input) ? input.slice(0, 12) : [];
+  if (!items.length || !run.artifactRoot) return [];
+  const dir = path.join(run.artifactRoot, '生成图片');
+  await fs.mkdir(dir, { recursive: true });
+  const saved = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index] || {};
+    const parsed = parseRunAttachmentDataUrl(item.dataUrl || '');
+    const sourcePath = parsed ? '' : resolveRunGeneratedArtifactSourcePath(item.path || item.relativePath || '');
+    const sourceStat = sourcePath ? await fs.stat(sourcePath).catch(() => null) : null;
+    const sourceExt = sourcePath ? path.extname(sourcePath).replace(/^\./, '').toLowerCase().replace('jpeg', 'jpg') : '';
+    const ext = parsed ? runAttachmentExt(parsed.mime) : sourceExt;
+    const mime = parsed?.mime || runAttachmentMimeFromExt(ext);
+    const size = parsed?.buffer?.length || Number(sourceStat?.size || item.size || 0);
+    if (!ext || !mime || !['png', 'jpg', 'webp', 'gif'].includes(ext) || size <= 0 || size > 8 * 1024 * 1024) continue;
+    const title = cleanString(item.name || `生成图片-${index + 1}.${ext}`) || `生成图片-${index + 1}.${ext}`;
+    const baseName = safePathSegment(title.replace(/\.[^.]+$/, '')) || `generated-${index + 1}`;
+    const fileName = `${String(index + 1).padStart(2, '0')}-${baseName}.${ext}`;
+    const filePath = await uniqueFilePath(dir, fileName);
+    if (parsed) await fs.writeFile(filePath, parsed.buffer);
+    else await fs.copyFile(sourcePath, filePath);
+    saved.push({
+      id: cleanString(item.id) || randomUUID(),
+      name: title,
+      type: mime,
+      size,
+      path: filePath,
+      relativePath: path.relative(paths.root, filePath).replaceAll(path.sep, '/'),
+      role: 'generated-image',
+      source: 'local-worker',
+      localPath: cleanString(item.path || item.relativePath),
+      createdAt: cleanString(item.createdAt) || new Date().toISOString()
+    });
+  }
+  return saved;
+}
+
+async function uniqueFilePath(dir = '', fileName = '') {
+  const ext = path.extname(fileName);
+  const base = path.basename(fileName, ext) || 'image';
+  let target = path.join(dir, fileName);
+  for (let index = 2; await fileExists(target); index += 1) {
+    target = path.join(dir, `${base}-${index}${ext}`);
+  }
+  return target;
+}
+
+async function fileExists(file = '') {
+  if (!file) return false;
+  try {
+    await fs.access(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveRunGeneratedArtifactSourcePath(value = '') {
+  const text = String(value || '').trim();
+  if (!text || /^https?:\/\//i.test(text) || text.includes('\0')) return '';
+  const normalized = text.replaceAll('\\', '/').replace(/^\/+/, '');
+  const abs = path.isAbsolute(text)
+    ? path.resolve(text)
+    : path.resolve(paths.root, normalized);
+  const relativeArtifact = normalized.startsWith('platform-artifacts/')
+    ? path.resolve(paths.artifactDir, normalized.replace(/^platform-artifacts\/+/, ''))
+    : '';
+  const target = relativeArtifact || abs;
+  return isPathInsideStore(target, paths.artifactDir) || isPathInsideStore(target, paths.workspaceDir) ? target : '';
+}
+
+function dedupeRunArtifacts(input = []) {
+  const seen = new Set();
+  const result = [];
+  for (const item of Array.isArray(input) ? input : []) {
+    if (!item) continue;
+    const artifact = typeof item === 'object'
+      ? item
+      : { path: String(item || ''), relativePath: String(item || ''), name: String(item || '').split('/').pop() || String(item || '') };
+    const key = cleanString(artifact.relativePath || artifact.path || artifact.name);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(artifact);
+  }
+  return result;
 }
 
 function resolveRunAttachmentSourcePath(value = '') {
@@ -6392,6 +6530,7 @@ function hasWorkerRunMaterialChange(existing = {}, nextRun = {}) {
     'resultSummary',
     'workerResult',
     'figmaWriteResult',
+    'generatedArtifacts',
     'workerLocalLogPath',
     'workerLocalLogSize',
     'logPath',

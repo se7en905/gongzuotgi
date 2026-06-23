@@ -345,6 +345,31 @@
           <strong>{{ row.value }}</strong>
         </div>
       </div>
+      <div v-if="app.runGeneratedImageArtifacts(app.selectedRun).length" class="run-generated-image-panel">
+        <div class="run-generated-image-head">
+          <strong>生成图片产物</strong>
+          <span>{{ app.runGeneratedImageArtifacts(app.selectedRun).length }} 张，可预览和下载</span>
+        </div>
+        <div class="run-generated-image-grid">
+          <article
+            v-for="image in app.runGeneratedImageArtifacts(app.selectedRun)"
+            :key="image.path"
+            class="run-generated-image-card"
+          >
+            <a :href="image.url" target="_blank" rel="noopener noreferrer" class="run-generated-image-thumb">
+              <img :src="image.url" :alt="image.name" loading="lazy" />
+            </a>
+            <div class="run-generated-image-meta">
+              <strong :title="image.name">{{ image.name }}</strong>
+              <span>{{ image.size ? app.formatBytes(image.size) : '已归档' }}</span>
+            </div>
+            <div class="run-generated-image-actions">
+              <ElButton size="small" plain tag="a" :href="image.url" target="_blank" rel="noopener noreferrer">打开</ElButton>
+              <ElButton size="small" type="primary" plain tag="a" :href="image.downloadUrl">下载</ElButton>
+            </div>
+          </article>
+        </div>
+      </div>
       <div class="direct-run-actions">
         <span>{{ focusedRunDetail.nextAction }}</span>
         <div>
@@ -2231,6 +2256,106 @@ export default {
 
     &.muted strong {
       color: var(--muted);
+    }
+  }
+
+  .run-generated-image-panel {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid rgba(20, 184, 166, 0.22);
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  .run-generated-image-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+
+    strong {
+      color: var(--heading);
+      font-size: 14px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    span {
+      min-width: 0;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 12px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .run-generated-image-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px;
+  }
+
+  .run-generated-image-card {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+    padding: 8px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    border-radius: 8px;
+    background: rgba(248, 250, 252, 0.72);
+  }
+
+  .run-generated-image-thumb {
+    display: block;
+    overflow: hidden;
+    aspect-ratio: 4 / 3;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 6px;
+    background: #f8fafc;
+
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+  }
+
+  .run-generated-image-meta {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+
+    strong,
+    span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    strong {
+      color: var(--heading);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+  }
+
+  .run-generated-image-actions {
+    display: flex;
+    gap: 6px;
+
+    .el-button {
+      flex: 1;
+      min-width: 0;
     }
   }
 

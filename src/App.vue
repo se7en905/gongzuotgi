@@ -20551,6 +20551,7 @@ export default {
       const detail = this.aiExecutionArchiveDetailMetrics(run);
       if (!run) return detail;
       const summary = run.resultSummary || {};
+      const generatedImages = this.runGeneratedImageArtifacts(run);
       const actualStages = (Array.isArray(run.stages) ? run.stages : []).filter(stage => stage?.name);
       const actualStageCounts = actualStages.reduce((acc, stage) => {
         const value = String(stage.status || '').toLowerCase();
@@ -20569,6 +20570,7 @@ export default {
       const scanPointCount = actualStages.length
         + detail.validationRows.length
         + detail.artifactRows.length
+        + generatedImages.length
         + detail.changeRows.length
         + (run.primarySkillPath || run.stage || run.selectedMaterialHints?.length ? 1 : 0)
         + (run.figmaLinks ? 1 : 0)
@@ -20586,10 +20588,50 @@ export default {
           { label: '成功数量', value: successCount, hint: successCount ? this.resultStatusLabel(resultStatus) : '尚未记录成功', tone: resultStatus === 'partial_write' ? 'warning' : failedCount ? 'warning' : successCount ? 'success' : 'muted' },
           { label: '失败数量', value: resultStatus === 'partial_write' ? 0 : failedCount, hint: resultStatus === 'partial_write' ? '不是纯失败，缺最终验收' : failedCount ? '含失败或阻塞' : '未记录失败', tone: resultStatus === 'partial_write' ? 'warning' : failedCount ? 'danger' : 'success' },
           { label: '扫描点', value: scanPointCount, hint: '对象 / Figma / 阶段 / 证据', tone: scanPointCount ? 'primary' : 'muted' },
-          { label: '数据类', value: detail.dataRows.length, hint: detail.dataRows.map(item => item.label).slice(0, 3).join(' / ') || '暂无结构化数据', tone: detail.dataRows.length ? 'primary' : 'muted' }
+          { label: '数据类', value: detail.dataRows.length + (generatedImages.length ? 1 : 0), hint: generatedImages.length ? `生成图片 ${generatedImages.length} 张` : detail.dataRows.map(item => item.label).slice(0, 3).join(' / ') || '暂无结构化数据', tone: detail.dataRows.length || generatedImages.length ? 'primary' : 'muted' }
         ],
         issueRows
       };
+    },
+
+    runGeneratedImageArtifacts(run = {}) {
+      const pools = [
+        run.generatedArtifacts,
+        run.workerResult?.generatedArtifacts,
+        run.resultSummary?.generatedArtifacts,
+        run.resultSummary?.artifacts
+      ];
+      const rows = [];
+      const seen = new Set();
+      for (const pool of pools) {
+        const items = Array.isArray(pool) ? pool : [];
+        for (const item of items) {
+          const artifact = typeof item === 'object'
+            ? item
+            : { path: String(item || ''), relativePath: String(item || ''), name: String(item || '').split('/').pop() || String(item || '') };
+          if (artifact.uploadFailed) continue;
+          const rawPath = String(artifact.relativePath || artifact.path || '').trim();
+          const rawName = String(artifact.name || rawPath.split('/').pop() || '').trim();
+          const type = String(artifact.type || '').trim();
+          if (!rawPath && !rawName) continue;
+          if (type && !/^image\//i.test(type) && this.artifactTypeFromPath(rawPath || rawName) !== 'image') continue;
+          if (!type && this.artifactTypeFromPath(rawPath || rawName) !== 'image') continue;
+          const path = rawPath || rawName;
+          const key = this.platformArtifactRequestPath(path);
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          const downloadName = rawName || key.split('/').pop() || '生成图片';
+          rows.push({
+            ...artifact,
+            path,
+            relativePath: rawPath,
+            name: downloadName,
+            url: this.artifactUrl(path),
+            downloadUrl: `${this.artifactUrl(path)}&download=${encodeURIComponent(downloadName)}`
+          });
+        }
+      }
+      return rows;
     },
 
     focusedRunOverviewMetrics(run = null) {
@@ -22900,7 +22942,7 @@ export default {
     },
 
     artifactTypeFromPath(path = '') {
-      if (/\.(png|jpg|jpeg|webp)$/i.test(path)) return 'image';
+      if (/\.(png|jpg|jpeg|webp|gif)$/i.test(path)) return 'image';
       if (/\.(md|markdown)$/i.test(path)) return 'report';
       if (/\.(json|csv)$/i.test(path)) return 'data';
       if (/\.(ts|vue|js|cjs|mjs)$/i.test(path)) return 'code';

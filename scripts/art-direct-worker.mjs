@@ -26,6 +26,8 @@ const offlineQueueMaxItems = Math.max(20, Number(process.env.ART_WORKER_OFFLINE_
 const offlineLogChunkMaxChars = Math.max(1000, Number(process.env.ART_WORKER_OFFLINE_LOG_CHUNK_MAX_CHARS || 8000));
 const runEventQueueMaxItems = Math.max(20, Number(process.env.ART_WORKER_RUN_EVENT_QUEUE_MAX_ITEMS || 500));
 const fullLogSyncMaxChars = Math.max(20000, Number(process.env.ART_WORKER_FULL_LOG_SYNC_MAX_CHARS || 180000));
+const generatedArtifactMaxFiles = Math.max(1, Number(process.env.ART_WORKER_GENERATED_ARTIFACT_MAX_FILES || 12));
+const generatedArtifactMaxBytes = Math.max(1024 * 1024, Number(process.env.ART_WORKER_GENERATED_ARTIFACT_MAX_BYTES || 8 * 1024 * 1024));
 const onlineHeartbeatGraceMs = Math.max(180000, Number(process.env.ART_WORKER_ONLINE_GRACE_MS || 720000));
 const selfUpdateEnabled = !['0', 'false', 'no'].includes(String(process.env.ART_WORKER_SELF_UPDATE || '1').toLowerCase());
 const selfUpdateIntervalMs = Math.max(300000, Number(process.env.ART_WORKER_SELF_UPDATE_INTERVAL_MS || 1800000));
@@ -293,6 +295,8 @@ async function wakeForRunChange(event = null) {
   await heartbeat(true).catch(error => {
     logOfflineNotice(`心跳恢复失败，稍后重试：${error.message}`);
   });
+  const updated = await checkSelfUpdate(true);
+  if (updated || selfRestartScheduled) return;
   await checkAndExecuteNextRun();
 }
 
@@ -524,6 +528,7 @@ async function executeRun(run) {
   const localLogText = await readLocalRunLogForSync(run.id);
   const combinedText = [finalText, rawStdoutText, localLogText, stderrText].filter(Boolean).join('\n');
   const figmaWriteResult = extractFigmaWriteEvidence(combinedText, run);
+  const generatedArtifacts = await collectAndUploadGeneratedArtifacts(run, workspace, combinedText);
   const effectiveExitCode = killedByWatchdog ? -1 : exitCode;
   const status = resolveWorkerFinalStatus(effectiveExitCode, figmaWriteResult);
   if (localLogText) {
@@ -559,7 +564,7 @@ async function executeRun(run) {
         durationMs
       }
     ],
-    resultSummary: buildResultSummary(status, effectiveExitCode, killedByWatchdog ? `${combinedText}\n${killedByWatchdog}` : combinedText, figmaWriteResult),
+    resultSummary: buildResultSummary(status, effectiveExitCode, killedByWatchdog ? `${combinedText}\n${killedByWatchdog}` : combinedText, figmaWriteResult, generatedArtifacts),
     workerResult: {
       deviceId,
       hostname: os.hostname(),
@@ -572,7 +577,8 @@ async function executeRun(run) {
       localLogSyncedChars: localLogText.length,
       finalText: finalText.slice(-8000),
       stderrText: stderrText.slice(-8000),
-      watchdogReason: killedByWatchdog
+      watchdogReason: killedByWatchdog,
+      generatedArtifacts
     },
     workerLocalLogPath: localLogInfo.path,
     workerLocalLogSize: localLogInfo.size,
@@ -651,6 +657,8 @@ async function failRunBeforeCodex(run, reason) {
 async function prepareRunWorkspace(run = {}) {
   const cwd = runWorkspacePath(run.id);
   await mkdir(cwd, { recursive: true });
+  await mkdir(path.join(cwd, '生成图片'), { recursive: true });
+  await mkdir(path.join(cwd, 'outputs'), { recursive: true });
   const snapshots = normalizeRunMaterialSnapshots(run);
   if (!snapshots.length && run.primarySkillPath && run.primarySkillContent) {
     snapshots.push({
@@ -726,6 +734,213 @@ async function downloadRunAttachments(run = {}, cwd = '') {
     }
   }
   return saved;
+}
+
+async function collectAndUploadGeneratedArtifacts(run = {}, workspace = {}, finalText = '') {
+  if (!workspace?.cwd) return [];
+  if (!isImageGenerationRun(run)) return [];
+  const localArtifacts = await collectGeneratedImageArtifacts(run, workspace, finalText);
+  if (!localArtifacts.length) return [];
+  const payload = [];
+  for (const item of localArtifacts) {
+    try {
+      const buffer = await readFile(item.path);
+      payload.push({
+        id: item.id,
+        name: item.name,
+        type: item.type,
+        size: item.size,
+        relativePath: item.relativePath,
+        path: item.path,
+        dataUrl: `data:${item.type};base64,${buffer.toString('base64')}`,
+        createdAt: item.createdAt
+      });
+    } catch (error) {
+      await appendLocalRunLog(run.id, `[worker] 生成图片读取失败：${item.path} ${error.message}\n`);
+    }
+  }
+  if (!payload.length) return [];
+  try {
+    const saved = [];
+    for (const batch of chunkArtifactPayloads(payload)) {
+      const response = await fetchJson(`/api/agent-runs/${encodeURIComponent(run.id)}/artifacts`, {
+        method: 'POST',
+        body: { artifacts: batch }
+      });
+      saved.push(...(Array.isArray(response?.artifacts) ? response.artifacts : []));
+    }
+    await appendLocalRunLog(run.id, `[worker] 已回传生成图片产物 ${saved.length} 个。\n`);
+    if (saved.length) {
+      await safeAppendRunLog(run.id, `\n[worker] 已归档生成图片产物：\n${saved.map((item, index) => `${index + 1}. ${item.relativePath || item.path}`).join('\n')}\n`);
+    }
+    return saved;
+  } catch (error) {
+    await appendLocalRunLog(run.id, `[worker] 生成图片产物回传失败：${error.message}\n`);
+    logOfflineNotice(`生成图片产物回传失败，状态仍会继续回传：${error.message}`);
+    return localArtifacts.map(item => ({
+      id: item.id,
+      name: item.name,
+      type: item.type,
+      size: item.size,
+      path: item.path,
+      relativePath: item.relativePath,
+      role: 'generated-image',
+      source: 'local-worker-local-only',
+      uploadFailed: true
+    }));
+  }
+}
+
+function chunkArtifactPayloads(items = []) {
+  const batches = [];
+  let current = [];
+  let bytes = 0;
+  const maxBytes = 40 * 1024 * 1024;
+  for (const item of items) {
+    const size = String(item.dataUrl || '').length + 2000;
+    if (current.length && bytes + size > maxBytes) {
+      batches.push(current);
+      current = [];
+      bytes = 0;
+    }
+    current.push(item);
+    bytes += size;
+  }
+  if (current.length) batches.push(current);
+  return batches;
+}
+
+async function collectGeneratedImageArtifacts(run = {}, workspace = {}, finalText = '') {
+  const cwd = workspace.cwd;
+  const root = path.resolve(cwd);
+  const candidates = await walkGeneratedImageFiles(root, root, {
+    excludedDirs: generatedArtifactExcludedDirs(workspace),
+    maxFiles: generatedArtifactMaxFiles * 4
+  });
+  const finalPathHints = new Set(extractImagePathHints(finalText).map(item => normalizeLocalPathHint(item, root)).filter(Boolean));
+  const attachmentPaths = new Set((workspace.attachmentPaths || [])
+    .map(item => normalizeLocalPathHint(item.path || item.relativePath, root))
+    .filter(Boolean));
+  const snapshotPaths = new Set((workspace.snapshotPaths || [])
+    .map(item => normalizeLocalPathHint(item, root))
+    .filter(Boolean));
+  return candidates
+    .filter(item => !attachmentPaths.has(item.path) && !snapshotPaths.has(item.path))
+    .map(item => ({
+      ...item,
+      score: generatedArtifactScore(item, finalPathHints, run)
+    }))
+    .sort((a, b) => b.score - a.score || b.mtimeMs - a.mtimeMs)
+    .slice(0, generatedArtifactMaxFiles)
+    .map((item, index) => ({
+      id: `${run.id || 'run'}-${index + 1}-${Math.round(item.mtimeMs || Date.now())}`,
+      name: item.name,
+      type: item.mime,
+      size: item.size,
+      path: item.path,
+      relativePath: item.relativePath,
+      createdAt: new Date(item.mtimeMs || Date.now()).toISOString()
+    }));
+}
+
+function generatedArtifactExcludedDirs(workspace = {}) {
+  return new Set([
+    '执行附件',
+    'node_modules',
+    '.git',
+    '.codex',
+    '.cache',
+    '.tmp',
+    'tmp',
+    'temp',
+    ...new Set((workspace.snapshotPaths || [])
+      .map(item => String(item || '').split('/')[0])
+      .filter(Boolean)
+      .filter(name => /^skills?$|^materials?$|^docs?$|^references?$/i.test(name)))
+  ]);
+}
+
+async function walkGeneratedImageFiles(dir = '', root = '', options = {}, depth = 0, acc = []) {
+  if (!dir || acc.length >= Number(options.maxFiles || generatedArtifactMaxFiles * 4) || depth > 5) return acc;
+  let entries = [];
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return acc;
+  }
+  for (const entry of entries) {
+    if (acc.length >= Number(options.maxFiles || generatedArtifactMaxFiles * 4)) break;
+    if (!entry?.name || entry.name.startsWith('.DS_Store')) continue;
+    const target = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (options.excludedDirs?.has(entry.name)) continue;
+      await walkGeneratedImageFiles(target, root, options, depth + 1, acc);
+      continue;
+    }
+    if (!entry.isFile() || !isGeneratedImageFileName(entry.name)) continue;
+    const info = await stat(target).catch(() => null);
+    if (!info || info.size <= 0 || info.size > generatedArtifactMaxBytes) continue;
+    acc.push({
+      name: entry.name,
+      path: path.resolve(target),
+      relativePath: path.relative(root, target).replace(/\\/g, '/'),
+      size: info.size,
+      mtimeMs: info.mtimeMs,
+      mime: imageMimeFromFileName(entry.name)
+    });
+  }
+  return acc;
+}
+
+function isGeneratedImageFileName(name = '') {
+  return /\.(png|jpe?g|webp|gif)$/i.test(name);
+}
+
+function imageMimeFromFileName(name = '') {
+  const ext = path.extname(name).toLowerCase();
+  if (ext === '.png') return 'image/png';
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  if (ext === '.webp') return 'image/webp';
+  if (ext === '.gif') return 'image/gif';
+  return 'application/octet-stream';
+}
+
+function generatedArtifactScore(item = {}, finalPathHints = new Set(), run = {}) {
+  const name = String(item.name || '').toLowerCase();
+  const relativePath = String(item.relativePath || '').toLowerCase();
+  let score = Number(item.mtimeMs || 0) / 1000000000;
+  if (finalPathHints.has(item.path)) score += 1000;
+  if (/生成图片|generated|output|outputs|result|final|image|asset|产物|成品|导出|export/.test(relativePath)) score += 80;
+  if (/生成|generated|output|result|final|成品|产物|image|asset|export/i.test(name)) score += 30;
+  if (isImageGenerationRun(run)) score += 20;
+  return score;
+}
+
+function extractImagePathHints(text = '') {
+  const value = String(text || '');
+  const results = [];
+  const patterns = [
+    /(?:图片|产物|路径|保存|输出|生成).{0,40}?(\/[^\s"'，。；]+?\.(?:png|jpe?g|webp|gif))/ig,
+    /(?:图片|产物|路径|保存|输出|生成).{0,40}?([A-Za-z0-9_.\-\/\u4e00-\u9fa5]+?\.(?:png|jpe?g|webp|gif))/ig,
+    /`([^`]+?\.(?:png|jpe?g|webp|gif))`/ig
+  ];
+  for (const pattern of patterns) {
+    for (const match of value.matchAll(pattern)) {
+      const candidate = match[1] || '';
+      if (candidate) results.push(candidate);
+    }
+  }
+  return results.slice(0, 20);
+}
+
+function normalizeLocalPathHint(value = '', root = '') {
+  const text = String(value || '').trim().replace(/^['"`]+|['"`]+$/g, '');
+  if (!text || /^https?:\/\//i.test(text) || text.includes('\0')) return '';
+  const normalized = text.replace(/\\/g, '/');
+  const target = path.isAbsolute(normalized) ? path.resolve(normalized) : path.resolve(root, normalized);
+  const relative = path.relative(root, target);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return '';
+  return target;
 }
 
 function safeFileName(value = '') {
@@ -819,6 +1034,7 @@ function buildPrompt(run = {}, workspace = {}) {
   const materialInstruction = buildClientEquivalentMaterialInstruction(run, materialPaths, primaryMaterial);
   const figmaLinks = String(run.figmaLinks || '').trim();
   const figmaWriteRequired = requiresFigmaWriteEvidence(run);
+  const imageGenerationRun = isImageGenerationRun(run);
   const imagePlacementRequired = figmaTargetIsImagePlacement(run);
   const editableFigmaRequested = requestsEditableFigmaOutput(run);
   return [
@@ -875,6 +1091,7 @@ function buildPrompt(run = {}, workspace = {}) {
     imagePlacementRequired && !editableFigmaRequested ? '- 除非用户明确要求“转为可编辑 / 可编辑图层 / 矢量重建”，否则保留位图成品展示。' : '',
     figmaWriteRequired ? '- 涉及 Figma 写入、图片放置或图片替换时，必须回传 createdNodeIds / mutatedNodeIds，或可证明图片已放置/替换到目标 Figma 的等价工具证据。' : '',
     !figmaLinks ? '- 本次没有 Figma 链接时，不要因为缺少 Figma MCP、Figma OAuth 或 Figma 写入工具而判定阻塞。' : '',
+    !figmaLinks && imageGenerationRun ? '- 本次是纯生图且未填写 Figma 链接：必须把最终成品图保存到本机执行目录下的“生成图片/”或“outputs/”目录，平台会自动归档到执行台供预览、打开和下载。' : '',
     imagePlacementRequired
       ? '- 最终报告必须写明生成图片产物路径、Figma 放置/替换目标、使用的 Skill / md 和复核点。'
       : '- 如果 Skill / md 任务本身是生成图片或本地产物且本次没有要求落到 Figma，不强制要求 Figma 写入完成；最终报告写明产物路径、使用的 Skill / md 和复核点。',
@@ -1395,7 +1612,7 @@ function safePathSegment(value = '') {
     .slice(0, 120) || 'run';
 }
 
-function buildResultSummary(status, exitCode, finalText, figmaWriteResult = {}) {
+function buildResultSummary(status, exitCode, finalText, figmaWriteResult = {}, generatedArtifacts = []) {
   const figmaBlocker = figmaWriteResult.required && (!figmaWriteResult.written || figmaWriteResult.partialWrite)
     ? figmaWriteResult.blockerReason || '未检测到 Figma 放置、替换或写入证据。'
     : '';
@@ -1415,7 +1632,11 @@ function buildResultSummary(status, exitCode, finalText, figmaWriteResult = {}) 
     blockerReason: failureReason,
     needsHumanReview: true,
     validationCommands: ['codex exec --json'],
-    artifacts: figmaWriteResult.evidence?.length ? figmaWriteResult.evidence : [],
+    artifacts: [
+      ...(figmaWriteResult.evidence?.length ? figmaWriteResult.evidence : []),
+      ...generatedArtifacts.filter(item => !item.uploadFailed).map(item => item.relativePath || item.path).filter(Boolean)
+    ],
+    generatedArtifacts,
     figmaWritten: figmaWriteResult.written === true,
     figmaVerifiedAfterWrite: figmaWriteResult.verifiedAfterWrite === true,
     nextStep: status === 'blocked'
