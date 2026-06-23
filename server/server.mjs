@@ -5997,17 +5997,11 @@ async function serveArtifact(res, file, currentUser, options = {}) {
   }
   const runs = await listRuns();
   const matchedRun = runs.find(run => {
-    const roots = [
-      run.artifactRoot,
-      run.logPath,
-      run.promptPath,
-      run.materialPath,
-      run.id ? path.join(paths.workspaceDir, run.id, 'run.log') : ''
-    ].filter(Boolean);
+    const roots = artifactAccessRootsForRun(run);
     return roots.some(root => isPathInside(abs, root));
   });
   if (matchedRun) {
-    await requireRunViewAccess(currentUser, matchedRun);
+    await requireRunArtifactAccess(currentUser, matchedRun);
   } else if (!isPathInside(abs, zentaoArtBriefOutDir)) {
     sendJson(res, 403, { error: 'artifact path is not linked to an accessible run' });
     return;
@@ -6037,6 +6031,39 @@ async function serveArtifact(res, file, currentUser, options = {}) {
   }
   res.writeHead(200, headers);
   res.end(content);
+}
+
+function artifactAccessRootsForRun(run = {}) {
+  const roots = [
+    run.artifactRoot,
+    run.logPath,
+    run.promptPath,
+    run.materialPath,
+    run.id ? path.join(paths.workspaceDir, run.id, 'run.log') : ''
+  ].filter(Boolean);
+  for (const file of [
+    run.materialPath,
+    ...(Array.isArray(run.attachments) ? run.attachments.map(item => item?.path || item?.relativePath) : []),
+    ...(Array.isArray(run.generatedArtifacts) ? run.generatedArtifacts.map(item => item?.path || item?.relativePath) : []),
+    ...(Array.isArray(run.resultSummary?.generatedArtifacts) ? run.resultSummary.generatedArtifacts.map(item => item?.path || item?.relativePath) : []),
+    ...(Array.isArray(run.workerResult?.generatedArtifacts) ? run.workerResult.generatedArtifacts.map(item => item?.path || item?.relativePath) : [])
+  ]) {
+    const resolved = resolveArtifactRequestPath(file);
+    if (resolved) roots.push(path.dirname(resolved));
+  }
+  return [...new Set(roots.map(item => path.resolve(item)).filter(Boolean))];
+}
+
+async function requireRunArtifactAccess(user = {}, run = {}) {
+  try {
+    await requireRunViewAccess(user, run);
+    return user;
+  } catch (error) {
+    if (error?.status !== 403) throw error;
+  }
+  requireAnyPermission(user, ['api.agentRuns.claim', 'api.agentRuns.status']);
+  ensureWorkerCanUpdateRun(user, run);
+  return user;
 }
 
 function safeDownloadFilename(value = '') {

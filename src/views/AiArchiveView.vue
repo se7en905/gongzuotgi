@@ -246,6 +246,29 @@
           </div>
         </div>
       </section>
+
+      <section v-if="app.runGeneratedImageArtifacts(app.aiExecutionArchiveDetailRun).length" class="ai-archive-detail-section">
+        <h4>生成图片产物</h4>
+        <div class="ai-archive-generated-image-grid">
+          <article
+            v-for="image in app.runGeneratedImageArtifacts(app.aiExecutionArchiveDetailRun)"
+            :key="image.path"
+            class="ai-archive-generated-image-card"
+          >
+            <a :href="image.url" target="_blank" rel="noopener noreferrer" class="ai-archive-generated-image-thumb">
+              <img :src="image.url" :alt="image.name" loading="lazy" />
+            </a>
+            <div class="ai-archive-generated-image-meta">
+              <strong :title="image.name">{{ image.name }}</strong>
+              <span>{{ image.size ? app.formatBytes(image.size) : '已归档' }}</span>
+            </div>
+            <div class="ai-archive-generated-image-actions">
+              <ElButton size="small" plain tag="a" :href="image.url" target="_blank" rel="noopener noreferrer">打开</ElButton>
+              <ElButton size="small" type="primary" plain tag="a" :href="image.downloadUrl">下载</ElButton>
+            </div>
+          </article>
+        </div>
+      </section>
     </div>
   </ElDrawer>
 </section>
@@ -642,6 +665,58 @@ export default {
   &.two-columns {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+.ai-archive-generated-image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.ai-archive-generated-image-card {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.ai-archive-generated-image-thumb {
+  display: block;
+  aspect-ratio: 1 / 1;
+  background: #0f172a;
+
+  img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+}
+
+.ai-archive-generated-image-meta {
+  display: grid;
+  gap: 2px;
+  padding: 10px 10px 0;
+
+  strong {
+    overflow: hidden;
+    color: var(--text);
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  span {
+    color: var(--muted);
+    font-size: 12px;
+  }
+}
+
+.ai-archive-generated-image-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px;
 }
 
 .ai-archive-empty {

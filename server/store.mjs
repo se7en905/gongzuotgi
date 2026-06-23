@@ -1410,7 +1410,7 @@ export async function saveAgentRunGeneratedArtifacts(runId, input = []) {
   const runs = await readJson(paths.runs, []);
   const index = runs.findIndex(item => item.id === runId);
   if (index === -1) return null;
-  const run = runs[index];
+  const run = ensureRunArtifactRootFromExistingFiles(runs[index]);
   if (!run.artifactRoot) return await hydrateRunStages(run);
   const saved = await saveGeneratedRunArtifacts(run, input);
   if (!saved.length) return await hydrateRunStages(run);
@@ -1432,6 +1432,7 @@ export async function saveAgentRunGeneratedArtifacts(runId, input = []) {
   ]);
   const nextRun = {
     ...run,
+    artifactRoot: run.artifactRoot,
     generatedArtifacts: dedupeRunArtifacts([
       ...(Array.isArray(run.generatedArtifacts) ? run.generatedArtifacts : []),
       ...saved
@@ -1454,6 +1455,36 @@ export async function saveAgentRunGeneratedArtifacts(runId, input = []) {
     ...hydrated,
     savedGeneratedArtifacts: saved
   };
+}
+
+function ensureRunArtifactRootFromExistingFiles(run = {}) {
+  if (run.artifactRoot) return run;
+  const root = inferRunArtifactRootFromExistingFiles(run);
+  return root ? { ...run, artifactRoot: root } : run;
+}
+
+function inferRunArtifactRootFromExistingFiles(run = {}) {
+  const candidates = [
+    run.materialPath,
+    ...(Array.isArray(run.attachments) ? run.attachments.map(item => item?.path || item?.relativePath) : []),
+    ...(Array.isArray(run.generatedArtifacts) ? run.generatedArtifacts.map(item => item?.path || item?.relativePath) : []),
+    ...(Array.isArray(run.resultSummary?.generatedArtifacts) ? run.resultSummary.generatedArtifacts.map(item => item?.path || item?.relativePath) : []),
+    ...(Array.isArray(run.workerResult?.generatedArtifacts) ? run.workerResult.generatedArtifacts.map(item => item?.path || item?.relativePath) : [])
+  ];
+  for (const item of candidates) {
+    const resolved = resolveRunArtifactSourcePath(item);
+    const root = inferRunArtifactRootFromPath(resolved);
+    if (root) return root;
+  }
+  return '';
+}
+
+function inferRunArtifactRootFromPath(filePath = '') {
+  if (!filePath || !isPathInsideStore(filePath, paths.artifactDir)) return '';
+  const parts = path.relative(paths.artifactDir, filePath).split(path.sep);
+  const runsIndex = parts.indexOf('runs');
+  if (runsIndex < 0 || parts.length <= runsIndex + 1) return '';
+  return path.join(paths.artifactDir, ...parts.slice(0, runsIndex + 2));
 }
 
 export async function applyAgentRunEvents(runId, input = {}) {
@@ -2451,17 +2482,7 @@ async function fileExists(file = '') {
 }
 
 function resolveRunGeneratedArtifactSourcePath(value = '') {
-  const text = String(value || '').trim();
-  if (!text || /^https?:\/\//i.test(text) || text.includes('\0')) return '';
-  const normalized = text.replaceAll('\\', '/').replace(/^\/+/, '');
-  const abs = path.isAbsolute(text)
-    ? path.resolve(text)
-    : path.resolve(paths.root, normalized);
-  const relativeArtifact = normalized.startsWith('platform-artifacts/')
-    ? path.resolve(paths.artifactDir, normalized.replace(/^platform-artifacts\/+/, ''))
-    : '';
-  const target = relativeArtifact || abs;
-  return isPathInsideStore(target, paths.artifactDir) || isPathInsideStore(target, paths.workspaceDir) ? target : '';
+  return resolveRunArtifactSourcePath(value);
 }
 
 function dedupeRunArtifacts(input = []) {
@@ -2481,6 +2502,10 @@ function dedupeRunArtifacts(input = []) {
 }
 
 function resolveRunAttachmentSourcePath(value = '') {
+  return resolveRunArtifactSourcePath(value);
+}
+
+function resolveRunArtifactSourcePath(value = '') {
   const text = String(value || '').trim();
   if (!text || /^https?:\/\//i.test(text) || text.includes('\0')) return '';
   const normalized = text.replaceAll('\\', '/').replace(/^\/+/, '');

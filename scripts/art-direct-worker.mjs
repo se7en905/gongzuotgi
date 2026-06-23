@@ -530,7 +530,8 @@ async function executeRun(run) {
   const figmaWriteResult = extractFigmaWriteEvidence(combinedText, run);
   const generatedArtifacts = await collectAndUploadGeneratedArtifacts(run, workspace, combinedText);
   const effectiveExitCode = killedByWatchdog ? -1 : exitCode;
-  const status = resolveWorkerFinalStatus(effectiveExitCode, figmaWriteResult);
+  const imageArtifactResult = evaluateImageArtifactResult(run, generatedArtifacts);
+  const status = resolveWorkerFinalStatus(effectiveExitCode, figmaWriteResult, imageArtifactResult);
   if (localLogText) {
     await safeAppendRunLog(run.id, `\n\n[worker local full log ${finishedAt}]\n${localLogText}\n[/worker local full log]\n`);
   }
@@ -564,7 +565,7 @@ async function executeRun(run) {
         durationMs
       }
     ],
-    resultSummary: buildResultSummary(status, effectiveExitCode, killedByWatchdog ? `${combinedText}\n${killedByWatchdog}` : combinedText, figmaWriteResult, generatedArtifacts),
+    resultSummary: buildResultSummary(status, effectiveExitCode, killedByWatchdog ? `${combinedText}\n${killedByWatchdog}` : combinedText, figmaWriteResult, generatedArtifacts, imageArtifactResult),
     workerResult: {
       deviceId,
       hostname: os.hostname(),
@@ -1612,16 +1613,23 @@ function safePathSegment(value = '') {
     .slice(0, 120) || 'run';
 }
 
-function buildResultSummary(status, exitCode, finalText, figmaWriteResult = {}, generatedArtifacts = []) {
+function buildResultSummary(status, exitCode, finalText, figmaWriteResult = {}, generatedArtifacts = [], imageArtifactResult = {}) {
   const figmaBlocker = figmaWriteResult.required && (!figmaWriteResult.written || figmaWriteResult.partialWrite)
     ? figmaWriteResult.blockerReason || '未检测到 Figma 放置、替换或写入证据。'
     : '';
-  const failureReason = status === 'completed' ? '' : figmaBlocker || extractFailureReason(finalText) || `Codex 退出码：${exitCode}`;
+  const imageBlocker = imageArtifactResult.required && !imageArtifactResult.hasArtifact
+    ? imageArtifactResult.blockerReason || '未检测到生成图片产物。'
+    : '';
+  const failureReason = status === 'completed' ? '' : figmaBlocker || imageBlocker || extractFailureReason(finalText) || `Codex 退出码：${exitCode}`;
   const completedSummary = figmaWriteResult.required
     ? '本机直接执行已完整完成，已检测到 Figma 放置、替换或写入证据，以及写入后的回读/截图验收证据。'
+    : imageArtifactResult.required
+      ? '本机直接执行已完成，生成图片产物已归档到工作台。'
     : '本机直接执行已完成。';
   const failedSummary = figmaWriteResult.partialWrite
     ? 'Figma 已有部分放置、替换或写入，但最终回读/截图验收未闭环，请恢复授权后继续执行。'
+    : imageArtifactResult.required && !imageArtifactResult.hasArtifact
+      ? '本机 Codex 已结束，但未检测到可归档的生成图片产物，请继续执行或补充输入后重新执行。'
     : '本机直接执行失败，请查看阻塞原因和原始日志。';
   return {
     status,
@@ -1640,10 +1648,25 @@ function buildResultSummary(status, exitCode, finalText, figmaWriteResult = {}, 
     figmaWritten: figmaWriteResult.written === true,
     figmaVerifiedAfterWrite: figmaWriteResult.verifiedAfterWrite === true,
     nextStep: status === 'blocked'
-      ? '恢复执行人本机 Figma MCP 授权后继续执行，优先补齐最终回读、截图验收和剩余未完成项。'
+      ? (imageBlocker || !figmaWriteResult.required
+        ? '继续执行或重新执行时补齐可用参考图、主体说明，并确认成品图保存到“生成图片/”或“outputs/”目录。'
+        : '恢复执行人本机 Figma MCP 授权后继续执行，优先补齐最终回读、截图验收和剩余未完成项。')
       : '',
     finalText: String(finalText || '').slice(-4000),
     parsedAt: new Date().toISOString()
+  };
+}
+
+function evaluateImageArtifactResult(run = {}, generatedArtifacts = []) {
+  const required = isImageGenerationRun(run) && !String(run.figmaLinks || '').trim();
+  if (!required) return { required: false, hasArtifact: true, blockerReason: '' };
+  const uploaded = generatedArtifacts.filter(item => !item.uploadFailed && (item.relativePath || item.path));
+  return {
+    required: true,
+    hasArtifact: uploaded.length > 0,
+    blockerReason: uploaded.length > 0
+      ? ''
+      : '本次是纯生图且未填写 Figma 链接，但执行结束后未在“生成图片/”或“outputs/”目录检测到可归档图片。'
   };
 }
 
@@ -1701,10 +1724,11 @@ function requestsEditableFigmaOutput(run = {}) {
   return /转(?:成|为)?可编辑|可编辑图层|可编辑结构|矢量(?:化|重建)?|vector|拆(?:成|为).{0,12}图层|重建.{0,12}(?:Figma|图层|节点)|还原.{0,12}(?:Figma|图层|节点)/i.test(text);
 }
 
-function resolveWorkerFinalStatus(exitCode, figmaWriteResult = {}) {
+function resolveWorkerFinalStatus(exitCode, figmaWriteResult = {}, imageArtifactResult = {}) {
   if (Number(exitCode) !== 0) return 'failed';
   if (figmaWriteResult.required && !figmaWriteResult.written) return 'failed';
   if (figmaWriteResult.required && figmaWriteResult.partialWrite) return 'blocked';
+  if (imageArtifactResult.required && !imageArtifactResult.hasArtifact) return 'blocked';
   return 'completed';
 }
 
