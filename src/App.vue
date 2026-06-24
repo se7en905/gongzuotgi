@@ -19011,6 +19011,22 @@ export default {
       }
       const workerAccount = String(claimedWorker?.userName || claimedWorker?.username || claimedWorker?.account || '').trim();
       if (workerAccount) return workerAccount;
+      const executorNames = [
+        run.queuedForName,
+        run.assignedToName,
+        run.developer
+      ].map(value => String(value || '').trim()).filter(Boolean);
+      for (const executorName of executorNames) {
+        const matchedUser = (this.users || []).find(user => [
+          user?.username,
+          user?.account,
+          user?.displayName,
+          user?.realname,
+          user?.name
+        ].some(alias => samePerson(alias, executorName)));
+        const matchedAccount = String(matchedUser?.username || matchedUser?.account || '').trim();
+        if (matchedAccount) return matchedAccount;
+      }
       return [
         run.queuedForAccount,
         run.assignedToAccount,
