@@ -253,6 +253,33 @@ export function normalizeTaskArtBriefCumulativeUsageBucket(bucket = {}) {
   return next;
 }
 
+export function normalizeArtProgressReporterSelfUsageBucketForRegression(bucket = {}) {
+  const next = {
+    ...bucket,
+    target: bucket.target || 'art-progress-reporter',
+    people: { ...(bucket.people || {}) },
+    usagePeople: { ...(bucket.usagePeople || {}) },
+    usageEventKeys: Array.isArray(bucket.usageEventKeys) ? [...bucket.usageEventKeys] : [],
+    eventKeys: Array.isArray(bucket.eventKeys) ? [...bucket.eventKeys] : []
+  };
+  const key = compactUsageTargetText(next.key || next.target);
+  if (key !== 'artprogressreporter') return next;
+  const researchCount = Math.max(0, Math.round(Number(next.researchSyncCount || 0)));
+  const usageCount = Math.max(0, Math.round(Number(next.usageCount || 0)), researchCount, next.usageEventKeys.length);
+  next.usageCount = usageCount;
+  const usagePeopleTotal = Object.values(next.usagePeople || {}).reduce((sum, value) => sum + Math.max(0, Math.round(Number(value || 0))), 0);
+  const peopleTotal = Object.values(next.people || {}).reduce((sum, value) => sum + Math.max(0, Math.round(Number(value || 0))), 0);
+  if (peopleTotal > usagePeopleTotal) {
+    next.usagePeople = { ...next.people };
+    next.usagePeopleCount = Object.keys(next.usagePeople).length;
+  }
+  if (next.eventKeys.length && next.usageEventKeys.length < Math.min(usageCount, next.eventKeys.length)) {
+    next.usageEventKeys = [...next.usageEventKeys, ...next.eventKeys]
+      .filter((eventKey, index, array) => eventKey && array.indexOf(eventKey) === index);
+  }
+  return next;
+}
+
 export function usageCounterDisplayCountFromBucket(bucket = {}) {
   return Math.max(0, Math.round(Number(bucket.usageCount || 0)));
 }

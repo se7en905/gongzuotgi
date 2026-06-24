@@ -9,6 +9,7 @@ import {
   deleteOperationLogRecords,
   displayMetricsForSkillInventoryRow,
   mergeUsageCounterRebuildSnapshot,
+  normalizeArtProgressReporterSelfUsageBucketForRegression,
   normalizeTaskArtBriefCumulativeUsageBucket,
   shouldKeepOperationLog,
   shouldReplaceAiMembersBoardHtml,
@@ -277,6 +278,43 @@ function testTaskArtBriefUsageKeepsLegacyCumulativeCount() {
   }, '摘要产物旧累计成员分布必须随 usagePeople 一起保留');
 }
 
+function testArtProgressReporterSelfUsageMigration() {
+  const bucket = normalizeArtProgressReporterSelfUsageBucketForRegression({
+    key: 'artprogressreporter',
+    target: 'art-progress-reporter',
+    count: 48,
+    usageCount: 0,
+    researchSyncCount: 48,
+    eventKeys: ['old-a', 'old-b'],
+    usageEventKeys: [],
+    people: {
+      余盛威: 16,
+      黄剑荣: 9,
+      李华玲: 7,
+      冯淑琪: 5,
+      叶君博: 5,
+      兰韩界: 4,
+      张宗斌: 2
+    },
+    usagePeople: {}
+  });
+  assert.equal(bucket.usageCount, 48, '研究同步助手产物自身的历史上报累计必须迁移为调用次数');
+  assert.equal(usageCounterDisplayCountFromBucket(bucket), 48, 'AI产物清单展示必须读取迁移后的 usageCount');
+  assert.deepEqual(bucket.usagePeople, bucket.people, '研究同步助手产物自身的成员明细必须和历史上报人员保持一致');
+  assert.deepEqual(bucket.usageEventKeys, ['old-a', 'old-b'], '历史事件键必须并入 usageEventKeys 参与后续去重');
+
+  const notReduced = normalizeArtProgressReporterSelfUsageBucketForRegression({
+    key: 'artprogressreporter',
+    target: 'art-progress-reporter',
+    usageCount: 52,
+    researchSyncCount: 48,
+    people: { 兰韩界: 48 },
+    usagePeople: { 兰韩界: 52 }
+  });
+  assert.equal(notReduced.usageCount, 52, '历史迁移不得降低已经更高的真实累计次数');
+  assert.deepEqual(notReduced.usagePeople, { 兰韩界: 52 }, '历史迁移不得降低已经更高的成员调用明细');
+}
+
 function testUsageCounterRebuildNeverReducesRealUsage() {
   const bucket = mergeUsageCounterRebuildSnapshot({
     key: 'alias:界面收尾',
@@ -370,6 +408,7 @@ testAiMembersBoardPlaceholderDoesNotReplaceCachedHtml();
 testOperationLogDeleteDoesNotMutateUsageCounters();
 testOperationLogKeepsOnlyImportantActions();
 testTaskArtBriefUsageKeepsLegacyCumulativeCount();
+testArtProgressReporterSelfUsageMigration();
 testUsageCounterRebuildNeverReducesRealUsage();
 testArtProgressUsageRequiresStrongEvidence();
 testPermissionCatalogsStayAligned();
@@ -388,6 +427,7 @@ console.log(JSON.stringify({
     '操作日志删除不影响累计调用次数',
     '操作日志只保留关键动作',
     '任务中心摘要累计调用不被短期日志压低',
+    '研究同步助手产物自身历史上报迁移为调用次数',
     '历史重建不得减少真实调用累计',
     '成员上报调用必须有强证据且过滤技术桶',
     '权限目录前后端一致性'

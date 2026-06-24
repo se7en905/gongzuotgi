@@ -248,9 +248,15 @@ async function handleApi(req, res, url) {
       sendJson(res, 401, { error: '缺少有效登录态或美术工作台上报密钥。' });
       return;
     }
-    const event = await saveArtProgressEvent(body, user, 'api');
+    const progressResult = await saveArtProgressEvent(body, user, 'api');
+    const event = progressResult.event || progressResult;
     const validationRecord = await maybeCreateSkillValidationFromArtProgress(event, user);
     broadcastPlatformEvent('art-progress-events.changed', { module: 'skill-events' });
+    broadcastUsageCountersChanged(progressResult.usagePatch, {
+      module: 'art-progress',
+      targetId: event.id || '',
+      target: event.title || event.skillName || ''
+    });
     if (validationRecord) {
       broadcastPlatformEvent('skill-validations.changed', { module: 'skill-validation' });
       broadcastUsageCountersChanged(validationRecord.usagePatch, {
@@ -5587,6 +5593,9 @@ async function maybeCreateSkillValidationFromArtProgress(event = {}, user = {}) 
 }
 
 async function saveArtProgressEvent(input = {}, user = {}, source = 'api') {
+  const userName = cleanText(user.username || user.id || '');
+  const isReporterUser = userName === 'art-progress-reporter' || cleanText(user.displayName) === '研究同步助手';
+  const inputMetadata = input.metadata && typeof input.metadata === 'object' ? input.metadata : {};
   const run = input.runId ? await getRun(String(input.runId)).catch(() => null) : null;
   const task = run?.taskId ? await getTask(run.taskId).catch(() => null) : null;
   const project = (input.projectId || run?.projectId) ? await getProject(input.projectId || run.projectId).catch(() => null) : null;
@@ -5607,9 +5616,13 @@ async function saveArtProgressEvent(input = {}, user = {}, source = 'api') {
     title: classified.title || input.title || run?.title || task?.title || '',
     memberAccount: normalizeArtMemberAccount(input.memberAccount, input.memberName) || user.username || '',
     memberName: normalizeArtMemberName(input.memberName || user.displayName || user.username, input.memberAccount || user.username),
-    source
+    source,
+    metadata: {
+      ...inputMetadata,
+      ...(isReporterUser ? { reportedByArtProgressReporter: true } : {})
+    }
   });
-  await recordUsageCountersForArtProgressEvent(event);
+  const usagePatch = await recordUsageCountersForArtProgressEvent(event);
   await createOperationLog({
     user,
     module: 'art-progress',
@@ -5621,7 +5634,7 @@ async function saveArtProgressEvent(input = {}, user = {}, source = 'api') {
     description: `${normalizeArtMemberName(event.memberName, event.memberAccount) || '外部脚本'} 同步 ${event.eventType}：${event.summary}`,
     after: event
   });
-  return event;
+  return { event, usagePatch };
 }
 
 async function editArtProgressEvent(id = '', input = {}, user = {}) {

@@ -71,8 +71,10 @@ const mysqlConfigs = new Map([
 
 const useMysqlStore = process.env.AWP_USE_MYSQL === '1';
 const retentionDays = Math.max(1, Number(process.env.AWP_DATA_RETENTION_DAYS || 2) || 2);
-const usageCounterLogicVersion = 'usage-only-v7-operation-log-targets';
+const usageCounterLogicVersion = 'usage-only-v8-reporter-self-usage';
 const taskArtBriefUsageCounterKey = 'zentaoartbriefproduct';
+const artProgressReporterUsageCounterKey = 'artprogressreporter';
+const artProgressReporterUsageTarget = 'art-progress-reporter';
 const unknownUsagePersonName = '未识别使用人';
 const retentionEnabled = process.env.AWP_DATA_RETENTION_ENABLED !== '0';
 const runFigmaLogEvidenceCache = new Map();
@@ -5187,6 +5189,7 @@ async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCount
     }
     if (applyHistoricalUsageBucketRebuild(bucket, usageBucketRebuildMap)) changed = true;
     if (normalizeTaskArtBriefLegacyUsageBucket(bucket)) changed = true;
+    if (normalizeArtProgressReporterSelfUsageBucket(bucket)) changed = true;
     if (normalizeUsageBucketAliases(bucket)) changed = true;
     const eventKeys = Array.isArray(bucket.eventKeys) ? bucket.eventKeys.filter(Boolean) : [];
     const misclassified = historicalNonUsageEventKeySetForBucket(bucket, nonUsageLogs);
@@ -5407,6 +5410,42 @@ function normalizeTaskArtBriefLegacyUsageBucket(bucket = {}) {
   if (peopleTotal > usageTotal) {
     bucket.usagePeople = { ...people };
     bucket.usagePeopleCount = Object.keys(bucket.usagePeople).length;
+    changed = true;
+  }
+  return changed;
+}
+
+function normalizeArtProgressReporterSelfUsageBucket(bucket = {}) {
+  if (!bucket || bucket.key !== artProgressReporterUsageCounterKey) return false;
+  let changed = false;
+  const researchCount = Math.max(0, Math.round(Number(bucket.researchSyncCount || 0)));
+  const existingUsage = Math.max(0, Math.round(Number(bucket.usageCount || 0)));
+  const eventKeys = Array.isArray(bucket.eventKeys) ? bucket.eventKeys.map(cleanString).filter(Boolean) : [];
+  const usageEventKeys = Array.isArray(bucket.usageEventKeys) ? bucket.usageEventKeys.map(cleanString).filter(Boolean) : [];
+  const usageCount = Math.max(existingUsage, researchCount, usageEventKeys.length);
+  if (usageCount > existingUsage) {
+    bucket.usageCount = usageCount;
+    changed = true;
+  }
+  const people = bucket.people && typeof bucket.people === 'object' ? bucket.people : {};
+  const usagePeople = bucket.usagePeople && typeof bucket.usagePeople === 'object' ? bucket.usagePeople : {};
+  const mergedUsagePeople = mergeHistoricalUsagePeople(usagePeople, people, Math.max(usageCount, existingUsage));
+  if (usageCount > 0 && JSON.stringify(usagePeople) !== JSON.stringify(mergedUsagePeople)) {
+    bucket.usagePeople = mergedUsagePeople;
+    bucket.usagePeopleCount = Object.keys(mergedUsagePeople).length;
+    changed = true;
+  }
+  if (usageCount > 0 && eventKeys.length && usageEventKeys.length < Math.min(usageCount, eventKeys.length)) {
+    const mergedUsageEventKeys = [...usageEventKeys, ...eventKeys]
+      .filter((eventKey, index, array) => eventKey && array.indexOf(eventKey) === index)
+      .slice(-500);
+    if (JSON.stringify(usageEventKeys) !== JSON.stringify(mergedUsageEventKeys)) {
+      bucket.usageEventKeys = mergedUsageEventKeys;
+      changed = true;
+    }
+  }
+  if (!bucket.target || usageCounterKey(bucket.target) !== artProgressReporterUsageCounterKey) {
+    bucket.target = artProgressReporterUsageTarget;
     changed = true;
   }
   return changed;
@@ -6348,9 +6387,10 @@ function cleanValidationUsageText(value = '') {
 }
 
 function usageTargetsFromArtProgressEvent(event = {}) {
-  if (!isUsageLikeArtProgressEvent(event)) return [];
   const metadata = event.metadata && typeof event.metadata === 'object' ? event.metadata : {};
   const defaultCount = Math.max(1, Number(metadata.usageCount || metadata.count || 1) || 1);
+  const reporterSelfTargets = artProgressReporterSelfUsageTargetsFromEvent(event, defaultCount);
+  if (!isUsageLikeArtProgressEvent(event)) return reporterSelfTargets;
   const kind = isUsageCountableArtProgressEvent(event) ? 'usage' : 'research-sync';
   const targetValues = artProgressStrongUsageTargetValues(event);
   const targets = buildUsageTargets(targetValues, {
@@ -6373,11 +6413,38 @@ function usageTargetsFromArtProgressEvent(event = {}) {
     count: Math.max(1, Number(item?.count || defaultCount) || 1),
     eventKey: usageEventKey('art-progress-artifact', `${event.id || event.skillName || event.title}:${index}`, event.createdAt)
   }));
-  return [...targets, ...artifactTargets];
+  return [...targets, ...artifactTargets, ...reporterSelfTargets];
+}
+
+function artProgressReporterSelfUsageTargetsFromEvent(event = {}, defaultCount = 1) {
+  if (!isArtProgressReporterSelfUsageEvent(event)) return [];
+  return buildUsageTargets([artProgressReporterUsageTarget], {
+    person: cleanString(event.memberName || event.memberAccount),
+    at: cleanString(event.createdAt),
+    source: 'art-progress-reporter-self',
+    kind: 'usage',
+    count: Math.max(1, Number(defaultCount || 1) || 1),
+    eventKey: artProgressReporterSelfUsageEventKey(event)
+  });
+}
+
+function artProgressReporterSelfUsageEventKey(event = {}) {
+  return usageEventKey('art-progress-reporter-self', event.id || event.targetId || event.skillName || event.title, event.createdAt || event.updatedAt);
+}
+
+function isArtProgressReporterSelfUsageEvent(event = {}) {
+  const metadata = event.metadata && typeof event.metadata === 'object' ? event.metadata : {};
+  if (metadata.reportedByArtProgressReporter !== true && metadata.countAsReporterSelfUsage !== true) return false;
+  if (['reporter_test', 'reporter_installed'].includes(cleanString(event.eventType))) return false;
+  if (metadata.countAsSkillUsage === false || metadata.countAsProductUsage === false || metadata.countAsReporterSelfUsage === false) return false;
+  const person = cleanString(event.memberName || event.memberAccount);
+  return Boolean(person && !isUsageProxyPerson(person) && !looksLikeUuid(person));
 }
 
 function usageTargetsFromOperationLog(log = {}, inventoryIdentity = null) {
   if (isSkillValidationOperationLog(log)) return usageTargetsFromSkillValidationOperationLog(log, inventoryIdentity);
+  const reporterSelfTargets = artProgressReporterSelfUsageTargetsFromOperationLog(log);
+  if (reporterSelfTargets.length) return reporterSelfTargets;
   if (!isUsageLikeOperationLog(log)) return [];
   if (isTaskArtBriefUsageOperationLog(log)) {
     return buildUsageTargets(['zentao-art-brief-product'], {
@@ -6398,6 +6465,33 @@ function usageTargetsFromOperationLog(log = {}, inventoryIdentity = null) {
     eventKey: operationLogUsageEventKey(log, record)
   }));
   return normalizeUsageTargets(targets.filter(target => targetMatchesUsageInventory(target.target, inventoryIdentity)));
+}
+
+function artProgressReporterSelfUsageTargetsFromOperationLog(log = {}) {
+  if (!isArtProgressReporterSelfUsageOperationLog(log)) return [];
+  const after = log.after && typeof log.after === 'object' ? log.after : {};
+  const person = cleanString(after.memberName || after.memberAccount || extractOwnerFromResearchSyncDescription(log.description || log.targetName || ''));
+  return buildUsageTargets([artProgressReporterUsageTarget], {
+    person,
+    at: cleanString(log.createdAt || after.createdAt || log.updatedAt),
+    source: 'operation-log-reporter-self',
+    kind: 'usage',
+    eventKey: usageEventKey('operation-log-reporter-self', log.targetId || after.id || log.id || log.targetName, cleanString(log.createdAt || after.createdAt || log.updatedAt))
+  });
+}
+
+function isArtProgressReporterSelfUsageOperationLog(log = {}) {
+  if (cleanString(log.result).toLowerCase() === 'fail') return false;
+  if (cleanString(log.action) !== 'REPORT_ART_PROGRESS') return false;
+  if (cleanString(log.module) !== 'art-progress' && cleanString(log.targetType) !== 'art-progress-event') return false;
+  const after = log.after && typeof log.after === 'object' ? log.after : {};
+  const actor = cleanString(log.username || log.displayName);
+  const metadata = after.metadata && typeof after.metadata === 'object' ? after.metadata : {};
+  if (metadata.countAsReporterSelfUsage === false) return false;
+  if (['reporter_test', 'reporter_installed'].includes(cleanString(after.eventType))) return false;
+  return actor === 'art-progress-reporter'
+    || samePersonName(actor, '研究同步助手')
+    || metadata.reportedByArtProgressReporter === true;
 }
 
 function operationLogEmbeddedUsageRecords(log = {}) {

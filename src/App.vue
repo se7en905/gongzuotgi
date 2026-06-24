@@ -570,7 +570,7 @@ const BUG_LIST_TIME_FIELDS = [
 ];
 const ARCHIVE_LIST_TIME_FIELDS = ['latestRunAt', 'createdAt', 'generatedAt', 'submittedAt', 'updatedAt', 'startedAt', 'finishedAt'];
 const SKILL_AUDIT_RULE_VERSION = '9-dimension-v2-fulltext';
-const USAGE_COUNTER_LOGIC_VERSION = 'usage-only-v7-operation-log-targets';
+const USAGE_COUNTER_LOGIC_VERSION = 'usage-only-v8-reporter-self-usage';
 const LARGE_WORKBENCH_DISPLAY_CACHE_KEYS = new Set([
   'aiMembersSnapshot',
   'aiMembersBoardHtmlSnapshot',

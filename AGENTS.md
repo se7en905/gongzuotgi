@@ -582,8 +582,9 @@
   - AI产物清单外层调用次数、明细弹窗调用次数、成员使用次数、版本有效人数和评分依赖必须共用同一套 `usageCounters.usageCount/usagePeople/usageEventKeys`；不得外层按累计桶、内层按短期日志，或列表和明细分别用不同口径导致内外不一致。
   - 单条操作日志如果携带多条 records/items/artifacts，只能按每条子记录的稳定 ID、路径或对象名拆分事件；同一子记录同时命中产物名、对象字段、路径、当前别名和历史别名时只能累计一次。同一条日志里重复出现同一产物、同一子记录、同一事件键时必须去重，不得因多字段命中把调用次数放大。
   - 操作日志里的验证回填对象必须显示真实 Skill/md/规范产物名称，优先从结构化 `artifactLocation`、`artifactName`、`researchName`、`metadata.skillPath/artifactPath` 和嵌入的 `skills/<name>/SKILL.md` 提取；不得把 `AGENTS`、`README`、`MEMORY`、`试用`、`md` 等通用词显示为对象。只有验证回填对象名或对象路径能命中当前库存真实产物身份时，才允许按该对象增加调用次数，并必须用验证记录唯一键去重，避免同一验证记录因保存日志、自动回填日志、对象名和路径多处命中而重复累计。
-  - `研究同步助手`、`同步助手`、`系统同步助手`、`art-progress-reporter`、`member-art-reporter`、`art-workbench-sync-reporter` 都是同步代理人，不得作为 AI 产物有效使用人写入 `usagePeople`。操作日志中代理人产生的 `REPORT_ART_PROGRESS` 仍只算研究同步证据；即使正文或对象字段提到 Skill 名，也不得直接按研究沉淀日志增加调用次数。若同一次同步后产生正向验证回填，则只能通过验证回填记录本身按真实对象名/路径入账一次。
-  - `/api/usage-counters` 返回的累计桶必须带当前调用次数口径版本，例如 `logicVersion: usage-only-v7-operation-log-targets`；前端只允许恢复同口径版本的浏览器缓存，旧口径本地缓存必须丢弃并重新读取服务端，避免旧 `count` 或旧 `usageCount` 在刷新页面时回流。
+  - `研究同步助手`、`同步助手`、`系统同步助手`、`art-progress-reporter`、`member-art-reporter`、`art-workbench-sync-reporter` 都是同步代理人，不得作为 AI 产物有效使用人写入 `usagePeople`。操作日志中代理人产生的 `REPORT_ART_PROGRESS` 默认只算研究同步证据；即使正文或对象字段提到其它 Skill 名，也不得直接按研究沉淀日志增加其它产物调用次数。若同一次同步后产生正向验证回填，则只能通过验证回填记录本身按真实对象名/路径入账一次。
+  - `art-progress-reporter` / 研究同步助手这个产物自身是例外：只要成员通过上报密钥或研究同步助手真实提交过研究同步上报，就必须按上报成员给 `art-progress-reporter` 自身累计一次 `usageCount/usagePeople`；历史上已落到 `researchSyncCount/people` 的同步助手自身累计必须迁移到 `usageCount/usagePeople`，删除操作日志、短期上报明细或压缩数据后不得减少。该例外只适用于同步助手产物自身，不得把 `REPORT_ART_PROGRESS` 里提到的其它 Skill/md 也顺带计为调用。
+  - `/api/usage-counters` 返回的累计桶必须带当前调用次数口径版本，例如 `logicVersion: usage-only-v8-reporter-self-usage`；前端只允许恢复同口径版本的浏览器缓存，旧口径本地缓存必须丢弃并重新读取服务端，避免旧 `count` 或旧 `usageCount` 在刷新页面时回流。
   - AI产物清单首屏快照不得作为调用次数和有效占比的事实来源；快照只保留行结构、版本、贡献人和质量分等展示兜底，展示调用次数时必须重新按当前 `usageCounters.usageCount/usagePeople/usageEventKeys` 装饰。无法命中新口径累计桶时只能显示 `0` 或作废横线，不得回退扫描缓存里的 `row.usageCount`、`skill.usageCount`、旧 `displayUsageCount` 或 `count`。
   - 成员调用明细只能在去重后的真实调用总数内分配；同一事件同时出现中文姓名、账号、别名、路径或多个桶时，只能绑定一个主使用人并累计一次，不得因成员字段重复或别名重叠把总次数放大。
   - 执行调用次数写入成功后必须广播 `usage-counters.changed`；客户端只刷新 `/api/usage-counters`，不得触发库存扫描、Git 拉取、本地路径读取或共享盘读取。
