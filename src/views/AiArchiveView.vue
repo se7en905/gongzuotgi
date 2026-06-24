@@ -91,7 +91,7 @@
         <template #default="{ row }">{{ app.directSkillRunOperatorName(row) }}</template>
       </ElTableColumn>
       <ElTableColumn label="执行人" width="120">
-        <template #default="{ row }">{{ row.assignedToName || row.developer || '-' }}</template>
+        <template #default="{ row }">{{ app.directSkillRunExecutorName(row) }}</template>
       </ElTableColumn>
       <ElTableColumn label="状态" width="110">
         <template #default="{ row }">

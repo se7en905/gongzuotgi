@@ -976,7 +976,8 @@ export async function listRuns() {
   const hydratedRuns = await Promise.all(artifactRuns.map(hydrateRunStages));
   const figmaEnrichedRuns = await Promise.all(hydratedRuns.map(enrichRunWithFigmaLogEvidence));
   const enrichedRuns = await Promise.all(figmaEnrichedRuns.map(enrichRunWithImageGenerationEvidence));
-  const evidenceReconciledRuns = enrichedRuns.map(reconcileFigmaEvidenceRunStatus);
+  const accountReconciledRuns = await Promise.all(enrichedRuns.map(reconcileRunAccountFields));
+  const evidenceReconciledRuns = accountReconciledRuns.map(reconcileFigmaEvidenceRunStatus);
   await persistRunReadReconciliations(runs, evidenceReconciledRuns);
   return evidenceReconciledRuns.sort(compareRunListTimeDesc);
 }
@@ -1133,7 +1134,8 @@ export async function getRun(id) {
   const hydrated = await hydrateRunStages(artifactRun);
   const enriched = await enrichRunWithFigmaLogEvidence(hydrated);
   const imageReconciled = await enrichRunWithImageGenerationEvidence(enriched);
-  const evidenceReconciled = reconcileFigmaEvidenceRunStatus(imageReconciled);
+  const accountReconciled = await reconcileRunAccountFields(imageReconciled);
+  const evidenceReconciled = reconcileFigmaEvidenceRunStatus(accountReconciled);
   await persistRunReadReconciliations(run ? [run] : [], evidenceReconciled ? [evidenceReconciled] : []);
   return evidenceReconciled;
 }
@@ -1188,6 +1190,7 @@ export async function createRun(input) {
     imageGenerationProviderMode: normalizeImageGenerationProviderMode(input.imageGenerationProviderMode),
     assignedToUserId: input.assignedToUserId || input.assigneeUserId || '',
     assignedToName: input.assignedToName || input.assigneeName || input.developer || task?.developer || '',
+    assignedToAccount: input.assignedToAccount || '',
     claimedByDeviceId: input.claimedByDeviceId || '',
     claimedAt: input.claimedAt || '',
     workerStatus: input.workerStatus || '',
@@ -1195,6 +1198,7 @@ export async function createRun(input) {
     workerExecution: input.workerExecution === true,
     queuedForUserId: input.queuedForUserId || '',
     queuedForName: input.queuedForName || '',
+    queuedForAccount: input.queuedForAccount || '',
     queuedAt: input.queuedAt || '',
     workerCapabilities: normalizeLineList(input.workerCapabilities),
     executionMode: input.executionMode || '',
@@ -1215,6 +1219,8 @@ export async function createRun(input) {
     blocker: null
   };
   if (input.createdBy) run.createdBy = input.createdBy;
+  if (input.createdByAccount) run.createdByAccount = input.createdByAccount;
+  if (input.createdByName) run.createdByName = input.createdByName;
   if (input.ownerUserId) run.ownerUserId = input.ownerUserId;
   run.attemptNo = attemptNo;
   run.artifactRoot = project ? buildRunArtifactRoot(project, run) : '';
@@ -2266,6 +2272,8 @@ export async function queueRunForLocalWorker(id, input = {}) {
   const existing = ensureRunArtifactRootFromExistingFiles(await ensureRunMaterialSnapshotsForQueue(runs[index]));
   const queuedForUserId = cleanString(input.queuedForUserId || input.userId || existing.queuedForUserId || existing.assignedToUserId || existing.ownerUserId);
   const queuedForName = cleanString(input.queuedForName || input.userName || existing.queuedForName || existing.assignedToName || existing.developer);
+  const queuedForAccount = cleanString(input.queuedForAccount || input.account || existing.queuedForAccount)
+    || await resolveRunUserAccountByIdOrName([queuedForUserId, queuedForName]);
   const materialSnapshot = await readRunMaterialSnapshot(existing);
   runs[index] = {
     ...existing,
@@ -2275,12 +2283,15 @@ export async function queueRunForLocalWorker(id, input = {}) {
     workerExecution: true,
     queuedForUserId,
     queuedForName,
+    queuedForAccount,
     queuedAt: now,
     assignedToUserId: queuedForUserId || existing.assignedToUserId || existing.ownerUserId || '',
     assignedToName: queuedForName || existing.assignedToName || existing.developer || '',
+    assignedToAccount: queuedForAccount || existing.assignedToAccount || '',
     claimedByDeviceId: '',
     claimedAt: '',
     startedBy: queuedForUserId || existing.startedBy || '',
+    startedByAccount: queuedForAccount || existing.startedByAccount || '',
     startedAt: '',
     finishedAt: '',
     completedAt: '',
@@ -2778,6 +2789,56 @@ export async function writeSessionsRaw(sessions = []) {
 
 export function getRunWorkspace(id) {
   return path.join(workspaceDir, id);
+}
+
+async function resolveRunUserAccountByIdOrName(candidates = []) {
+  const values = Array.isArray(candidates)
+    ? candidates.map(cleanString).filter(Boolean)
+    : [cleanString(candidates)].filter(Boolean);
+  if (!values.length) return '';
+  const users = await listUsersRaw();
+  for (const value of values) {
+    const byId = users.find(user => cleanString(user.id) === value);
+    if (byId) return cleanString(byId.username || byId.account);
+  }
+  for (const value of values) {
+    const byAlias = users.find(user => [
+      user.username,
+      user.account,
+      user.displayName,
+      user.realname,
+      user.name
+    ].some(alias => samePersonName(alias, value)));
+    if (byAlias) return cleanString(byAlias.username || byAlias.account);
+  }
+  return '';
+}
+
+async function reconcileRunAccountFields(run = {}) {
+  if (!run || typeof run !== 'object') return run;
+  const assignedToAccount = cleanString(run.assignedToAccount)
+    || await resolveRunUserAccountByIdOrName([run.assignedToUserId, run.assignedToName, run.developer]);
+  const queuedForAccount = cleanString(run.queuedForAccount)
+    || await resolveRunUserAccountByIdOrName([run.queuedForUserId, run.queuedForName, run.assignedToUserId, run.assignedToName, run.developer]);
+  const createdByAccount = cleanString(run.createdByAccount)
+    || await resolveRunUserAccountByIdOrName([run.createdBy, run.createdByName]);
+  const startedByAccount = cleanString(run.startedByAccount)
+    || await resolveRunUserAccountByIdOrName([run.startedBy, run.startedByName, run.queuedForUserId, run.queuedForName]);
+  if (
+    assignedToAccount === cleanString(run.assignedToAccount)
+    && queuedForAccount === cleanString(run.queuedForAccount)
+    && createdByAccount === cleanString(run.createdByAccount)
+    && startedByAccount === cleanString(run.startedByAccount)
+  ) {
+    return run;
+  }
+  return {
+    ...run,
+    assignedToAccount,
+    queuedForAccount,
+    createdByAccount,
+    startedByAccount
+  };
 }
 
 async function removeDirectoryIfSafe(target, parent) {
@@ -7264,7 +7325,7 @@ function normalizeAgentWorker(input = {}) {
   return {
     id,
     userId,
-    userName: cleanString(input.userName || input.displayName),
+    userName: cleanString(input.userName || input.username || input.account || input.displayName),
     deviceId,
     deviceAlias: cleanString(input.deviceAlias),
     deviceName: cleanString(input.deviceName || input.hostname || os.hostname()),

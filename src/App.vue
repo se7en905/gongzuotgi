@@ -629,23 +629,25 @@ const roleLevelPermissionPresets = {
   4: [
     'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive', 'menu.users', 'menu.roles', 'menu.operationLogs', 'menu.maintenance',
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy', 'task.personPressure.view', 'task.platform.delete',
-    'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'run.start', 'run.cancel', 'run.delete', 'review.submit', 'review.image.submit',
-    'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.source.delete', 'skill.asset.create', 'skill.asset.void', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
-    'aiMembers.score.view', 'aiMembers.score.refresh',
+    'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'workflow.manage.view', 'run.artifact.download', 'run.start', 'run.cancel', 'run.delete', 'review.submit', 'review.image.submit',
+    'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.source.delete', 'skill.asset.create', 'skill.asset.void', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view', 'skill.preview.view',
+    'aiMembers.board.view', 'aiMembers.score.view', 'aiMembers.score.refresh',
+    'archive.detail.view', 'archive.link.view',
     'codex.config.manage', 'user.manage', 'role.manage',
     'api.skillSources.manage', 'api.skillSources.delete', 'api.skillScan.run', 'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.tasks.deletePlatform', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.runs.delete', 'api.aiArchive.delete', 'api.reviews.submit', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.skillAsset.void', 'api.aiMembers.read', 'api.aiMembers.score.read', 'api.aiMembers.score.write', 'api.aiMembers.refresh', 'api.codex.config.read', 'api.codex.config.manage', 'api.users.manage', 'api.roles.manage', 'api.taskCenter.config.manage', 'api.operationLogs.read', 'api.operationLogs.delete', 'api.maintenance.manage'
   ],
   3: [
     'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive',
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy',
-    'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'run.start', 'run.cancel', 'review.submit', 'review.image.submit',
-    'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.asset.create', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
-    'aiMembers.score.view',
+    'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'workflow.manage.view', 'run.artifact.download', 'run.start', 'run.cancel', 'review.submit', 'review.image.submit',
+    'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.asset.create', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view', 'skill.preview.view',
+    'aiMembers.board.view', 'aiMembers.score.view',
+    'archive.detail.view', 'archive.link.view',
     'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.reviews.submit', 'api.codex.config.read', 'api.skillSources.manage', 'api.skillScan.run', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.aiMembers.read', 'api.aiMembers.score.read'
   ],
   2: [
     'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.runs', 'menu.aiArchive',
-    'task.codexPrompt.copy', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.reviews.submit', 'api.skillAlias.manage', 'api.aiMembers.read', 'api.aiMembers.score.read'
+    'task.codexPrompt.copy', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'skill.preview.view', 'workflow.manage.view', 'run.artifact.download', 'aiMembers.board.view', 'aiMembers.score.view', 'archive.detail.view', 'archive.link.view', 'api.reviews.submit', 'api.skillAlias.manage', 'api.aiMembers.read', 'api.aiMembers.score.read'
   ],
   1: ['menu.tasks', 'menu.skillList', 'menu.aiMembers', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.aiMembers.read', 'api.aiMembers.score.read']
 };
@@ -3866,6 +3868,10 @@ export default {
       return this.can('skill.usageLogs.view') || this.isPlatformAdmin;
     },
 
+    canViewSkillPreview() {
+      return this.can('skill.preview.view') || this.isPlatformAdmin;
+    },
+
     canViewSkillInventoryDetail() {
       return this.can('menu.skillList') || this.isPlatformAdmin;
     },
@@ -3886,6 +3892,26 @@ export default {
 
     canRefreshSkillInventoryScan() {
       return this.can('skill.scan.refresh') || this.isPlatformAdmin;
+    },
+
+    canViewRunTemplateManager() {
+      return this.can('workflow.manage.view') || this.can('workflow.manage') || this.can('api.workflow.manage') || this.isPlatformAdmin;
+    },
+
+    canDownloadRunArtifacts() {
+      return this.can('run.artifact.download') || this.isPlatformAdmin;
+    },
+
+    canViewAiMembersBoardContent() {
+      return this.can('aiMembers.board.view') || this.isPlatformAdmin;
+    },
+
+    canViewAiArchiveDetail() {
+      return this.can('archive.detail.view') || this.isPlatformAdmin;
+    },
+
+    canViewAiArchiveLinks() {
+      return this.can('archive.link.view') || this.isPlatformAdmin;
     },
 
     canConnectSkillInventorySource() {
@@ -18992,8 +19018,21 @@ export default {
       return '当前账号执行';
     },
 
-    runListExecutorName(run = null) {
-      if (!run) return '-';
+    runUserAccountFromName(name = '') {
+      const target = String(name || '').trim();
+      if (!target) return '';
+      const matchedUser = (this.users || []).find(user => [
+        user?.username,
+        user?.account,
+        user?.displayName,
+        user?.realname,
+        user?.name
+      ].some(alias => samePerson(alias, target)));
+      return String(matchedUser?.username || matchedUser?.account || '').trim();
+    },
+
+    runExecutorAccount(run = null) {
+      if (!run) return '';
       const claimedDevice = String(run.claimedByDeviceId || '').trim();
       const claimedWorker = claimedDevice ? this.agentWorkersByDeviceId.get(claimedDevice) : null;
       const userIds = [
@@ -19011,30 +19050,35 @@ export default {
       }
       const workerAccount = String(claimedWorker?.userName || claimedWorker?.username || claimedWorker?.account || '').trim();
       if (workerAccount) return workerAccount;
-      const executorNames = [
-        run.queuedForName,
-        run.assignedToName,
-        run.developer
-      ].map(value => String(value || '').trim()).filter(Boolean);
-      for (const executorName of executorNames) {
-        const matchedUser = (this.users || []).find(user => [
-          user?.username,
-          user?.account,
-          user?.displayName,
-          user?.realname,
-          user?.name
-        ].some(alias => samePerson(alias, executorName)));
-        const matchedAccount = String(matchedUser?.username || matchedUser?.account || '').trim();
-        if (matchedAccount) return matchedAccount;
-      }
-      return [
+      for (const account of [
         run.queuedForAccount,
         run.assignedToAccount,
         run.startedByAccount,
-        run.createdByAccount,
+        run.createdByAccount
+      ].map(value => String(value || '').trim()).filter(Boolean)) {
+        if (account) return account;
+      }
+      for (const executorName of [
         run.queuedForName,
         run.assignedToName,
-        run.developer
+        run.developer,
+        run.createdByName
+      ].map(value => String(value || '').trim()).filter(Boolean)) {
+        const matchedAccount = this.runUserAccountFromName(executorName);
+        if (matchedAccount) return matchedAccount;
+      }
+      return '';
+    },
+
+    runListExecutorName(run = null) {
+      if (!run) return '-';
+      const executorAccount = this.runExecutorAccount(run);
+      if (executorAccount) return executorAccount;
+      return [
+        run.queuedForName,
+        run.assignedToName,
+        run.developer,
+        run.createdByName
       ].map(value => String(value || '').trim()).find(Boolean) || '-';
     },
 
@@ -19333,7 +19377,14 @@ export default {
     directSkillRunOperatorName(run = null) {
       const userId = String(run?.createdBy || '').trim();
       const user = this.users.find(item => String(item.id || '') === userId);
-      return user?.displayName || user?.username || run?.createdByName || userId || '-';
+      return user?.username || run?.createdByAccount || user?.displayName || run?.createdByName || userId || '-';
+    },
+
+    directSkillRunExecutorName(run = null) {
+      return this.runExecutorAccount(run)
+        || String(run?.assignedToAccount || run?.queuedForAccount || '').trim()
+        || String(run?.assignedToName || run?.developer || '-').trim()
+        || '-';
     },
 
     directSkillRunContentName(run = null) {
@@ -20689,7 +20740,7 @@ export default {
       ];
       const environmentRows = [
         { label: '操作人', value: this.directSkillRunOperatorName(run) },
-        { label: '执行人', value: run.assignedToName || run.developer || '-' },
+        { label: '执行人', value: this.directSkillRunExecutorName(run) },
         { label: '执行设备', value: this.directSkillRunDeviceDisplayName(run) },
         { label: '当前状态', value: this.directSkillRunStatusLabel(run) || this.runStatusLabel(run.status) },
         { label: '创建时间', value: this.formatDateTime(run.createdAt) || '-' },

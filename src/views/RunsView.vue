@@ -256,7 +256,7 @@
       <div class="run-worker-grid">
         <div>
           <span>执行人</span>
-          <strong>{{ app.selectedRun.queuedForName || app.selectedRun.assignedToName || app.selectedRun.developer || '-' }}</strong>
+          <strong>{{ app.directSkillRunExecutorName(app.selectedRun) }}</strong>
         </div>
         <div>
           <span>领取设备</span>
@@ -292,7 +292,7 @@
       <div v-if="/pending|created/i.test(app.runDisplayStatusValue(app.selectedRun))" class="run-worker-command-box">
         <div>
           <strong>当前不显示平台“开始”按钮</strong>
-          <span>{{ app.localWorkerRunNeedsFigma(app.selectedRun) ? `直接执行必须由 ${app.selectedRun.assignedToName || app.selectedRun.developer || '执行人'} 的电脑启动 Worker 后自动领取，确保使用本人 Figma 账号和本机 Figma MCP。` : `直接执行必须由 ${app.selectedRun.assignedToName || app.selectedRun.developer || '执行人'} 的电脑启动 Worker 后自动领取；本次产物回传到工作台产物区。` }}</span>
+          <span>{{ app.localWorkerRunNeedsFigma(app.selectedRun) ? `直接执行必须由 ${app.directSkillRunExecutorName(app.selectedRun) || '执行人'} 的电脑启动 Worker 后自动领取，确保使用本人 Figma 账号和本机 Figma MCP。` : `直接执行必须由 ${app.directSkillRunExecutorName(app.selectedRun) || '执行人'} 的电脑启动 Worker 后自动领取；本次产物回传到工作台产物区。` }}</span>
         </div>
         <div class="run-worker-command-actions">
           <ElButton v-if="app.can('run.directSkill.workerCommand')" size="small" plain @click="app.copyDirectSkillWorkerCommand(app.directSkillAssigneeOptions.find(user => user.id === app.selectedRun.assignedToUserId) || app.currentUser, false)">复制 Worker 启动命令</ElButton>

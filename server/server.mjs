@@ -1487,7 +1487,7 @@ async function handleApi(req, res, url) {
     const worker = await upsertAgentWorker({
       ...body,
       userId: currentUser.id,
-      userName: currentUser.displayName || currentUser.username,
+      userName: currentUser.username || currentUser.displayName,
       lastHeartbeatAt: new Date().toISOString()
     });
     broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, module: 'agent-worker' });
@@ -1524,7 +1524,7 @@ async function handleApi(req, res, url) {
     const workerInput = {
       ...body,
       userId: currentUser.id,
-      userName: currentUser.displayName || currentUser.username,
+      userName: currentUser.username || currentUser.displayName,
       status: 'online',
       lastHeartbeatAt: new Date().toISOString()
     };
@@ -1567,7 +1567,7 @@ async function handleApi(req, res, url) {
     const workerInput = {
       ...body,
       userId: currentUser.id,
-      userName: currentUser.displayName || currentUser.username,
+      userName: currentUser.username || currentUser.displayName,
       status: 'online',
       lastHeartbeatAt: new Date().toISOString()
     };
@@ -2459,15 +2459,20 @@ async function handleApi(req, res, url) {
       validateSkillSnapshotForRun(body, { requireSnapshot: true });
     }
     const currentUserName = currentUser.displayName || currentUser.username || currentUser.id;
+    const currentUserAccount = currentUser.username || currentUser.account || currentUser.id;
     const now = new Date().toISOString();
     const run = await createRun({
       ...body,
       createdBy: currentUser.id,
+      createdByAccount: currentUserAccount,
+      createdByName: currentUserName,
       ownerUserId: currentUser.id,
       assignedToUserId: body.assignedToUserId || body.assigneeUserId || currentUser.id,
       assignedToName: body.assignedToName || body.assigneeName || body.developer || currentUserName,
+      assignedToAccount: body.assignedToAccount || body.assigneeAccount || currentUserAccount,
       queuedForUserId: body.queuedForUserId || body.assignedToUserId || body.assigneeUserId || currentUser.id,
       queuedForName: body.queuedForName || body.assignedToName || body.assigneeName || body.developer || currentUserName,
+      queuedForAccount: body.queuedForAccount || body.assignedToAccount || body.assigneeAccount || currentUserAccount,
       queuedAt: body.queuedAt || now,
       executionHost: body.executionHost || 'local-worker',
       workerExecution: true,
@@ -2587,9 +2592,11 @@ async function handleApi(req, res, url) {
     const targetUserId = String(currentUser.id || '').trim();
     const targetUser = currentUser;
     const targetUserName = targetUser.displayName || targetUser.username || targetUserId;
+    const targetUserAccount = targetUser.username || targetUser.account || targetUserId;
     const queued = await queueRunForLocalWorker(run.id, {
       queuedForUserId: targetUserId,
       queuedForName: targetUserName,
+      queuedForAccount: targetUserAccount,
       startMode
     });
     await writeOperationLog(req, {
@@ -2652,11 +2659,15 @@ async function handleApi(req, res, url) {
       imageGenerationProviderMode: body.imageGenerationProviderMode || source.imageGenerationProviderMode,
       assignedToUserId: currentUser.id,
       assignedToName: currentUser.displayName || currentUser.username || currentUser.id,
+      assignedToAccount: currentUser.username || currentUser.account || currentUser.id,
       queuedForUserId: currentUser.id,
       queuedForName: currentUser.displayName || currentUser.username || currentUser.id,
+      queuedForAccount: currentUser.username || currentUser.account || currentUser.id,
       developer: currentUser.displayName || currentUser.username || source.developer,
       codexRequest: body.codexRequest,
       createdBy: currentUser.id,
+      createdByAccount: currentUser.username || currentUser.account || currentUser.id,
+      createdByName: currentUser.displayName || currentUser.username || currentUser.id,
       ownerUserId: currentUser.id
     });
     await writeOperationLog(req, {
@@ -2944,6 +2955,7 @@ async function createDirectSkillRunFromBody(req, project, body = {}, currentUser
   validateSkillSnapshotForRun(body, { requireSnapshot: true });
   const assigneeUserId = String(body.assignedToUserId || body.assigneeUserId || currentUser.id || '').trim();
   const assigneeName = String(body.assignedToName || body.assigneeName || body.developer || currentUser.displayName || currentUser.username || '').trim();
+  const assigneeAccount = String(body.assignedToAccount || body.assigneeAccount || currentUser.username || currentUser.account || currentUser.id || '').trim();
   const run = await createRun({
     ...body,
     projectId: project.id,
@@ -2962,8 +2974,13 @@ async function createDirectSkillRunFromBody(req, project, body = {}, currentUser
     developer: assigneeName,
     assignedToUserId: assigneeUserId,
     assignedToName: assigneeName,
+    assignedToAccount: assigneeAccount,
+    queuedForUserId: assigneeUserId,
+    queuedForName: assigneeName,
+    queuedForAccount: assigneeAccount,
     requirement: buildDirectSkillRequirement(body),
     createdBy: currentUser.id,
+    createdByAccount: currentUser.username || currentUser.account || currentUser.id,
     createdByName: currentUser.displayName || currentUser.username || currentUser.id,
     ownerUserId: assigneeUserId || currentUser.id
   });

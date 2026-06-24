@@ -1,5 +1,5 @@
 <template>
-<section v-show="app.activeView === 'ai-members'" class="ai-board-embed-view">
+  <section v-show="app.activeView === 'ai-members'" class="ai-board-embed-view">
   <section v-if="app.canViewAiMemberScore" class="ai-score-panel">
     <div class="ai-score-head">
       <div>
@@ -47,13 +47,21 @@
       </article>
     </div>
   </section>
-  <iframe
-    ref="boardFrame"
-    class="ai-board-embed-frame"
-    :srcdoc="frameHtml || activeBoardHtml"
-    title="AI部门看板"
-    @load="syncThemeToFrame"
-  />
+  <section class="ai-board-frame-shell" :class="{ locked: !app.canViewAiMembersBoardContent }">
+    <div v-if="!app.canViewAiMembersBoardContent" class="ai-board-lock-mask">
+      <div class="ai-board-lock-card">
+        <strong>AI 看板已锁定</strong>
+        <span>当前角色只能进入 AI 部门看板页面，但不能查看底部完整 AI 看板正文。</span>
+      </div>
+    </div>
+    <iframe
+      ref="boardFrame"
+      class="ai-board-embed-frame"
+      :srcdoc="frameHtml || activeBoardHtml"
+      title="AI部门看板"
+      @load="syncThemeToFrame"
+    />
+  </section>
 </section>
 </template>
 
@@ -132,6 +140,54 @@ export default {
   display: grid;
   gap: 10px;
   min-height: 0;
+}
+
+.ai-board-frame-shell {
+  position: relative;
+  min-height: 0;
+}
+
+.ai-board-frame-shell.locked .ai-board-embed-frame {
+  filter: blur(16px) saturate(0.7);
+  pointer-events: none;
+  user-select: none;
+}
+
+.ai-board-lock-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(3px);
+}
+
+.ai-board-lock-card {
+  display: grid;
+  gap: 8px;
+  max-width: 360px;
+  padding: 18px 20px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 92%, white 8%);
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12);
+  text-align: center;
+}
+
+.ai-board-lock-card strong {
+  color: var(--heading);
+  font-size: 16px;
+  font-weight: 780;
+  line-height: 1.3;
+}
+
+.ai-board-lock-card span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .ai-score-panel {

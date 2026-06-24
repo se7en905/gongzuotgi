@@ -52,8 +52,14 @@ const permissionCatalog = [
   { id: 'skill.version.manage', name: '维护产物版本', type: 'button', group: 'AI 产物清单', description: '编辑产物预览里的版本号。' },
   { id: 'skill.alias.manage', name: '维护产物调用别名', type: 'button', group: 'AI 产物清单', description: '编辑产物预览里的调用别名，不允许修改版本。' },
   { id: 'skill.usageLogs.view', name: '查看产物使用明细', type: 'button', group: 'AI 产物清单', description: '查看产物调用次数、成员调用统计和版本迭代记录。' },
+  { id: 'skill.preview.view', name: '查看产物内容预览', type: 'button', group: 'AI 产物清单', description: '打开 AI 产物清单右侧内容预览抽屉并查看正文。' },
+  { id: 'aiMembers.board.view', name: '查看 AI 看板正文', type: 'button', group: 'AI部门看板', description: '查看 AI 部门看板底部完整 HTML 看板；关闭后仅显示模糊锁定态。' },
   { id: 'aiMembers.score.view', name: '查看 AI 评分', type: 'button', group: 'AI部门看板', description: '查看 AI 部门看板里的当月 AI 评分。' },
   { id: 'aiMembers.score.refresh', name: '刷新 AI 评分', type: 'button', group: 'AI部门看板', description: '手动刷新 AI 评分相关轻量依赖并重新计算评分快照。' },
+  { id: 'workflow.manage.view', name: '查看模板管理', type: 'button', group: '执行管理', description: '打开美术执行台里的模板管理弹窗并查看模板列表。' },
+  { id: 'run.artifact.download', name: '下载执行附件与产物', type: 'button', group: '执行管理', description: '在执行明细或 AI档案中打开、下载附件和生成产物。' },
+  { id: 'archive.detail.view', name: '查看 AI 档案明细', type: 'button', group: 'AI档案', description: '打开 AI 档案右侧执行明细抽屉。' },
+  { id: 'archive.link.view', name: '查看 AI 档案链接', type: 'button', group: 'AI档案', description: '查看并打开 AI 档案里的 Figma 链接等外部链接。' },
   { id: 'codex.config.manage', name: '管理 Codex 配置', type: 'button', group: 'AI 管理', description: '保存 Codex 模型、Provider 和 API Key。' },
   { id: 'user.manage', name: '管理账号', type: 'button', group: '用户管理', description: '新增、编辑、禁用账号和重置密码。' },
   { id: 'role.manage', name: '管理角色', type: 'button', group: '用户管理', description: '新增、编辑、删除角色。' },
@@ -99,9 +105,10 @@ const levelPermissions = {
   3: [
     'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive',
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy',
-    'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'run.start', 'run.cancel', 'review.submit', 'review.image.submit',
-    'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.asset.create', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view',
-    'aiMembers.score.view',
+    'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'workflow.manage.view', 'run.artifact.download', 'run.start', 'run.cancel', 'review.submit', 'review.image.submit',
+    'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.asset.create', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view', 'skill.preview.view',
+    'aiMembers.board.view', 'aiMembers.score.view',
+    'archive.detail.view', 'archive.link.view',
     'api.taskNotes.manage', 'api.taskArtBrief.generate', 'api.runs.execute', 'api.agentRuns.create', 'api.agentWorkers.read', 'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status', 'api.reviews.submit', 'api.codex.config.read', 'api.skillSources.manage', 'api.skillScan.run', 'api.skillVersion.manage', 'api.skillAlias.manage', 'api.skillAsset.create', 'api.aiMembers.read', 'api.aiMembers.score.read'
   ],
   2: [
@@ -208,7 +215,10 @@ function legacyRolePermissionAdditions(roleId = '') {
   if (roleId === 'developer') return [
     'menu.skillList', 'menu.aiMembers', 'menu.agentWorkers',
     'run.directSkill.create', 'run.directSkill.workerCommand',
-    'skill.alias.manage', 'skill.usageLogs.view', 'aiMembers.score.view',
+    'workflow.manage.view', 'run.artifact.download',
+    'skill.alias.manage', 'skill.usageLogs.view', 'skill.preview.view',
+    'aiMembers.board.view', 'aiMembers.score.view',
+    'archive.detail.view', 'archive.link.view',
     'api.skillAlias.manage', 'api.aiMembers.read', 'api.aiMembers.score.read', 'api.agentRuns.create', 'api.agentWorkers.read',
     'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status'
   ];
