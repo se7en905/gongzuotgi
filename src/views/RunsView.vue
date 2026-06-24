@@ -249,7 +249,7 @@
       <div class="run-section-head">
         <div>
           <h4>执行人本机状态</h4>
-          <p>本机执行由当前操作人电脑上的 Worker 领取，使用操作人自己的 Codex、Figma MCP 和 Figma 账号授权。</p>
+          <p>{{ app.localWorkerRunNeedsFigma(app.selectedRun) ? '本机执行由当前操作人电脑上的 Worker 领取，使用操作人自己的 Codex、Figma MCP 和 Figma 账号授权。' : '本机执行由当前操作人电脑上的 Worker 领取，使用操作人自己的 Codex、本机工具、网络和账号配置；产物回传到工作台。' }}</p>
         </div>
         <ElButton size="small" :loading="app.loading.agentWorkers" @click="app.refreshAgentWorkers">刷新状态</ElButton>
       </div>
@@ -281,7 +281,7 @@
         <span v-if="app.isDirectSkillPartialWriteRun(app.selectedRun)">Figma 已有真实改动，但最终回读/截图验收未闭环；请让执行人恢复本机 Figma MCP 授权后继续执行。</span>
         <span v-else-if="app.isDirectSkillFailedRun(app.selectedRun)">该任务已由执行人本机 Worker 自动领取后执行失败；请点击右上角日志图标查看具体原因。</span>
         <span v-else-if="!app.directSkillWorkerForRun(app.selectedRun)">执行人需要启动本机 Worker 后，任务才会从“待领取”变为“已领取 / 执行中”。</span>
-        <span v-else-if="app.directSkillWorkerForRun(app.selectedRun)?.codexReady !== true || app.directSkillWorkerForRun(app.selectedRun)?.figmaMcpReady !== true">{{ app.directSkillRunSyncBadge(app.selectedRun).detail || app.directSkillWorkerIssueText(app.directSkillWorkerForRun(app.selectedRun)) }}</span>
+        <span v-else-if="!app.isDirectSkillWorkerReady(app.directSkillWorkerForRun(app.selectedRun), app.selectedRun)">{{ app.directSkillRunSyncBadge(app.selectedRun).detail || app.directSkillWorkerIssueText(app.directSkillWorkerForRun(app.selectedRun), app.selectedRun) }}</span>
         <span v-else>{{ app.directSkillRunSyncBadge(app.selectedRun).detail || '本机 Worker 会把 Codex 日志和执行结果回传到当前执行记录。' }}</span>
       </div>
       <div v-if="app.isDirectSkillClaimedRun(app.selectedRun)" class="run-worker-claim-evidence">
@@ -292,7 +292,7 @@
       <div v-if="/pending|created/i.test(app.runDisplayStatusValue(app.selectedRun))" class="run-worker-command-box">
         <div>
           <strong>当前不显示平台“开始”按钮</strong>
-          <span>直接执行必须由 {{ app.selectedRun.assignedToName || app.selectedRun.developer || '执行人' }} 的电脑启动 Worker 后自动领取，确保使用本人 Figma 账号和本机 Figma MCP。</span>
+          <span>{{ app.localWorkerRunNeedsFigma(app.selectedRun) ? `直接执行必须由 ${app.selectedRun.assignedToName || app.selectedRun.developer || '执行人'} 的电脑启动 Worker 后自动领取，确保使用本人 Figma 账号和本机 Figma MCP。` : `直接执行必须由 ${app.selectedRun.assignedToName || app.selectedRun.developer || '执行人'} 的电脑启动 Worker 后自动领取；本次产物回传到工作台产物区。` }}</span>
         </div>
         <div class="run-worker-command-actions">
           <ElButton v-if="app.can('run.directSkill.workerCommand')" size="small" plain @click="app.copyDirectSkillWorkerCommand(app.directSkillAssigneeOptions.find(user => user.id === app.selectedRun.assignedToUserId) || app.currentUser, false)">复制 Worker 启动命令</ElButton>

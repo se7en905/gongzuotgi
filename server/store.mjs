@@ -1544,7 +1544,7 @@ async function enrichRunWithImageGenerationEvidence(run = null) {
   const requiresLocalImageArtifact = !cleanString(run.figmaLinks);
   const statusText = `${cleanString(workingRun.status)} ${cleanString(workingRun.workerStatus)}`.toLowerCase();
   if (requiresLocalImageArtifact && /completed|done|success|passed/.test(statusText) && !hasGeneratedImage) {
-    return blockRunForImageGenerationEvidence(workingRun, '本次是纯生图且未填写 Figma 链接，但执行结束后未检测到可下载的生成图片产物；不能按本机已完成展示。', {
+    return blockRunForImageGenerationEvidence(workingRun, noFigmaImageArtifactMissingReason(), {
       generatedArtifacts,
       imageEvidenceText: imageEvidence
     });
@@ -1561,9 +1561,7 @@ function sanitizeNoFigmaImageGenerationRunSummary(run = {}, generatedArtifacts =
   const nextMentionsMissingFigma = mentionsMissingFigmaTarget(nextStep);
   if (!blockerMentionsMissingFigma && !nextMentionsMissingFigma) return run;
   const hasGeneratedImage = hasGeneratedImageArtifacts(generatedArtifacts);
-  const sanitizedReason = hasGeneratedImage
-    ? ''
-    : '本次是纯生图且未填写 Figma 链接，但执行结束后未检测到可下载的生成图片产物；不能按本机已完成展示。';
+  const sanitizedReason = hasGeneratedImage ? '' : noFigmaImageArtifactMissingReason();
   return {
     ...run,
     resultSummary: {
@@ -1571,12 +1569,12 @@ function sanitizeNoFigmaImageGenerationRunSummary(run = {}, generatedArtifacts =
       status: hasGeneratedImage ? 'completed' : (summary.status || 'blocked'),
       statusText: hasGeneratedImage ? 'completed' : (summary.statusText || 'blocked'),
       summary: hasGeneratedImage
-        ? '本次纯生图未填写 Figma 链接，生成图片产物已归档到工作台，可在产物区预览、打开和下载。'
+        ? '本次纯生图生成图片产物已归档到工作台，可在产物区预览、打开和下载。'
         : (summary.summary || '本机 Codex 已结束，但未检测到可归档的生成图片产物。'),
       blockerReason: sanitizedReason,
       nextStep: hasGeneratedImage
         ? ''
-        : '继续执行或重新执行时确认成品图保存到“生成图片/”或“outputs/”目录；纯生图未填写 Figma 链接时不需要补 Figma node-id。',
+        : noFigmaImageArtifactNextStep(),
       generatedArtifacts
     },
     blocker: {
@@ -1584,6 +1582,14 @@ function sanitizeNoFigmaImageGenerationRunSummary(run = {}, generatedArtifacts =
       reason: sanitizedReason
     }
   };
+}
+
+function noFigmaImageArtifactMissingReason() {
+  return '本次纯生图执行结束后未检测到可下载的生成图片产物；不能按本机已完成展示。';
+}
+
+function noFigmaImageArtifactNextStep() {
+  return '继续执行或重新执行时确认成品图保存到“生成图片/”或“outputs/”目录，工作台会自动归档供预览、打开和下载。';
 }
 
 function mentionsMissingFigmaTarget(text = '') {

@@ -18876,7 +18876,9 @@ export default {
     runFlowHelperDescription(run = null) {
       if (!run) return '左侧选择一条执行记录后，右侧会按执行类型展示对应内容。';
       if (this.isLocalWorkerRun(run) && !this.isDirectSkillRun(run)) {
-        return '这条执行由当前操作人本机 Worker 领取，使用操作人本机 Codex、Figma MCP 和 Figma 授权，并把日志和结果回传到当前记录。';
+        return this.localWorkerRunNeedsFigma(run)
+          ? '这条执行由当前操作人本机 Worker 领取，使用操作人本机 Codex、Figma MCP 和 Figma 授权，并把日志和结果回传到当前记录。'
+          : '这条执行由当前操作人本机 Worker 领取，使用操作人本机 Codex、本机工具、网络和账号配置，并把产物、日志和结果回传到当前记录。';
       }
       if (this.isDirectSkillRun(run)) {
         return '引用 Skill/md 的直接执行只展示执行对象、执行人本机状态、阶段进度和档案入口，不展示普通任务的关键动作、任务链路和继续对话。';
@@ -18913,12 +18915,12 @@ export default {
         || null;
     },
 
-    currentUserReadyWorker() {
+    currentUserReadyWorker(run = null) {
       const currentUserId = String(this.currentUser?.id || '').trim();
       if (!currentUserId) return null;
       const worker = this.agentWorkersByUserId.get(currentUserId) || null;
       if (!worker || !this.directSkillWorkerOnline(worker)) return null;
-      if (worker.codexReady !== true || worker.figmaMcpReady !== true) return null;
+      if (!this.isDirectSkillWorkerReady(worker, run)) return null;
       return worker;
     },
 
@@ -19187,25 +19189,36 @@ export default {
       return 'Image2 配置待读取';
     },
 
-    directSkillWorkerIssueText(worker = null) {
+    localWorkerRunNeedsFigma(run = null) {
+      return Boolean(run && this.runRequiresFigmaWriteEvidence(run));
+    },
+
+    directSkillWorkerIssueText(worker = null, run = null) {
       if (!worker) return '未发现本机 Worker 安装或心跳记录。';
-      if (!this.directSkillWorkerOnline(worker)) return '最近心跳超时：工作台暂时收不到这台电脑的 Worker 心跳。若本机已有执行在跑，Codex / Figma 会继续在组员电脑执行，恢复网络后补回日志和状态；新任务会等心跳恢复后领取。';
+      const needsFigma = this.localWorkerRunNeedsFigma(run);
+      if (!this.directSkillWorkerOnline(worker)) {
+        return needsFigma
+          ? '最近心跳超时：工作台暂时收不到这台电脑的 Worker 心跳。若本机已有执行在跑，Codex / Figma 会继续在组员电脑执行，恢复网络后补回日志和状态；新任务会等心跳恢复后领取。'
+          : '最近心跳超时：工作台暂时收不到这台电脑的 Worker 心跳。若本机已有执行在跑，会继续在组员电脑处理，恢复网络后补回日志和状态；新任务会等心跳恢复后领取。';
+      }
       const checks = worker.checks && typeof worker.checks === 'object' ? worker.checks : {};
       const messages = [];
       if (worker.codexReady !== true) messages.push(checks.codexMessage || 'Codex 未就绪，请确认组员电脑上能运行 codex --help。');
-      if (worker.figmaMcpReady !== true) messages.push(checks.figmaMessage || 'Figma MCP 未就绪，请确认组员电脑上的 Codex 已完成 Figma MCP 授权。');
+      if (needsFigma && worker.figmaMcpReady !== true) messages.push(checks.figmaMessage || 'Figma MCP 未就绪，请确认组员电脑上的 Codex 已完成 Figma MCP 授权。');
       if (worker.image2Ready !== true) messages.push(checks.image2Message || 'Image2 未验证可用：Codex 客户端能用不等于 LaunchAgent Worker 能继承同一套 PATH、代理、DNS 和 OpenAI API 入口访问能力，请确认 Worker 进程能读取执行人本机 image2/OpenAI 配置和代理。');
       if (!messages.length) return 'Worker 已在线并可自动领取。';
       return messages.join('；');
     },
 
-    isDirectSkillWorkerReady(worker = null) {
-      return Boolean(worker && this.directSkillWorkerOnline(worker) && worker.codexReady === true && worker.figmaMcpReady === true);
+    isDirectSkillWorkerReady(worker = null, run = null) {
+      if (!worker || !this.directSkillWorkerOnline(worker) || worker.codexReady !== true) return false;
+      if (this.localWorkerRunNeedsFigma(run) && worker.figmaMcpReady !== true) return false;
+      return true;
     },
 
     directSkillQueuedRunLabel(run = null) {
       const worker = this.directSkillWorkerForRun(run);
-      if (this.isDirectSkillWorkerReady(worker)) return '正在启动本机执行';
+      if (this.isDirectSkillWorkerReady(worker, run)) return '正在启动本机执行';
       if (worker && this.directSkillWorkerOnline(worker)) return '待本机自检';
       if (worker?.lastHeartbeatAt) return '待本机恢复在线';
       return '待本机上线';
@@ -19213,11 +19226,12 @@ export default {
 
     directSkillQueuedRunDetail(run = null) {
       const worker = this.directSkillWorkerForRun(run);
-      if (this.isDirectSkillWorkerReady(worker)) {
+      const needsFigma = this.localWorkerRunNeedsFigma(run);
+      if (this.isDirectSkillWorkerReady(worker, run)) {
         return '已向执行人本机 Worker 发送定向唤醒，Worker 会立即心跳并领取；5 分钟轮询只作为事件断线兜底。';
       }
       if (worker && this.directSkillWorkerOnline(worker)) {
-        return `Worker 已在线，待本机 Codex / Figma MCP 自检通过后自动领取。${this.directSkillWorkerIssueText(worker)}`;
+        return `${needsFigma ? 'Worker 已在线，待本机 Codex / Figma MCP 自检通过后自动领取。' : 'Worker 已在线，待本机 Codex 自检通过后自动领取。'}${this.directSkillWorkerIssueText(worker, run)}`;
       }
       if (worker?.lastHeartbeatAt) {
         return '这台电脑曾启动过 Worker，但当前心跳已超时。若本机已有执行在跑，会继续操作并在恢复网络后补回；未领取的新任务会等 Worker 恢复在线后自动领取。';
@@ -19249,14 +19263,14 @@ export default {
       const worker = this.directSkillWorkerForRun(run);
       const online = this.directSkillWorkerOnline(worker);
       if (/pending|queued|created/.test(status)) {
-        if (this.isDirectSkillWorkerReady(worker)) {
+        if (this.isDirectSkillWorkerReady(worker, run)) {
           return {
             label: '正在启动本机执行',
             detail: this.directSkillQueuedRunDetail(run),
             tone: 'running'
           };
         }
-        if (online && (worker?.codexReady !== true || worker?.figmaMcpReady !== true)) {
+        if (online && !this.isDirectSkillWorkerReady(worker, run)) {
           return {
             label: '待本机自检',
             detail: this.directSkillQueuedRunDetail(run),
@@ -19272,7 +19286,7 @@ export default {
       if (/claimed|running|in_progress/.test(status)) {
         return {
           label: online ? '本机执行中' : '断联执行中',
-          detail: online ? 'Worker 在线，执行状态会持续回传。' : '平台暂时收不到 Worker 心跳；已领取的本机 Codex / Figma 操作不会因此中断，恢复网络后会补回日志和状态。',
+          detail: online ? 'Worker 在线，执行状态会持续回传。' : this.localWorkerRunNeedsFigma(run) ? '平台暂时收不到 Worker 心跳；已领取的本机 Codex / Figma 操作不会因此中断，恢复网络后会补回日志和状态。' : '平台暂时收不到 Worker 心跳；已领取的本机任务不会因此中断，恢复网络后会补回日志和状态。',
           tone: online ? 'running' : 'warning'
         };
       }
@@ -20084,7 +20098,7 @@ export default {
         `执行资料路径：${pathText}。`,
         figmaText
           ? `Figma 链接：${figmaText}。`
-          : 'Figma 链接：未填写；本次按当前 md / Skill 和执行要求直接产出图片、本地文件、报告或其它结果。',
+          : '目标位置：工作台产物区；本次按当前 md / Skill 和执行要求直接产出图片、本地文件、报告或其它结果。',
         figmaText && isImagePlacement
           ? '按该 md / Skill 的原始要求生成成品图，并将最终图片按比例放置或替换到该 Figma 目标；默认保留位图成品效果，不拉伸变形，不转为可编辑图层。'
           : figmaText
@@ -20733,7 +20747,11 @@ export default {
       if (this.isAiExecutionArchiveReviewRun(run)) return '建议：打开 Figma 和执行结果，完成人工验收确认。';
       if (this.isAiExecutionArchiveClosedRun(run)) return '建议：进入业务任务验收，确认是否闭环。';
       const displayStatus = this.runDisplayStatusValue(run);
-      if (/pending|queued/i.test(displayStatus)) return '建议：确认执行人电脑 Worker、Codex 和 Figma MCP 是否就绪。';
+      if (/pending|queued/i.test(displayStatus)) {
+        return this.localWorkerRunNeedsFigma(run)
+          ? '建议：确认执行人电脑 Worker、Codex 和 Figma MCP 是否就绪。'
+          : '建议：确认执行人电脑 Worker 和 Codex 是否就绪。';
+      }
       if (/claimed|running|in_progress/i.test(displayStatus)) return '建议：查看本机 Worker 回传结果。';
       return this.resultNextActionText(run);
     },
@@ -20779,7 +20797,7 @@ export default {
         + (summary.finalText && !this.isPlaceholderResultText(summary.finalText) ? 1 : 0);
       let issueRows = detail.issueRows;
       if (/pending|queued|created/i.test(rawStatus)) {
-        issueRows = [{ label: '当前状态', value: this.directSkillQueuedRunDetail(run), tone: this.isDirectSkillWorkerReady(this.directSkillWorkerForRun(run)) ? 'primary' : 'muted' }];
+        issueRows = [{ label: '当前状态', value: this.directSkillQueuedRunDetail(run), tone: this.isDirectSkillWorkerReady(this.directSkillWorkerForRun(run), run) ? 'primary' : 'muted' }];
       } else if (/claimed|running|in_progress/i.test(rawStatus)) {
         issueRows = [{ label: '当前处理', value: '执行人本机 Worker 正在处理，等待结果回传。', tone: 'muted' }];
       }
@@ -20869,7 +20887,7 @@ export default {
         issueRows.push({
           label: '当前状态',
           value: this.isLocalWorkerRun(run) ? this.directSkillQueuedRunDetail(run) : '等待负责人点击启动执行。',
-          tone: this.isLocalWorkerRun(run) && this.isDirectSkillWorkerReady(this.directSkillWorkerForRun(run)) ? 'primary' : 'muted'
+          tone: this.isLocalWorkerRun(run) && this.isDirectSkillWorkerReady(this.directSkillWorkerForRun(run), run) ? 'primary' : 'muted'
         });
       } else if (isRunning) {
         issueRows.push({ label: '当前处理', value: 'Codex 正在按当前步骤执行，等待结果回传。', tone: 'muted' });
@@ -20905,7 +20923,7 @@ export default {
       const images = this.runGeneratedImageArtifacts(run);
       return images.length
         ? ''
-        : '本次是纯生图且未填写 Figma 链接，但执行结束后未检测到可下载的生成图片产物；不能按本机已完成展示。';
+        : '本次纯生图执行结束后未检测到可下载的生成图片产物；不能按本机已完成展示。';
     },
 
     mentionsMissingFigmaTarget(text = '') {
@@ -21496,7 +21514,7 @@ export default {
         {
           key: 'preflight',
           title: '执行自检',
-          summary: isDirect ? '检查执行人本机 Codex 与 Figma MCP' : '检查项目、路径和执行参数',
+          summary: isDirect ? (this.localWorkerRunNeedsFigma(run) ? '检查执行人本机 Codex 与 Figma MCP' : '检查执行人本机 Codex 和产物目录') : '检查项目、路径和执行参数',
           status: preflightStatus,
           startedAt: run.claimedAt || run.startedAt || '',
           finishedAt: workerStartedAt || preflightStage?.finishedAt || '',
@@ -22497,12 +22515,12 @@ export default {
           cancelledBy: ''
         });
         const onlineWorker = this.currentUserOnlineWorker();
-        const readyWorker = this.currentUserReadyWorker();
+        const readyWorker = this.currentUserReadyWorker(sourceRun);
         const targetLabel = '当前账号本机 Worker';
         const waitingText = readyWorker
           ? `已唤醒${targetLabel}，正在领取...`
           : onlineWorker
-            ? `${targetLabel}在线，待自检通过后领取：${this.directSkillWorkerIssueText(onlineWorker)}`
+            ? `${targetLabel}在线，待自检通过后领取：${this.directSkillWorkerIssueText(onlineWorker, sourceRun)}`
             : `${targetLabel}上线后自动领取...`;
         this.logText = mode === 'resume' ? `继续执行已排队，${waitingText}` : `执行已排队，${waitingText}`;
         this.runLogCollapse = [];

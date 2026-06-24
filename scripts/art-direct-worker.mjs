@@ -967,7 +967,7 @@ function buildLocalTaskMaterial(run = {}, snapshots = [], snapshotPaths = [], at
     '',
     `- runId: ${run.id || ''}`,
     `- 标题: ${run.title || ''}`,
-    figmaLinks ? `- Figma 链接: ${figmaLinks}` : '- Figma 链接: 未填写，本次不强制读取或写入 Figma',
+    figmaLinks ? `- Figma 链接: ${figmaLinks}` : '- 目标位置: 工作台产物区，本次不写入 Figma',
     figmaLinks ? `- Figma 写入方式: ${run.figmaWriteMode || 'target-node'}` : '- Figma 写入方式: 不写入 Figma，成品在工作台产物区展示',
     `- 主执行 Skill / md: ${run.primarySkillPath || run.stage || ''}`,
     `- 执行人: ${run.queuedForName || run.assignedToName || run.developer || ''}`,
@@ -1061,7 +1061,7 @@ function buildPrompt(run = {}, workspace = {}) {
     '',
     run.requirement || '按上方引用的 Skill / md 执行本次任务。',
     '',
-    figmaLinks ? `Figma 链接：${figmaLinks}` : 'Figma 链接：未填写，本次不强制读取或写入 Figma。',
+    figmaLinks ? `Figma 链接：${figmaLinks}` : '目标位置：工作台产物区，本次不写入 Figma。',
     '',
     '## 必读本地文件',
     '',
@@ -1082,8 +1082,12 @@ function buildPrompt(run = {}, workspace = {}) {
     '## 执行口径',
     '',
     '- 按 Codex 客户端直接使用该 Skill / md 的方式执行：该读文件就读文件，该生成图就生成图，该写 Figma 就写 Figma。',
-    '- 本次实际执行必须使用当前领取任务的执行人电脑：Codex、Skill/md 快照、本机工具、网络、代理、API Key、Figma MCP 和授权都以执行人本机为准。',
-    '- 工作台只负责派单、下发资料和接收回传；不得依赖平台服务器、负责人电脑或工作台管理者 admin 的 Codex、OpenAI / gpt-image2 凭据、代理、Figma MCP 或 Figma 授权。',
+    figmaLinks
+      ? '- 本次实际执行必须使用当前领取任务的执行人电脑：Codex、Skill/md 快照、本机工具、网络、代理、API Key、Figma MCP 和授权都以执行人本机为准。'
+      : '- 本次实际执行必须使用当前领取任务的执行人电脑：Codex、Skill/md 快照、本机工具、网络、代理和 API Key 都以执行人本机为准。',
+    figmaLinks
+      ? '- 工作台只负责派单、下发资料和接收回传；不得依赖平台服务器、负责人电脑或工作台管理者 admin 的 Codex、OpenAI / gpt-image2 凭据、代理、Figma MCP 或 Figma 授权。'
+      : '- 工作台只负责派单、下发资料和接收回传；不得依赖平台服务器、负责人电脑或工作台管理者 admin 的 Codex、OpenAI / gpt-image2 凭据或代理。',
     '- 不要因为这是工作台任务就额外套用未被用户选择的流程、模板、阶段或其它 Skill。',
     '- 如果引用的是单个 Skill / md，只执行这个 Skill / md；如果引用的是模板或自定义流程，才按下方顺序执行。',
     '- Skill / md 中提到的 references、scripts、assets 如已在本地文件中出现，必须按其说明继续读取和使用。',
@@ -1110,15 +1114,15 @@ function buildPrompt(run = {}, workspace = {}) {
     imagePlacementRequired ? '- 图片落到 Figma 时必须保持成品图比例和视觉效果，不得拉伸变形；默认不拆成可编辑图层。' : '',
     imagePlacementRequired && !editableFigmaRequested ? '- 除非用户明确要求“转为可编辑 / 可编辑图层 / 矢量重建”，否则保留位图成品展示。' : '',
     figmaWriteRequired ? '- 涉及 Figma 写入、图片放置或图片替换时，必须回传 createdNodeIds / mutatedNodeIds，或可证明图片已放置/替换到目标 Figma 的等价工具证据。' : '',
-    !figmaLinks ? '- 本次没有 Figma 链接时，不要因为缺少 Figma MCP、Figma OAuth 或 Figma 写入工具而判定阻塞。' : '',
-    !figmaLinks && imageGenerationRun ? '- 本次是纯生图且未填写 Figma 链接：必须把最终成品图保存到本机执行目录下的“生成图片/”或“outputs/”目录，平台会自动归档到执行台供预览、打开和下载。' : '',
+    !figmaLinks ? '- 本次交付位置是工作台产物区，不要求读取或写入 Figma。' : '',
+    !figmaLinks && imageGenerationRun ? '- 本次是纯生图：必须把最终成品图保存到本机执行目录下的“生成图片/”或“outputs/”目录，平台会自动归档到执行台供预览、打开和下载。' : '',
     imagePlacementRequired
       ? '- 最终报告必须写明生成图片产物路径、Figma 放置/替换目标、使用的 Skill / md 和复核点。'
       : '- 如果 Skill / md 任务本身是生成图片或本地产物且本次没有要求落到 Figma，不强制要求 Figma 写入完成；最终报告写明产物路径、使用的 Skill / md 和复核点。',
     figmaLinks ? '- 如果已经写入 Figma，最后必须尽量回读目标节点或截图确认；如果回读失败，说明写入证据和回读失败原因。' : '',
     figmaLinks
       ? '- 最终回答用中文简短总结结果，必须写明：使用的 Skill / md、Figma 链接、产物或写入节点、阻塞原因或复核建议。'
-      : '- 最终回答用中文简短总结结果，必须写明：使用的 Skill / md、生成图片产物路径、阻塞原因或复核建议；不得把缺少 Figma 链接、缺少 Figma node-id 或缺少 target-node 写成阻塞原因。',
+      : '- 最终回答用中文简短总结结果，必须写明：使用的 Skill / md、生成图片产物路径、阻塞原因或复核建议；本次交付位置是工作台产物区，不要提出补 Figma 目标的建议。',
     '',
     '## 快照内容兜底',
     '',
@@ -2127,7 +2131,7 @@ function evaluateImageArtifactResult(run = {}, generatedArtifacts = [], imagePro
     blocked: false,
     blockerReason: uploaded.length > 0
       ? ''
-      : '本次是纯生图且未填写 Figma 链接，但执行结束后未在“生成图片/”或“outputs/”目录检测到可归档图片。'
+      : '本次纯生图执行结束后未在“生成图片/”或“outputs/”目录检测到可归档图片。'
   };
 }
 
