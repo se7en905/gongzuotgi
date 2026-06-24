@@ -127,6 +127,7 @@ const levelPermissions = {
 const defaultRoles = [
   {
     id: 'admin',
+    builtinKey: 'admin',
     name: '美术负责人',
     description: '管理美术部门任务、用户、角色和所有执行记录。',
     level: 4,
@@ -136,6 +137,7 @@ const defaultRoles = [
   },
   {
     id: 'developer',
+    builtinKey: 'developer',
     name: '美术执行人',
     description: '创建并启动执行，管理任务同步和美术流程。',
     level: 3,
@@ -145,6 +147,7 @@ const defaultRoles = [
   },
   {
     id: 'reviewer',
+    builtinKey: 'reviewer',
     name: '美术验证人',
     description: '查看任务并提交人工复核或 Skill 验证结论。',
     level: 2,
@@ -154,6 +157,7 @@ const defaultRoles = [
   },
   {
     id: 'viewer',
+    builtinKey: 'viewer',
     name: '组员只读',
     description: '只读查看任务、执行记录和部门资产。',
     level: 1,
@@ -172,6 +176,7 @@ export async function ensureDefaultAdmin() {
   await ensureDefaultRoles();
   const users = await listUsersRaw();
   if (users.length) return null;
+  const adminRole = await findBuiltinRole('admin');
   const username = process.env.AWP_ADMIN_USERNAME || 'admin';
   const password = process.env.AWP_ADMIN_PASSWORD || randomBytes(9).toString('base64url');
   const now = new Date().toISOString();
@@ -179,7 +184,7 @@ export async function ensureDefaultAdmin() {
     id: randomUUID(),
     username,
     displayName: '美术负责人',
-    role: 'admin',
+    role: adminRole?.id || 'admin',
     projectIds: ['*'],
     passwordHash: await hashPassword(password),
     createdAt: now,
@@ -192,20 +197,26 @@ export async function ensureDefaultAdmin() {
 
 export async function ensureDefaultRoles() {
   const roles = await listRolesRaw();
-  const byId = new Map(roles.map(role => [role.id, role]));
+  const byBuiltinKey = new Map(roles.map(role => [resolveRoleBuiltinKey(role), role]).filter(([key]) => key));
   let changed = false;
   for (const role of defaultRoles) {
-    if (!byId.has(role.id)) {
+    const builtinKey = resolveRoleBuiltinKey(role);
+    const existing = builtinKey ? byBuiltinKey.get(builtinKey) : null;
+    if (!existing) {
       roles.push(normalizeRoleRecord(role, true));
       changed = true;
     } else {
-      const existing = byId.get(role.id);
       if (existing.system !== true) {
         existing.system = true;
         existing.updatedAt = new Date().toISOString();
         changed = true;
       }
-      const mergedPermissions = mergeLegacyPermissions(existing.permissions || [], legacyRolePermissionAdditions(existing.id));
+      if (builtinKey && existing.builtinKey !== builtinKey) {
+        existing.builtinKey = builtinKey;
+        existing.updatedAt = new Date().toISOString();
+        changed = true;
+      }
+      const mergedPermissions = mergeLegacyPermissions(existing.permissions || [], legacyRolePermissionAdditions(resolveRoleBuiltinKey(existing) || existing.id));
       if (JSON.stringify(mergedPermissions) !== JSON.stringify(normalizePermissions(existing.permissions || []))) {
         existing.permissions = mergedPermissions;
         existing.updatedAt = new Date().toISOString();
@@ -309,6 +320,7 @@ export async function listAgentWorkerUsers() {
       username: user.username,
       displayName: user.displayName || user.username,
       role: user.role,
+      roleBuiltinKey: user.roleBuiltinKey || '',
       roleName: user.roleName || '',
       permissions: user.permissions || [],
       projectIds: user.projectIds || []
@@ -330,6 +342,7 @@ export async function upsertRole(input = {}) {
   await ensureDefaultRoles();
   const roles = await listRolesRaw();
   const existingId = String(input.existingId || '').trim();
+  const existingBuiltinKey = String(input.builtinKey || '').trim().toLowerCase();
   const role = normalizeRoleRecord({
     ...input,
     id: input.id || uniqueRoleId(input.name, roles)
@@ -344,6 +357,7 @@ export async function upsertRole(input = {}) {
     roles[index] = {
       ...previous,
       ...role,
+      builtinKey: previous.builtinKey || role.builtinKey || '',
       system: input.system === undefined ? previous.system === true : input.system === true,
       createdAt: previous.createdAt || role.createdAt,
       updatedAt: new Date().toISOString()
@@ -361,10 +375,15 @@ export async function upsertRole(input = {}) {
     }
   } else {
     if (roles.some(item => item.id === role.id)) throw statusError(409, '角色英文标识已存在，请换一个。');
-    roles.push(role);
+    const nextRole = {
+      ...role,
+      builtinKey: existingBuiltinKey || role.builtinKey || ''
+    };
+    roles.push(nextRole);
   }
   await writeRolesRaw(sortRoles(roles));
-  return publicRole(index >= 0 ? roles[index] : role);
+  const savedRole = index >= 0 ? roles[index] : roles.find(item => item.id === role.id) || role;
+  return publicRole(savedRole);
 }
 
 export async function deleteRole(id, options = {}) {
@@ -443,8 +462,8 @@ export async function updateUser(id, input = {}) {
   const nextRole = input.role === undefined ? user.role : await normalizeExistingRole(input.role);
   const nextProjectIds = input.projectIds === undefined ? user.projectIds : normalizeProjectIds(input.projectIds);
   const nextDisabled = input.disabled === undefined ? user.disabled === true : Boolean(input.disabled);
-  const adminUsers = users.filter(item => item.disabled !== true && normalizeRole(item.role) === 'admin');
-  if (user.role === 'admin' && (nextRole !== 'admin' || nextDisabled) && adminUsers.length <= 1) {
+  const adminUsers = await listBuiltinUsers(users, 'admin');
+  if (await isBuiltinRoleId(user.role, 'admin') && (!(await isBuiltinRoleId(nextRole, 'admin')) || nextDisabled) && adminUsers.length <= 1) {
     throw statusError(400, '至少保留一个启用状态的管理员账号。');
   }
   users[index] = {
@@ -468,8 +487,8 @@ export async function deleteUser(id, currentUserId = '') {
   if (index === -1) throw statusError(404, '用户不存在。');
   const user = users[index];
   if (user.id === currentUserId) throw statusError(400, '不能删除当前登录账号。');
-  const adminUsers = users.filter(item => item.disabled !== true && normalizeRole(item.role) === 'admin');
-  if (normalizeRole(user.role) === 'admin' && adminUsers.length <= 1) {
+  const adminUsers = await listBuiltinUsers(users, 'admin');
+  if (await isBuiltinRoleId(user.role, 'admin') && adminUsers.length <= 1) {
     throw statusError(400, '至少保留一个启用状态的管理员账号。');
   }
   users.splice(index, 1);
@@ -571,15 +590,30 @@ export function requireProjectAccess(user, projectId, role = 'viewer', permissio
 export function hasPermission(user, permission) {
   if (!permission) return true;
   if (!user) return false;
-  if (isAdminRole(user.role)) return true;
+  if (isAdminUser(user)) return true;
   return new Set(user.permissions || []).has(permission);
 }
 
 export function canAccessProject(user, projectId) {
   if (!user) return false;
-  if (isAdminRole(user.role)) return true;
+  if (isAdminUser(user)) return true;
   const ids = Array.isArray(user.projectIds) ? user.projectIds : [];
   return ids.includes('*') || ids.includes(projectId);
+}
+
+export function isAdminUser(user = {}) {
+  const builtinKey = normalizeBuiltinKey(user?.roleBuiltinKey);
+  if (builtinKey) return builtinKey === 'admin';
+  return isAdminRole(user?.role);
+}
+
+export function isBuiltinRole(user = {}, builtinKey = '') {
+  if (!user) return false;
+  const expected = normalizeBuiltinKey(builtinKey);
+  if (!expected) return false;
+  const current = normalizeBuiltinKey(user?.roleBuiltinKey);
+  if (current) return current === expected;
+  return String(user?.role || '').trim().toLowerCase() === expected;
 }
 
 export function publicUser(user = {}, roles = [], passwordRecords = {}) {
@@ -589,8 +623,9 @@ export function publicUser(user = {}, roles = [], passwordRecords = {}) {
     id: user.id,
     username: user.username,
     displayName: user.displayName || user.username,
-    role: normalizeRole(user.role),
+    role: String(user.role || '').trim() || 'viewer',
     roleName: role?.name || '',
+    roleBuiltinKey: role?.builtinKey || resolveRoleBuiltinKey(role) || '',
     permissions: normalizePermissions(role?.permissions || user.permissions || []),
     projectIds: normalizeProjectIds(user.projectIds),
     mustChangePassword: user.mustChangePassword === true,
@@ -658,7 +693,7 @@ async function normalizeExistingRole(role = '') {
 }
 
 function roleLevel(role = '') {
-  const normalized = normalizeRole(role);
+  const normalized = String(role || '').trim().toLowerCase();
   if (roleRank[normalized]) return roleRank[normalized];
   return 1;
 }
@@ -667,9 +702,11 @@ function normalizeRoleRecord(input = {}, systemDefault = false) {
   const now = new Date().toISOString();
   const id = String(input.id || input.name || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
   if (!id) throw statusError(400, '角色标识不能为空。');
-  const level = Math.max(1, Math.min(4, Number(input.level || roleRank[id] || 1)));
+  const builtinKey = normalizeBuiltinKey(input.builtinKey || (systemDefault ? id : ''));
+  const level = Math.max(1, Math.min(4, Number(input.level || roleRank[builtinKey] || roleRank[id] || 1)));
   return {
     id,
+    builtinKey,
     name: String(input.name || id).trim(),
     description: String(input.description || '').trim(),
     level,
@@ -707,9 +744,10 @@ function normalizePermissions(value = []) {
 function publicRole(role = {}) {
   return {
     id: role.id,
+    builtinKey: resolveRoleBuiltinKey(role),
     name: role.name || role.id,
     description: role.description || '',
-    level: Number(role.level || roleRank[role.id] || 1),
+    level: Number(role.level || roleRank[resolveRoleBuiltinKey(role)] || roleRank[role.id] || 1),
     permissions: normalizePermissions(role.permissions),
     system: role.system === true,
     disabled: role.disabled === true,
@@ -735,6 +773,50 @@ function mergeLegacyPermissions(previous = [], next = []) {
 function isAdminRole(roleId = '') {
   const value = String(roleId || '').trim().toLowerCase();
   return defaultRoleAliases.admin.includes(value);
+}
+
+function normalizeBuiltinKey(value = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(defaultRoleAliases, normalized) ? normalized : '';
+}
+
+function resolveRoleBuiltinKey(role = {}) {
+  const builtinKey = normalizeBuiltinKey(role?.builtinKey);
+  if (builtinKey) return builtinKey;
+  if (role?.system === true) {
+    const id = String(role?.id || '').trim().toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(defaultRoleAliases, id)) return id;
+  }
+  return '';
+}
+
+async function findBuiltinRole(builtinKey = '') {
+  await ensureDefaultRoles();
+  const normalizedKey = normalizeBuiltinKey(builtinKey);
+  if (!normalizedKey) return null;
+  const roles = await listRolesRaw();
+  return roles.find(role => resolveRoleBuiltinKey(role) === normalizedKey) || null;
+}
+
+async function isBuiltinRoleId(roleId = '', builtinKey = '') {
+  const role = await findRoleById(roleId);
+  return resolveRoleBuiltinKey(role) === normalizeBuiltinKey(builtinKey);
+}
+
+async function findRoleById(roleId = '') {
+  await ensureDefaultRoles();
+  const normalizedId = String(roleId || '').trim();
+  if (!normalizedId) return null;
+  const roles = await listRolesRaw();
+  return roles.find(role => role.id === normalizedId) || null;
+}
+
+async function listBuiltinUsers(users = [], builtinKey = '') {
+  const normalizedKey = normalizeBuiltinKey(builtinKey);
+  if (!normalizedKey) return [];
+  const roles = await listRolesRaw();
+  const ids = new Set(roles.filter(role => resolveRoleBuiltinKey(role) === normalizedKey).map(role => role.id));
+  return users.filter(user => user.disabled !== true && ids.has(String(user.role || '').trim()));
 }
 
 function expandLegacyPermission(permission = '') {

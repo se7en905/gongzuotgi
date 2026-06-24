@@ -15,6 +15,8 @@ import {
   deleteUser,
   ensureDefaultAdmin,
   hasPermission,
+  isAdminUser,
+  isBuiltinRole,
   listAgentWorkerUsers,
   listPermissionCatalog,
   listPublicUsers,
@@ -1537,7 +1539,7 @@ async function handleApi(req, res, url) {
       deviceId: workerInput.deviceId,
       capabilities,
       allowedProjectIds: currentUser.projectIds || [],
-      canAccessAllProjects: currentUser.role === 'admin'
+      canAccessAllProjects: isAdminUser(currentUser)
     });
     const worker = await upsertAgentWorker(workerInput);
     broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, module: 'agent-worker' });
@@ -1581,7 +1583,7 @@ async function handleApi(req, res, url) {
       runId: workerInput.runId,
       capabilities,
       allowedProjectIds: currentUser.projectIds || [],
-      canAccessAllProjects: currentUser.role === 'admin'
+      canAccessAllProjects: isAdminUser(currentUser)
     });
     if (!run) {
       sendJson(res, 200, { run: null });
@@ -2755,7 +2757,7 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && runLog) {
     const run = await requireRun(runLog[1]);
     await requireRunViewAccess(currentUser, run);
-    if (currentUser.role !== 'admin' && !hasPermission(currentUser, 'run.log.view')) {
+    if (!isAdminUser(currentUser) && !hasPermission(currentUser, 'run.log.view')) {
       sendJson(res, 403, { error: '当前角色不能查看原始执行日志。' });
       return;
     }
@@ -3175,7 +3177,7 @@ function canReceivePlatformEvent(client, event = {}) {
   }
   if (type === 'runs.changed') return canClientAccessProject(client, event.payload?.projectId || '');
   if (type === 'access-control.changed') return true;
-  if (type === 'operation-logs.changed') return client.role === 'admin' && (client.permissions.has('api.operationLogs.read') || client.permissions.has('menu.operationLogs'));
+  if (type === 'operation-logs.changed') return isAdminUser(client) && (client.permissions.has('api.operationLogs.read') || client.permissions.has('menu.operationLogs'));
   return true;
 }
 
@@ -3841,14 +3843,14 @@ function skillValidationOperationTargetName(record = {}) {
 }
 
 function isOwnerWorkbenchUser(user = {}) {
-  if (user.role === 'admin') return true;
+  if (isAdminUser(user)) return true;
   return [user.username, user.displayName, user.name, user.realname, user.account]
     .filter(Boolean)
     .some(value => samePersonName(value, 'zhangqw') || samePersonName(value, '张倩文') || samePersonName(value, 'admin'));
 }
 
 function hasUserPermission(user = {}, permission = '') {
-  return user.role === 'admin' || (Array.isArray(user.permissions) && user.permissions.includes(permission));
+  return isAdminUser(user) || (Array.isArray(user.permissions) && user.permissions.includes(permission));
 }
 
 function canManageSkillValidationOwner(user = {}) {
@@ -5151,7 +5153,7 @@ function normalizeAiAssetOverride(input = {}, currentUser = {}) {
 }
 
 function canEditAiAssetRow(row = {}, currentUser = {}) {
-  if (currentUser.role === 'admin') return true;
+  if (isAdminUser(currentUser)) return true;
   const names = [currentUser.displayName, currentUser.username, currentUser.name, currentUser.realname, currentUser.account].filter(Boolean);
   const rowPeople = [
     ...splitPersonList(row.owner),
@@ -5242,6 +5244,7 @@ async function authenticateArtProgressReporter(req) {
     username: 'art-progress-reporter',
     displayName: '研究同步助手',
     role: 'developer',
+    roleBuiltinKey: 'developer',
     projectIds: ['*'],
     permissions: []
   };
@@ -5919,11 +5922,11 @@ function aggregateArtEvents(events = [], labelKey, fallbackKey) {
 
 function canSeeAllArtProgress(user = {}, filters = {}) {
   if (filters.scope === 'log') {
-    return user.role === 'admin'
+    return isAdminUser(user)
       || hasPermission(user, 'api.skillAsset.create')
       || hasPermission(user, 'api.skillAsset.void');
   }
-  if (user.role === 'admin' || user.role === 'developer' || (user.projectIds || []).includes('*')) return true;
+  if (isAdminUser(user) || isBuiltinRole(user, 'developer') || (user.projectIds || []).includes('*')) return true;
   return false;
 }
 
@@ -6104,7 +6107,7 @@ async function serveArtifact(res, file, currentUser, options = {}) {
     sendJson(res, 404, { error: '目标不是可打开的文件，请重新生成美术摘要。', code: 'ENOTFILE', details: { path: abs } });
     return;
   }
-  if (matchedRun && currentUser.role !== 'admin' && !hasPermission(currentUser, 'run.artifact.download')) {
+  if (matchedRun && !isAdminUser(currentUser) && !hasPermission(currentUser, 'run.artifact.download')) {
     const mime = mimeType(abs);
     const previewOnly = options.preview === true && /^image\//i.test(mime);
     if (!previewOnly) {
@@ -6243,7 +6246,7 @@ async function serveRunLog(res, file, currentUser, options = {}) {
     return;
   }
   await requireRunViewAccess(currentUser, matchedRun);
-  if (currentUser.role !== 'admin' && !hasPermission(currentUser, 'run.log.view')) {
+  if (!isAdminUser(currentUser) && !hasPermission(currentUser, 'run.log.view')) {
     sendJson(res, 403, { error: '当前角色不能查看原始执行日志。' });
     return;
   }
@@ -6398,7 +6401,7 @@ function canAccessRunRecord(user = {}, run = {}, activeProjectIds = new Set()) {
   const isOrphanRun = Boolean(projectId && !activeProjectIds.has(projectId));
   if (!isOrphanRun && canAccessProject(user, run.projectId)) return true;
   if (!isOrphanRun || (!hasPermission(user, 'menu.runs') && !hasPermission(user, 'menu.aiArchive'))) return false;
-  if (user.role === 'admin') return true;
+  if (isAdminUser(user)) return true;
   const userId = String(user.id || '').trim();
   return [
     run.createdBy,
@@ -10307,7 +10310,7 @@ function buildDepartmentSummary(markdown = '', visibleRows = []) {
 }
 
 function filterAiMemberReportsForUser(rows = [], user = {}) {
-  if (user.role === 'admin') return rows;
+  if (isAdminUser(user)) return rows;
   const names = new Set([
     user.displayName,
     user.username,

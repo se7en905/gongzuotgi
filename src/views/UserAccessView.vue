@@ -30,7 +30,7 @@
       </ElTableColumn>
       <ElTableColumn label="角色" width="130">
         <template #default="{ row }">
-          <ElTag :type="roleTagType(row.role)">{{ app.roleLabel(row.role, row.roleName) }}</ElTag>
+          <ElTag :type="roleTagType(row.roleBuiltinKey || row.role)">{{ app.roleLabel(row.role, row.roleName) }}</ElTag>
         </template>
       </ElTableColumn>
       <ElTableColumn label="项目权限" min-width="260">

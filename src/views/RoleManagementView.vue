@@ -5,14 +5,14 @@
       <div class="panel-head">
         <div>
           <h3>角色管理</h3>
-          <p>系统内置角色是平台默认角色，可编辑权限但不能删除；新增角色会显示为自定义，账号页会直接读取这里的角色。</p>
+          <p>角色名称、英文标识、权限和启用状态都在这里维护；角色变更后，账号页和关联权限会实时同步刷新。</p>
         </div>
         <ElButton v-if="app.can('role.manage')" type="primary" @click="app.openRoleCreateDrawer">新增角色</ElButton>
       </div>
     </template>
 
     <ElTable class="fill-table" :data="app.roles" row-key="id" empty-text="暂无角色">
-      <ElTableColumn label="角色" min-width="190">
+      <ElTableColumn label="角色" min-width="260">
         <template #default="{ row }">
           <div class="role-cell">
             <strong>{{ row.name }}</strong>
@@ -23,7 +23,7 @@
       <ElTableColumn label="等级" width="100">
         <template #default="{ row }"><ElTag :type="levelTagType(row.level)">L{{ row.level }}</ElTag></template>
       </ElTableColumn>
-      <ElTableColumn label="权限点" min-width="360">
+      <ElTableColumn label="权限点" min-width="520">
         <template #default="{ row }">
           <div class="permission-list">
             <ElTag v-for="permission in visiblePermissions(row.permissions)" :key="permission" size="small" effect="plain">{{ permissionName(permission) }}</ElTag>
@@ -31,9 +31,9 @@
           </div>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="类型" width="110">
+      <ElTableColumn label="类型" width="140">
         <template #default="{ row }">
-          <ElTag :type="row.system ? 'info' : 'success'" :title="row.system ? '平台默认角色：可编辑权限，不能删除。' : '你手动新增的角色：可编辑、可停用、未被账号使用时可删除。'">{{ row.system ? '系统内置' : '自定义' }}</ElTag>
+          <ElTag :type="row.system ? 'info' : 'success'" :title="row.system ? '平台预设角色，可继续编辑、改名、改英文标识，也可以删除。' : '手动新增角色，可继续编辑、改名、改英文标识，也可以删除。'">{{ row.system ? '平台预设' : '手动新增' }}</ElTag>
         </template>
       </ElTableColumn>
       <ElTableColumn label="状态" width="100">
@@ -48,8 +48,6 @@
               type="danger"
               plain
               size="small"
-              :disabled="row.system"
-              :title="row.system ? '系统内置角色不能删除' : '删除角色'"
               @click="app.deleteRole(row)"
             >
               删除
@@ -60,9 +58,19 @@
     </ElTable>
   </ElCard>
 
-  <ElDialog v-model="app.roleDrawer" width="640px" :title="app.roleForm.id && app.roleForm.persisted ? '编辑角色' : '新增角色'" class="app-dialog" align-center>
+  <ElDialog v-model="app.roleDrawer" width="860px" :title="app.roleForm.id && app.roleForm.persisted ? '编辑角色' : '新增角色'" class="app-dialog role-edit-dialog" align-center>
     <ElForm :model="app.roleForm" label-position="top" @submit.prevent>
-      <ElFormItem label="角色名称" class="is-required-field"><ElInput v-model="app.roleForm.name" placeholder="运营" /></ElFormItem>
+      <ElRow :gutter="12">
+        <ElCol :span="12">
+          <ElFormItem label="角色名称" class="is-required-field"><ElInput v-model="app.roleForm.name" placeholder="运营" /></ElFormItem>
+        </ElCol>
+        <ElCol :span="12">
+          <ElFormItem label="角色英文标识" class="is-required-field">
+            <ElInput v-model="app.roleForm.id" placeholder="operation-manager" />
+            <div class="field-hint">角色英文标识用于账号绑定和系统识别；支持字母、数字、下划线和短横线。</div>
+          </ElFormItem>
+        </ElCol>
+      </ElRow>
       <ElFormItem label="角色等级" class="is-required-field">
         <ElSegmented :model-value="app.roleForm.level" :options="roleLevelOptions" @update:model-value="app.setRoleLevel" />
         <div class="field-hint">{{ app.roleForm.persisted ? '修改等级不会覆盖当前权限配置；等级只是权限预设和排序，不代表只能有四个角色。' : '选择等级后会自动匹配常用权限，下面可以按实际岗位调整；可以新增任意数量的自定义角色。' }}</div>
@@ -163,13 +171,33 @@
         </ElCheckboxGroup>
       </ElFormItem>
       <ElFormItem label="说明"><ElInput v-model="app.roleForm.description" type="textarea" :rows="3" placeholder="说明这个角色适合什么人使用" /></ElFormItem>
-      <ElFormItem v-if="!app.roleForm.system" label="启用状态">
+      <ElFormItem label="启用状态">
         <ElSwitch
           :model-value="!app.roleForm.disabled"
           @update:model-value="value => app.roleForm.disabled = !value"
         />
       </ElFormItem>
       <ElButton type="primary" class="full-button" :loading="app.loading.roles" @click="app.saveRole">保存角色</ElButton>
+    </ElForm>
+  </ElDialog>
+
+  <ElDialog v-model="app.roleReplaceDialog" width="500px" title="删除角色并替换关联账号" class="app-dialog" align-center>
+    <ElForm label-position="top" @submit.prevent>
+      <ElFormItem label="待删除角色">
+        <ElInput :model-value="app.roleReplaceForm.roleName || app.roleReplaceForm.roleId" disabled />
+      </ElFormItem>
+      <ElFormItem label="替换到哪个角色" class="is-required-field">
+        <ElSelect v-model="app.roleReplaceForm.replacementRoleId" placeholder="请选择替换角色">
+          <ElOption
+            v-for="role in app.enabledRoles.filter(item => item.id !== app.roleReplaceForm.roleId)"
+            :key="role.id"
+            :label="`${role.name}（${role.id}）`"
+            :value="role.id"
+          />
+        </ElSelect>
+      </ElFormItem>
+      <div class="field-hint">删除后，当前使用该角色的账号会立即切换到你选择的替换角色，相关权限和页面显示会实时生效。</div>
+      <ElButton type="danger" class="full-button" :loading="app.loading.roles" @click="app.confirmDeleteRoleWithReplacement">确认替换并删除</ElButton>
     </ElForm>
   </ElDialog>
 </section>
@@ -334,15 +362,22 @@ export default {
   .role-cell {
     display: grid;
     gap: 2px;
+    min-width: 0;
 
     strong {
       color: var(--heading);
       font-weight: 850;
+      line-height: 1.45;
+      white-space: normal;
+      word-break: break-word;
     }
 
     span {
       color: var(--muted);
       font-size: 12px;
+      line-height: 1.45;
+      white-space: normal;
+      word-break: break-all;
     }
   }
 
@@ -350,6 +385,16 @@ export default {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+
+    .el-tag {
+      height: auto;
+      min-height: 24px;
+      white-space: normal;
+      word-break: break-word;
+      line-height: 1.45;
+      padding-top: 3px;
+      padding-bottom: 3px;
+    }
   }
 
   .permission-section-list {
@@ -465,6 +510,28 @@ export default {
 
   .api-permission-block {
     border-style: dashed;
+  }
+
+  .role-edit-dialog {
+    .el-dialog__body {
+      max-height: 78vh;
+      overflow: auto;
+    }
+
+    .el-segmented {
+      width: 100%;
+    }
+
+    .el-segmented__item {
+      min-width: 0;
+    }
+
+    .el-segmented__item-label {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: unset;
+      line-height: 1.35;
+    }
   }
 
   .muted-text {

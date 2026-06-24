@@ -5944,20 +5944,19 @@ export default {
       if (fallbackName) return fallbackName;
       const label = {
         ...Object.fromEntries(this.roles.map(item => [item.id, item.name])),
-        admin: '管理员',
+        admin: '美术负责人',
         developer: '美术执行人',
         reviewer: '美术验证人',
         viewer: '组员只读'
       }[role];
       if (label) return label;
       if (!role) return '未登录';
-      if (String(role).startsWith('role-')) return '自定义角色';
       return role;
     },
 
     can(permission) {
       if (!permission) return true;
-      if (this.currentUser?.role === 'admin') return true;
+      if (this.isPlatformAdmin) return true;
       return this.permissionSet.has(permission);
     },
 
@@ -16282,6 +16281,7 @@ export default {
 
     openUserCreateDrawer() {
       this.userForm = emptyUserForm();
+      this.userForm.role = this.defaultUserRoleId();
       this.userDrawer = true;
     },
 
@@ -16292,7 +16292,7 @@ export default {
         username: user.username,
         displayName: user.displayName || '',
         password: '',
-        role: user.role || 'viewer',
+        role: user.role || this.defaultUserRoleId(),
         allProjects: user.projectIds?.includes('*'),
         projectIds: user.projectIds?.includes('*') ? [] : [...(user.projectIds || [])],
         disabled: user.disabled === true
@@ -16322,10 +16322,17 @@ export default {
       return {
         username: this.userForm.username,
         displayName: this.userForm.displayName,
-        role: this.userForm.role,
+        role: this.userForm.role || this.defaultUserRoleId(),
         projectIds: this.userForm.allProjects ? ['*'] : this.userForm.projectIds,
         disabled: this.userForm.disabled
       };
+    },
+
+    defaultUserRoleId() {
+      return this.enabledRoles.find(role => role.builtinKey === 'developer')?.id
+        || this.enabledRoles.find(role => role.builtinKey === 'viewer')?.id
+        || this.enabledRoles[0]?.id
+        || '';
     },
 
     async saveUser() {
@@ -16499,6 +16506,8 @@ export default {
       this.roleForm = {
         ...emptyRoleForm(),
         ...role,
+        originalId: role.id || '',
+        builtinKey: role.builtinKey || '',
         permissions: [...(role.permissions || [])],
         persisted: true
       };
@@ -16541,6 +16550,8 @@ export default {
       try {
         const payload = {
           id: this.roleForm.id,
+          existingId: this.roleForm.originalId || this.roleForm.id,
+          builtinKey: this.roleForm.builtinKey || '',
           name: this.roleForm.name,
           description: this.roleForm.description,
           level: Number(this.roleForm.level || 1),
@@ -16549,7 +16560,7 @@ export default {
           system: this.roleForm.system === true
         };
         if (this.roleForm.persisted) {
-          await this.api(`/api/roles/${encodeURIComponent(this.roleForm.id)}`, {
+          await this.api(`/api/roles/${encodeURIComponent(this.roleForm.originalId || this.roleForm.id)}`, {
             method: 'PATCH',
             body: JSON.stringify(payload)
           });
@@ -19254,7 +19265,7 @@ export default {
 
     directSkillUserCanExecute(user = null) {
       if (!user || user.disabled === true) return false;
-      if (user.role === 'admin') return true;
+      if (user.roleBuiltinKey === 'admin' || user.role === 'admin') return true;
       const permissions = new Set(user.permissions || []);
       return [
         'api.agentWorkers.heartbeat',
@@ -24308,7 +24319,7 @@ function emptyUserForm() {
     username: '',
     displayName: '',
     password: '12345678',
-    role: 'developer',
+    role: '',
     allProjects: true,
     projectIds: [],
     disabled: false
@@ -24572,6 +24583,8 @@ function emptyArtProgressEventForm(input = {}) {
 function emptyRoleForm() {
   return {
     id: '',
+    originalId: '',
+    builtinKey: '',
     name: '',
     description: '',
     level: 1,

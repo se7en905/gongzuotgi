@@ -104,7 +104,7 @@
       <ElTableColumn label="Figma 链接" min-width="180">
         <template #default="{ row }">
           <a v-if="row.figmaLinks && app.canViewAiArchiveLinks" :href="row.figmaLinks" target="_blank" rel="noopener noreferrer">打开 Figma</a>
-          <span v-else-if="row.figmaLinks">已隐藏</span>
+          <span v-else-if="row.figmaLinks">打开 Figma</span>
           <span v-else>-</span>
         </template>
       </ElTableColumn>
@@ -172,7 +172,7 @@
           <div v-for="item in app.aiExecutionArchiveDetailStats.targetRows" :key="item.label">
             <span>{{ item.label }}</span>
             <a v-if="item.href && app.canViewAiArchiveLinks" :href="item.href" target="_blank" rel="noopener noreferrer">{{ item.value }}</a>
-            <strong v-else-if="item.href">{{ item.label.includes('Figma') ? '已隐藏' : item.value }}</strong>
+            <strong v-else-if="item.href">{{ item.value }}</strong>
             <strong v-else>{{ item.value }}</strong>
           </div>
         </div>
