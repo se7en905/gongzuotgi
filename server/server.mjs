@@ -2154,6 +2154,14 @@ async function handleApi(req, res, url) {
       });
       result.updatedTask = updatedTask;
     }
+    const createdChildResults = Array.isArray(result.results) ? result.results.filter(item => item.type === 'child' && item.ok && item.taskId) : [];
+    const createdTasks = [];
+    for (const childResult of createdChildResults) {
+      const localChildTask = platformTaskFromSplitChildResult(task, childResult, body.plan || body);
+      if (!localChildTask) continue;
+      createdTasks.push(await upsertTask(localChildTask));
+    }
+    if (createdTasks.length) result.createdTasks = createdTasks;
     await writeOperationLog(req, {
       user: currentUser,
       module: 'task',
@@ -2165,7 +2173,14 @@ async function handleApi(req, res, url) {
       metadata: result,
       description: `${currentUser.displayName || currentUser.username} 在工作台拆单「${task.displayTitle || task.title || task.taskNo || task.id}」`
     });
-    broadcastPlatformEvent('tasks.changed', { projectId: task.projectId || artProjectId, taskId: (updatedTask || task).id, taskNo: task.taskNo || '', module: 'zentao-task-split' });
+    broadcastPlatformEvent('tasks.changed', {
+      projectId: task.projectId || artProjectId,
+      taskId: (updatedTask || task).id,
+      taskNo: task.taskNo || '',
+      module: 'zentao-task-split',
+      createdTaskIds: createdTasks.map(item => item.id),
+      affectedTaskIds: [updatedTask?.id || task.id, ...createdTasks.map(item => item.id)].filter(Boolean)
+    });
     sendJson(res, 200, result);
     return;
   }
@@ -9506,6 +9521,80 @@ function isWorkbenchArtTask(task = {}) {
     task.zentao?.assignedToRealName
   ].map(value => String(value || '').trim()).filter(Boolean);
   return nameFields.some(name => artNames.has(name));
+}
+
+function platformTaskFromSplitChildResult(parentTask = {}, childResult = {}, plan = {}) {
+  const taskNo = String(childResult.taskId || '').trim();
+  if (!taskNo) return null;
+  const childRows = Array.isArray(plan.children) ? plan.children : [];
+  const planRow = childRows.find(row => {
+    const rowName = String(row.name || '').trim();
+    const rowAssignee = String(row.assignedTo || '').trim();
+    return rowName === String(childResult.name || '').trim()
+      && (!rowAssignee || rowAssignee === String(childResult.assignedTo || '').trim());
+  }) || {};
+  const assigneeAccount = String(childResult.assignedTo || planRow.assignedTo || '').trim();
+  const assignee = findArtAssignee(assigneeAccount) || { account: assigneeAccount, realname: assigneeAccount };
+  const title = String(childResult.name || planRow.name || `ZenTao task ${taskNo}`).trim();
+  const deadline = validDate(planRow.deadline || parentTask.deadline || parentTask.zentao?.deadline || '');
+  const estimate = Number(planRow.estimate ?? 0);
+  const now = new Date().toISOString();
+  return {
+    id: `${parentTask.projectId || artProjectId}_${taskNo}`,
+    projectId: parentTask.projectId || artProjectId,
+    taskNo,
+    title,
+    developer: assignee.realname || assignee.account || '',
+    assignedTo: assignee.account || '',
+    source: 'zentao',
+    status: 'pending',
+    zentaoStatus: 'wait',
+    isCurrent: true,
+    syncStatus: 'current',
+    lastSyncedAt: now,
+    archivedAt: '',
+    deadline,
+    zentaoCreatedAt: now,
+    zentaoProgress: 0,
+    completion: 0,
+    agentModel: '',
+    summary: [
+      parentTask.zentao?.executionName ? `ZenTao执行：${parentTask.zentao.executionName}` : '',
+      parentTask.zentao?.storyTitle ? `关联需求：${parentTask.zentao.storyTitle}` : ''
+    ].filter(Boolean).join('；'),
+    issues: estimate > 0 ? `剩余工时：${estimate}` : '',
+    requirement: parentTask.requirement || parentTask.description || '',
+    workloadLevel: parentTask.workloadLevel || parentTask.workloadEstimate?.level || '',
+    workloadEstimate: parentTask.workloadEstimate || null,
+    stageChecks: [],
+    zentao: {
+      id: Number(taskNo),
+      project: parentTask.zentao?.project || '',
+      execution: childResult.execution || planRow.executionId || parentTask.zentao?.execution || '',
+      executionName: parentTask.zentao?.executionName || '',
+      story: childResult.story || parentTask.zentao?.story || '',
+      storyTitle: parentTask.zentao?.storyTitle || '',
+      parent: childResult.parent || planRow.parent || parentTask.taskNo || parentTask.zentao?.id || '',
+      parentName: parentTask.displayTitle || parentTask.title || '',
+      type: parentTask.zentao?.type || '',
+      pri: parentTask.zentao?.pri || parentTask.pri || '',
+      estimate,
+      consumed: 0,
+      left: estimate,
+      deadline,
+      originalStatus: 'wait',
+      assignedTo: assignee.account || '',
+      assignedToName: assignee.realname || assignee.account || '',
+      assignedToRealName: assignee.realname || assignee.account || '',
+      openedDate: now,
+      assignedDate: now,
+      finishedDate: '',
+      realStarted: '',
+      taskUrl: `${zentaoBaseUrl}?m=task&f=view&taskID=${encodeURIComponent(taskNo)}`
+    },
+    createdAt: now,
+    updatedAt: now
+  };
 }
 
 function isBugLikeTaskInput(input = {}) {

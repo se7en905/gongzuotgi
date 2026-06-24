@@ -17278,8 +17278,11 @@ export default {
         this.taskSplitDialog.visible = false;
         if (result?.updatedTask?.id) {
           this.applyUpdatedBusinessTask(result.updatedTask);
-          this.saveWorkbenchDisplayCache('businessTasks', this.businessTasks);
         }
+        if (Array.isArray(result?.createdTasks)) {
+          result.createdTasks.forEach(item => this.applyUpdatedBusinessTask(item));
+        }
+        this.saveWorkbenchDisplayCache('businessTasks', this.businessTasks);
         const failed = Array.isArray(result?.results) ? result.results.filter(item => item.ok === false) : [];
         if (failed.length) {
           ElMessage.warning(`拆单已处理，成功 ${result.successCount || 0} 条，失败 ${failed.length} 条；失败项请查看操作日志。`);
