@@ -26,8 +26,8 @@
       <ElTableColumn label="权限点" min-width="360">
         <template #default="{ row }">
           <div class="permission-list">
-            <ElTag v-for="permission in row.permissions" :key="permission" size="small" effect="plain">{{ permissionName(permission) }}</ElTag>
-            <span v-if="!row.permissions?.length" class="muted-text">只读基础权限</span>
+            <ElTag v-for="permission in visiblePermissions(row.permissions)" :key="permission" size="small" effect="plain">{{ permissionName(permission) }}</ElTag>
+            <span v-if="!visiblePermissions(row.permissions).length" class="muted-text">只读基础权限</span>
           </div>
         </template>
       </ElTableColumn>
@@ -190,6 +190,12 @@ export default {
     }
   },
   methods: {
+    hiddenPermissionIds() {
+      return new Set([
+        'menu.aiMembers.owner',
+        'menu.aiMembers.member'
+      ]);
+    },
     levelTagType(level) {
       return Number(level) >= 4 ? 'danger' : Number(level) === 3 ? 'primary' : Number(level) === 2 ? 'warning' : 'info';
     },
@@ -229,7 +235,8 @@ export default {
       return this.app.permissionCatalog.find(item => item.id === id)?.name || fallbackNames[id] || '未知权限';
     },
     permissionsByType(type) {
-      return this.app.permissionCatalog.filter(item => item.type === type);
+      const hiddenIds = this.hiddenPermissionIds();
+      return this.app.permissionCatalog.filter(item => item.type === type && !hiddenIds.has(item.id));
     },
     groupPermissions(items = []) {
       const groups = new Map();
@@ -243,6 +250,10 @@ export default {
     selectedCount(items = []) {
       const selected = new Set(this.app.roleForm.permissions || []);
       return items.filter(item => selected.has(item.id)).length;
+    },
+    visiblePermissions(items = []) {
+      const hiddenIds = this.hiddenPermissionIds();
+      return (Array.isArray(items) ? items : []).filter(id => !hiddenIds.has(id));
     },
     setPermissionGroup(items = [], checked) {
       const selected = new Set(this.app.roleForm.permissions || []);
