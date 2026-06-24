@@ -976,8 +976,9 @@ export async function listRuns() {
   const hydratedRuns = await Promise.all(artifactRuns.map(hydrateRunStages));
   const figmaEnrichedRuns = await Promise.all(hydratedRuns.map(enrichRunWithFigmaLogEvidence));
   const enrichedRuns = await Promise.all(figmaEnrichedRuns.map(enrichRunWithImageGenerationEvidence));
-  await persistRunReadReconciliations(runs, enrichedRuns);
-  return enrichedRuns.sort(compareRunListTimeDesc);
+  const evidenceReconciledRuns = enrichedRuns.map(reconcileFigmaEvidenceRunStatus);
+  await persistRunReadReconciliations(runs, evidenceReconciledRuns);
+  return evidenceReconciledRuns.sort(compareRunListTimeDesc);
 }
 
 export async function getCodexConfig() {
@@ -1132,8 +1133,9 @@ export async function getRun(id) {
   const hydrated = await hydrateRunStages(artifactRun);
   const enriched = await enrichRunWithFigmaLogEvidence(hydrated);
   const imageReconciled = await enrichRunWithImageGenerationEvidence(enriched);
-  await persistRunReadReconciliations(run ? [run] : [], imageReconciled ? [imageReconciled] : []);
-  return imageReconciled;
+  const evidenceReconciled = reconcileFigmaEvidenceRunStatus(imageReconciled);
+  await persistRunReadReconciliations(run ? [run] : [], evidenceReconciled ? [evidenceReconciled] : []);
+  return evidenceReconciled;
 }
 
 export async function createRun(input) {
@@ -1519,6 +1521,13 @@ async function enrichRunWithImageGenerationEvidence(run = null) {
     ...(Array.isArray(workingRun.workerResult?.generatedArtifacts) ? workingRun.workerResult.generatedArtifacts : [])
   ]);
   const hasGeneratedImage = hasGeneratedImageArtifacts(generatedArtifacts);
+  if (hasGeneratedImage) {
+    return reconcileGeneratedImageRun(workingRun, generatedArtifacts, {
+      summary: '本次生图已检测到真实生成图片产物并归档到工作台；不再按本机阻塞展示，请以产物区图片为准复核和下载。',
+      policy: 'generated-image-artifacts-evidence-first',
+      originalBlockerReason: cleanString(workingRun.blocker?.reason || workingRun.resultSummary?.blockerReason)
+    });
+  }
   const imageEvidence = await readRunImageGenerationEvidenceText(workingRun);
   const providerResult = evaluateImageProviderLogEvidence(imageEvidence, generatedArtifacts, workingRun);
   if (providerResult.blocked) {
@@ -1699,10 +1708,39 @@ function evaluateImageProviderLogEvidence(text = '', generatedArtifacts = [], ru
   return {
     blocked: true,
     disallowGeneratedArtifacts: fallbackGenerated,
-    reason: fallbackGenerated
-      ? 'Image2 / GPT Image 2 出图失败后检测到复用旧图、本地绘制、Pillow、脚本或其它替代产物；按当前规则不能算完成，必须修复执行人本机 Image2 后重新执行。'
-      : 'Image2 / GPT Image 2 出图失败，必须修复执行人本机连接、代理、地区、额度或权限后重新执行。'
+    reason: imageProviderFailureReason(source, { fallbackGenerated })
   };
+}
+
+function imageProviderFailureReason(source = '', options = {}) {
+  const text = String(source || '');
+  const details = [];
+  if (/(?:unsupported_country_region_territory|Country,\s*region,\s*or\s*territory\s*not\s*supported|Unable to load site|api\.openai\.com|If you are using a VPN|Ray ID)/i.test(text)) {
+    details.push('当前 Worker/Codex 生图请求像是直连官方 OpenAI，被地区、网络或 Cloudflare 拦截，未命中执行人本机中转站 Image2 配置。');
+  }
+  if (/(?:WindowsApps|Get-Command\s+py|py(?:\.exe)?['"]?\s+不存在|python.{0,80}(?:WindowsApps|占位|not found|无法|不是可用)|python\s+仅指向)/i.test(text)) {
+    details.push('执行人 Windows 环境里的 python/py 不可用或指向 WindowsApps 占位程序，不能依赖 Python 版 Image2 CLI。');
+  }
+  if (/(?:billing_hard_limit_reached|quota|rate limit|429|余额|额度|计费)/i.test(text)) {
+    details.push('Image2/API 额度、计费或限流未通过。');
+  }
+  if (/(?:401|403|permission|denied|unauthorized|invalid_api_key|API key|权限)/i.test(text) && !details.some(item => /地区|Cloudflare|OpenAI/.test(item))) {
+    details.push('Image2/API key 或权限未通过。');
+  }
+  if (options.fallbackGenerated) {
+    return [
+      'Image2 / GPT Image 2 出图失败后检测到复用旧图、本地绘制、Pillow、脚本或其它替代产物；按当前规则不能算完成。',
+      ...details,
+      '必须修复执行人本机 Image2 后重新执行。'
+    ].join('');
+  }
+  return [
+    'Image2 / GPT Image 2 出图失败。',
+    ...details,
+    details.length
+      ? '请确认执行人本机 Worker 能读取同一套中转 base_url、代理、凭据和 Codex 配置后重启 Worker 再执行。'
+      : '必须修复执行人本机连接、代理、地区、额度或权限后重新执行。'
+  ].join('');
 }
 
 function hasPositiveFallbackImageEvidence(text = '') {
@@ -2021,35 +2059,37 @@ function blockRunForImageGenerationEvidence(run = {}, reason = '', options = {})
 async function scanRunGeneratedImageArtifacts(run = {}) {
   const rootDir = cleanString(run.artifactRoot);
   if (!rootDir || !isPathInsideStore(rootDir, paths.artifactDir)) return [];
-  const generatedDir = path.join(rootDir, '生成图片');
-  let entries = [];
-  try {
-    entries = await fs.readdir(generatedDir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
   const rows = [];
-  for (const entry of entries) {
-    if (!entry?.isFile?.() || entry.name.startsWith('.DS_Store')) continue;
-    const ext = path.extname(entry.name).replace(/^\./, '').toLowerCase().replace('jpeg', 'jpg');
-    const type = runAttachmentMimeFromExt(ext);
-    if (!type) continue;
-    const filePath = path.join(generatedDir, entry.name);
-    const stat = await fs.stat(filePath).catch(() => null);
-    if (!stat || !stat.isFile() || stat.size <= 0) continue;
-    const relativePath = path.relative(paths.root, filePath).replaceAll(path.sep, '/');
-    const key = createHash('sha1').update(relativePath).digest('hex').slice(0, 12);
-    rows.push({
-      id: `${cleanString(run.id) || 'run'}-generated-${key}`,
-      name: entry.name,
-      type,
-      size: stat.size,
-      path: filePath,
-      relativePath,
-      role: 'generated-image',
-      source: 'artifact-root-scan',
-      createdAt: new Date(stat.mtimeMs || Date.now()).toISOString()
-    });
+  for (const dirName of ['生成图片', 'outputs']) {
+    const generatedDir = path.join(rootDir, dirName);
+    let entries = [];
+    try {
+      entries = await fs.readdir(generatedDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry?.isFile?.() || entry.name.startsWith('.DS_Store')) continue;
+      const ext = path.extname(entry.name).replace(/^\./, '').toLowerCase().replace('jpeg', 'jpg');
+      const type = runAttachmentMimeFromExt(ext);
+      if (!type) continue;
+      const filePath = path.join(generatedDir, entry.name);
+      const stat = await fs.stat(filePath).catch(() => null);
+      if (!stat || !stat.isFile() || stat.size <= 0) continue;
+      const relativePath = path.relative(paths.root, filePath).replaceAll(path.sep, '/');
+      const key = createHash('sha1').update(relativePath).digest('hex').slice(0, 12);
+      rows.push({
+        id: `${cleanString(run.id) || 'run'}-generated-${key}`,
+        name: entry.name,
+        type,
+        size: stat.size,
+        path: filePath,
+        relativePath,
+        role: 'generated-image',
+        source: 'artifact-root-scan',
+        createdAt: new Date(stat.mtimeMs || Date.now()).toISOString()
+      });
+    }
   }
   return rows.sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh-Hans-CN'));
 }
@@ -3734,6 +3774,67 @@ async function enrichRunWithFigmaLogEvidence(run) {
       needsHumanReview: true
     }
   });
+}
+
+function reconcileFigmaEvidenceRunStatus(run = {}) {
+  if (!run || !hasFigmaWriteEvidence(run)) return run;
+  const hasVerification = hasFigmaPostWriteVerification(run);
+  const existingSummary = run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {};
+  const existingResult = run.figmaWriteResult && typeof run.figmaWriteResult === 'object' ? run.figmaWriteResult : {};
+  const status = hasVerification ? 'completed' : 'partial_write';
+  const blockerReason = hasVerification
+    ? ''
+    : (existingResult.blockerReason || existingSummary.blockerReason || 'Figma 已有放置、替换或写入证据，但最终回读/截图验收未闭环，本次不能判定完整完成。');
+  const finishedAt = cleanString(run.finishedAt || run.completedAt || run.updatedAt || new Date().toISOString());
+  const stages = Array.isArray(run.stages)
+    ? run.stages.map(stage => {
+      const rawStatus = cleanString(stage.status).toLowerCase();
+      if (hasVerification && /failed|blocked|error|partial_write/i.test(rawStatus)) {
+        return { ...stage, status: 'completed', finishedAt: stage.finishedAt || finishedAt };
+      }
+      if (!hasVerification && /failed|blocked|error/i.test(rawStatus)) {
+        return { ...stage, status: 'partial_write', finishedAt: stage.finishedAt || finishedAt };
+      }
+      return stage;
+    })
+    : run.stages;
+  return {
+    ...run,
+    status,
+    workerStatus: status,
+    currentStage: hasVerification ? 'Figma 写入已验收' : 'Figma 已部分写入',
+    blocker: {
+      ...(run.blocker && typeof run.blocker === 'object' ? run.blocker : {}),
+      reason: '',
+      legacyFigmaBlockerReason: cleanString(run.blocker?.reason || existingSummary.blockerReason)
+    },
+    figmaWriteResult: {
+      ...existingResult,
+      required: true,
+      written: true,
+      partialWrite: !hasVerification,
+      blockerReason
+    },
+    resultSummary: {
+      ...existingSummary,
+      status,
+      statusText: status,
+      summary: hasVerification
+        ? '已检测到 Figma 真实写入和写入后验收证据；不再按本机阻塞展示。'
+        : 'Figma 已有真实写入证据，但最终回读/截图验收未闭环；按部分写入展示，不再按本机阻塞展示。',
+      blockerReason,
+      needsHumanReview: !hasVerification,
+      figmaWritten: true,
+      figmaVerifiedAfterWrite: hasVerification,
+      nextStep: hasVerification
+        ? ''
+        : '让执行人继续执行补齐最终回读、截图验收和剩余未完成项。'
+    },
+    stages,
+    localWorkerStale: false,
+    localWorkerStaleDetectedAt: '',
+    updatedAt: new Date().toISOString()
+  };
 }
 
 async function persistRunReadReconciliations(beforeRuns = [], afterRuns = []) {
@@ -7438,11 +7539,12 @@ function guardFigmaWriteCompletion(run = {}) {
     : 'Codex 进程结束，但平台未检测到 Figma 放置、替换或写入证据。必须有 createdNodeIds / mutatedNodeIds，或等价图片放置/替换工具证据后才算完成。';
   return {
     ...run,
-    status: hasWriteEvidence ? 'blocked' : 'failed',
-    workerStatus: hasWriteEvidence ? 'blocked' : 'failed',
+    status: hasWriteEvidence ? 'partial_write' : 'failed',
+    workerStatus: hasWriteEvidence ? 'partial_write' : 'failed',
     blocker: {
       ...(run.blocker && typeof run.blocker === 'object' ? run.blocker : {}),
-      reason: blockerReason
+      reason: hasWriteEvidence ? '' : blockerReason,
+      legacyFigmaBlockerReason: hasWriteEvidence ? cleanString(run.blocker?.reason || blockerReason) : ''
     },
     figmaWriteResult: {
       ...(run.figmaWriteResult && typeof run.figmaWriteResult === 'object' ? run.figmaWriteResult : {}),
@@ -7453,8 +7555,8 @@ function guardFigmaWriteCompletion(run = {}) {
     },
     resultSummary: {
       ...(run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {}),
-      status: hasWriteEvidence ? 'blocked' : 'failed',
-      statusText: hasWriteEvidence ? 'blocked' : 'failed',
+      status: hasWriteEvidence ? 'partial_write' : 'failed',
+      statusText: hasWriteEvidence ? 'partial_write' : 'failed',
       summary: hasWriteEvidence
         ? 'Figma 已有部分写入，但最终回读/截图验收未闭环，本次不能判定完整完成。'
         : '本机 Codex 已结束，但未检测到 Figma 真实写入证据，本次不能判定完成。',

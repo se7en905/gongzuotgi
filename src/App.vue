@@ -1749,7 +1749,7 @@ export default {
     },
 
     logHtml() {
-      const text = normalizeLogMarkdown(this.logText);
+      const text = this.displayRunLogText();
       if (!text.trim()) return '<div class="empty-block">暂无日志。</div>';
       return this.renderMarkdown(text, this.selectedRun?.logPath || '');
     },
@@ -20915,6 +20915,35 @@ export default {
       return Boolean(this.isImageGenerationRun(run) && !String(run?.figmaLinks || '').trim());
     },
 
+    noFigmaImageGenerationRunLogSummary(run = null) {
+      if (!this.isNoFigmaImageGenerationRun(run)) return '';
+      const images = this.runGeneratedImageArtifacts(run);
+      const summary = run?.resultSummary || {};
+      const blocker = String(this.sanitizedRunBlockerReason(run, summary.blockerReason || run?.blocker?.reason) || '').trim();
+      const nextStep = String(this.resultNextActionText(run) || '').trim();
+      const lines = [
+        '## 工作台结构化结果',
+        '',
+        '- 执行类型：纯生图 Skill/md',
+        '- 交付位置：工作台产物区',
+        '- Figma：本次不写入 Figma，不需要补链接或 node-id',
+        images.length
+          ? `- 生成图片产物：${images.length} 张，已在执行详情下方展示，可打开和下载。`
+          : '- 生成图片产物：未检测到可下载的成图。',
+        blocker ? `- 当前判定：${blocker}` : '- 当前判定：未记录阻塞原因。',
+        nextStep ? `- 下一步：${nextStep.replace(/^下一步[：:]\s*/, '')}` : ''
+      ].filter(Boolean);
+      return `${lines.join('\n')}\n\n---\n\n`;
+    },
+
+    displayRunLogText() {
+      const rawText = normalizeLogMarkdown(this.logText);
+      if (!this.isNoFigmaImageGenerationRun(this.selectedRun)) return rawText;
+      const summary = this.noFigmaImageGenerationRunLogSummary(this.selectedRun);
+      const cleaned = sanitizeNoFigmaImageGenerationLogText(rawText);
+      return `${summary}${cleaned}`.trim();
+    },
+
     sanitizedRunBlockerReason(run = {}, value = '') {
       const text = String(value || '').trim();
       if (!text) return '';
@@ -21124,7 +21153,10 @@ export default {
         .split(/\r?\n/)
         .map(line => line.trim())
         .filter(Boolean);
-      const matched = lines.find(line => /not inside a trusted directory|skip-git-repo-check|figma|mcp|oauth|permission|denied|error|failed|失败|阻塞|不可用/i.test(line));
+      const visibleLines = this.isNoFigmaImageGenerationRun(run)
+        ? lines.filter(line => !isNoFigmaImageGenerationLogNoise(line))
+        : lines;
+      const matched = visibleLines.find(line => /not inside a trusted directory|skip-git-repo-check|figma|mcp|oauth|permission|denied|error|failed|失败|阻塞|不可用/i.test(line));
       if (!matched || /日志读取失败|暂无日志/.test(matched)) return '';
       return matched.slice(0, 300);
     },
@@ -24765,6 +24797,30 @@ function normalizeLogMarkdown(value = '') {
   if (omittedHeavy > 0) notices.push(`已省略 ${omittedHeavy} 行 Figma 截图、base64 或大段工具 JSON。`);
   if (notices.length) text = `${notices.join(' ')}\n\n${text}`.trim();
   return text || '暂无关键执行日志。原始日志仍保存在 run.log，可在需要排查时查看。';
+}
+
+function sanitizeNoFigmaImageGenerationLogText(value = '') {
+  const lines = String(value || '')
+    .split(/\r?\n/)
+    .filter(line => !isNoFigmaImageGenerationLogNoise(line));
+  let text = lines.join('\n')
+    .replace(/(?:^|\n)(?:[-*]\s*)?Figma\s*链接[：:].*(?:未填写|未提供|为空|空).*$/gim, '')
+    .replace(/(?:^|\n)(?:[-*]\s*)?写入节点[：:].*(?:无|未提供|target[-\s]?node|node[-\s]?id).*$/gim, '')
+    .replace(/(?:^|\n)(?:[-*]\s*)?Figma\s*写入证据[：:].*(?:无|未执行|createdNodeIds|mutatedNodeIds|figmaWriteResult).*$/gim, '')
+    .replace(/(?:^|\n)(?:[-*]\s*)?最终回读\/截图验收[：:].*(?:未完成|未执行).*$/gim, '')
+    .replace(/(?:^|\n)(?:[-*]\s*)?Figma\s*MCP\s*授权[：:].*$/gim, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (!text) {
+    text = '原始日志里只剩 Figma 空链接或写入证据类旧提示，已按无链接纯生图规则隐藏；请以上方结构化结果和下方生成图片产物区为准。';
+  }
+  return text;
+}
+
+function isNoFigmaImageGenerationLogNoise(line = '') {
+  const text = String(line || '').trim();
+  if (!text) return false;
+  return /Figma\s*链接.{0,80}(?:未填写|未提供|为空|空)|写入节点.{0,120}(?:无|未提供|target[-\s]?node|node[-\s]?id)|Figma\s*写入证据|createdNodeIds\s*[:：]?\s*\[\]|mutatedNodeIds\s*[:：]?\s*\[\]|figmaWriteResult\s*[:：]?\s*(?:未执行|无)|最终回读\/截图验收.{0,80}(?:未完成|未执行)|(?:缺少|没有|无|补充|提供).{0,80}Figma.{0,80}(?:链接|target[-\s]?node|node[-\s]?id|目标|写入|回读|截图)|Figma.{0,80}(?:target[-\s]?node|node[-\s]?id|目标文件|目标节点)|如果需要写入\s*Figma|Figma\s*MCP\s*授权/i.test(text);
 }
 
 function normalizeRunLogLine(line = '') {

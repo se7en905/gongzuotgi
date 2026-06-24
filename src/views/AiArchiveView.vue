@@ -247,9 +247,12 @@
         </div>
       </section>
 
-      <section v-if="app.runGeneratedImageArtifacts(app.aiExecutionArchiveDetailRun).length" class="ai-archive-detail-section">
+      <section
+        v-if="app.isNoFigmaImageGenerationRun(app.aiExecutionArchiveDetailRun) || app.runGeneratedImageArtifacts(app.aiExecutionArchiveDetailRun).length"
+        class="ai-archive-detail-section"
+      >
         <h4>生成图片产物</h4>
-        <div class="ai-archive-generated-image-grid">
+        <div v-if="app.runGeneratedImageArtifacts(app.aiExecutionArchiveDetailRun).length" class="ai-archive-generated-image-grid">
           <article
             v-for="image in app.runGeneratedImageArtifacts(app.aiExecutionArchiveDetailRun)"
             :key="image.path"
@@ -267,6 +270,10 @@
               <ElButton size="small" type="primary" plain tag="a" :href="image.downloadUrl">下载</ElButton>
             </div>
           </article>
+        </div>
+        <div v-else class="ai-archive-generated-image-empty">
+          <strong>未检测到可下载成图。</strong>
+          <span>无 Figma 链接的纯生图任务会在这里展示成品图；如果这里为空，说明本次执行没有把最终成品图归档到“生成图片/”或“outputs/”目录。</span>
         </div>
       </section>
     </div>
@@ -671,6 +678,26 @@ export default {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 12px;
+}
+
+.ai-archive-generated-image-empty {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px dashed rgba(20, 184, 166, 0.32);
+  border-radius: 8px;
+  background: rgba(240, 253, 250, 0.54);
+
+  strong {
+    color: var(--text);
+    font-size: 13px;
+  }
+
+  span {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.7;
+  }
 }
 
 .ai-archive-generated-image-card {

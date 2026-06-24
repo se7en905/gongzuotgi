@@ -346,12 +346,16 @@
           <strong>{{ row.value }}</strong>
         </div>
       </div>
-      <div v-if="app.runGeneratedImageArtifacts(app.selectedRun).length" class="run-generated-image-panel">
+      <div
+        v-if="app.isNoFigmaImageGenerationRun(app.selectedRun) || app.runGeneratedImageArtifacts(app.selectedRun).length"
+        class="run-generated-image-panel"
+      >
         <div class="run-generated-image-head">
           <strong>生成图片产物</strong>
-          <span>{{ app.runGeneratedImageArtifacts(app.selectedRun).length }} 张，可预览和下载</span>
+          <span v-if="app.runGeneratedImageArtifacts(app.selectedRun).length">{{ app.runGeneratedImageArtifacts(app.selectedRun).length }} 张，可预览和下载</span>
+          <span v-else>未检测到可下载成图</span>
         </div>
-        <div class="run-generated-image-grid">
+        <div v-if="app.runGeneratedImageArtifacts(app.selectedRun).length" class="run-generated-image-grid">
           <article
             v-for="image in app.runGeneratedImageArtifacts(app.selectedRun)"
             :key="image.path"
@@ -369,6 +373,10 @@
               <ElButton size="small" type="primary" plain tag="a" :href="image.downloadUrl">下载</ElButton>
             </div>
           </article>
+        </div>
+        <div v-else class="run-generated-image-empty">
+          <strong>这条无 Figma 链接的纯生图任务没有归档到成品图。</strong>
+          <span>请让执行人继续执行或重新执行，并把最终成品图保存到本机执行目录的“生成图片/”或“outputs/”目录；平台会自动在这里展示预览、打开和下载。</span>
         </div>
       </div>
       <div class="direct-run-actions">
@@ -2315,6 +2323,27 @@ export default {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
     gap: 10px;
+  }
+
+  .run-generated-image-empty {
+    display: grid;
+    gap: 4px;
+    padding: 12px;
+    border: 1px dashed rgba(20, 184, 166, 0.32);
+    border-radius: 8px;
+    background: rgba(240, 253, 250, 0.54);
+
+    strong {
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 850;
+    }
+
+    span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.7;
+    }
   }
 
   .run-generated-image-card {
