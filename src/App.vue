@@ -1102,8 +1102,14 @@ export default {
       passwordRecordDrawer: false,
       forcePasswordDialog: false,
       roleDrawer: false,
+      roleReplaceDialog: false,
       userForm: emptyUserForm(),
       roleForm: emptyRoleForm(),
+      roleReplaceForm: {
+        roleId: '',
+        roleName: '',
+        replacementRoleId: ''
+      },
       passwordForm: {
         id: '',
         username: '',
@@ -1563,7 +1569,7 @@ export default {
     },
 
     isPlatformAdmin() {
-      return this.currentUser?.role === 'admin';
+      return this.can('menu.maintenance') || this.can('api.maintenance.manage');
     },
 
     maintenancePreviewCount() {
@@ -1667,7 +1673,7 @@ export default {
     },
 
     isWorkbenchAdmin() {
-      return this.currentUser?.role === 'admin' || this.can('api.users.manage') || this.can('role.manage');
+      return this.can('api.users.manage') || this.can('role.manage');
     },
 
     currentWorkerBindingUser() {
@@ -7067,10 +7073,20 @@ export default {
           await this.refreshAgentWorkers({ background: true, minInterval: 1500 });
         }, 500);
       }
-      if (type === 'access-control.changed' && this.can('api.users.manage')) {
-        this.schedulePlatformRefresh('access-control-users', async () => {
-          await this.refreshUsers();
-        }, 400);
+      if (type === 'access-control.changed') {
+        this.schedulePlatformRefresh('access-control-current-user', async () => {
+          await this.refreshCurrentUserPermissions();
+        }, 200);
+        if (this.can('api.users.manage')) {
+          this.schedulePlatformRefresh('access-control-users', async () => {
+            await this.refreshUsers();
+          }, 300);
+        }
+        if (this.can('api.roles.manage')) {
+          this.schedulePlatformRefresh('access-control-roles', async () => {
+            await this.refreshRoles();
+          }, 300);
+        }
       }
       if (type === 'operation-logs.changed' && this.can('api.operationLogs.read')) {
         if (this.activeView !== 'operation-logs') {
@@ -16474,6 +16490,7 @@ export default {
 
     openRoleCreateDrawer() {
       this.roleForm = emptyRoleForm();
+      this.roleForm.id = this.nextRoleDefaultId();
       this.setRoleLevel(this.roleForm.level);
       this.roleDrawer = true;
     },
@@ -16486,6 +16503,17 @@ export default {
         persisted: true
       };
       this.roleDrawer = true;
+    },
+
+    nextRoleDefaultId() {
+      const ids = new Set((this.roles || []).map(role => String(role.id || '').trim()).filter(Boolean));
+      let index = 1;
+      let candidate = `role-${index}`;
+      while (ids.has(candidate)) {
+        index += 1;
+        candidate = `role-${index}`;
+      }
+      return candidate;
     },
 
     permissionsForRoleLevel(level) {
@@ -16512,12 +16540,13 @@ export default {
       this.loading.roles = true;
       try {
         const payload = {
-          id: this.roleForm.persisted ? this.roleForm.id : '',
+          id: this.roleForm.id,
           name: this.roleForm.name,
           description: this.roleForm.description,
           level: Number(this.roleForm.level || 1),
           permissions: Array.isArray(this.roleForm.permissions) ? this.roleForm.permissions : [],
-          disabled: this.roleForm.disabled
+          disabled: this.roleForm.disabled,
+          system: this.roleForm.system === true
         };
         if (this.roleForm.persisted) {
           await this.api(`/api/roles/${encodeURIComponent(this.roleForm.id)}`, {
@@ -16547,9 +16576,45 @@ export default {
         type: 'warning',
         confirmButtonClass: 'el-button--danger'
       });
-      await this.api(`/api/roles/${encodeURIComponent(role.id)}`, { method: 'DELETE' });
-      await this.refreshRoles();
-      ElMessage.success('角色已删除');
+      try {
+        await this.api(`/api/roles/${encodeURIComponent(role.id)}`, { method: 'DELETE' });
+        await Promise.all([this.refreshRoles(), this.refreshUsers(), this.refreshCurrentUserPermissions()]);
+        ElMessage.success('角色已删除');
+      } catch (error) {
+        const details = error?.details || error?.response?.details || null;
+        if (details?.code === 'ROLE_IN_USE') {
+          this.roleReplaceForm = {
+            roleId: role.id,
+            roleName: role.name,
+            replacementRoleId: this.enabledRoles.find(item => item.id !== role.id)?.id || ''
+          };
+          this.roleReplaceDialog = true;
+          return;
+        }
+        ElMessage.error(this.readApiError(error) || '角色删除失败');
+      }
+    },
+
+    async confirmDeleteRoleWithReplacement() {
+      if (!this.roleReplaceForm.roleId || !this.roleReplaceForm.replacementRoleId) {
+        ElMessage.warning('请先选择替换角色');
+        return;
+      }
+      this.loading.roles = true;
+      try {
+        await this.api(`/api/roles/${encodeURIComponent(this.roleReplaceForm.roleId)}`, {
+          method: 'DELETE',
+          body: JSON.stringify({ replacementRoleId: this.roleReplaceForm.replacementRoleId })
+        });
+        await Promise.all([this.refreshRoles(), this.refreshUsers(), this.refreshCurrentUserPermissions()]);
+        this.roleReplaceDialog = false;
+        this.roleReplaceForm = { roleId: '', roleName: '', replacementRoleId: '' };
+        ElMessage.success('角色已删除，关联账号已同步切换到替换角色');
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || '角色删除失败');
+      } finally {
+        this.loading.roles = false;
+      }
     },
 
     openTaskSyncDrawer() {

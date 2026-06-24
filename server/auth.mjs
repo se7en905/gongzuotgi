@@ -14,6 +14,12 @@ const roleRank = {
   developer: 3,
   admin: 4
 };
+const defaultRoleAliases = {
+  admin: ['admin'],
+  developer: ['developer'],
+  reviewer: ['reviewer'],
+  viewer: ['viewer']
+};
 const permissionCatalog = [
   { id: 'menu.tasks', name: '任务中心', type: 'menu', group: '一级菜单', description: '访问美术任务中心。' },
   { id: 'menu.skillList', name: 'AI 产物清单', type: 'menu', group: '一级菜单', description: '查看 AI 产物清单、产物数量统计和产物列表。' },
@@ -323,36 +329,77 @@ export function listPermissionCatalog() {
 export async function upsertRole(input = {}) {
   await ensureDefaultRoles();
   const roles = await listRolesRaw();
+  const existingId = String(input.existingId || '').trim();
   const role = normalizeRoleRecord({
     ...input,
     id: input.id || uniqueRoleId(input.name, roles)
   });
-  const index = roles.findIndex(item => item.id === role.id);
+  const previousIndex = existingId ? roles.findIndex(item => item.id === existingId) : -1;
+  const index = previousIndex >= 0 ? previousIndex : roles.findIndex(item => item.id === role.id);
   if (index >= 0) {
     const previous = roles[index];
+    if (role.id !== previous.id && roles.some((item, itemIndex) => itemIndex !== index && item.id === role.id)) {
+      throw statusError(409, '角色英文标识已存在，请换一个。');
+    }
     roles[index] = {
       ...previous,
       ...role,
-      system: previous.system === true,
+      system: input.system === undefined ? previous.system === true : input.system === true,
       createdAt: previous.createdAt || role.createdAt,
       updatedAt: new Date().toISOString()
     };
+    if (role.id !== previous.id) {
+      const users = await listUsersRaw();
+      let changed = false;
+      for (const user of users) {
+        if (String(user.role || '') !== previous.id) continue;
+        user.role = role.id;
+        user.updatedAt = new Date().toISOString();
+        changed = true;
+      }
+      if (changed) await writeUsersRaw(users);
+    }
   } else {
+    if (roles.some(item => item.id === role.id)) throw statusError(409, '角色英文标识已存在，请换一个。');
     roles.push(role);
   }
   await writeRolesRaw(sortRoles(roles));
   return publicRole(index >= 0 ? roles[index] : role);
 }
 
-export async function deleteRole(id) {
+export async function deleteRole(id, options = {}) {
   await ensureDefaultRoles();
   const roleId = String(id || '').trim();
   const roles = await listRolesRaw();
   const role = roles.find(item => item.id === roleId);
   if (!role) throw statusError(404, '角色不存在。');
-  if (role.system) throw statusError(400, '系统内置角色不能删除。');
   const users = await listUsersRaw();
-  if (users.some(user => user.role === roleId)) throw statusError(400, '该角色已有账号使用，不能删除。');
+  const linkedUsers = users.filter(user => String(user.role || '') === roleId);
+  const replacementRoleId = String(options.replacementRoleId || '').trim();
+  if (linkedUsers.length) {
+    if (!replacementRoleId) {
+      const error = statusError(409, '该角色已有账号使用，请先选择替换角色。');
+      error.details = {
+        code: 'ROLE_IN_USE',
+        linkedUserCount: linkedUsers.length,
+        linkedUsers: linkedUsers.map(user => ({
+          id: user.id,
+          username: user.username || '',
+          displayName: user.displayName || user.username || ''
+        }))
+      };
+      throw error;
+    }
+    const replacement = roles.find(item => item.id === replacementRoleId);
+    if (!replacement || replacement.disabled === true || replacement.id === roleId) {
+      throw statusError(400, '请选择一个有效的替换角色。');
+    }
+    for (const user of linkedUsers) {
+      user.role = replacement.id;
+      user.updatedAt = new Date().toISOString();
+    }
+    await writeUsersRaw(users);
+  }
   await writeRolesRaw(roles.filter(item => item.id !== roleId));
   return publicRole(role);
 }
@@ -524,13 +571,13 @@ export function requireProjectAccess(user, projectId, role = 'viewer', permissio
 export function hasPermission(user, permission) {
   if (!permission) return true;
   if (!user) return false;
-  if (user.role === 'admin') return true;
+  if (isAdminRole(user.role)) return true;
   return new Set(user.permissions || []).has(permission);
 }
 
 export function canAccessProject(user, projectId) {
   if (!user) return false;
-  if (user.role === 'admin') return true;
+  if (isAdminRole(user.role)) return true;
   const ids = Array.isArray(user.projectIds) ? user.projectIds : [];
   return ids.includes('*') || ids.includes(projectId);
 }
@@ -611,7 +658,9 @@ async function normalizeExistingRole(role = '') {
 }
 
 function roleLevel(role = '') {
-  return roleRank[role] || 1;
+  const normalized = normalizeRole(role);
+  if (roleRank[normalized]) return roleRank[normalized];
+  return 1;
 }
 
 function normalizeRoleRecord(input = {}, systemDefault = false) {
@@ -681,6 +730,11 @@ async function hydrateUserPermissions(user) {
 
 function mergeLegacyPermissions(previous = [], next = []) {
   return normalizePermissions([...previous, ...next]);
+}
+
+function isAdminRole(roleId = '') {
+  const value = String(roleId || '').trim().toLowerCase();
+  return defaultRoleAliases.admin.includes(value);
 }
 
 function expandLegacyPermission(permission = '') {

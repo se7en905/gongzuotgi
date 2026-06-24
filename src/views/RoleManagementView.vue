@@ -82,9 +82,9 @@
               </div>
             </div>
             <div class="permission-check-grid">
-              <ElCheckbox v-for="permission in fineGrainedViewPermissions" :key="permission.id" :label="permission.id" class="permission-highlight-item">
+              <ElCheckbox v-for="permission in fineGrainedViewPermissions" :key="permission.id" :label="permission.id" :title="permission.description">
                 <strong>{{ permission.name }}</strong>
-                <span>{{ permission.description }}</span>
+                <span>{{ fineGrainedPermissionDescription(permission) }}</span>
               </ElCheckbox>
             </div>
           </section>
@@ -285,6 +285,19 @@ export default {
       const targetIds = new Set(Array.isArray(ids) ? ids : []);
       return this.permissionsByType('button').filter(item => targetIds.has(item.id));
     },
+    fineGrainedPermissionDescription(permission = {}) {
+      const id = String(permission.id || '');
+      const shortMap = {
+        'skill.preview.view': '关闭后只能看列表，不能打开正文。',
+        'aiMembers.board.view': '关闭后底部 AI 看板会模糊锁定。',
+        'workflow.manage.view': '控制模板管理弹窗是否可见。',
+        'run.log.view': '控制原始执行日志抽屉是否可见。',
+        'run.artifact.download': '关闭后仅保留缩略图，不可打开下载。',
+        'archive.detail.view': '控制 AI 档案明细抽屉是否可见。',
+        'archive.link.view': '控制 AI 档案外链是否显示并可打开。'
+      };
+      return shortMap[id] || permission.description || '';
+    },
     groupPermissions(items = []) {
       const groups = new Map();
       for (const permission of items) {
@@ -452,16 +465,6 @@ export default {
 
   .api-permission-block {
     border-style: dashed;
-  }
-
-  .permission-highlight-block {
-    border-color: color-mix(in srgb, var(--primary) 36%, var(--line));
-    background: color-mix(in srgb, var(--primary) 6%, var(--panel));
-  }
-
-  .permission-highlight-item {
-    border-color: color-mix(in srgb, var(--primary) 20%, var(--line)) !important;
-    background: color-mix(in srgb, var(--primary) 4%, var(--soft-card)) !important;
   }
 
   .muted-text {

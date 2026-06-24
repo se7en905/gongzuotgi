@@ -1139,7 +1139,7 @@ async function handleApi(req, res, url) {
   if (req.method === 'PATCH' && roleDetail) {
     requirePermission(currentUser, 'api.roles.manage');
     const before = (await listRoles()).find(role => role.id === roleDetail[1]) || null;
-    const role = await upsertRole({ ...(await readBody(req)), id: roleDetail[1] });
+    const role = await upsertRole({ ...(await readBody(req)), existingId: roleDetail[1] });
     await writeOperationLog(req, {
       user: currentUser,
       module: 'role',
@@ -1159,7 +1159,8 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'DELETE' && roleDetail) {
     requirePermission(currentUser, 'api.roles.manage');
-    const role = await deleteRole(roleDetail[1]);
+    const body = await readBody(req).catch(() => ({}));
+    const role = await deleteRole(roleDetail[1], body || {});
     await writeOperationLog(req, {
       user: currentUser,
       module: 'role',
