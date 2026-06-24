@@ -1407,6 +1407,16 @@ async function checkOpenAiApiReady(credential = {}, baseUrl = null) {
   const endpointUrls = buildImageGenerationProbeUrls(resolvedBaseUrl.url);
   const dnsResult = await checkOpenAiDnsReady(endpointUrls[0]);
   if (!dnsResult.ready) return { ready: false, message: `DNS 不可用：${dnsResult.message}` };
+  const probe = await runOpenAiImageEndpointProbe(endpointUrls, credential.key);
+  const output = `${probe.stdout || ''}\n${probe.stderr || ''}`.trim();
+  if (probe.code === 0) return { ready: true, message: `${resolvedBaseUrl.url} 图像接口已到达（无效参数预检，不出图）：${output || '可访问'}` };
+  if (/HTTP\s+401|HTTP\s+403/.test(output)) {
+    return { ready: false, message: `${output}；凭据无效、账号无权限或当前地区 / 网络被 OpenAI 拒绝` };
+  }
+  return { ready: false, message: output || probe.error || `OpenAI API 检查失败：${probe.code}` };
+}
+
+async function runOpenAiImageEndpointProbe(endpointUrls = [], apiKey = '') {
   const script = [
     'import json, os, sys, urllib.error, urllib.request',
     'key = os.environ.get("OPENAI_API_KEY", "").strip()',
@@ -1436,19 +1446,51 @@ async function checkOpenAiApiReady(credential = {}, baseUrl = null) {
     'print("\\n".join(errors), file=sys.stderr)',
     'sys.exit(2)'
   ].join('\n');
-  const probe = await runCommand('python3', ['-c', script], {
-    timeoutMs: Math.min(localCheckTimeoutMs, 15000),
-    env: {
-      OPENAI_API_KEY: credential.key,
-      OPENAI_IMAGE_PROBE_URLS: endpointUrls.join('\n')
-    }
-  });
-  const output = `${probe.stdout || ''}\n${probe.stderr || ''}`.trim();
-  if (probe.code === 0) return { ready: true, message: `${resolvedBaseUrl.url} 图像接口已到达（无效参数预检，不出图）：${output || '可访问'}` };
-  if (/HTTP\s+401|HTTP\s+403/.test(output)) {
-    return { ready: false, message: `${output}；凭据无效、账号无权限或当前地区 / 网络被 OpenAI 拒绝` };
+  const pythonCandidates = os.platform() === 'win32'
+    ? [['python', ['-c', script]], ['py', ['-3', '-c', script]], ['python3', ['-c', script]]]
+    : [['python3', ['-c', script]], ['python', ['-c', script]]];
+  for (const [command, args] of pythonCandidates) {
+    const result = await runCommand(command, args, {
+      timeoutMs: Math.min(localCheckTimeoutMs, 15000),
+      env: {
+        OPENAI_API_KEY: apiKey,
+        OPENAI_IMAGE_PROBE_URLS: endpointUrls.join('\n')
+      }
+    });
+    if (result.error && /ENOENT|not found|找不到|无法将.*识别为/i.test(result.error)) continue;
+    return result;
   }
-  return { ready: false, message: output || probe.error || `OpenAI API 检查失败：${probe.code}` };
+  return probeOpenAiImageEndpointWithFetch(endpointUrls, apiKey);
+}
+
+async function probeOpenAiImageEndpointWithFetch(endpointUrls = [], apiKey = '') {
+  const errors = [];
+  for (const endpoint of endpointUrls) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.min(localCheckTimeoutMs, 15000));
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ model: 'gpt-image-2' }),
+        signal: controller.signal
+      });
+      const body = await response.text().catch(() => '');
+      const message = `${endpoint} HTTP ${response.status}: ${body.slice(0, 1200)}`;
+      if (response.ok || response.status === 400 || response.status === 422) {
+        return { code: 0, stdout: message, stderr: '' };
+      }
+      errors.push(message);
+    } catch (error) {
+      errors.push(`${endpoint} ${error.name || 'FetchError'}: ${error.message || String(error)}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return { code: 2, stdout: '', stderr: errors.join('\n'), error: errors.join('\n') };
 }
 
 function buildImageGenerationProbeUrls(baseUrl = '') {

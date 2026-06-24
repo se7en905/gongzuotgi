@@ -366,6 +366,7 @@
   - 生图类 Skill/md 需要真实调用 OpenAI/Image2 API 时，Worker 启动 `codex exec` 必须使用执行人本机可联网、可读取本机代理和凭据的执行环境；不得把生图命令放进会阻断 DNS、OpenAI API 或代理继承的沙箱环境里，否则会造成 Codex 客户端可用但工作台 Worker 出图失败。
   - 本机 Worker 状态必须区分 `Image2 配置已发现` 和 `Image2 API 已验证`：前者只表示找到 key、Skill 脚本或 uv，后者才表示当前 Worker 进程已通过不消耗出图额度的 OpenAI API 入口检查。工作台不得用“已发现”或单纯 DNS 解析成功暗示一定能出图。
   - 本机 Worker 的 Image2 自检必须按执行人本机真实生图入口检查：优先读取 `OPENAI_BASE_URL`、`OPENAI_API_BASE_URL`、`OPENAI_API_BASE` 等中转站配置；若环境变量未配置，必须继续读取执行人 `CODEX_HOME/config.toml` 中 `model_provider` 对应的 `model_providers.<name>.base_url`；再检查对应 `/images/generations` 图像接口。不得硬编码只检查官方 `api.openai.com`，因为当前团队默认走中转站。
+  - Image2 自检不得依赖组员 Windows 电脑必装 `python3`；如果 `python3`、`python` 或 `py` 不可用，必须使用 Node 内置网络能力做同等无效参数预检，避免 Codex 客户端能生图但 Worker 状态因缺 Python 误报未通过。
   - 纯生图 Skill/md 填写了 Figma 链接时，必须视为需要在 Figma 目标处放置或替换生成成品图；证据可以是 `use_figma` 返回的 `createdNodeIds` / `mutatedNodeIds`，也可以是图片上传、放置或替换工具返回的等价成功记录，但必须能证明成品图已落到该 Figma 目标。
   - 纯生图 Skill/md 未填写 Figma 链接时，本机 Worker 必须要求 Codex 把生成图片保存到本机执行目录，并在执行结束后扫描新增图片产物，上传归档到本次执行 `artifactRoot/生成图片/`；执行记录只保存路径、名称、类型、大小等元信息，不得把图片 base64 长期写入 `runs.json`。
   - 生图状态判定必须先扫描并归档本机执行目录里的真实生成图片产物，再根据 `imageGenerationProviderMode`、Image2 调用结果和替代图证据判定最终状态；不得因为同一日志前段出现 Image2 连接失败、后段已经由 Image2 成功落盘成品图，就跳过归档或继续显示 `本机阻塞`。
