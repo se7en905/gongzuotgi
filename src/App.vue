@@ -1503,6 +1503,8 @@ export default {
             codexReady: worker?.codexReady === true,
             figmaMcpReady: worker?.figmaMcpReady === true,
             image2Ready: worker?.image2Ready === true,
+            image2Configured: worker?.image2Configured === true || worker?.image2Ready === true,
+            image2NetworkReady: worker?.image2NetworkReady === true || worker?.image2Ready === true,
             ready: online && worker?.codexReady === true && worker?.figmaMcpReady === true
           };
         });
@@ -1542,6 +1544,8 @@ export default {
           codexReady: worker?.codexReady === true,
           figmaMcpReady: worker?.figmaMcpReady === true,
           image2Ready: worker?.image2Ready === true,
+          image2Configured: worker?.image2Configured === true || worker?.image2Ready === true,
+          image2NetworkReady: worker?.image2NetworkReady === true || worker?.image2Ready === true,
           ready: online && worker?.codexReady === true && worker?.figmaMcpReady === true
         });
       }
@@ -19168,8 +19172,19 @@ export default {
       const online = this.directSkillWorkerOnline(worker);
       const figma = worker.figmaMcpReady ? 'Figma MCP 已就绪' : 'Figma MCP 未就绪';
       const codex = worker.codexReady ? 'Codex 已就绪' : 'Codex 未就绪';
-      const image2 = worker.image2Ready ? 'Image2 配置已发现' : 'Image2 配置待读取';
+      const image2 = this.directSkillWorkerImage2StatusLabel(worker);
       return `${this.directSkillWorkerDisplayName(worker)} · ${online ? '在线' : '离线'} · ${codex} · ${figma} · ${image2}`;
+    },
+
+    directSkillWorkerImage2StatusLabel(worker = null) {
+      if (!worker) return 'Image2 未检查';
+      if (worker.image2Ready === true) return 'Image2 API 已验证';
+      if (worker.image2Configured === true || worker.checks?.image2Configured === true) {
+        return worker.image2NetworkReady === false || worker.checks?.image2NetworkReady === false
+          ? 'Image2 配置已发现，API 未通过'
+          : 'Image2 配置已发现，API 未验证';
+      }
+      return 'Image2 配置待读取';
     },
 
     directSkillWorkerIssueText(worker = null) {
@@ -19179,7 +19194,7 @@ export default {
       const messages = [];
       if (worker.codexReady !== true) messages.push(checks.codexMessage || 'Codex 未就绪，请确认组员电脑上能运行 codex --help。');
       if (worker.figmaMcpReady !== true) messages.push(checks.figmaMessage || 'Figma MCP 未就绪，请确认组员电脑上的 Codex 已完成 Figma MCP 授权。');
-      if (worker.image2Ready !== true) messages.push(checks.image2Message || 'Image2 配置待读取：组员电脑已配置 image2/key 时，请确认 Worker 进程能读取执行人本机 image2/OpenAI 配置和代理。');
+      if (worker.image2Ready !== true) messages.push(checks.image2Message || 'Image2 未验证可用：Codex 客户端能用不等于 LaunchAgent Worker 能继承同一套 PATH、代理、DNS 和 OpenAI API 入口访问能力，请确认 Worker 进程能读取执行人本机 image2/OpenAI 配置和代理。');
       if (!messages.length) return 'Worker 已在线并可自动领取。';
       return messages.join('；');
     },

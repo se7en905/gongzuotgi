@@ -6,6 +6,7 @@ LABEL="com.artproject.art-direct-worker.${ART_PLATFORM_USERNAME:-user}"
 PLIST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
 NODE_BIN="$(command -v node)"
 DEFAULT_CODEX_CLI="/Applications/Codex.app/Contents/Resources/codex"
+WORKER_PATH="${ART_WORKER_PATH:-/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
 LOG_DIR="${ROOT}/logs"
 RUNNER="${ROOT}/scripts/run-art-direct-worker.sh"
 
@@ -47,6 +48,7 @@ mkdir -p "${ART_WORKER_HOME}/scripts" "${LOG_DIR}"
 
 export ART_WORKER_PROJECT_ROOT="${ART_WORKER_PROJECT_ROOT:-${ART_WORKER_HOME}}"
 export ART_WORKER_SUPERVISED=1
+export PATH="${ART_WORKER_PATH:-/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}:${PATH:-}"
 
 while true; do
   if command -v curl >/dev/null 2>&1; then
@@ -92,10 +94,22 @@ cat > "${PLIST}" <<PLIST
     <string>${ART_WORKER_LOCAL_CHECK_INTERVAL_MS:-2400000}</string>
     <key>ART_WORKER_HOME</key>
     <string>${ROOT}</string>
+    <key>ART_WORKER_PATH</key>
+    <string>${WORKER_PATH}</string>
+    <key>PATH</key>
+    <string>${WORKER_PATH}</string>
     <key>NODE_BIN</key>
     <string>${NODE_BIN}</string>
     <key>CODEX_CLI_PATH</key>
     <string>${CODEX_CLI_PATH:-${DEFAULT_CODEX_CLI}}</string>
+    <key>HTTP_PROXY</key>
+    <string>${HTTP_PROXY:-${http_proxy:-}}</string>
+    <key>HTTPS_PROXY</key>
+    <string>${HTTPS_PROXY:-${https_proxy:-}}</string>
+    <key>ALL_PROXY</key>
+    <string>${ALL_PROXY:-${all_proxy:-}}</string>
+    <key>NO_PROXY</key>
+    <string>${NO_PROXY:-${no_proxy:-}}</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>

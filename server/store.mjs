@@ -7090,6 +7090,21 @@ function normalizeAgentWorker(input = {}) {
   const heartbeatIntervalMs = Math.max(0, Number(input.heartbeatIntervalMs || 0));
   const pollIntervalMs = Math.max(0, Number(input.pollIntervalMs || 0));
   const onlineGraceMs = Math.max(0, Number(input.onlineGraceMs || 0));
+  const image2Configured = input.image2Configured === true
+    || capabilities.includes('image2.config.detected')
+    || checks.image2Configured === true
+    || input.image2Ready === true;
+  const image2NetworkReady = input.image2NetworkReady === false || checks.image2NetworkReady === false
+    ? false
+    : (input.image2NetworkReady === true
+      || capabilities.includes('image2.network.ready')
+      || capabilities.includes('image2.ready')
+      || checks.image2NetworkReady === true
+        ? true
+        : null);
+  const image2Ready = capabilities.includes('image2.ready')
+    || (input.image2Ready === true && image2NetworkReady)
+    || (checks.image2Ready === true && image2NetworkReady);
   return {
     id,
     userId,
@@ -7101,7 +7116,9 @@ function normalizeAgentWorker(input = {}) {
     platform: cleanString(input.platform || os.platform()),
     codexReady: input.codexReady === true || capabilities.includes('codex.exec'),
     figmaMcpReady: input.figmaMcpReady === true || capabilities.includes('figma.mcp.write'),
-    image2Ready: input.image2Ready === true || capabilities.includes('image2.config.detected'),
+    image2Ready,
+    image2Configured,
+    image2NetworkReady,
     capabilities,
     checks,
     currentRunId: cleanString(input.currentRunId),

@@ -360,6 +360,8 @@
   - 有 Figma 链接也不等于必须把结果转为可编辑 Figma 图层。只有执行要求或 Skill/md 行为明确包含写入、修改、创建、清理、重命名、更新 Figma 节点/Frame/页面等动作，或纯生图需要落到 Figma 目标时，才要求 Figma 变更证据；纯参考、分析或无链接的本地产物任务不得因为没有 Figma 放置/替换/写入证据被判失败。
   - 生图类 Skill/md 默认必须调用执行人电脑上的原生 `image2` / `gpt-image-2` / GPT Image 2 能力进行生图创作；只有新建执行时 `imageGenerationProviderMode=fallback`，或负责人 / 执行要求明确写明使用 Midjourney、Stable Diffusion、Flux、ComfyUI、DALL-E、豆包、即梦、可灵、通义万相、本地模型或其它非 image2 工具时，才允许按非 image2 方案执行。
   - 本机 Worker 生成 `codex exec` prompt 时必须把 `imageGenerationProviderMode` 写成明确执行口径：`image2` 模式必须写明失败即阻塞且禁止替代；`fallback` 模式必须写明允许使用执行人本机非 image2 生图方案，并要求最终报告写明实际使用工具。
+  - 生图类 Skill/md 需要真实调用 OpenAI/Image2 API 时，Worker 启动 `codex exec` 必须使用执行人本机可联网、可读取本机代理和凭据的执行环境；不得把生图命令放进会阻断 DNS、OpenAI API 或代理继承的沙箱环境里，否则会造成 Codex 客户端可用但工作台 Worker 出图失败。
+  - 本机 Worker 状态必须区分 `Image2 配置已发现` 和 `Image2 API 已验证`：前者只表示找到 key、Skill 脚本或 uv，后者才表示当前 Worker 进程已通过不消耗出图额度的 OpenAI API 入口检查。工作台不得用“已发现”或单纯 DNS 解析成功暗示一定能出图。
   - 纯生图 Skill/md 填写了 Figma 链接时，必须视为需要在 Figma 目标处放置或替换生成成品图；证据可以是 `use_figma` 返回的 `createdNodeIds` / `mutatedNodeIds`，也可以是图片上传、放置或替换工具返回的等价成功记录，但必须能证明成品图已落到该 Figma 目标。
   - 纯生图 Skill/md 未填写 Figma 链接时，本机 Worker 必须要求 Codex 把生成图片保存到本机执行目录，并在执行结束后扫描新增图片产物，上传归档到本次执行 `artifactRoot/生成图片/`；执行记录只保存路径、名称、类型、大小等元信息，不得把图片 base64 长期写入 `runs.json`。
   - 生图状态判定必须先扫描并归档本机执行目录里的真实生成图片产物，再根据 `imageGenerationProviderMode`、Image2 调用结果和替代图证据判定最终状态；不得因为同一日志前段出现 Image2 连接失败、后段已经由 Image2 成功落盘成品图，就跳过归档或继续显示 `本机阻塞`。
@@ -716,6 +718,7 @@
   - Worker 只能领取并回传分配给自己的直接执行任务；除 admin 审计能力外，不得回传他人任务状态。
   - Worker 日志回传要限制单次长度，避免日志过大拖慢平台。
   - Worker 本机状态目录只允许保存当前执行所需的轻量快照、有限离线事件和必要同步去重信息；不得保存整个平台数据、全量日志历史、全量聊天记录、Figma token 或其它长期敏感数据。
+  - Worker 由 macOS LaunchAgent 启动时，必须显式设置可用 `PATH`，并允许从 Worker `.env`、项目 `.env` 或用户 `~/.env` 读取 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 和 `OPENAI_API_KEY`；不得假设 LaunchAgent 会自动继承用户终端或 Codex 客户端的 PATH、代理和 DNS 环境。
   - 工作台前端不得整段渲染原始 Codex/Worker/Figma 日志；`run.log` 中的 Figma 截图、base64、图片、超长 JSON 和大段 MCP 工具返回必须摘要、截断或过滤后再展示。
   - `/api/runs/:id/log` 默认只返回尾部日志摘要；完整原始日志只作为服务器文件保留，排查时查看文件，不得作为页面切换或刷新时的默认渲染数据。
   - 前端默认请求执行日志尾部不得超过 `48KB`；如需排查更大原始日志，只能在明确调试入口或服务器文件中查看，不能作为页面默认加载内容。

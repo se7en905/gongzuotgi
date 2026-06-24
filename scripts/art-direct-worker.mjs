@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import os from 'node:os';
 import path from 'node:path';
+import dns from 'node:dns/promises';
 import { access, appendFile, mkdir, readFile, writeFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -48,6 +49,7 @@ let workerStartedAt = new Date().toISOString();
 let currentRunId = '';
 let lockOwned = false;
 let offlineQueueOperation = Promise.resolve();
+let workerEnvOverrides = {};
 let localChecks = {
   codexReady: false,
   figmaMcpReady: false,
@@ -63,6 +65,7 @@ main().catch(error => {
 });
 
 async function main() {
+  workerEnvOverrides = await loadWorkerEnvOverrides();
   await acquireWorkerLock();
   await mkdir(runStateDir, { recursive: true });
   await waitForLogin();
@@ -441,6 +444,7 @@ async function executeRun(run) {
   try {
     child = spawn(codexPath, args, {
       cwd,
+      env: workerChildEnv(),
       stdio: ['pipe', 'pipe', 'pipe']
     });
     await appendLocalRunLog(run.id, `[worker] Codex 进程已启动，pid=${child.pid || 'unknown'}\n`);
@@ -1177,11 +1181,15 @@ function workerPayload() {
     capabilities: [
       localChecks.codexReady ? 'codex.exec' : '',
       localChecks.figmaMcpReady ? 'figma.mcp.write' : '',
-      localChecks.image2Ready ? 'image2.config.detected' : ''
+      localChecks.image2Configured ? 'image2.config.detected' : '',
+      localChecks.image2NetworkReady ? 'image2.network.ready' : '',
+      localChecks.image2Ready ? 'image2.ready' : ''
     ].filter(Boolean),
     codexReady: localChecks.codexReady,
     figmaMcpReady: localChecks.figmaMcpReady,
     image2Ready: localChecks.image2Ready,
+    image2Configured: localChecks.image2Configured,
+    image2NetworkReady: localChecks.image2NetworkReady,
     checks: localChecks
   };
 }
@@ -1212,6 +1220,8 @@ async function runLocalChecks() {
     codexReady: codex.code === 0,
     figmaMcpReady: figmaReady,
     image2Ready: image2.ready,
+    image2Configured: image2.configured,
+    image2NetworkReady: image2.networkReady,
     codexMessage: codex.code === 0 ? '可用' : `不可用：${codex.stderr || codex.error || codex.code}`,
     figmaMessage: figmaReady ? '已发现 figma MCP 配置' : '未发现 figma MCP 配置，请先在本机 Codex 完成 Figma MCP 授权',
     image2Message: image2.message,
@@ -1221,38 +1231,115 @@ async function runLocalChecks() {
 
 async function checkLocalImage2Config() {
   const sources = [];
-  if (String(process.env.OPENAI_API_KEY || '').trim()) sources.push('当前 Worker 进程环境 OPENAI_API_KEY');
+  const credential = await resolveOpenAiApiCredential();
+  if (credential.key) sources.push(`当前 Worker 进程可读取 OPENAI_API_KEY（${credential.source}）`);
   const cwdEnv = await hasEnvKey(path.join(process.cwd(), '.env'), 'OPENAI_API_KEY');
   if (cwdEnv) sources.push('当前执行目录 .env');
   const projectEnv = await hasEnvKey(path.join(defaultProjectRoot, '.env'), 'OPENAI_API_KEY');
   if (projectEnv && !sources.includes('当前执行目录 .env')) sources.push('Worker 项目目录 .env');
   const homeEnv = await hasEnvKey(path.join(os.homedir(), '.env'), 'OPENAI_API_KEY');
   if (homeEnv) sources.push('用户 ~/.env');
-  const codexAuth = await hasReadableFile(path.join(os.homedir(), '.codex', 'auth.json'));
-  if (codexAuth) sources.push('用户 ~/.codex/auth.json');
+  if (credential.source.includes('.codex/auth.json')) sources.push('用户 ~/.codex/auth.json');
   const bundledSkillScript = path.join(os.homedir(), '.codex', 'skills', 'gpt-image', 'scripts', 'generate.py');
   const bundledScriptReady = await hasReadableFile(bundledSkillScript);
   if (bundledScriptReady) sources.push('gpt-image 技能脚本');
   const uv = await runCommand('uv', ['--version'], { timeoutMs: Math.min(localCheckTimeoutMs, 5000) });
   if (uv.code === 0) sources.push('uv 可用');
+  else if (uv.error) sources.push(`uv 未就绪：${uv.error}`);
+  const network = await checkOpenAiApiReady(credential);
+  if (network.ready) sources.push('OpenAI API 入口已验证可访问');
   const hasCredential = sources.some(item => /OPENAI_API_KEY|\.env|auth\.json/.test(item));
   const hasTool = bundledScriptReady || uv.code === 0;
-  if (hasCredential && hasTool) {
+  const configured = hasCredential && hasTool;
+  if (configured && network.ready) {
     return {
       ready: true,
+      configured: true,
+      networkReady: true,
       sources,
-      message: `已发现执行人本机 Image2 配置来源：${sources.join('、')}。未发起真实出图请求，不消耗额度。`
+      message: `Image2 配置已发现，且当前 Worker 进程已通过 OpenAI API 入口检查：${sources.join('、')}。未发起真实出图请求，不消耗额度。`
     };
   }
   const missing = [
     hasCredential ? '' : '未在当前 Worker 进程、~/.env 或 ~/.codex/auth.json 发现 OpenAI/Image2 凭据来源',
-    hasTool ? '' : '未发现 gpt-image 技能脚本或 uv'
+    hasTool ? '' : '未发现 gpt-image 技能脚本或 uv',
+    network.ready ? '' : `当前 Worker 进程未通过 OpenAI API 入口检查：${network.message}`
   ].filter(Boolean).join('；');
   return {
     ready: false,
+    configured,
+    networkReady: network.ready,
     sources,
-    message: `${missing || 'Worker 进程尚未验证可读取本机 Image2 配置'}。本检查不消耗额度；组员电脑已配置 image2/key 时，请确认当前 Worker 进程能读取同一套本机配置和代理。`
+    message: `${missing || 'Worker 进程尚未验证可读取本机 Image2 配置'}。本检查不消耗额度；Codex 客户端可用但 Worker 不可用时，通常是 LaunchAgent 没继承 PATH、HTTP(S)_PROXY、DNS 或 OpenAI API 入口访问能力。`
   };
+}
+
+async function resolveOpenAiApiCredential() {
+  const direct = String(process.env.OPENAI_API_KEY || workerEnvOverrides.OPENAI_API_KEY || '').trim();
+  if (direct) return { key: direct, source: '环境变量 / .env' };
+  for (const file of [
+    path.join(process.cwd(), '.env'),
+    path.join(defaultProjectRoot, '.env'),
+    path.join(workerHome, '.env'),
+    path.join(os.homedir(), '.env')
+  ]) {
+    const key = await readEnvFileKey(file, 'OPENAI_API_KEY');
+    if (key) return { key, source: file.replace(os.homedir(), '~') };
+  }
+  const codexHome = String(process.env.CODEX_HOME || '').trim() || path.join(os.homedir(), '.codex');
+  const authPath = path.join(codexHome, 'auth.json');
+  try {
+    const auth = JSON.parse(await readFile(authPath, 'utf8'));
+    const key = String(auth?.OPENAI_API_KEY || '').trim();
+    if (key) return { key, source: authPath.replace(os.homedir(), '~') };
+  } catch {
+  }
+  return { key: '', source: '' };
+}
+
+async function readEnvFileKey(file = '', key = '') {
+  const values = await readEnvFileKeys(file, [key]);
+  return String(values[key] || '').trim();
+}
+
+async function checkOpenAiApiReady(credential = {}) {
+  if (!credential?.key) return { ready: false, message: '未发现可用于 API 检查的 OPENAI_API_KEY' };
+  const dnsResult = await checkOpenAiDnsReady();
+  if (!dnsResult.ready) return { ready: false, message: `DNS 不可用：${dnsResult.message}` };
+  const script = [
+    'import os, sys, urllib.error, urllib.request',
+    'key = os.environ.get("OPENAI_API_KEY", "").strip()',
+    'req = urllib.request.Request("https://api.openai.com/v1/models", headers={"Authorization": "Bearer " + key})',
+    'try:',
+    '    with urllib.request.urlopen(req, timeout=12) as response:',
+    '        print(f"HTTP {response.status}")',
+    '        sys.exit(0 if 200 <= response.status < 300 else 1)',
+    'except urllib.error.HTTPError as error:',
+    '    print(f"HTTP {error.code}: {error.reason}", file=sys.stderr)',
+    '    sys.exit(1)',
+    'except Exception as error:',
+    '    print(f"{type(error).__name__}: {error}", file=sys.stderr)',
+    '    sys.exit(2)'
+  ].join('\n');
+  const probe = await runCommand('python3', ['-c', script], {
+    timeoutMs: Math.min(localCheckTimeoutMs, 15000),
+    env: { OPENAI_API_KEY: credential.key }
+  });
+  const output = `${probe.stdout || ''}\n${probe.stderr || ''}`.trim();
+  if (probe.code === 0) return { ready: true, message: output || 'OpenAI API 入口可访问' };
+  if (/HTTP\s+401|HTTP\s+403/.test(output)) {
+    return { ready: false, message: `${output}；凭据无效、账号无权限或当前地区 / 网络被 OpenAI 拒绝` };
+  }
+  return { ready: false, message: output || probe.error || `OpenAI API 检查失败：${probe.code}` };
+}
+
+async function checkOpenAiDnsReady() {
+  try {
+    const rows = await dns.lookup('api.openai.com', { all: true });
+    return rows.length ? { ready: true, message: rows.map(item => item.address).join(', ') } : { ready: false, message: 'DNS 返回空结果' };
+  } catch (error) {
+    return { ready: false, message: error.message || String(error) };
+  }
 }
 
 async function hasEnvKey(file = '', key = '') {
@@ -1274,11 +1361,75 @@ async function hasReadableFile(file = '') {
   }
 }
 
+async function loadWorkerEnvOverrides() {
+  const env = {};
+  const pathParts = [
+    process.env.PATH,
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin'
+  ].filter(Boolean);
+  env.PATH = [...new Set(pathParts.join(':').split(':').filter(Boolean))].join(':');
+  for (const file of [
+    path.join(defaultProjectRoot, '.env'),
+    path.join(workerHome, '.env'),
+    path.join(os.homedir(), '.env')
+  ]) {
+    Object.assign(env, await readEnvFileKeys(file, [
+      'OPENAI_API_KEY',
+      'HTTP_PROXY',
+      'HTTPS_PROXY',
+      'ALL_PROXY',
+      'NO_PROXY',
+      'http_proxy',
+      'https_proxy',
+      'all_proxy',
+      'no_proxy'
+    ]));
+  }
+  return Object.fromEntries(Object.entries(env).filter(([, value]) => String(value || '').trim()));
+}
+
+async function readEnvFileKeys(file = '', keys = []) {
+  const result = {};
+  let text = '';
+  try {
+    text = await readFile(file, 'utf8');
+  } catch {
+    return result;
+  }
+  const keySet = new Set(keys);
+  for (const line of text.split(/\r?\n/)) {
+    const match = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+    if (!match || !keySet.has(match[1])) continue;
+    result[match[1]] = cleanEnvValue(match[2]);
+  }
+  return result;
+}
+
+function cleanEnvValue(value = '') {
+  return String(value || '')
+    .trim()
+    .replace(/^['"]|['"]$/g, '')
+    .trim();
+}
+
+function workerChildEnv(extra = {}) {
+  return {
+    ...process.env,
+    ...workerEnvOverrides,
+    ...extra
+  };
+}
+
 function runCommand(command, args = [], options = {}) {
   return new Promise(resolve => {
     const timeoutMs = Math.max(0, Number(options.timeoutMs || 0));
     let settled = false;
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], env: workerChildEnv(options.env || {}) });
     let stdout = '';
     let stderr = '';
     let timer = null;

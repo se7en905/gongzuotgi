@@ -126,7 +126,7 @@
           <div><span>状态</span><strong>{{ app.directSkillMemberReadyLabel(row) }}</strong></div>
           <div><span>Codex</span><strong>{{ row.codexReady ? '已就绪' : '未就绪' }}</strong></div>
           <div><span>Figma MCP</span><strong>{{ row.figmaMcpReady ? '已就绪' : '未就绪' }}</strong></div>
-          <div><span>Image2 配置</span><strong>{{ row.image2Ready ? '已发现' : '待读取' }}</strong></div>
+          <div><span>Image2</span><strong>{{ app.directSkillWorkerImage2StatusLabel(row.worker) }}</strong></div>
           <div><span>最近心跳</span><strong>{{ app.directSkillWorkerLastSeenText(row.worker) }}</strong></div>
           <div><span>待领取</span><strong>{{ row.pendingRuns.length }}</strong></div>
           <div><span>执行中</span><strong>{{ row.activeRuns.length }}</strong></div>
