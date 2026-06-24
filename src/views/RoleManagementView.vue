@@ -69,6 +69,26 @@
       </ElFormItem>
       <ElFormItem label="权限配置">
         <ElCheckboxGroup v-model="app.roleForm.permissions" class="permission-section-list">
+          <section class="permission-block permission-highlight-block">
+            <div class="permission-block-head">
+              <div>
+                <strong>细分查看 / 脱敏权限</strong>
+                <span>这里单独控制模糊、可下载、可看正文、可看明细这类细权限。后面要给验证人开放，直接在这里勾选。</span>
+              </div>
+              <div class="permission-block-actions">
+                <span>{{ selectedCount(fineGrainedViewPermissions) }} / {{ fineGrainedViewPermissions.length }}</span>
+                <ElButton text size="small" @click="setPermissionGroup(fineGrainedViewPermissions, true)">全选</ElButton>
+                <ElButton text size="small" @click="setPermissionGroup(fineGrainedViewPermissions, false)">清空</ElButton>
+              </div>
+            </div>
+            <div class="permission-check-grid">
+              <ElCheckbox v-for="permission in fineGrainedViewPermissions" :key="permission.id" :label="permission.id" class="permission-highlight-item">
+                <strong>{{ permission.name }}</strong>
+                <span>{{ permission.description }}</span>
+              </ElCheckbox>
+            </div>
+          </section>
+
           <section class="permission-block">
             <div class="permission-block-head">
               <div>
@@ -179,6 +199,17 @@ export default {
     buttonPermissions() {
       return this.permissionsByType('button');
     },
+    fineGrainedViewPermissions() {
+      return this.permissionsByIds([
+        'skill.preview.view',
+        'aiMembers.board.view',
+        'workflow.manage.view',
+        'run.log.view',
+        'run.artifact.download',
+        'archive.detail.view',
+        'archive.link.view'
+      ]);
+    },
     apiPermissions() {
       return this.permissionsByType('api');
     },
@@ -186,10 +217,22 @@ export default {
       return this.groupPermissions(this.menuPermissions);
     },
     buttonPermissionGroups() {
-      return this.groupPermissions(this.buttonPermissions);
+      const highlightedIds = this.fineGrainedPermissionIds();
+      return this.groupPermissions(this.buttonPermissions.filter(item => !highlightedIds.has(item.id)));
     }
   },
   methods: {
+    fineGrainedPermissionIds() {
+      return new Set([
+        'skill.preview.view',
+        'aiMembers.board.view',
+        'workflow.manage.view',
+        'run.log.view',
+        'run.artifact.download',
+        'archive.detail.view',
+        'archive.link.view'
+      ]);
+    },
     hiddenPermissionIds() {
       return new Set([
         'menu.aiMembers.owner',
@@ -237,6 +280,10 @@ export default {
     permissionsByType(type) {
       const hiddenIds = this.hiddenPermissionIds();
       return this.app.permissionCatalog.filter(item => item.type === type && !hiddenIds.has(item.id));
+    },
+    permissionsByIds(ids = []) {
+      const targetIds = new Set(Array.isArray(ids) ? ids : []);
+      return this.permissionsByType('button').filter(item => targetIds.has(item.id));
     },
     groupPermissions(items = []) {
       const groups = new Map();
@@ -405,6 +452,16 @@ export default {
 
   .api-permission-block {
     border-style: dashed;
+  }
+
+  .permission-highlight-block {
+    border-color: color-mix(in srgb, var(--primary) 36%, var(--line));
+    background: color-mix(in srgb, var(--primary) 6%, var(--panel));
+  }
+
+  .permission-highlight-item {
+    border-color: color-mix(in srgb, var(--primary) 20%, var(--line)) !important;
+    background: color-mix(in srgb, var(--primary) 4%, var(--soft-card)) !important;
   }
 
   .muted-text {

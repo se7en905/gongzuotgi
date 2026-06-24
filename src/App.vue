@@ -629,7 +629,7 @@ const roleLevelPermissionPresets = {
   4: [
     'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive', 'menu.users', 'menu.roles', 'menu.operationLogs', 'menu.maintenance',
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy', 'task.personPressure.view', 'task.platform.delete',
-    'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'workflow.manage.view', 'run.artifact.download', 'run.start', 'run.cancel', 'run.delete', 'review.submit', 'review.image.submit',
+    'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'workflow.manage.view', 'run.log.view', 'run.artifact.download', 'run.start', 'run.cancel', 'run.delete', 'review.submit', 'review.image.submit',
     'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.source.delete', 'skill.asset.create', 'skill.asset.void', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view', 'skill.preview.view',
     'aiMembers.board.view', 'aiMembers.score.view', 'aiMembers.score.refresh',
     'archive.detail.view', 'archive.link.view',
@@ -639,7 +639,7 @@ const roleLevelPermissionPresets = {
   3: [
     'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.codexConfig', 'menu.runs', 'menu.agentWorkers', 'menu.aiArchive',
     'task.sync', 'task.note.manage', 'task.artBrief.generate', 'task.codexPrompt.copy',
-    'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'workflow.manage.view', 'run.artifact.download', 'run.start', 'run.cancel', 'review.submit', 'review.image.submit',
+    'run.create', 'run.codex.execute', 'run.directSkill.create', 'run.directSkill.workerCommand', 'workflow.manage.view', 'run.log.view', 'run.artifact.download', 'run.start', 'run.cancel', 'review.submit', 'review.image.submit',
     'skill.scan.refresh', 'skill.source.connect', 'skill.source.edit', 'skill.asset.create', 'skill.assetOwner.manage', 'skill.version.manage', 'skill.alias.manage', 'skill.usageLogs.view', 'skill.preview.view',
     'aiMembers.board.view', 'aiMembers.score.view',
     'archive.detail.view', 'archive.link.view',
@@ -647,7 +647,7 @@ const roleLevelPermissionPresets = {
   ],
   2: [
     'menu.tasks', 'menu.skillList', 'menu.aiMembers', 'menu.runs', 'menu.aiArchive',
-    'task.codexPrompt.copy', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'skill.preview.view', 'workflow.manage.view', 'run.artifact.download', 'aiMembers.board.view', 'aiMembers.score.view', 'archive.detail.view', 'archive.link.view', 'api.reviews.submit', 'api.skillAlias.manage', 'api.aiMembers.read', 'api.aiMembers.score.read'
+    'task.codexPrompt.copy', 'review.submit', 'review.image.submit', 'skill.alias.manage', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.reviews.submit', 'api.skillAlias.manage', 'api.aiMembers.read', 'api.aiMembers.score.read'
   ],
   1: ['menu.tasks', 'menu.skillList', 'menu.aiMembers', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.aiMembers.read', 'api.aiMembers.score.read']
 };
@@ -3896,6 +3896,10 @@ export default {
 
     canViewRunTemplateManager() {
       return this.can('workflow.manage.view') || this.can('workflow.manage') || this.can('api.workflow.manage') || this.isPlatformAdmin;
+    },
+
+    canViewRunLog() {
+      return this.can('run.log.view') || this.isPlatformAdmin;
     },
 
     canDownloadRunArtifacts() {
@@ -9566,6 +9570,10 @@ export default {
     },
 
     async refreshCustomWorkflows() {
+      if (!this.canViewRunTemplateManager) {
+        this.customWorkflows = [];
+        return;
+      }
       try {
         const workflows = await this.api('/api/custom-workflows');
         this.customWorkflows = Array.isArray(workflows) ? workflows : [];
@@ -15526,6 +15534,10 @@ export default {
 
 
     async openSkillPreview(skill) {
+      if (!this.canViewSkillPreview) {
+        ElMessage.warning('当前角色不能查看产物内容预览');
+        return;
+      }
       this.skillPreview = { visible: true, skill, html: '' };
       const savedAliases = this.normalizeSkillAliasList(skill?.manualAliases || []);
       const baseAliases = savedAliases.length ? savedAliases : this.generateSkillAliases(skill || {});
@@ -20921,7 +20933,7 @@ export default {
             path,
             relativePath: rawPath,
             name: downloadName,
-            url: this.artifactUrl(path),
+            url: this.artifactPreviewUrl(path),
             downloadUrl: `${this.artifactUrl(path)}&download=${encodeURIComponent(downloadName)}`
           });
         }
@@ -20960,7 +20972,7 @@ export default {
             path,
             relativePath: rawPath,
             name: downloadName,
-            url: this.artifactUrl(path),
+            url: this.artifactPreviewUrl(path),
             downloadUrl: `${this.artifactUrl(path)}&download=${encodeURIComponent(downloadName)}`
           });
         }
@@ -21320,6 +21332,10 @@ export default {
 
     openAiExecutionArchiveDetail(run = null) {
       if (!run) return;
+      if (!this.canViewAiArchiveDetail) {
+        ElMessage.warning('当前角色不能查看 AI 档案明细');
+        return;
+      }
       this.aiExecutionArchiveDetail = {
         visible: true,
         run: { ...run }
@@ -22742,6 +22758,10 @@ export default {
         ElMessage.warning('请先选择一条执行记录');
         return;
       }
+      if (!this.canViewRunLog) {
+        ElMessage.warning('当前角色不能查看原始执行日志');
+        return;
+      }
       this.runLogDrawerVisible = true;
       if (!this.logText || /默认收起|选择一个任务后查看执行日志/.test(this.logText)) {
         await this.loadSelectedRunLog().catch(() => {});
@@ -22850,6 +22870,10 @@ export default {
       const run = this.selectedRun;
       if (!run?.id) {
         this.logText = '选择一个任务后查看执行日志。';
+        return;
+      }
+      if (!this.canViewRunLog) {
+        this.logText = '当前角色不能查看原始执行日志。';
         return;
       }
       try {
@@ -23544,6 +23568,10 @@ export default {
 
     artifactUrl(path) {
       return `/api/artifact?path=${encodeURIComponent(this.platformArtifactRequestPath(path))}`;
+    },
+
+    artifactPreviewUrl(path) {
+      return `${this.artifactUrl(path)}&preview=1`;
     },
 
     artifactDisplayTitle(artifact = {}) {

@@ -78,7 +78,7 @@
     <ElTable class="skill-clean-table ai-archive-table" :data="app.aiExecutionArchivePagedRunRows" table-layout="fixed" empty-text="暂无 AI 执行档案" v-loading="app.loading.runs">
       <ElTableColumn label="执行内容" min-width="260">
         <template #default="{ row }">
-          <button type="button" class="ai-archive-run-title" @click="app.openAiExecutionArchiveDetail(row)">
+          <button type="button" class="ai-archive-run-title" :disabled="!app.canViewAiArchiveDetail" @click="app.openAiExecutionArchiveDetail(row)">
             <strong>{{ app.directSkillRunContentName(row) }}</strong>
             <span>{{ app.directSkillRunContentKind(row) }}</span>
           </button>
@@ -103,7 +103,8 @@
       </ElTableColumn>
       <ElTableColumn label="Figma 链接" min-width="180">
         <template #default="{ row }">
-          <a v-if="row.figmaLinks" :href="row.figmaLinks" target="_blank" rel="noopener noreferrer">打开 Figma</a>
+          <a v-if="row.figmaLinks && app.canViewAiArchiveLinks" :href="row.figmaLinks" target="_blank" rel="noopener noreferrer">打开 Figma</a>
+          <span v-else-if="row.figmaLinks">已隐藏</span>
           <span v-else>-</span>
         </template>
       </ElTableColumn>
@@ -115,7 +116,7 @@
       </ElTableColumn>
       <ElTableColumn label="操作" width="96" fixed="right" align="right">
         <template #default="{ row }">
-          <ElButton link type="primary" @click="app.openAiExecutionArchiveDetail(row)">明细</ElButton>
+          <ElButton link type="primary" :disabled="!app.canViewAiArchiveDetail" @click="app.openAiExecutionArchiveDetail(row)">明细</ElButton>
         </template>
       </ElTableColumn>
     </ElTable>
@@ -170,7 +171,8 @@
         <div class="ai-archive-detail-grid">
           <div v-for="item in app.aiExecutionArchiveDetailStats.targetRows" :key="item.label">
             <span>{{ item.label }}</span>
-            <a v-if="item.href" :href="item.href" target="_blank" rel="noopener noreferrer">{{ item.value }}</a>
+            <a v-if="item.href && app.canViewAiArchiveLinks" :href="item.href" target="_blank" rel="noopener noreferrer">{{ item.value }}</a>
+            <strong v-else-if="item.href">{{ item.label.includes('Figma') ? '已隐藏' : item.value }}</strong>
             <strong v-else>{{ item.value }}</strong>
           </div>
         </div>
@@ -262,7 +264,12 @@
             :key="image.path"
             class="ai-archive-generated-image-card"
           >
-            <a :href="image.url" target="_blank" rel="noopener noreferrer" class="ai-archive-generated-image-thumb">
+            <a
+              class="ai-archive-generated-image-thumb"
+              :href="app.canDownloadRunArtifacts ? image.url : undefined"
+              :target="app.canDownloadRunArtifacts ? '_blank' : undefined"
+              :rel="app.canDownloadRunArtifacts ? 'noopener noreferrer' : undefined"
+            >
               <img :src="image.url" :alt="image.name" loading="lazy" />
             </a>
             <div class="ai-archive-generated-image-meta">
@@ -270,8 +277,27 @@
               <span>{{ image.size ? app.formatBytes(image.size) : '已保存' }}</span>
             </div>
             <div class="ai-archive-generated-image-actions">
-              <ElButton size="small" plain tag="a" :href="image.url" target="_blank" rel="noopener noreferrer">打开</ElButton>
-              <ElButton size="small" type="primary" plain tag="a" :href="image.downloadUrl">下载</ElButton>
+              <ElButton
+                size="small"
+                plain
+                :disabled="!app.canDownloadRunArtifacts"
+                :tag="app.canDownloadRunArtifacts ? 'a' : 'button'"
+                :href="app.canDownloadRunArtifacts ? image.url : undefined"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                打开
+              </ElButton>
+              <ElButton
+                size="small"
+                type="primary"
+                plain
+                :disabled="!app.canDownloadRunArtifacts"
+                :tag="app.canDownloadRunArtifacts ? 'a' : 'button'"
+                :href="app.canDownloadRunArtifacts ? image.downloadUrl : undefined"
+              >
+                下载
+              </ElButton>
             </div>
           </article>
         </div>
@@ -288,7 +314,12 @@
             :key="image.path"
             class="ai-archive-generated-image-card"
           >
-            <a :href="image.url" target="_blank" rel="noopener noreferrer" class="ai-archive-generated-image-thumb">
+            <a
+              class="ai-archive-generated-image-thumb"
+              :href="app.canDownloadRunArtifacts ? image.url : undefined"
+              :target="app.canDownloadRunArtifacts ? '_blank' : undefined"
+              :rel="app.canDownloadRunArtifacts ? 'noopener noreferrer' : undefined"
+            >
               <img :src="image.url" :alt="image.name" loading="lazy" />
             </a>
             <div class="ai-archive-generated-image-meta">
@@ -296,8 +327,27 @@
               <span>{{ image.size ? app.formatBytes(image.size) : '已归档' }}</span>
             </div>
             <div class="ai-archive-generated-image-actions">
-              <ElButton size="small" plain tag="a" :href="image.url" target="_blank" rel="noopener noreferrer">打开</ElButton>
-              <ElButton size="small" type="primary" plain tag="a" :href="image.downloadUrl">下载</ElButton>
+              <ElButton
+                size="small"
+                plain
+                :disabled="!app.canDownloadRunArtifacts"
+                :tag="app.canDownloadRunArtifacts ? 'a' : 'button'"
+                :href="app.canDownloadRunArtifacts ? image.url : undefined"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                打开
+              </ElButton>
+              <ElButton
+                size="small"
+                type="primary"
+                plain
+                :disabled="!app.canDownloadRunArtifacts"
+                :tag="app.canDownloadRunArtifacts ? 'a' : 'button'"
+                :href="app.canDownloadRunArtifacts ? image.downloadUrl : undefined"
+              >
+                下载
+              </ElButton>
             </div>
           </article>
         </div>

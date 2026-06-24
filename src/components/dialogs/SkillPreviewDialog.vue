@@ -9,33 +9,40 @@
     :with-header="true"
   >
     <div v-if="app.skillPreview.skill" class="skill-preview">
-      <div class="skill-preview-manage">
-        <div class="skill-preview-direct-run">
-          <div>
-            <strong>直接执行到 Figma</strong>
-            <span>创建后由执行人本机 Worker 领取，使用执行人自己的 Figma MCP 和 Figma 授权写入。</span>
+      <template v-if="app.canViewSkillPreview">
+        <div class="skill-preview-manage">
+          <div class="skill-preview-direct-run">
+            <div>
+              <strong>直接执行到 Figma</strong>
+              <span>创建后由执行人本机 Worker 领取，使用执行人自己的 Figma MCP 和 Figma 授权写入。</span>
+            </div>
+            <ElButton v-if="app.can('run.directSkill.create')" type="primary" size="small" @click="app.openDirectSkillRunDialog(app.skillPreview.skill)">直接执行</ElButton>
           </div>
-          <ElButton v-if="app.can('run.directSkill.create')" type="primary" size="small" @click="app.openDirectSkillRunDialog(app.skillPreview.skill)">直接执行</ElButton>
+          <div class="skill-preview-version-row skill-preview-alias-row">
+            <span>调用别名</span>
+            <ElInput
+              v-model="app.skillPreviewAliasesDraft"
+              type="textarea"
+              :autosize="{ minRows: 2, maxRows: 4 }"
+              class="skill-preview-alias-input"
+              placeholder="多个别名用顿号、逗号或换行隔开"
+              :disabled="!app.can('skill.alias.manage')"
+            />
+            <ElButton v-if="app.can('skill.alias.manage')" size="small" :loading="app.loading.skillVersion" @click="app.saveSkillPreviewAlias">保存别名</ElButton>
+          </div>
+          <div class="skill-trigger-list skill-preview-alias-tags">
+            <strong>当前别名</strong>
+            <span v-for="alias in app.skillPreviewEffectiveAliases" :key="alias">{{ alias }}</span>
+            <span v-if="!app.skillPreviewEffectiveAliases.length">暂无别名</span>
+          </div>
         </div>
-        <div class="skill-preview-version-row skill-preview-alias-row">
-          <span>调用别名</span>
-          <ElInput
-            v-model="app.skillPreviewAliasesDraft"
-            type="textarea"
-            :autosize="{ minRows: 2, maxRows: 4 }"
-            class="skill-preview-alias-input"
-            placeholder="多个别名用顿号、逗号或换行隔开"
-            :disabled="!app.can('skill.alias.manage')"
-          />
-          <ElButton v-if="app.can('skill.alias.manage')" size="small" :loading="app.loading.skillVersion" @click="app.saveSkillPreviewAlias">保存别名</ElButton>
-        </div>
-        <div class="skill-trigger-list skill-preview-alias-tags">
-          <strong>当前别名</strong>
-          <span v-for="alias in app.skillPreviewEffectiveAliases" :key="alias">{{ alias }}</span>
-          <span v-if="!app.skillPreviewEffectiveAliases.length">暂无别名</span>
-        </div>
+        <article class="markdown-report skill-preview-content" v-html="app.skillPreviewHtml || '<div class=&quot;empty-block&quot;>正在读取技能内容...</div>'"></article>
+      </template>
+      <div v-else class="skill-preview-locked">
+        <strong>内容预览已关闭</strong>
+        <span>当前角色可以进入 AI 产物清单，但不能打开正文预览。</span>
+        <div class="empty-block">如需开放，请在角色管理里勾选“查看产物内容预览”。</div>
       </div>
-      <article class="markdown-report skill-preview-content" v-html="app.skillPreviewHtml || '<div class=&quot;empty-block&quot;>正在读取技能内容...</div>'"></article>
     </div>
     <ElDialog v-model="app.directSkillRunDialog.visible" title="直接执行 Skill / md" width="520px" class="app-dialog" append-to-body align-center>
       <ElForm label-position="top" @submit.prevent>
@@ -113,5 +120,23 @@ export default {
     font-size: 12px;
     line-height: 1.5;
   }
+}
+
+.skill-preview-locked {
+  display: grid;
+  gap: 10px;
+  padding: 20px 16px;
+}
+
+.skill-preview-locked strong {
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.skill-preview-locked span {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
 }
 </style>

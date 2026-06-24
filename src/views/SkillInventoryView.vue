@@ -441,7 +441,15 @@
         <ElTableColumn label="操作" width="120" fixed="right">
           <template #default="{ row }">
             <div class="table-action-row">
-              <ElButton type="primary" plain size="small" @click="app.openSkillPreview(row.skill)">查看内容</ElButton>
+              <ElButton
+                type="primary"
+                plain
+                size="small"
+                :disabled="!app.canViewSkillPreview"
+                @click="app.openSkillPreview(row.skill)"
+              >
+                查看内容
+              </ElButton>
             </div>
           </template>
         </ElTableColumn>

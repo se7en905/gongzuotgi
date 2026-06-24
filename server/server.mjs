@@ -2754,6 +2754,10 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && runLog) {
     const run = await requireRun(runLog[1]);
     await requireRunViewAccess(currentUser, run);
+    if (currentUser.role !== 'admin' && !hasPermission(currentUser, 'run.log.view')) {
+      sendJson(res, 403, { error: '当前角色不能查看原始执行日志。' });
+      return;
+    }
     const fallbackLogPath = path.join(paths.workspaceDir, run.id, 'run.log');
     const tailBytes = clampNumber(url.searchParams.get('tailBytes'), 16 * 1024, 1024 * 1024, defaultRunLogTailBytes);
     await serveRunLog(res, run.logPath || fallbackLogPath, currentUser, { tailBytes, run });
@@ -2791,7 +2795,8 @@ async function handleApi(req, res, url) {
   if ((req.method === 'GET' || req.method === 'HEAD') && artifact) {
     await serveArtifact(res, url.searchParams.get('path'), currentUser, {
       head: req.method === 'HEAD',
-      download: url.searchParams.get('download') || ''
+      download: url.searchParams.get('download') || '',
+      preview: url.searchParams.get('preview') === '1'
     });
     return;
   }
@@ -6080,7 +6085,7 @@ async function serveArtifact(res, file, currentUser, options = {}) {
     return roots.some(root => isPathInside(abs, root));
   });
   if (matchedRun) {
-    await requireRunArtifactAccess(currentUser, matchedRun);
+    await requireRunViewAccess(currentUser, matchedRun);
   } else if (!isPathInside(abs, zentaoArtBriefOutDir)) {
     sendJson(res, 403, { error: 'artifact path is not linked to an accessible run' });
     return;
@@ -6097,6 +6102,14 @@ async function serveArtifact(res, file, currentUser, options = {}) {
   if (!stat.isFile()) {
     sendJson(res, 404, { error: '目标不是可打开的文件，请重新生成美术摘要。', code: 'ENOTFILE', details: { path: abs } });
     return;
+  }
+  if (matchedRun && currentUser.role !== 'admin' && !hasPermission(currentUser, 'run.artifact.download')) {
+    const mime = mimeType(abs);
+    const previewOnly = options.preview === true && /^image\//i.test(mime);
+    if (!previewOnly) {
+      sendJson(res, 403, { error: '当前角色只能查看右侧缩略图，不允许打开或下载附件产物。' });
+      return;
+    }
   }
   if (options.head) {
     res.writeHead(200, { 'Content-Type': mimeType(abs), 'Content-Length': stat.size });
@@ -6201,18 +6214,6 @@ function resolveRunLocalCandidatePath(run = {}, value = '') {
   return '';
 }
 
-async function requireRunArtifactAccess(user = {}, run = {}) {
-  try {
-    await requireRunViewAccess(user, run);
-    return user;
-  } catch (error) {
-    if (error?.status !== 403) throw error;
-  }
-  requireAnyPermission(user, ['api.agentRuns.claim', 'api.agentRuns.status']);
-  ensureWorkerCanUpdateRun(user, run);
-  return user;
-}
-
 function safeDownloadFilename(value = '') {
   return String(value || '')
     .replace(/[\\/\r\n]/g, '-')
@@ -6241,6 +6242,10 @@ async function serveRunLog(res, file, currentUser, options = {}) {
     return;
   }
   await requireRunViewAccess(currentUser, matchedRun);
+  if (currentUser.role !== 'admin' && !hasPermission(currentUser, 'run.log.view')) {
+    sendJson(res, 403, { error: '当前角色不能查看原始执行日志。' });
+    return;
+  }
   let stat;
   try {
     stat = await fs.stat(abs);

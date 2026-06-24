@@ -13,7 +13,7 @@
           <p>选择一条执行记录后，右侧查看当前任务从需求到产物的推进状态。</p>
         </div>
         <div class="run-list-header-actions">
-          <ElButton plain @click="openTemplateManagerDialog">模板管理</ElButton>
+          <ElButton v-if="app.canViewRunTemplateManager" plain @click="openTemplateManagerDialog">模板管理</ElButton>
           <ElButton v-if="app.can('run.create')" type="primary" @click="app.openRunCreateDrawer">新建美术执行</ElButton>
         </div>
       </div>
@@ -188,7 +188,7 @@
           <ElButton v-if="app.can('run.codex.execute') && app.canRestartSelectedRun" plain @click="app.restartSelectedRun" :disabled="!app.selectedRun || app.isRunSourceDeleted(app.selectedRun) || app.isRunInProgress(app.selectedRun) || app.isRunWaitingForLocalWorker(app.selectedRun)">重新执行</ElButton>
           <ElButton v-if="app.can('run.codex.execute')" @click="app.cancelSelectedRun" :disabled="!app.selectedRun || !app.isRunInProgress(app.selectedRun)">中断</ElButton>
           <ElButton v-if="app.can('run.delete')" type="danger" plain @click="app.deleteSelectedRun" :disabled="!app.selectedRun || app.isRunInProgress(app.selectedRun)">删除</ElButton>
-          <ElTooltip content="原始执行日志" placement="bottom">
+          <ElTooltip v-if="app.canViewRunLog" content="原始执行日志" placement="bottom">
             <button
               type="button"
               class="top-log-icon-button run-log-icon-button"
@@ -361,7 +361,12 @@
             :key="image.path"
             class="run-generated-image-card"
           >
-            <a :href="image.url" target="_blank" rel="noopener noreferrer" class="run-generated-image-thumb">
+            <a
+              class="run-generated-image-thumb"
+              :href="app.canDownloadRunArtifacts ? image.url : undefined"
+              :target="app.canDownloadRunArtifacts ? '_blank' : undefined"
+              :rel="app.canDownloadRunArtifacts ? 'noopener noreferrer' : undefined"
+            >
               <img :src="image.url" :alt="image.name" loading="lazy" />
             </a>
             <div class="run-generated-image-meta">
@@ -369,8 +374,27 @@
               <span>{{ image.size ? app.formatBytes(image.size) : '已保存' }}</span>
             </div>
             <div class="run-generated-image-actions">
-              <ElButton size="small" plain tag="a" :href="image.url" target="_blank" rel="noopener noreferrer">打开</ElButton>
-              <ElButton size="small" type="primary" plain tag="a" :href="image.downloadUrl">下载</ElButton>
+              <ElButton
+                size="small"
+                plain
+                :disabled="!app.canDownloadRunArtifacts"
+                :tag="app.canDownloadRunArtifacts ? 'a' : 'button'"
+                :href="app.canDownloadRunArtifacts ? image.url : undefined"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                打开
+              </ElButton>
+              <ElButton
+                size="small"
+                type="primary"
+                plain
+                :disabled="!app.canDownloadRunArtifacts"
+                :tag="app.canDownloadRunArtifacts ? 'a' : 'button'"
+                :href="app.canDownloadRunArtifacts ? image.downloadUrl : undefined"
+              >
+                下载
+              </ElButton>
             </div>
           </article>
         </div>
@@ -390,7 +414,12 @@
             :key="image.path"
             class="run-generated-image-card"
           >
-            <a :href="image.url" target="_blank" rel="noopener noreferrer" class="run-generated-image-thumb">
+            <a
+              class="run-generated-image-thumb"
+              :href="app.canDownloadRunArtifacts ? image.url : undefined"
+              :target="app.canDownloadRunArtifacts ? '_blank' : undefined"
+              :rel="app.canDownloadRunArtifacts ? 'noopener noreferrer' : undefined"
+            >
               <img :src="image.url" :alt="image.name" loading="lazy" />
             </a>
             <div class="run-generated-image-meta">
@@ -398,8 +427,27 @@
               <span>{{ image.size ? app.formatBytes(image.size) : '已归档' }}</span>
             </div>
             <div class="run-generated-image-actions">
-              <ElButton size="small" plain tag="a" :href="image.url" target="_blank" rel="noopener noreferrer">打开</ElButton>
-              <ElButton size="small" type="primary" plain tag="a" :href="image.downloadUrl">下载</ElButton>
+              <ElButton
+                size="small"
+                plain
+                :disabled="!app.canDownloadRunArtifacts"
+                :tag="app.canDownloadRunArtifacts ? 'a' : 'button'"
+                :href="app.canDownloadRunArtifacts ? image.url : undefined"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                打开
+              </ElButton>
+              <ElButton
+                size="small"
+                type="primary"
+                plain
+                :disabled="!app.canDownloadRunArtifacts"
+                :tag="app.canDownloadRunArtifacts ? 'a' : 'button'"
+                :href="app.canDownloadRunArtifacts ? image.downloadUrl : undefined"
+              >
+                下载
+              </ElButton>
             </div>
           </article>
         </div>
@@ -837,6 +885,10 @@ export default {
       };
     },
     async openTemplateManagerDialog() {
+      if (!this.app.canViewRunTemplateManager) {
+        ElMessage.warning('当前角色不能查看模板管理');
+        return;
+      }
       this.templateManagerVisible = true;
       this.app.refreshCustomWorkflows().catch(() => {});
       if (!this.templateForm.name && !this.templateForm.materialHints.length) this.resetTemplateForm();
