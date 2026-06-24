@@ -431,7 +431,7 @@ async function executeRun(run) {
     cwd,
     '--skip-git-repo-check',
     '--sandbox',
-    'workspace-write',
+    codexSandboxModeForRun(run),
     '-'
   ];
   let finalText = '';
@@ -1139,6 +1139,11 @@ function codexRunArgs(run = {}) {
   if (model) args.push('-m', model);
   if (reasoningEffort) args.push('-c', `model_reasoning_effort=${JSON.stringify(reasoningEffort)}`);
   return args;
+}
+
+function codexSandboxModeForRun(run = {}) {
+  if (isImageGenerationRun(run)) return process.env.ART_WORKER_IMAGE_CODEX_SANDBOX || 'danger-full-access';
+  return process.env.ART_WORKER_CODEX_SANDBOX || 'workspace-write';
 }
 
 async function resolveExecutionCwd(run = {}) {

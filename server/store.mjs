@@ -76,6 +76,16 @@ const taskArtBriefUsageCounterKey = 'zentaoartbriefproduct';
 const artProgressReporterUsageCounterKey = 'artprogressreporter';
 const artProgressReporterUsageTarget = 'art-progress-reporter';
 const unknownUsagePersonName = '未识别使用人';
+const artDeptAccountNameMap = new Map([
+  ['zhangqw', '张倩文'],
+  ['fengshuqi', '冯淑琪'],
+  ['yushengwei', '余盛威'],
+  ['yejunbo', '叶君博'],
+  ['huangjianrong', '黄剑荣'],
+  ['lilh', '李华玲'],
+  ['zhangzb', '张宗斌'],
+  ['lanhj', '兰韩界']
+]);
 const retentionEnabled = process.env.AWP_DATA_RETENTION_ENABLED !== '0';
 const runFigmaLogEvidenceCache = new Map();
 const staleLocalWorkerRunMs = Math.max(10 * 60 * 1000, Number(process.env.AWP_STALE_LOCAL_WORKER_RUN_MS || 20 * 60 * 1000));
@@ -4530,6 +4540,12 @@ function cleanString(value = '') {
   return String(value ?? '').trim();
 }
 
+function canonicalUsagePersonName(value = '') {
+  const text = cleanString(value);
+  if (!text) return '';
+  return artDeptAccountNameMap.get(text.toLowerCase()) || text;
+}
+
 function samePersonName(left = '', right = '') {
   const a = normalizePersonLoose(left);
   const b = normalizePersonLoose(right);
@@ -5189,7 +5205,7 @@ async function normalizeHistoricalUsageCounterKinds(counters = defaultUsageCount
     }
     if (applyHistoricalUsageBucketRebuild(bucket, usageBucketRebuildMap)) changed = true;
     if (normalizeTaskArtBriefLegacyUsageBucket(bucket)) changed = true;
-    if (normalizeArtProgressReporterSelfUsageBucket(bucket)) changed = true;
+    if (normalizeArtProgressReporterSelfUsageBucket(bucket, ownerMap)) changed = true;
     if (normalizeUsageBucketAliases(bucket)) changed = true;
     const eventKeys = Array.isArray(bucket.eventKeys) ? bucket.eventKeys.filter(Boolean) : [];
     const misclassified = historicalNonUsageEventKeySetForBucket(bucket, nonUsageLogs);
@@ -5415,21 +5431,34 @@ function normalizeTaskArtBriefLegacyUsageBucket(bucket = {}) {
   return changed;
 }
 
-function normalizeArtProgressReporterSelfUsageBucket(bucket = {}) {
+function normalizeArtProgressReporterSelfUsageBucket(bucket = {}, ownerMap = new Map()) {
   if (!bucket || bucket.key !== artProgressReporterUsageCounterKey) return false;
   let changed = false;
   const researchCount = Math.max(0, Math.round(Number(bucket.researchSyncCount || 0)));
   const existingUsage = Math.max(0, Math.round(Number(bucket.usageCount || 0)));
   const eventKeys = Array.isArray(bucket.eventKeys) ? bucket.eventKeys.map(cleanString).filter(Boolean) : [];
   const usageEventKeys = Array.isArray(bucket.usageEventKeys) ? bucket.usageEventKeys.map(cleanString).filter(Boolean) : [];
-  const usageCount = Math.max(existingUsage, researchCount, usageEventKeys.length);
+  const historicalEventKeySet = new Set(eventKeys);
+  const additionalUsageEventKeys = usageEventKeys.filter(eventKey => eventKey && !historicalEventKeySet.has(eventKey));
+  const usageCount = Math.max(existingUsage, researchCount + additionalUsageEventKeys.length, usageEventKeys.length);
   if (usageCount > existingUsage) {
     bucket.usageCount = usageCount;
     changed = true;
   }
   const people = bucket.people && typeof bucket.people === 'object' ? bucket.people : {};
   const usagePeople = bucket.usagePeople && typeof bucket.usagePeople === 'object' ? bucket.usagePeople : {};
-  const mergedUsagePeople = mergeHistoricalUsagePeople(usagePeople, people, Math.max(usageCount, existingUsage));
+  const additionalPeople = {};
+  for (const eventKey of additionalUsageEventKeys) {
+    const owners = ownerMap.get(eventKey) || [];
+    const uniqueOwners = owners
+      .map(canonicalUsagePersonName)
+      .filter(owner => owner && !isUsageProxyPerson(owner) && !looksLikeUuid(owner))
+      .filter((owner, index, array) => array.findIndex(item => samePersonName(item, owner)) === index);
+    for (const owner of uniqueOwners.length ? uniqueOwners : [unknownUsagePersonName]) {
+      additionalPeople[owner] = Number(additionalPeople[owner] || 0) + 1;
+    }
+  }
+  const mergedUsagePeople = mergeArtProgressReporterSelfUsagePeople(people, additionalPeople, usagePeople, usageCount);
   if (usageCount > 0 && JSON.stringify(usagePeople) !== JSON.stringify(mergedUsagePeople)) {
     bucket.usagePeople = mergedUsagePeople;
     bucket.usagePeopleCount = Object.keys(mergedUsagePeople).length;
@@ -5449,6 +5478,26 @@ function normalizeArtProgressReporterSelfUsageBucket(bucket = {}) {
     changed = true;
   }
   return changed;
+}
+
+function mergeArtProgressReporterSelfUsagePeople(basePeople = {}, additionalPeople = {}, existingUsagePeople = {}, usageCount = 0) {
+  const next = {};
+  const add = (person = '', count = 0, mode = 'sum') => {
+    const key = canonicalUsagePersonName(person);
+    const value = Math.max(0, Math.round(Number(count || 0)));
+    if (!key || isUsageProxyPerson(key) || value <= 0) return;
+    if (mode === 'max') next[key] = Math.max(Number(next[key] || 0), value);
+    else next[key] = Number(next[key] || 0) + value;
+  };
+  Object.entries(basePeople || {}).forEach(([person, count]) => add(person, count, 'sum'));
+  Object.entries(additionalPeople || {}).forEach(([person, count]) => add(person, count, 'sum'));
+  Object.entries(existingUsagePeople || {})
+    .filter(([person]) => canonicalUsagePersonName(person) !== unknownUsagePersonName)
+    .forEach(([person, count]) => add(person, count, 'max'));
+  const limit = Math.max(0, Math.round(Number(usageCount || 0)));
+  const total = Object.values(next).reduce((sum, value) => sum + Number(value || 0), 0);
+  if (limit && total < limit) next[unknownUsagePersonName] = Number(next[unknownUsagePersonName] || 0) + (limit - total);
+  return limit && total > limit ? capUsagePeopleCounts(next, limit) : next;
 }
 
 function normalizeUsageBucketAliases(bucket = {}) {
@@ -5515,7 +5564,7 @@ function mergeUsageCounterPeople(left = {}, right = {}) {
   const output = {};
   for (const source of [left, right]) {
     for (const [person, count] of Object.entries(source && typeof source === 'object' ? source : {})) {
-      const key = cleanString(person);
+      const key = canonicalUsagePersonName(person);
       const value = Math.max(0, Math.round(Number(count || 0)));
       if (!key || value <= 0) continue;
       output[key] = Number(output[key] || 0) + value;
@@ -5568,7 +5617,7 @@ async function historicalUsageBucketRebuildMap(inventoryIdentity = null) {
     if (!key || !eventKey) return;
     const ownerList = (Array.isArray(owners) ? owners : [owners])
       .flatMap(value => normalizeLineList(value))
-      .map(cleanString)
+      .map(canonicalUsagePersonName)
       .filter(owner => owner && !isUsageProxyPerson(owner) && !looksLikeUuid(owner));
     if (!ownerList.length) return;
     const bucket = map.get(key) || {
@@ -5619,6 +5668,12 @@ async function historicalUsageBucketRebuildMap(inventoryIdentity = null) {
     const eventKey = usageEventKey('operation-log', log.id || log.targetId || log.targetName, at);
     if (isSkillValidationOperationLog(log)) {
       for (const target of usageTargetsFromSkillValidationOperationLog(log, inventory)) {
+        addTarget(target.target, [target.person, ...owners], target.eventKey || eventKey, at, 'operation-log');
+      }
+      continue;
+    }
+    if (isArtProgressReporterSelfUsageOperationLog(log)) {
+      for (const target of artProgressReporterSelfUsageTargetsFromOperationLog(log)) {
         addTarget(target.target, [target.person, ...owners], target.eventKey || eventKey, at, 'operation-log');
       }
       continue;
@@ -5715,7 +5770,7 @@ function applyHistoricalUsageBucketRebuild(bucket = {}, rebuildMap = new Map()) 
 function mergeHistoricalUsagePeople(existing = {}, rebuilt = {}, usageCount = 0) {
   const next = {};
   const add = (person = '', count = 0) => {
-    const key = cleanString(person);
+    const key = canonicalUsagePersonName(person);
     const value = Math.max(0, Math.round(Number(count || 0)));
     if (!key || isUsageProxyPerson(key) || value <= 0) return;
     next[key] = Math.max(Number(next[key] || 0), value);
@@ -5812,7 +5867,7 @@ function rebuildHistoricalUsagePeople(bucket = {}, sources = {}) {
     if (!hitKey || !eventKeys.has(hitKey) || seen.has(hitKey)) return;
     const ownerList = (Array.isArray(owners) ? owners : [owners])
       .flatMap(value => normalizeLineList(value))
-      .map(cleanString)
+      .map(canonicalUsagePersonName)
       .filter(owner => owner && !isUsageProxyPerson(owner));
     if (!ownerList.length) return;
     seen.add(hitKey);
@@ -5913,7 +5968,7 @@ async function historicalUsageEventOwnerMap() {
     if (!key) return;
     const list = (Array.isArray(owners) ? owners : [owners])
       .flatMap(value => normalizeLineList(value))
-      .map(cleanString)
+      .map(canonicalUsagePersonName)
       .filter(owner => owner && !isUsageProxyPerson(owner));
     if (!list.length) return;
     const existing = map.get(key) || [];
@@ -5942,6 +5997,16 @@ async function historicalUsageEventOwnerMap() {
     const owners = [ownerFromDescription, ...usageOwnersFromOperationLog(log)].filter(owner => !isUsageProxyPerson(owner));
     const baseId = log.id || log.targetId || log.targetName;
     add(usageEventKey('operation-log', baseId, log.createdAt), owners);
+    if (isArtProgressReporterSelfUsageOperationLog(log)) {
+      const after = log.after && typeof log.after === 'object' ? log.after : {};
+      const reporterOwners = [
+        after.memberName,
+        after.memberAccount,
+        ownerFromDescription,
+        ...owners
+      ].filter(owner => !isUsageProxyPerson(owner));
+      add(usageEventKey('operation-log-reporter-self', log.targetId || after.id || log.id || log.targetName, log.createdAt || after.createdAt || log.updatedAt), reporterOwners);
+    }
     if (isUsageLikeOperationLog(log)) {
       for (const target of usageTargetsFromOperationLog(log)) {
         add(usageEventKey('alias-operation-log', [baseId, target.target].filter(Boolean).join(':'), log.createdAt || log.updatedAt), owners);
@@ -6394,7 +6459,7 @@ function usageTargetsFromArtProgressEvent(event = {}) {
   const kind = isUsageCountableArtProgressEvent(event) ? 'usage' : 'research-sync';
   const targetValues = artProgressStrongUsageTargetValues(event);
   const targets = buildUsageTargets(targetValues, {
-    person: cleanString(event.memberName || event.memberAccount),
+    person: canonicalUsagePersonName(event.memberName || event.memberAccount),
     at: cleanString(event.createdAt),
     source: 'art-progress',
     kind,
@@ -6406,7 +6471,7 @@ function usageTargetsFromArtProgressEvent(event = {}) {
     ...(Array.isArray(metadata.matchedArtifacts) ? metadata.matchedArtifacts : [])
   ].filter(item => isStrongUsageTargetValue(item?.path || item?.name || item?.id))
     .flatMap((item, index) => buildUsageTargets([item?.path, item?.name, item?.id], {
-    person: cleanString(event.memberName || event.memberAccount),
+    person: canonicalUsagePersonName(event.memberName || event.memberAccount),
     at: cleanString(event.createdAt),
     source: 'art-progress',
     kind,
@@ -6419,7 +6484,7 @@ function usageTargetsFromArtProgressEvent(event = {}) {
 function artProgressReporterSelfUsageTargetsFromEvent(event = {}, defaultCount = 1) {
   if (!isArtProgressReporterSelfUsageEvent(event)) return [];
   return buildUsageTargets([artProgressReporterUsageTarget], {
-    person: cleanString(event.memberName || event.memberAccount),
+    person: canonicalUsagePersonName(event.memberName || event.memberAccount),
     at: cleanString(event.createdAt),
     source: 'art-progress-reporter-self',
     kind: 'usage',
@@ -6437,7 +6502,7 @@ function isArtProgressReporterSelfUsageEvent(event = {}) {
   if (metadata.reportedByArtProgressReporter !== true && metadata.countAsReporterSelfUsage !== true) return false;
   if (['reporter_test', 'reporter_installed'].includes(cleanString(event.eventType))) return false;
   if (metadata.countAsSkillUsage === false || metadata.countAsProductUsage === false || metadata.countAsReporterSelfUsage === false) return false;
-  const person = cleanString(event.memberName || event.memberAccount);
+  const person = canonicalUsagePersonName(event.memberName || event.memberAccount);
   return Boolean(person && !isUsageProxyPerson(person) && !looksLikeUuid(person));
 }
 
@@ -6470,7 +6535,7 @@ function usageTargetsFromOperationLog(log = {}, inventoryIdentity = null) {
 function artProgressReporterSelfUsageTargetsFromOperationLog(log = {}) {
   if (!isArtProgressReporterSelfUsageOperationLog(log)) return [];
   const after = log.after && typeof log.after === 'object' ? log.after : {};
-  const person = cleanString(after.memberName || after.memberAccount || extractOwnerFromResearchSyncDescription(log.description || log.targetName || ''));
+  const person = canonicalUsagePersonName(after.memberName || after.memberAccount || extractOwnerFromResearchSyncDescription(log.description || log.targetName || ''));
   return buildUsageTargets([artProgressReporterUsageTarget], {
     person,
     at: cleanString(log.createdAt || after.createdAt || log.updatedAt),
@@ -6918,7 +6983,7 @@ function normalizeUsageTargets(targets = []) {
     const target = cleanString(item.target || item.key);
     const key = usageCounterKey(target);
     if (!key) continue;
-    const person = cleanString(item.person);
+    const person = canonicalUsagePersonName(item.person);
     const at = cleanString(item.at);
     const dedupeKey = [key, person, at, item.source || ''].join('::');
     if (seen.has(dedupeKey)) continue;
