@@ -1606,7 +1606,7 @@ export default {
     },
 
     canManageSkillValidationColumns() {
-      return this.can('skill.validationColumns.manage') || this.canManageTaskCenterFields;
+      return this.canManageTaskCenterFields;
     },
 
     currentAccountPersonNames() {
@@ -3921,7 +3921,7 @@ export default {
     },
 
     canManageSkillValidationOwner() {
-      return this.can('skill.validationOwner.manage') || this.isOwnerWorkbenchAccount;
+      return this.canManageSkillAssetOwner;
     },
 
     canManageSkillAssetOwner() {

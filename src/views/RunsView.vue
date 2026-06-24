@@ -128,7 +128,7 @@
           <div class="run-template-create-actions">
             <ElButton @click="resetTemplateForm">{{ templateForm.id ? '取消编辑' : '清空' }}</ElButton>
             <ElButton
-              v-if="app.can('workflow.manage') || app.can('api.workflow.manage')"
+              v-if="app.can('workflow.manage') && app.can('api.workflow.manage')"
               type="primary"
               :loading="templateSubmitting"
               @click="saveTemplateFromDialog"
@@ -155,7 +155,7 @@
               <p class="run-template-description">{{ workflow.description || '暂无模板说明' }}</p>
               <span class="run-template-meta">{{ workflowMetaText(workflow) }}</span>
             </div>
-            <div v-if="app.can('workflow.manage') || app.can('api.workflow.manage')" class="run-template-item-actions">
+            <div v-if="app.can('workflow.manage') && app.can('api.workflow.manage')" class="run-template-item-actions">
               <ElButton size="small" plain @click.stop="editTemplateFromDialog(workflow)">编辑</ElButton>
               <ElButton
                 size="small"

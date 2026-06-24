@@ -389,7 +389,7 @@ async function handleApi(req, res, url) {
 
 
   if (req.method === 'GET' && url.pathname === '/api/art-progress-events/lifecycle') {
-    requireAnyPermission(currentUser, ['artProgress.accessLogs.view', 'artProgress.logs.manage']);
+    requireAnyPermission(currentUser, ['api.skillAsset.create', 'api.skillAsset.void']);
     const events = await listArtProgressEvents(Object.fromEntries(url.searchParams.entries()));
     sendJson(res, 200, events.filter(event => isReporterLifecycleEvent(event)));
     return;
@@ -422,7 +422,7 @@ async function handleApi(req, res, url) {
   if (artProgressEventDetail && req.method === 'DELETE') {
     const existingEvent = (await listArtProgressEvents({})).find(event => String(event.id) === String(artProgressEventDetail[1]));
     if (isReporterLifecycleEvent(existingEvent)) {
-      requireAnyPermission(currentUser, ['artProgress.logs.delete', 'artProgress.logs.manage', 'api.skillAsset.void']);
+      requireAnyPermission(currentUser, ['api.skillAsset.void', 'api.skillAsset.create']);
     } else {
       requirePermission(currentUser, 'api.skillAsset.void');
     }
@@ -978,7 +978,7 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/operation-logs') {
     const moduleFilter = String(url.searchParams.get('module') || '').trim();
     if (moduleFilter === 'art-progress') {
-      requireAnyPermission(currentUser, ['artProgress.operationLogs.view', 'artProgress.logs.manage']);
+      requireAnyPermission(currentUser, ['api.skillAsset.create', 'api.skillAsset.void']);
     } else {
       requirePermission(currentUser, 'api.operationLogs.read');
     }
@@ -1089,7 +1089,7 @@ async function handleApi(req, res, url) {
   if (operationLogDetail && req.method === 'DELETE') {
     const targetLog = await getOperationLog(operationLogDetail[1]);
     if (targetLog?.module === 'art-progress') {
-      requireAnyPermission(currentUser, ['artProgress.logs.delete', 'artProgress.logs.manage', 'api.operationLogs.delete']);
+      requireAnyPermission(currentUser, ['api.operationLogs.delete', 'api.skillAsset.void']);
     } else {
       requirePermission(currentUser, 'api.operationLogs.delete');
     }
@@ -1412,7 +1412,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/task-center/config') {
-    requireAnyPermission(currentUser, ['api.taskCenter.config.manage', 'skill.validationColumns.manage']);
+    requirePermission(currentUser, 'api.taskCenter.config.manage');
     if (!canAccessProject(currentUser, artProjectId)) {
       const error = new Error('当前账号没有该项目权限。');
       error.status = 403;
@@ -5882,9 +5882,8 @@ function aggregateArtEvents(events = [], labelKey, fallbackKey) {
 function canSeeAllArtProgress(user = {}, filters = {}) {
   if (filters.scope === 'log') {
     return user.role === 'admin'
-      || hasPermission(user, 'artProgress.operationLogs.view')
-      || hasPermission(user, 'artProgress.accessLogs.view')
-      || hasPermission(user, 'artProgress.logs.manage');
+      || hasPermission(user, 'api.skillAsset.create')
+      || hasPermission(user, 'api.skillAsset.void');
   }
   if (user.role === 'admin' || user.role === 'developer' || (user.projectIds || []).includes('*')) return true;
   return false;

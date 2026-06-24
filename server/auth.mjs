@@ -18,8 +18,6 @@ const permissionCatalog = [
   { id: 'menu.tasks', name: '任务中心', type: 'menu', group: '一级菜单', description: '访问美术任务中心。' },
   { id: 'menu.skillList', name: 'AI 产物清单', type: 'menu', group: '一级菜单', description: '查看 AI 产物清单、产物数量统计和产物列表。' },
   { id: 'menu.aiMembers', name: 'AI 部门看板', type: 'menu', group: '一级菜单', description: '访问 AI 部门看板和当月 AI 评分。' },
-  { id: 'menu.aiMembers.owner', name: '负责人 AI部门看板', type: 'menu', group: 'AI部门看板', description: '查看负责人视角的 AI 部门看板。' },
-  { id: 'menu.aiMembers.member', name: '组员 AI部门看板', type: 'menu', group: 'AI部门看板', description: '查看组员视角的 AI 部门看板。' },
   { id: 'menu.codexConfig', name: 'Codex 配置', type: 'menu', group: '一级菜单', description: '访问 Codex 配置页。' },
   { id: 'menu.runs', name: '美术执行台', type: 'menu', group: '一级菜单', description: '访问美术执行台。' },
   { id: 'menu.agentWorkers', name: '本机执行状态', type: 'menu', group: '一级菜单', description: '查看组员 Worker 心跳、自检和执行明细。' },
@@ -38,6 +36,7 @@ const permissionCatalog = [
   { id: 'run.codex.execute', name: '启动 Codex 执行', type: 'button', group: '执行管理', description: '启动、中断或重试会消耗服务器侧 Codex Key 的执行。' },
   { id: 'run.directSkill.create', name: '创建直接执行', type: 'button', group: '执行管理', description: '从 Skill 或 md 预览创建直接执行到 Figma 的任务。' },
   { id: 'run.directSkill.workerCommand', name: '复制 Worker 命令', type: 'button', group: '执行管理', description: '复制组员本机 Worker 手动启动或开机自启命令。' },
+  { id: 'workflow.manage', name: '管理流程模板', type: 'button', group: '执行管理', description: '新增、编辑、删除自定义流程模板。' },
   { id: 'run.start', name: '启动执行', type: 'button', group: '执行管理', description: '启动或重试执行。' },
   { id: 'run.cancel', name: '中断执行', type: 'button', group: '执行管理', description: '中断运行中的执行。' },
   { id: 'run.delete', name: '删除执行记录', type: 'button', group: '执行管理', description: '删除运行记录和平台产物。' },
@@ -74,6 +73,7 @@ const permissionCatalog = [
   { id: 'api.agentRuns.status', name: '直接执行状态 API', type: 'api', group: '后端接口', description: '允许组员本机 Worker 回传执行状态、阻塞原因和结果。' },
   { id: 'api.runs.delete', name: '删除执行 API', type: 'api', group: '后端接口', description: '删除执行记录。' },
   { id: 'api.aiArchive.delete', name: 'AI档案范围删除 API', type: 'api', group: '后端接口', description: '按时间范围删除 AI 执行明细和后端执行数据。' },
+  { id: 'archive.record.manage', name: 'AI 全流程人工记录 API', type: 'api', group: '后端接口', description: '新增、编辑、删除、导入 AI 全流程人工记录。' },
   { id: 'api.reviews.submit', name: '复核提交 API', type: 'api', group: '后端接口', description: '提交人工复核。' },
   { id: 'api.skillVersion.manage', name: '产物版本 API', type: 'api', group: '后端接口', description: '保存技能清单/产物版本号。' },
   { id: 'api.skillAlias.manage', name: '产物调用别名 API', type: 'api', group: '后端接口', description: '保存产物调用别名，不允许修改版本。' },
@@ -90,7 +90,8 @@ const permissionCatalog = [
   { id: 'api.taskCenter.config.manage', name: '任务中心字段配置 API', type: 'api', group: '后端接口', description: '保存任务中心组员可见字段。' },
   { id: 'api.operationLogs.read', name: '操作日志读取 API', type: 'api', group: '后端接口', description: '查询平台操作审计日志。' },
   { id: 'api.operationLogs.delete', name: '操作日志删除 API', type: 'api', group: '后端接口', description: '删除平台操作日志记录。' },
-  { id: 'api.maintenance.manage', name: '维护中心 API', type: 'api', group: '后端接口', description: '管理员预览和执行维护中心清理。' }
+  { id: 'api.maintenance.manage', name: '维护中心 API', type: 'api', group: '后端接口', description: '管理员预览和执行维护中心清理。' },
+  { id: 'api.workflow.manage', name: '流程模板管理 API', type: 'api', group: '后端接口', description: '新增、编辑、删除自定义流程模板。' }
 ];
 const allPermissionIds = permissionCatalog.map(item => item.id);
 const levelPermissions = {
@@ -688,6 +689,8 @@ function expandLegacyPermission(permission = '') {
     'menu.skillManagement': ['menu.skillList'],
     'menu.skillMembers': ['menu.skillList'],
     'menu.aiMembers': ['menu.aiMembers', 'aiMembers.score.view', 'api.aiMembers.read', 'api.aiMembers.score.read'],
+    'menu.aiMembers.owner': ['menu.aiMembers', 'aiMembers.score.view', 'api.aiMembers.read', 'api.aiMembers.score.read'],
+    'menu.aiMembers.member': ['menu.aiMembers', 'aiMembers.score.view', 'api.aiMembers.read', 'api.aiMembers.score.read'],
     'project.create': ['skill.source.connect', 'api.skillSources.manage'],
     'project.edit': ['skill.source.edit', 'api.skillSources.manage'],
     'project.delete': ['skill.source.delete', 'api.skillSources.delete'],
@@ -697,7 +700,13 @@ function expandLegacyPermission(permission = '') {
     'api.aiAssets.manage': ['api.skillAsset.create', 'api.skillAsset.void'],
     'api.skillValidations.manage': ['api.skillAsset.create', 'api.skillAsset.void'],
     'api.artProgress.manage': ['api.skillAsset.create', 'api.skillAsset.void'],
-    'skill.asset.manage': ['skill.asset.create', 'skill.asset.void', 'skill.source.connect', 'skill.scan.refresh', 'api.skillAsset.create', 'api.skillAsset.void', 'api.skillSources.manage', 'api.skillScan.run']
+    'skill.asset.manage': ['skill.asset.create', 'skill.asset.void', 'skill.source.connect', 'skill.scan.refresh', 'api.skillAsset.create', 'api.skillAsset.void', 'api.skillSources.manage', 'api.skillScan.run'],
+    'skill.validationColumns.manage': ['api.taskCenter.config.manage'],
+    'skill.validationOwner.manage': ['skill.assetOwner.manage'],
+    'artProgress.operationLogs.view': ['api.skillAsset.create'],
+    'artProgress.accessLogs.view': ['api.skillAsset.create'],
+    'artProgress.logs.manage': ['api.skillAsset.create', 'api.skillAsset.void'],
+    'artProgress.logs.delete': ['api.skillAsset.void']
   };
   return legacy[value] || [value];
 }
