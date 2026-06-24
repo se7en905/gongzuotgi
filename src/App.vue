@@ -20365,6 +20365,7 @@ export default {
     },
 
     effectiveResultStatus(run = {}) {
+      if (/cancelled|canceled/i.test(`${run?.status || ''} ${run?.workerStatus || ''}`)) return 'cancelled';
       if (this.hasPartialFigmaWrite(run)) return 'partial_write';
       if (this.runRequiresFigmaWriteEvidence(run) && this.runHasFinishedAsSuccess(run) && !this.hasFigmaWriteEvidence(run)) {
         return 'failed';
@@ -20858,6 +20859,45 @@ export default {
       return rows;
     },
 
+    runInputAttachments(run = {}) {
+      const pools = [
+        run.attachments,
+        run.referenceImages,
+        run.inputAttachments
+      ];
+      const rows = [];
+      const seen = new Set();
+      for (const pool of pools) {
+        const items = Array.isArray(pool) ? pool : [];
+        for (const item of items) {
+          const attachment = typeof item === 'object'
+            ? item
+            : { path: String(item || ''), relativePath: String(item || ''), name: String(item || '').split('/').pop() || String(item || '') };
+          if (attachment.uploadFailed) continue;
+          const rawPath = String(attachment.relativePath || attachment.path || '').trim();
+          const rawName = String(attachment.name || rawPath.split('/').pop() || '').trim();
+          const type = String(attachment.type || '').trim();
+          if (!rawPath && !rawName) continue;
+          if (type && !/^image\//i.test(type) && this.artifactTypeFromPath(rawPath || rawName) !== 'image') continue;
+          if (!type && this.artifactTypeFromPath(rawPath || rawName) !== 'image') continue;
+          const path = rawPath || rawName;
+          const key = this.platformArtifactRequestPath(path);
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          const downloadName = rawName || key.split('/').pop() || '执行附件';
+          rows.push({
+            ...attachment,
+            path,
+            relativePath: rawPath,
+            name: downloadName,
+            url: this.artifactUrl(path),
+            downloadUrl: `${this.artifactUrl(path)}&download=${encodeURIComponent(downloadName)}`
+          });
+        }
+      }
+      return rows;
+    },
+
     focusedRunOverviewMetrics(run = null) {
       if (!run) return {
         summaryCards: [],
@@ -21264,8 +21304,8 @@ export default {
       const value = String(run.status || '').toLowerCase();
       const workerValue = String(run.workerStatus || '').toLowerCase();
       if (this.isLocalWorkerRun(run)) {
-        if (/completed|done|success|passed|blocked|failed|error|cancelled|canceled/.test(value)) return value;
-        if (/completed|done|success|passed|blocked|failed|error|cancelled|canceled/.test(workerValue)) return workerValue;
+        if (/completed|done|success|passed|partial_write|blocked|failed|error|cancelled|canceled/.test(value)) return value;
+        if (/completed|done|success|passed|partial_write|blocked|failed|error|cancelled|canceled/.test(workerValue)) return workerValue;
         if (/queued|pending|created/.test(`${value} ${workerValue}`) && this.hasLocalWorkerRunEvidence(run)) return 'blocked';
         if (/running|in_progress/.test(`${value} ${workerValue}`)) return 'running';
         if (run.startedAt && /claimed|pending|queued|created/.test(`${value} ${workerValue}`)) return 'running';
@@ -21299,6 +21339,7 @@ export default {
       if (/running|in_progress/.test(`${value} ${workerValue}`) || (run.startedAt && /claimed/.test(value))) return '本机执行中';
       if (/claimed/.test(value)) return '已领取';
       if (this.hasPartialFigmaWrite(run)) return '部分写入';
+      if (/partial_write/.test(value)) return '部分写入';
       if (this.effectiveResultStatus(run) === 'failed') return '本机执行失败';
       if (this.effectiveResultStatus(run) === 'blocked') return '本机阻塞';
       if (/failed|error/.test(value)) return '本机执行失败';
@@ -22071,6 +22112,7 @@ export default {
 
     runStatusClass(status = '') {
       const value = String(status || '').toLowerCase();
+      if (/partial_write/.test(value)) return 'is-partial-write';
       if (/conditional/.test(value)) return 'is-conditional';
       if (/failed|error/.test(value)) return 'is-failed';
       if (/cancelled|canceled/.test(value)) return 'is-cancelled';

@@ -346,6 +346,35 @@
           <strong>{{ row.value }}</strong>
         </div>
       </div>
+      <details
+        v-if="app.runInputAttachments(app.selectedRun).length"
+        :key="`input-attachments-${app.selectedRun?.id || 'run'}`"
+        class="run-generated-image-panel run-input-attachment-panel"
+      >
+        <summary class="run-generated-image-head run-input-attachment-summary">
+          <strong>本次输入附件</strong>
+          <span :data-count="`${app.runInputAttachments(app.selectedRun).length} 张参考图 / 修改说明截图`">{{ app.runInputAttachments(app.selectedRun).length }} 张参考图 / 修改说明截图 · 点击展开</span>
+        </summary>
+        <div class="run-generated-image-grid">
+          <article
+            v-for="image in app.runInputAttachments(app.selectedRun)"
+            :key="image.path"
+            class="run-generated-image-card"
+          >
+            <a :href="image.url" target="_blank" rel="noopener noreferrer" class="run-generated-image-thumb">
+              <img :src="image.url" :alt="image.name" loading="lazy" />
+            </a>
+            <div class="run-generated-image-meta">
+              <strong :title="image.name">{{ image.name }}</strong>
+              <span>{{ image.size ? app.formatBytes(image.size) : '已保存' }}</span>
+            </div>
+            <div class="run-generated-image-actions">
+              <ElButton size="small" plain tag="a" :href="image.url" target="_blank" rel="noopener noreferrer">打开</ElButton>
+              <ElButton size="small" type="primary" plain tag="a" :href="image.downloadUrl">下载</ElButton>
+            </div>
+          </article>
+        </div>
+      </details>
       <div
         v-if="app.isNoFigmaImageGenerationRun(app.selectedRun) || app.runGeneratedImageArtifacts(app.selectedRun).length"
         class="run-generated-image-panel"
@@ -2295,6 +2324,28 @@ export default {
     background: #ffffff;
   }
 
+  .run-input-attachment-panel {
+    border-color: rgba(59, 130, 246, 0.22);
+    background: rgba(248, 250, 252, 0.86);
+
+    &[open] .run-input-attachment-summary span::after {
+      content: ' · 点击收起';
+    }
+
+    &[open] .run-input-attachment-summary span {
+      font-size: 0;
+    }
+
+    &[open] .run-input-attachment-summary span::before,
+    &[open] .run-input-attachment-summary span::after {
+      font-size: 12px;
+    }
+
+    &[open] .run-input-attachment-summary span::before {
+      content: attr(data-count);
+    }
+  }
+
   .run-generated-image-head {
     display: flex;
     align-items: center;
@@ -2316,6 +2367,15 @@ export default {
       font-size: 12px;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+  }
+
+  .run-input-attachment-summary {
+    list-style: none;
+    cursor: pointer;
+
+    &::-webkit-details-marker {
+      display: none;
     }
   }
 

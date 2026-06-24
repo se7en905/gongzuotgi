@@ -1521,6 +1521,9 @@ async function enrichRunWithImageGenerationEvidence(run = null) {
     ...(Array.isArray(workingRun.workerResult?.generatedArtifacts) ? workingRun.workerResult.generatedArtifacts : [])
   ]);
   const hasGeneratedImage = hasGeneratedImageArtifacts(generatedArtifacts);
+  if (isCancelledRunStatus(workingRun.status) || isCancelledRunStatus(workingRun.workerStatus)) {
+    return sanitizeNoFigmaImageGenerationRunSummary(workingRun, generatedArtifacts);
+  }
   if (hasGeneratedImage) {
     return reconcileGeneratedImageRun(workingRun, generatedArtifacts, {
       summary: '本次生图已检测到真实生成图片产物并归档到工作台；不再按本机阻塞展示，请以产物区图片为准复核和下载。',
@@ -3510,6 +3513,7 @@ function normalizeFinalWorkerStatusConflict(run = {}, now = new Date()) {
 function normalizeCanonicalFinalWorkerStatus(value = '') {
   const status = cleanString(value).toLowerCase();
   if (/cancelled|canceled/.test(status)) return 'cancelled';
+  if (/partial_write/.test(status)) return 'partial_write';
   if (/completed|done|success|passed/.test(status)) return 'completed';
   if (/blocked/.test(status)) return 'blocked';
   if (/failed|error/.test(status)) return 'failed';
@@ -3778,6 +3782,7 @@ async function enrichRunWithFigmaLogEvidence(run) {
 
 function reconcileFigmaEvidenceRunStatus(run = {}) {
   if (!run || !hasFigmaWriteEvidence(run)) return run;
+  if (isCancelledRunStatus(run.status) || isCancelledRunStatus(run.workerStatus)) return run;
   const hasVerification = hasFigmaPostWriteVerification(run);
   const existingSummary = run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {};
   const existingResult = run.figmaWriteResult && typeof run.figmaWriteResult === 'object' ? run.figmaWriteResult : {};
@@ -4194,7 +4199,11 @@ function compactEvidenceReason(text = '') {
 }
 
 function isFinishedRun(status = '') {
-  return /conditional|done|success|passed|completed|failed|blocked|cancelled|canceled/i.test(String(status || ''));
+  return /conditional|partial_write|done|success|passed|completed|failed|blocked|cancelled|canceled/i.test(String(status || ''));
+}
+
+function isCancelledRunStatus(status = '') {
+  return /cancelled|canceled/i.test(String(status || ''));
 }
 
 function isPendingStage(status = '') {
@@ -7326,14 +7335,14 @@ function workerCanExecuteRun(run = {}, capabilities = []) {
 
 function normalizeWorkerRunStatus(value = '') {
   const status = String(value || '').trim().toLowerCase();
-  if (['running', 'claimed', 'completed', 'blocked', 'failed', 'cancelled', 'pending'].includes(status)) return status;
+  if (['running', 'claimed', 'completed', 'partial_write', 'blocked', 'failed', 'cancelled', 'pending'].includes(status)) return status;
   if (status === 'done' || status === 'success') return 'completed';
   if (status === 'error') return 'failed';
   return status || 'running';
 }
 
 function isFinalWorkerRunStatus(status = '') {
-  return /completed|blocked|failed|cancelled|canceled/i.test(String(status || ''));
+  return /completed|partial_write|blocked|failed|cancelled|canceled/i.test(String(status || ''));
 }
 
 function isWorkerRunStarted(run = {}) {
