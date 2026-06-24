@@ -1233,6 +1233,8 @@ async function checkLocalImage2Config() {
   const sources = [];
   const credential = await resolveOpenAiApiCredential();
   if (credential.key) sources.push(`当前 Worker 进程可读取 OPENAI_API_KEY（${credential.source}）`);
+  const baseUrl = await resolveOpenAiBaseUrl();
+  if (baseUrl.configured) sources.push(`OpenAI/Image2 API 入口：${baseUrl.url}（${baseUrl.source || '已配置'}）`);
   const cwdEnv = await hasEnvKey(path.join(process.cwd(), '.env'), 'OPENAI_API_KEY');
   if (cwdEnv) sources.push('当前执行目录 .env');
   const projectEnv = await hasEnvKey(path.join(defaultProjectRoot, '.env'), 'OPENAI_API_KEY');
@@ -1246,7 +1248,7 @@ async function checkLocalImage2Config() {
   const uv = await runCommand('uv', ['--version'], { timeoutMs: Math.min(localCheckTimeoutMs, 5000) });
   if (uv.code === 0) sources.push('uv 可用');
   else if (uv.error) sources.push(`uv 未就绪：${uv.error}`);
-  const network = await checkOpenAiApiReady(credential);
+  const network = await checkOpenAiApiReady(credential, baseUrl);
   if (network.ready) sources.push('OpenAI API 入口已验证可访问');
   const hasCredential = sources.some(item => /OPENAI_API_KEY|\.env|auth\.json/.test(item));
   const hasTool = bundledScriptReady || uv.code === 0;
@@ -1257,7 +1259,7 @@ async function checkLocalImage2Config() {
       configured: true,
       networkReady: true,
       sources,
-      message: `Image2 配置已发现，且当前 Worker 进程已通过 OpenAI API 入口检查：${sources.join('、')}。未发起真实出图请求，不消耗额度。`
+      message: `Image2 配置已发现，且当前 Worker 进程已通过 ${baseUrl.url} 入口检查：${sources.join('、')}。未发起真实出图请求，不消耗额度。`
     };
   }
   const missing = [
@@ -1286,7 +1288,7 @@ async function resolveOpenAiApiCredential() {
     const key = await readEnvFileKey(file, 'OPENAI_API_KEY');
     if (key) return { key, source: file.replace(os.homedir(), '~') };
   }
-  const codexHome = String(process.env.CODEX_HOME || '').trim() || path.join(os.homedir(), '.codex');
+  const codexHome = resolveCodexHome();
   const authPath = path.join(codexHome, 'auth.json');
   try {
     const auth = JSON.parse(await readFile(authPath, 'utf8'));
@@ -1297,46 +1299,177 @@ async function resolveOpenAiApiCredential() {
   return { key: '', source: '' };
 }
 
+async function resolveOpenAiBaseUrl() {
+  const keys = ['OPENAI_BASE_URL', 'OPENAI_API_BASE_URL', 'OPENAI_API_BASE'];
+  for (const key of keys) {
+    const direct = String(process.env[key] || workerEnvOverrides[key] || '').trim();
+    if (direct) return normalizeOpenAiBaseUrl(direct, `环境变量 ${key}`);
+  }
+  for (const file of [
+    path.join(process.cwd(), '.env'),
+    path.join(defaultProjectRoot, '.env'),
+    path.join(workerHome, '.env'),
+    path.join(os.homedir(), '.env')
+  ]) {
+    const values = await readEnvFileKeys(file, keys);
+    for (const key of keys) {
+      const value = String(values[key] || '').trim();
+      if (value) return normalizeOpenAiBaseUrl(value, `${file.replace(os.homedir(), '~')} ${key}`);
+    }
+  }
+  const codexConfigBaseUrl = await resolveCodexConfigBaseUrl();
+  if (codexConfigBaseUrl?.url) return normalizeOpenAiBaseUrl(codexConfigBaseUrl.url, codexConfigBaseUrl.source);
+  return normalizeOpenAiBaseUrl('https://api.openai.com/v1', '默认官方入口', false);
+}
+
+function resolveCodexHome() {
+  return String(process.env.CODEX_HOME || workerEnvOverrides.CODEX_HOME || '').trim() || path.join(os.homedir(), '.codex');
+}
+
+async function resolveCodexConfigBaseUrl() {
+  const configPath = path.join(resolveCodexHome(), 'config.toml');
+  let text = '';
+  try {
+    text = await readFile(configPath, 'utf8');
+  } catch {
+    return null;
+  }
+  const parsed = parseMinimalTomlConfig(text);
+  const provider = String(parsed.root.model_provider || parsed.root.modelProvider || '').trim();
+  const providerConfig = provider ? parsed.sections[`model_providers.${provider}`] : null;
+  const baseUrl = String(providerConfig?.base_url || providerConfig?.baseUrl || '').trim();
+  if (!provider || !baseUrl) return null;
+  return {
+    url: baseUrl,
+    source: `${configPath.replace(os.homedir(), '~')} model_providers.${provider}.base_url`
+  };
+}
+
+function parseMinimalTomlConfig(text = '') {
+  const root = {};
+  const sections = {};
+  let current = root;
+  for (const rawLine of String(text || '').split(/\r?\n/)) {
+    const line = rawLine.replace(/\s+#.*$/, '').trim();
+    if (!line) continue;
+    const section = line.match(/^\[([^\]]+)]$/);
+    if (section) {
+      const name = section[1].trim();
+      sections[name] = sections[name] || {};
+      current = sections[name];
+      continue;
+    }
+    const pair = line.match(/^([A-Za-z0-9_.-]+)\s*=\s*(.+)$/);
+    if (!pair) continue;
+    current[pair[1]] = cleanTomlScalar(pair[2]);
+  }
+  return { root, sections };
+}
+
+function cleanTomlScalar(value = '') {
+  const trimmed = String(value || '').trim();
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed.replace(/\s+#.*$/, '').trim();
+}
+
+function normalizeOpenAiBaseUrl(value = '', source = '', configured = true) {
+  const fallback = 'https://api.openai.com/v1';
+  const raw = String(value || '').trim() || fallback;
+  try {
+    const url = new URL(raw);
+    url.pathname = url.pathname.replace(/\/+$/, '');
+    url.search = '';
+    url.hash = '';
+    return {
+      url: url.toString().replace(/\/+$/, ''),
+      source,
+      configured
+    };
+  } catch {
+    return {
+      url: fallback,
+      source: `${source || '配置'} 无效，已回退官方入口`,
+      configured: false
+    };
+  }
+}
+
 async function readEnvFileKey(file = '', key = '') {
   const values = await readEnvFileKeys(file, [key]);
   return String(values[key] || '').trim();
 }
 
-async function checkOpenAiApiReady(credential = {}) {
+async function checkOpenAiApiReady(credential = {}, baseUrl = null) {
   if (!credential?.key) return { ready: false, message: '未发现可用于 API 检查的 OPENAI_API_KEY' };
-  const dnsResult = await checkOpenAiDnsReady();
+  const resolvedBaseUrl = baseUrl || await resolveOpenAiBaseUrl();
+  const endpointUrls = buildImageGenerationProbeUrls(resolvedBaseUrl.url);
+  const dnsResult = await checkOpenAiDnsReady(endpointUrls[0]);
   if (!dnsResult.ready) return { ready: false, message: `DNS 不可用：${dnsResult.message}` };
   const script = [
-    'import os, sys, urllib.error, urllib.request',
+    'import json, os, sys, urllib.error, urllib.request',
     'key = os.environ.get("OPENAI_API_KEY", "").strip()',
-    'req = urllib.request.Request("https://api.openai.com/v1/models", headers={"Authorization": "Bearer " + key})',
-    'try:',
-    '    with urllib.request.urlopen(req, timeout=12) as response:',
-    '        print(f"HTTP {response.status}")',
-    '        sys.exit(0 if 200 <= response.status < 300 else 1)',
-    'except urllib.error.HTTPError as error:',
-    '    print(f"HTTP {error.code}: {error.reason}", file=sys.stderr)',
-    '    sys.exit(1)',
-    'except Exception as error:',
-    '    print(f"{type(error).__name__}: {error}", file=sys.stderr)',
-    '    sys.exit(2)'
+    'endpoints = [item.strip() for item in os.environ.get("OPENAI_IMAGE_PROBE_URLS", "").split("\\n") if item.strip()]',
+    'payload = json.dumps({"model": "gpt-image-2"}).encode("utf-8")',
+    'errors = []',
+    'for endpoint in endpoints:',
+    '    req = urllib.request.Request(',
+    '        endpoint,',
+    '        data=payload,',
+    '        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},',
+    '        method="POST",',
+    '    )',
+    '    try:',
+    '        with urllib.request.urlopen(req, timeout=12) as response:',
+    '            print(f"{endpoint} HTTP {response.status}")',
+    '            sys.exit(0 if 200 <= response.status < 300 else 1)',
+    '    except urllib.error.HTTPError as error:',
+    '        body = error.read(1200).decode("utf-8", "replace")',
+    '        message = f"{endpoint} HTTP {error.code}: {error.reason} {body}"',
+    '        print(message, file=sys.stderr)',
+    '        if error.code in (400, 422):',
+    '            sys.exit(0)',
+    '        errors.append(message)',
+    '    except Exception as error:',
+    '        errors.append(f"{endpoint} {type(error).__name__}: {error}")',
+    'print("\\n".join(errors), file=sys.stderr)',
+    'sys.exit(2)'
   ].join('\n');
   const probe = await runCommand('python3', ['-c', script], {
     timeoutMs: Math.min(localCheckTimeoutMs, 15000),
-    env: { OPENAI_API_KEY: credential.key }
+    env: {
+      OPENAI_API_KEY: credential.key,
+      OPENAI_IMAGE_PROBE_URLS: endpointUrls.join('\n')
+    }
   });
   const output = `${probe.stdout || ''}\n${probe.stderr || ''}`.trim();
-  if (probe.code === 0) return { ready: true, message: output || 'OpenAI API 入口可访问' };
+  if (probe.code === 0) return { ready: true, message: `${resolvedBaseUrl.url} 图像接口已到达（无效参数预检，不出图）：${output || '可访问'}` };
   if (/HTTP\s+401|HTTP\s+403/.test(output)) {
     return { ready: false, message: `${output}；凭据无效、账号无权限或当前地区 / 网络被 OpenAI 拒绝` };
   }
   return { ready: false, message: output || probe.error || `OpenAI API 检查失败：${probe.code}` };
 }
 
-async function checkOpenAiDnsReady() {
+function buildImageGenerationProbeUrls(baseUrl = '') {
+  const normalized = normalizeOpenAiBaseUrl(baseUrl).url.replace(/\/+$/, '');
+  const urls = [`${normalized}/images/generations`];
   try {
-    const rows = await dns.lookup('api.openai.com', { all: true });
-    return rows.length ? { ready: true, message: rows.map(item => item.address).join(', ') } : { ready: false, message: 'DNS 返回空结果' };
+    const url = new URL(normalized);
+    if (!/\/v\d+$/i.test(url.pathname)) {
+      url.pathname = `${url.pathname.replace(/\/+$/, '')}/v1`;
+      urls.push(`${url.toString().replace(/\/+$/, '')}/images/generations`);
+    }
+  } catch {
+  }
+  return [...new Set(urls)];
+}
+
+async function checkOpenAiDnsReady(url = 'https://api.openai.com/v1') {
+  try {
+    const hostname = new URL(url).hostname;
+    const rows = await dns.lookup(hostname, { all: true });
+    return rows.length ? { ready: true, message: `${hostname}: ${rows.map(item => item.address).join(', ')}` } : { ready: false, message: 'DNS 返回空结果' };
   } catch (error) {
     return { ready: false, message: error.message || String(error) };
   }
@@ -1380,6 +1513,9 @@ async function loadWorkerEnvOverrides() {
   ]) {
     Object.assign(env, await readEnvFileKeys(file, [
       'OPENAI_API_KEY',
+      'OPENAI_BASE_URL',
+      'OPENAI_API_BASE_URL',
+      'OPENAI_API_BASE',
       'HTTP_PROXY',
       'HTTPS_PROXY',
       'ALL_PROXY',

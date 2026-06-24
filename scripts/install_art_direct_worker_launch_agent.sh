@@ -102,6 +102,12 @@ cat > "${PLIST}" <<PLIST
     <string>${NODE_BIN}</string>
     <key>CODEX_CLI_PATH</key>
     <string>${CODEX_CLI_PATH:-${DEFAULT_CODEX_CLI}}</string>
+    <key>OPENAI_BASE_URL</key>
+    <string>${OPENAI_BASE_URL:-}</string>
+    <key>OPENAI_API_BASE_URL</key>
+    <string>${OPENAI_API_BASE_URL:-}</string>
+    <key>OPENAI_API_BASE</key>
+    <string>${OPENAI_API_BASE:-}</string>
     <key>HTTP_PROXY</key>
     <string>${HTTP_PROXY:-${http_proxy:-}}</string>
     <key>HTTPS_PROXY</key>

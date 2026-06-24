@@ -366,7 +366,7 @@ export default {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
 
   div {
     min-width: 0;
@@ -377,33 +377,34 @@ export default {
   }
 
   strong {
-    overflow: hidden;
     color: var(--heading);
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    line-height: 1.4;
+    white-space: normal;
+    word-break: break-word;
   }
 
   span {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
     margin-top: 4px;
-    overflow: hidden;
     color: var(--muted);
     font-size: 12px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    line-height: 1.45;
+    white-space: normal;
+    word-break: break-word;
   }
 }
 
 .agent-worker-state-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
 
   div {
     min-width: 0;
-    padding: 8px;
+    padding: 8px 9px;
     border-radius: 6px;
     background: #f8fafc;
   }
@@ -419,12 +420,13 @@ export default {
   }
 
   strong {
-    margin-top: 4px;
-    overflow: hidden;
+    margin-top: 5px;
     color: var(--heading);
     font-size: 12px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    line-height: 1.45;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
   }
 }
 

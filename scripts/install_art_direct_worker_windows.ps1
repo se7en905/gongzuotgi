@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$InstallScriptVersion = '2026-06-17-scheduled-task'
+$InstallScriptVersion = '2026-06-24-image2-base-url'
 
 $Root = if ($env:ART_WORKER_HOME) { $env:ART_WORKER_HOME } elseif ($env:ART_WORKER_PROJECT_ROOT) { $env:ART_WORKER_PROJECT_ROOT } else { Join-Path $env:USERPROFILE 'ArtDirectWorker' }
 $Username = $env:ART_PLATFORM_USERNAME
@@ -8,6 +8,13 @@ $Api = $env:ART_PLATFORM_API
 $PollInterval = if ($env:ART_WORKER_POLL_INTERVAL_MS) { $env:ART_WORKER_POLL_INTERVAL_MS } else { '300000' }
 $HeartbeatInterval = if ($env:ART_WORKER_HEARTBEAT_INTERVAL_MS) { $env:ART_WORKER_HEARTBEAT_INTERVAL_MS } else { '300000' }
 $LocalCheckInterval = if ($env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS) { $env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS } else { '2400000' }
+$OpenAiBaseUrl = if ($env:OPENAI_BASE_URL) { $env:OPENAI_BASE_URL } else { '' }
+$OpenAiApiBaseUrl = if ($env:OPENAI_API_BASE_URL) { $env:OPENAI_API_BASE_URL } else { '' }
+$OpenAiApiBase = if ($env:OPENAI_API_BASE) { $env:OPENAI_API_BASE } else { '' }
+$HttpProxy = if ($env:HTTP_PROXY) { $env:HTTP_PROXY } elseif ($env:http_proxy) { $env:http_proxy } else { '' }
+$HttpsProxy = if ($env:HTTPS_PROXY) { $env:HTTPS_PROXY } elseif ($env:https_proxy) { $env:https_proxy } else { '' }
+$AllProxy = if ($env:ALL_PROXY) { $env:ALL_PROXY } elseif ($env:all_proxy) { $env:all_proxy } else { '' }
+$NoProxy = if ($env:NO_PROXY) { $env:NO_PROXY } elseif ($env:no_proxy) { $env:no_proxy } else { '' }
 $CodexPath = if ($env:CODEX_CLI_PATH) { $env:CODEX_CLI_PATH } else { 'codex' }
 $DefaultCodexHome = Join-Path $env:USERPROFILE '.codex'
 $CodexHome = if ($env:CODEX_HOME) {
@@ -132,6 +139,13 @@ Set-Location $(ConvertTo-PSLiteral $Root)
 `$env:ART_WORKER_SUPERVISED = '1'
 `$env:CODEX_HOME = $(ConvertTo-PSLiteral $CodexHome)
 `$env:CODEX_CLI_PATH = $(ConvertTo-PSLiteral $CodexPath)
+if ($(ConvertTo-PSLiteral $OpenAiBaseUrl)) { `$env:OPENAI_BASE_URL = $(ConvertTo-PSLiteral $OpenAiBaseUrl) }
+if ($(ConvertTo-PSLiteral $OpenAiApiBaseUrl)) { `$env:OPENAI_API_BASE_URL = $(ConvertTo-PSLiteral $OpenAiApiBaseUrl) }
+if ($(ConvertTo-PSLiteral $OpenAiApiBase)) { `$env:OPENAI_API_BASE = $(ConvertTo-PSLiteral $OpenAiApiBase) }
+if ($(ConvertTo-PSLiteral $HttpProxy)) { `$env:HTTP_PROXY = $(ConvertTo-PSLiteral $HttpProxy) }
+if ($(ConvertTo-PSLiteral $HttpsProxy)) { `$env:HTTPS_PROXY = $(ConvertTo-PSLiteral $HttpsProxy) }
+if ($(ConvertTo-PSLiteral $AllProxy)) { `$env:ALL_PROXY = $(ConvertTo-PSLiteral $AllProxy) }
+if ($(ConvertTo-PSLiteral $NoProxy)) { `$env:NO_PROXY = $(ConvertTo-PSLiteral $NoProxy) }
 while (`$true) {
   try {
     Invoke-WebRequest -UseBasicParsing -Uri ((`$env:ART_PLATFORM_API).TrimEnd('/') + '/worker/art-direct-worker.mjs') -OutFile $(ConvertTo-PSLiteral $Worker) -ErrorAction Stop
