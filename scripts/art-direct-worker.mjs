@@ -961,13 +961,14 @@ function safeFileName(value = '') {
 }
 
 function buildLocalTaskMaterial(run = {}, snapshots = [], snapshotPaths = [], attachmentPaths = []) {
+  const figmaLinks = String(run.figmaLinks || '').trim();
   return [
     '# 美术工作台本机执行资料',
     '',
     `- runId: ${run.id || ''}`,
     `- 标题: ${run.title || ''}`,
-    `- Figma 链接: ${run.figmaLinks || ''}`,
-    `- Figma 写入方式: ${run.figmaWriteMode || 'target-node'}`,
+    figmaLinks ? `- Figma 链接: ${figmaLinks}` : '- Figma 链接: 未填写，本次不强制读取或写入 Figma',
+    figmaLinks ? `- Figma 写入方式: ${run.figmaWriteMode || 'target-node'}` : '- Figma 写入方式: 不写入 Figma，成品在工作台产物区展示',
     `- 主执行 Skill / md: ${run.primarySkillPath || run.stage || ''}`,
     `- 执行人: ${run.queuedForName || run.assignedToName || run.developer || ''}`,
     '',
@@ -1115,7 +1116,9 @@ function buildPrompt(run = {}, workspace = {}) {
       ? '- 最终报告必须写明生成图片产物路径、Figma 放置/替换目标、使用的 Skill / md 和复核点。'
       : '- 如果 Skill / md 任务本身是生成图片或本地产物且本次没有要求落到 Figma，不强制要求 Figma 写入完成；最终报告写明产物路径、使用的 Skill / md 和复核点。',
     figmaLinks ? '- 如果已经写入 Figma，最后必须尽量回读目标节点或截图确认；如果回读失败，说明写入证据和回读失败原因。' : '',
-    '- 最终回答用中文简短总结结果，必须写明：使用的 Skill / md、Figma 链接、产物或写入节点、阻塞原因或复核建议。',
+    figmaLinks
+      ? '- 最终回答用中文简短总结结果，必须写明：使用的 Skill / md、Figma 链接、产物或写入节点、阻塞原因或复核建议。'
+      : '- 最终回答用中文简短总结结果，必须写明：使用的 Skill / md、生成图片产物路径、阻塞原因或复核建议；不得把缺少 Figma 链接、缺少 Figma node-id 或缺少 target-node 写成阻塞原因。',
     '',
     '## 快照内容兜底',
     '',
@@ -2031,7 +2034,9 @@ function buildResultSummary(status, exitCode, finalText, figmaWriteResult = {}, 
     : imageArtifactResult.required && !imageArtifactResult.hasArtifact
       ? imageArtifactResult.blockerReason || '未检测到生成图片产物。'
     : '';
-  const failureReason = status === 'completed' ? '' : figmaBlocker || imageBlocker || extractFailureReason(finalText) || `Codex 退出码：${exitCode}`;
+  const noFigmaImageRun = imageArtifactResult.required === true && !figmaWriteResult.required;
+  const fallbackFailureReason = noFigmaImageRun ? '' : extractFailureReason(finalText);
+  const failureReason = status === 'completed' ? '' : figmaBlocker || imageBlocker || fallbackFailureReason || `Codex 退出码：${exitCode}`;
   const completedSummary = figmaWriteResult.required
     ? '本机直接执行已完整完成，已检测到 Figma 放置、替换或写入证据，以及写入后的回读/截图验收证据。'
     : imageArtifactResult.required

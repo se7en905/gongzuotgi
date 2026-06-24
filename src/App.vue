@@ -20642,11 +20642,16 @@ export default {
         { label: '扫描点', value: scanPointCount, hint: '阶段 / 验证 / 变更 / 证据', tone: scanPointCount ? 'primary' : 'muted' },
         { label: '数据类', value: dataRows.length, hint: dataRows.map(item => item.label).slice(0, 3).join(' / ') || '暂无结构化数据', tone: dataRows.length ? 'primary' : 'muted' }
       ];
+      const noFigmaImageGeneration = this.isNoFigmaImageGenerationRun(run);
       const targetRows = [
         { label: '使用内容', value: this.directSkillRunContentName(run) },
         { label: '内容类型', value: this.directSkillRunContentKind(run) },
-        { label: 'Figma 目标', value: run.figmaLinks ? '已记录目标链接' : '未记录链接', href: run.figmaLinks || '' },
-        { label: '写入方式', value: this.directSkillWriteModeLabel(run.figmaWriteMode) }
+        noFigmaImageGeneration
+          ? { label: '产物位置', value: '工作台产物区预览 / 打开 / 下载' }
+          : { label: 'Figma 目标', value: run.figmaLinks ? '已记录目标链接' : '未记录链接', href: run.figmaLinks || '' },
+        noFigmaImageGeneration
+          ? { label: '写入方式', value: '不写入 Figma' }
+          : { label: '写入方式', value: this.directSkillWriteModeLabel(run.figmaWriteMode) }
       ];
       const environmentRows = [
         { label: '操作人', value: this.directSkillRunOperatorName(run) },
@@ -20657,8 +20662,8 @@ export default {
         { label: '更新时间', value: this.directSkillRunUpdatedText(run) }
       ];
       const issueRows = [
-        this.aiExecutionArchiveIssueRow('Figma 验收', this.figmaExecutionBlockerText(run)),
-        this.aiExecutionArchiveIssueRow('阻塞原因', summary.blockerReason),
+        this.aiExecutionArchiveIssueRow('Figma 验收', noFigmaImageGeneration ? '' : this.figmaExecutionBlockerText(run)),
+        this.aiExecutionArchiveIssueRow('阻塞原因', this.sanitizedRunBlockerReason(run, summary.blockerReason)),
         this.aiExecutionArchiveIssueRow('退出码', run.exitCode === null || run.exitCode === undefined ? '' : `Codex 退出码 ${run.exitCode}`),
         this.aiExecutionArchiveIssueRow('人工确认', summary.needsHumanReview ? '需要人工确认' : '')
       ].filter(Boolean);
@@ -20709,7 +20714,7 @@ export default {
         return this.figmaExecutionBlockerText(run) || 'Figma 已有真实写入，但最后一次写入后的最终回读/截图验收未闭环。';
       }
       if (this.isAiExecutionArchiveReworkRun(run)) {
-        const reason = String(summary.blockerReason || '').trim();
+        const reason = String(this.sanitizedRunBlockerReason(run, summary.blockerReason) || '').trim();
         return reason && !this.isPlaceholderResultText(reason)
           ? this.humanizeRunResultText(reason)
           : '本次执行失败或阻塞，需要查看问题信息后重新执行。';
@@ -20853,7 +20858,7 @@ export default {
       const isPending = /pending|created|queued/i.test(this.runDisplayStatusValue(run));
       const isRunning = this.isRunInProgress(run);
       const issueRows = [];
-      const blocker = String(this.figmaExecutionBlockerText(run) || summary.blockerReason || run.blocker?.reason || '').trim();
+      const blocker = String(this.figmaExecutionBlockerText(run) || this.sanitizedRunBlockerReason(run, summary.blockerReason || run.blocker?.reason) || '').trim();
       if (blocker && !this.isPlaceholderResultText(blocker)) {
         issueRows.push({
           label: status === 'failed' || status === 'blocked' ? '阻塞原因' : '风险提示',
@@ -20886,6 +20891,25 @@ export default {
         append: '追加到目标区域',
         replace: '替换目标内容'
       }[mode] || mode || '写入指定节点';
+    },
+
+    isNoFigmaImageGenerationRun(run = {}) {
+      return Boolean(this.isImageGenerationRun(run) && !String(run?.figmaLinks || '').trim());
+    },
+
+    sanitizedRunBlockerReason(run = {}, value = '') {
+      const text = String(value || '').trim();
+      if (!text) return '';
+      if (!this.isNoFigmaImageGenerationRun(run)) return text;
+      if (!this.mentionsMissingFigmaTarget(text)) return text;
+      const images = this.runGeneratedImageArtifacts(run);
+      return images.length
+        ? ''
+        : '本次是纯生图且未填写 Figma 链接，但执行结束后未检测到可下载的生成图片产物；不能按本机已完成展示。';
+    },
+
+    mentionsMissingFigmaTarget(text = '') {
+      return /缺少\s*Figma|未填(?:写)?\s*Figma|补充.{0,30}Figma|Figma.{0,40}(?:target[-\s]?node|node[-\s]?id|链接|目标)|target[-\s]?node|node[-\s]?id/i.test(String(text || ''));
     },
 
     aiExecutionArchiveChangeRows(run = {}) {
@@ -20941,8 +20965,9 @@ export default {
           value: this.hasFigmaPostWriteVerification(run) ? '已完成最终回读/截图验收' : '未完成最终回读/截图验收'
         });
       }
-      if (summary.blockerReason && !this.isPlaceholderResultText(summary.blockerReason)) {
-        rows.push({ label: '阻塞数据', value: this.humanizeRunResultText(summary.blockerReason) });
+      const sanitizedBlockerReason = this.sanitizedRunBlockerReason(run, summary.blockerReason);
+      if (sanitizedBlockerReason && !this.isPlaceholderResultText(sanitizedBlockerReason)) {
+        rows.push({ label: '阻塞数据', value: this.humanizeRunResultText(sanitizedBlockerReason) });
       }
       if (summary.finalText && !this.isPlaceholderResultText(summary.finalText)) {
         rows.push({ label: '模型回传', value: this.compactArchiveText(summary.finalText) });
@@ -20968,7 +20993,7 @@ export default {
       if (logReason) return this.humanizeRunResultText(logReason);
       const text = String(summary.summary || '').trim();
       if (text && !this.isPlaceholderResultText(text)) return this.humanizeRunResultText(text);
-      const reason = String(summary.blockerReason || '').trim();
+      const reason = String(this.sanitizedRunBlockerReason(run, summary.blockerReason) || '').trim();
       if (reason && !this.isPlaceholderResultText(reason)) return this.humanizeRunResultText(reason);
       return this.resultStatusDescription(summary, run);
     },
@@ -20976,7 +21001,7 @@ export default {
     resultReasonText(summary = {}, run = {}) {
       const figmaReason = this.figmaExecutionBlockerText(run);
       if (figmaReason) return figmaReason;
-      const reason = String(summary.blockerReason || '').trim();
+      const reason = String(this.sanitizedRunBlockerReason(run, summary.blockerReason) || '').trim();
       if (reason && !this.isPlaceholderResultText(reason)) return this.humanizeRunResultText(reason);
       return this.resultStatusDescription(summary, run);
     },
@@ -21044,12 +21069,15 @@ export default {
     resultNextActionText(run = {}) {
       const summary = run.resultSummary || {};
       const status = this.effectiveResultStatus(run);
-      const nextStep = String(summary.nextStep || '').trim();
+      const rawNextStep = String(summary.nextStep || '').trim();
+      const nextStep = this.isNoFigmaImageGenerationRun(run) && this.mentionsMissingFigmaTarget(rawNextStep)
+        ? ''
+        : rawNextStep;
       if (this.hasPartialFigmaWrite(run)) return '下一步：让执行人恢复本机 Figma MCP 授权后继续执行，补齐最终回读、截图验收和剩余未完成项。';
       if (nextStep && !this.isPlaceholderResultText(nextStep)) return this.humanizeRunResultText(nextStep);
       const logReason = this.directSkillRunLogFailureReason(run);
       if (logReason) return `下一步：${this.humanizeRunResultText(logReason)}`;
-      const blockerReason = String(summary.blockerReason || '').trim();
+      const blockerReason = String(this.sanitizedRunBlockerReason(run, summary.blockerReason) || '').trim();
       if (['blocked', 'failed'].includes(status) && blockerReason && !this.isPlaceholderResultText(blockerReason)) {
         return this.humanizeRunResultText(blockerReason);
       }

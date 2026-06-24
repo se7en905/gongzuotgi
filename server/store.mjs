@@ -1549,7 +1549,47 @@ async function enrichRunWithImageGenerationEvidence(run = null) {
       imageEvidenceText: imageEvidence
     });
   }
-  return workingRun;
+  return sanitizeNoFigmaImageGenerationRunSummary(workingRun, generatedArtifacts);
+}
+
+function sanitizeNoFigmaImageGenerationRunSummary(run = {}, generatedArtifacts = []) {
+  if (!run || !isImageGenerationRun(run) || cleanString(run.figmaLinks)) return run;
+  const summary = run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {};
+  const blockerReason = cleanString(summary.blockerReason);
+  const nextStep = cleanString(summary.nextStep);
+  const blockerMentionsMissingFigma = mentionsMissingFigmaTarget(blockerReason);
+  const nextMentionsMissingFigma = mentionsMissingFigmaTarget(nextStep);
+  if (!blockerMentionsMissingFigma && !nextMentionsMissingFigma) return run;
+  const hasGeneratedImage = hasGeneratedImageArtifacts(generatedArtifacts);
+  const sanitizedReason = hasGeneratedImage
+    ? ''
+    : '本次是纯生图且未填写 Figma 链接，但执行结束后未检测到可下载的生成图片产物；不能按本机已完成展示。';
+  return {
+    ...run,
+    resultSummary: {
+      ...summary,
+      status: hasGeneratedImage ? 'completed' : (summary.status || 'blocked'),
+      statusText: hasGeneratedImage ? 'completed' : (summary.statusText || 'blocked'),
+      summary: hasGeneratedImage
+        ? '本次纯生图未填写 Figma 链接，生成图片产物已归档到工作台，可在产物区预览、打开和下载。'
+        : (summary.summary || '本机 Codex 已结束，但未检测到可归档的生成图片产物。'),
+      blockerReason: sanitizedReason,
+      nextStep: hasGeneratedImage
+        ? ''
+        : '继续执行或重新执行时确认成品图保存到“生成图片/”或“outputs/”目录；纯生图未填写 Figma 链接时不需要补 Figma node-id。',
+      generatedArtifacts
+    },
+    blocker: {
+      ...(run.blocker && typeof run.blocker === 'object' ? run.blocker : {}),
+      reason: sanitizedReason
+    }
+  };
+}
+
+function mentionsMissingFigmaTarget(text = '') {
+  const value = cleanString(text);
+  if (!value) return false;
+  return /缺少\s*Figma|未填(?:写)?\s*Figma|补充.{0,30}Figma|Figma.{0,40}(?:target[-\s]?node|node[-\s]?id|链接|目标)|target[-\s]?node|node[-\s]?id/i.test(value);
 }
 
 async function readRunImageGenerationEvidenceText(run = {}) {
