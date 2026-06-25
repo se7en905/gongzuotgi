@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { watch as fsWatch } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -3126,11 +3127,12 @@ function watchAiMembersBoardFiles() {
     }, 800);
   };
   try {
-    fs.watch(aiWeekDir, (eventType, fileName) => {
+    const watcher = fsWatch(aiWeekDir, (eventType, fileName) => {
       const name = String(fileName || '');
       if (!boardFiles.includes(name)) return;
       emitChanged(name);
-    }).on('error', error => {
+    });
+    watcher.on('error', error => {
       console.warn(`AI部门看板目录监听失败：${error.message}`);
     });
   } catch (error) {
