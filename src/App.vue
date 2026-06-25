@@ -760,6 +760,25 @@ export default {
           rows: []
         }
       },
+      derivedListCache: {
+        projectRows: {
+          projectsRef: null,
+          scansRef: null,
+          rows: []
+        },
+        businessTaskRows: {
+          tasksRef: null,
+          projectsRef: null,
+          runsByTaskKeyRef: null,
+          taskReviewsByTaskKeyRef: null,
+          rows: []
+        },
+        bugRows: {
+          bugsRef: null,
+          projectsRef: null,
+          rows: []
+        }
+      },
       skillValidationPage: 1,
       skillValidationPageSize: 10,
       skillValidationVisibleColumns: [],
@@ -2202,7 +2221,17 @@ export default {
     },
 
     businessTaskRows() {
-      return this.businessTasks
+      const cache = this.derivedListCache?.businessTaskRows;
+      if (
+        cache
+        && cache.tasksRef === this.businessTasks
+        && cache.projectsRef === this.projects
+        && cache.runsByTaskKeyRef === this.runsByTaskKey
+        && cache.taskReviewsByTaskKeyRef === this.taskReviewsByTaskKey
+      ) {
+        return cache.rows;
+      }
+      const rows = this.businessTasks
         .filter(task => !isBugLikeTask(task))
         .map(task => {
           const project = this.projects.find(item => item.id === task.projectId);
@@ -2241,6 +2270,14 @@ export default {
           };
         })
         .sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: TASK_LIST_TIME_FIELDS }));
+      this.derivedListCache.businessTaskRows = {
+        tasksRef: this.businessTasks,
+        projectsRef: this.projects,
+        runsByTaskKeyRef: this.runsByTaskKey,
+        taskReviewsByTaskKeyRef: this.taskReviewsByTaskKey,
+        rows
+      };
+      return rows;
     },
 
     isTasksRoute() {
@@ -2250,7 +2287,11 @@ export default {
 
 
     bugRows() {
-      return this.bugs
+      const cache = this.derivedListCache?.bugRows;
+      if (cache && cache.bugsRef === this.bugs && cache.projectsRef === this.projects) {
+        return cache.rows;
+      }
+      const rows = this.bugs
         .map(bug => {
           const project = this.projects.find(item => item.id === bug.projectId);
           return {
@@ -2261,6 +2302,12 @@ export default {
           };
         })
         .sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: BUG_LIST_TIME_FIELDS }));
+      this.derivedListCache.bugRows = {
+        bugsRef: this.bugs,
+        projectsRef: this.projects,
+        rows
+      };
+      return rows;
     },
 
     taskCenterBusinessTaskRows() {
@@ -2699,6 +2746,10 @@ export default {
     },
 
     projectRows() {
+      const cache = this.derivedListCache?.projectRows;
+      if (cache && cache.projectsRef === this.projects && cache.scansRef === this.scans) {
+        return cache.rows;
+      }
       const projectList = Array.isArray(this.projects) ? [...this.projects] : [];
       const knownProjectIds = new Set(projectList.map(project => String(project.id || '')));
       for (const [projectId, scan] of Object.entries(this.scans || {})) {
@@ -2706,7 +2757,7 @@ export default {
         projectList.push(this.projectFromCachedScan(projectId, scan));
         knownProjectIds.add(String(projectId));
       }
-      return projectList.map(project => {
+      const rows = projectList.map(project => {
         const rawScan = this.scans[project.id] || project.scan || null;
         const scan = rawScan?.scan && typeof rawScan.scan === 'object'
           ? { ...rawScan.scan, cachedAt: rawScan.cachedAt || rawScan.scan.cachedAt || '' }
@@ -2764,6 +2815,12 @@ export default {
           createdAtText: project.createdAt ? formatDateTime(project.createdAt) : '-'
         };
       });
+      this.derivedListCache.projectRows = {
+        projectsRef: this.projects,
+        scansRef: this.scans,
+        rows
+      };
+      return rows;
     },
 
     pagedProjectRows() {
@@ -5516,8 +5573,12 @@ export default {
     ensureActiveViewData(view = this.activeView) {
       const dirty = this.consumeViewDataDirty(view);
       if (view === 'tasks') {
-        if (!this.loading.tasks) this.refreshTasks({ background: !dirty }).catch(() => {});
-        if (!this.loading.config) this.refreshConfig({ background: !dirty }).catch(() => {});
+        if ((!this.businessTasks.length || !this.bugs.length || !this.taskReviews.length || dirty) && !this.loading.tasks) {
+          this.refreshTasks({ background: !dirty }).catch(() => {});
+        }
+        if ((!this.appConfig || !Object.keys(this.appConfig).length || dirty) && !this.loading.config) {
+          this.refreshConfig({ background: !dirty }).catch(() => {});
+        }
       }
       if (['skill-inventory', 'skill-assets'].includes(view)) {
         if (view === 'skill-assets' || view === 'skill-inventory') this.skillInventoryTab = 'assets';
@@ -5526,7 +5587,7 @@ export default {
       if (view === 'ai-members') {
         this.ensureAiMemberScoreData();
         this.restoreAiMembersBoardHtmlSnapshot();
-        if (!this.loading.aiMembers && this.can('api.aiMembers.read')) {
+        if ((!this.aiMembersSnapshot?.members?.length || dirty || !this.hasAiMembersBoardHtml(this.aiMembersSnapshot)) && !this.loading.aiMembers && this.can('api.aiMembers.read')) {
           this.refreshAiMembers({
             silent: this.hasAiMembersBoardHtml(this.aiMembersSnapshot),
             background: !dirty
@@ -5534,7 +5595,9 @@ export default {
         }
       }
       if (view === 'codex-config') {
-        if (!this.loading.codexConfig) this.loadCodexConfig().catch(() => {});
+        if ((!this.codexConfig?.models?.length && !this.codexConfig?.model && !this.codexConfig?.baseUrl) && !this.loading.codexConfig) {
+          this.loadCodexConfig().catch(() => {});
+        }
       }
       if (view === 'user-access') {
         if (!this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
@@ -5547,18 +5610,18 @@ export default {
         this.restoreWorkbenchDisplayCacheKeyIfEmpty('projects');
         this.restoreWorkbenchDisplayCacheKeyIfEmpty('customWorkflows');
         if (!this.projects.length && !this.loading.projects) this.refreshProjects().catch(() => {});
-        if (!this.customWorkflows.length || dirty) this.refreshCustomWorkflows().catch(() => {});
-        if (!this.loading.runs) this.refreshRuns({ background: !dirty }).catch(() => {});
+        if ((!this.customWorkflows.length || dirty) && !this.loading.runs) this.refreshCustomWorkflows().catch(() => {});
+        if ((!this.runs.length || dirty) && !this.loading.runs) this.refreshRuns({ background: !dirty }).catch(() => {});
         if ((!this.agentWorkers.length || dirty) && !this.loading.agentWorkers) this.refreshAgentWorkers({ background: !dirty }).catch(() => {});
         if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
       }
       if (view === 'agent-workers') {
-        if (!this.loading.runs) this.refreshRuns({ background: !dirty }).catch(() => {});
+        if ((!this.runs.length || dirty) && !this.loading.runs) this.refreshRuns({ background: !dirty }).catch(() => {});
         if ((!this.agentWorkers.length || dirty) && !this.loading.agentWorkers) this.refreshAgentWorkers({ background: !dirty }).catch(() => {});
         if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
       }
       if (view === 'ai-archive') {
-        if (!this.loading.runs) this.refreshRuns({ background: !dirty }).catch(() => {});
+        if ((!this.runs.length || dirty) && !this.loading.runs) this.refreshRuns({ background: !dirty }).catch(() => {});
         if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
       }
       if (view === 'operation-logs') {
@@ -5916,37 +5979,43 @@ export default {
       const aiMembersView = this.activeView === 'ai-members';
       try {
         if (lightRunViews.includes(this.activeView)) {
-          jobs.push(['执行记录', () => this.refreshRuns()]);
+          if (!this.runs.length) jobs.push(['执行记录', () => this.refreshRuns()]);
           if (this.can('menu.runs')) {
-            jobs.push(['自定义流程模板', () => this.refreshCustomWorkflows()]);
+            if (!this.customWorkflows.length) jobs.push(['自定义流程模板', () => this.refreshCustomWorkflows()]);
           }
-          if (['runs', 'agent-workers'].includes(this.activeView) && this.can('api.agentWorkers.read')) {
+          if (['runs', 'agent-workers'].includes(this.activeView) && this.can('api.agentWorkers.read') && !this.agentWorkers.length) {
             jobs.push(['Worker 状态', () => this.refreshAgentWorkers()]);
           }
           if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length) {
             jobs.push(['账号列表', () => this.refreshUsers()]);
           }
-        } else if (!aiMembersView && this.can('menu.skillList')) {
-          jobs.push(['库存缓存', () => this.loadSkillInventorySavedSnapshot({ force: true, silent: true })]);
-          jobs.push(['人工研究清单', () => this.refreshAiAssetSheet()]);
-          jobs.push(['验证回填', () => this.refreshSkillValidations({ force: true, silent: true })]);
-          jobs.push(['调用次数', () => this.refreshUsageCounters()]);
-          jobs.push(['版本覆盖', () => this.refreshSkillVersionOverrides()]);
+        } else if (this.activeView === 'tasks') {
+          if ((!this.businessTasks.length || !this.bugs.length || !this.taskReviews.length) && this.can('menu.tasks')) {
+            jobs.push(['任务中心', () => this.refreshTasks()]);
+          }
+        } else if (this.isSkillInventoryViewActive && this.can('menu.skillList')) {
+          if (!this.skillInventoryRows.length && !this.hasProjectScanProducts(this.scans)) {
+            jobs.push(['库存缓存', () => this.loadSkillInventorySavedSnapshot({ force: true, silent: true })]);
+          }
+          if (!this.aiAssetSheetRows.length) jobs.push(['人工研究清单', () => this.refreshAiAssetSheet()]);
+          if (!this.skillValidationRows.length) jobs.push(['验证回填', () => this.refreshSkillValidations({ force: true, silent: true })]);
+          if (!this.usageCountersReadyForSkillInventory()) jobs.push(['调用次数', () => this.refreshUsageCounters()]);
+          if (!Object.keys(this.skillVersionOverrides || {}).length) jobs.push(['版本覆盖', () => this.refreshSkillVersionOverrides()]);
         }
-        if (!lightRunViews.includes(this.activeView) && !aiMembersView && (this.can('menu.skillList') || this.can('menu.aiMembers'))) {
+        if (this.isSkillInventoryViewActive && (this.can('menu.skillList') || this.can('menu.aiMembers')) && !this.artProgressEvents.length) {
           jobs.push(['AI 研究同步', () => this.refreshArtProgressEvents()]);
         }
         if (aiMembersView && this.can('api.aiMembers.read')) {
           this.restoreAiMembersBoardHtmlSnapshot();
-          jobs.push(['成员快照', () => this.refreshAiMembers({ silent: true })]);
-        } else if (!lightRunViews.includes(this.activeView) && this.can('menu.aiMembers')) {
-          jobs.push(['成员快照', () => this.refreshAiMembers()]);
+          if (!this.aiMembersSnapshot?.members?.length || !this.hasAiMembersBoardHtml(this.aiMembersSnapshot)) {
+            jobs.push(['成员快照', () => this.refreshAiMembers({ silent: true })]);
+          }
         }
         const results = await Promise.allSettled(jobs.map(([, run]) => run()));
         results.forEach((result, index) => {
           if (result.status === 'rejected') console.warn(`${jobs[index][0]}恢复失败，已保留当前页面状态`, result.reason);
         });
-        if (!lightRunViews.includes(this.activeView) && !aiMembersView && this.can('menu.skillList')) {
+        if (this.isSkillInventoryViewActive && this.can('menu.skillList')) {
           this.applySkillAliasOverridesToScans();
           this.saveWorkbenchDisplayCache('skillVersionOverrides', this.skillVersionOverrides);
           this.saveWorkbenchDisplayCache('scans', this.scans);
