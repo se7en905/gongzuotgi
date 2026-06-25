@@ -9914,7 +9914,7 @@ export default {
       };
       this.maintenancePreview = null;
       this.maintenancePreviewPayloadKey = '';
-      if (type === 'runs') this.ensureMaintenanceUserOptions();
+      if (['runs', 'generated-images'].includes(type)) this.ensureMaintenanceUserOptions();
     },
 
     resetMaintenanceFilters() {
@@ -10023,7 +10023,7 @@ export default {
         this.maintenancePreviewPayloadKey = this.maintenancePayloadKey(payload);
         await this.refreshMaintenanceOverview();
         if (this.maintenanceForm.type === 'operation-logs') await this.refreshOperationLogs().catch(() => {});
-        if (this.maintenanceForm.type === 'runs') await this.refreshRuns({ minInterval: 0 }).catch(() => {});
+        if (['runs', 'generated-images'].includes(this.maintenanceForm.type)) await this.refreshRuns({ minInterval: 0 }).catch(() => {});
         ElMessage.success(`维护清理完成：删除 ${Number(result.deletedCount || 0)} 项，释放 ${this.formatBytes(result.releasedBytes || result.estimatedBytes || 0)}`);
       } catch (error) {
         ElMessage.error(this.readApiError(error) || '维护清理失败');

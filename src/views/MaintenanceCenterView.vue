@@ -108,7 +108,7 @@
               <ElOption label="失败" value="fail" />
             </ElSelect>
           </label>
-          <label v-if="app.maintenanceForm.type === 'runs'" class="maintenance-filter-field">
+          <label v-if="['runs', 'generated-images'].includes(app.maintenanceForm.type)" class="maintenance-filter-field">
             <span>状态</span>
             <ElSelect v-model="app.maintenanceForm.filters.status" clearable placeholder="全部非运行状态">
               <ElOption label="已完成" value="completed" />
@@ -117,7 +117,7 @@
               <ElOption label="已取消" value="cancelled" />
             </ElSelect>
           </label>
-          <label v-if="app.maintenanceForm.type === 'runs'" class="maintenance-filter-field">
+          <label v-if="['runs', 'generated-images'].includes(app.maintenanceForm.type)" class="maintenance-filter-field">
             <span>类型</span>
             <ElSelect v-model="app.maintenanceForm.filters.sourceType" clearable placeholder="全部类型">
               <ElOption label="直接执行" value="direct-skill" />
@@ -126,7 +126,7 @@
               <ElOption label="Bug 执行" value="bug" />
             </ElSelect>
           </label>
-          <label v-if="app.maintenanceForm.type === 'runs'" class="maintenance-filter-field">
+          <label v-if="['runs', 'generated-images'].includes(app.maintenanceForm.type)" class="maintenance-filter-field">
             <span>执行人 / 操作人</span>
             <ElSelect v-model="app.maintenanceForm.filters.userId" clearable filterable placeholder="全部人员">
               <ElOption v-for="user in app.users" :key="user.id" :label="user.displayName || user.username" :value="user.id" />
@@ -233,6 +233,12 @@ export default {
           notice: '必须选择开始和结束时间；运行中记录不会被删除。'
         },
         {
+          value: 'generated-images',
+          label: '生图产物清理',
+          description: '按时间、状态、类型、执行人删除执行归档里的生成图片。',
+          notice: '必须选择开始和结束时间；只删生成图片和对应引用，不删执行记录、任务和累计调用统计。'
+        },
+        {
           value: 'art-briefs',
           label: '美术摘要产物清理',
           description: '按任务号、关键词或生成时间清理摘要 HTML / AI 工作说明。',
@@ -246,6 +252,7 @@ export default {
     keywordPlaceholder() {
       if (this.app.maintenanceForm.type === 'operation-logs') return '用户、对象、描述、IP';
       if (this.app.maintenanceForm.type === 'runs') return '执行内容、Skill/md、Figma 链接';
+      if (this.app.maintenanceForm.type === 'generated-images') return '执行标题、图片目录、图片文件名';
       if (this.app.maintenanceForm.type === 'art-briefs') return '摘要标题、任务号、目录名';
       return '关键词';
     }

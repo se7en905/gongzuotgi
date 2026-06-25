@@ -2531,6 +2531,154 @@ export async function deleteRunsByFilters(filters = {}) {
   return { deleted, remaining };
 }
 
+function generatedImageArtifactEntriesForRun(run = {}) {
+  const pools = [
+    run.generatedArtifacts,
+    run.resultSummary?.generatedArtifacts,
+    run.workerResult?.generatedArtifacts
+  ];
+  const rows = [];
+  const seen = new Set();
+  for (const pool of pools) {
+    for (const item of Array.isArray(pool) ? pool : []) {
+      const artifact = item && typeof item === 'object'
+        ? item
+        : { path: String(item || ''), relativePath: String(item || ''), name: String(item || '').split('/').pop() || String(item || '') };
+      const rawPath = cleanString(artifact.relativePath || artifact.path || artifact.name);
+      const rawName = cleanString(artifact.name || rawPath.split('/').pop());
+      const type = cleanString(artifact.type);
+      if (!rawPath && !rawName) continue;
+      if (type && !/^image\//i.test(type) && runArtifactTypeFromPath(rawPath || rawName) !== 'image') continue;
+      if (!type && runArtifactTypeFromPath(rawPath || rawName) !== 'image') continue;
+      const resolved = resolveRunArtifactSourcePath(rawPath || rawName);
+      if (!resolved || seen.has(resolved)) continue;
+      seen.add(resolved);
+      rows.push({
+        ...artifact,
+        path: resolved,
+        relativePath: rawPath,
+        name: rawName || path.basename(resolved)
+      });
+    }
+  }
+  return rows;
+}
+
+function runGeneratedImageArtifactDir(run = {}) {
+  if (!run?.artifactRoot) return '';
+  const dir = path.join(run.artifactRoot, '生成图片');
+  return isPathInsideStore(dir, paths.artifactDir) ? dir : '';
+}
+
+async function previewGeneratedImageArtifactsDeletion(filters = {}) {
+  validateRunMaintenanceFilters(filters);
+  const runs = await readJson(paths.runs, []);
+  const { deleted } = splitRunsByArchiveDeleteFilters(runs, filters);
+  const sample = [];
+  let estimatedBytes = 0;
+  for (const run of deleted) {
+    const images = generatedImageArtifactEntriesForRun(run);
+    const imageDir = runGeneratedImageArtifactDir(run);
+    const imageDirSize = imageDir ? await directorySize(imageDir) : 0;
+    const imageBytes = images.reduce((total, item) => total + Number(item.size || 0), 0);
+    const releasedBytes = Math.max(imageDirSize, imageBytes);
+    if (!images.length && releasedBytes <= 0) continue;
+    estimatedBytes += releasedBytes;
+    sample.push({
+      id: run.id,
+      title: run.title,
+      status: run.status,
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
+      developer: run.developer,
+      assignedToName: run.assignedToName,
+      targetName: `${run.title || run.id || '执行记录'} / 生成图片`,
+      path: imageDir || images[0]?.path || '',
+      relativePath: imageDir ? path.relative(paths.root, imageDir).replaceAll(path.sep, '/') : images[0]?.relativePath || '',
+      bytes: releasedBytes,
+      imageCount: images.length,
+      kind: 'generated-images'
+    });
+  }
+  return {
+    matchedCount: sample.length,
+    estimatedBytes,
+    sample: sample.slice(0, 12)
+  };
+}
+
+export async function deleteGeneratedImageArtifactsByFilters(filters = {}) {
+  validateRunMaintenanceFilters(filters);
+  const runs = await readJson(paths.runs, []);
+  const nextRuns = [];
+  const deleted = [];
+  let releasedBytes = 0;
+  for (const rawRun of runs) {
+    const matches = splitRunsByArchiveDeleteFilters([rawRun], filters).deleted.length > 0;
+    if (!matches) {
+      nextRuns.push(rawRun);
+      continue;
+    }
+    const run = ensureRunArtifactRootFromExistingFiles(rawRun);
+    const images = generatedImageArtifactEntriesForRun(run);
+    const imageDir = runGeneratedImageArtifactDir(run);
+    const imageDirSize = imageDir ? await directorySize(imageDir) : 0;
+    const imagePathSet = new Set(images.map(item => cleanString(item.path)).filter(Boolean));
+    const stripArtifacts = (list = []) => dedupeRunArtifacts((Array.isArray(list) ? list : []).filter(item => {
+      const artifact = item && typeof item === 'object'
+        ? item
+        : { path: String(item || ''), relativePath: String(item || ''), name: String(item || '').split('/').pop() || String(item || '') };
+      const resolved = resolveRunArtifactSourcePath(artifact.relativePath || artifact.path || artifact.name);
+      if (!resolved) return true;
+      return !imagePathSet.has(resolved);
+    }));
+    const nextRun = {
+      ...run,
+      generatedArtifacts: stripArtifacts(run.generatedArtifacts),
+      resultSummary: {
+        ...(run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {}),
+        generatedArtifacts: stripArtifacts(run.resultSummary?.generatedArtifacts),
+        artifacts: (Array.isArray(run.resultSummary?.artifacts) ? run.resultSummary.artifacts : []).filter(value => {
+          const resolved = resolveRunArtifactSourcePath(value);
+          return !resolved || !imagePathSet.has(resolved);
+        })
+      },
+      workerResult: {
+        ...(run.workerResult && typeof run.workerResult === 'object' ? run.workerResult : {}),
+        generatedArtifacts: stripArtifacts(run.workerResult?.generatedArtifacts)
+      },
+      updatedAt: new Date().toISOString()
+    };
+    nextRuns.push(nextRun);
+    if (imageDir) await removeDirectoryIfSafe(imageDir, run.artifactRoot);
+    const itemBytes = Math.max(imageDirSize, images.reduce((total, item) => total + Number(item.size || 0), 0));
+    releasedBytes += itemBytes;
+    if (images.length || imageDirSize > 0) {
+      deleted.push({
+        id: run.id,
+        title: run.title,
+        status: run.status,
+        createdAt: run.createdAt,
+        updatedAt: run.updatedAt,
+        developer: run.developer,
+        assignedToName: run.assignedToName,
+        targetName: `${run.title || run.id || '执行记录'} / 生成图片`,
+        path: imageDir || images[0]?.path || '',
+        relativePath: imageDir ? path.relative(paths.root, imageDir).replaceAll(path.sep, '/') : images[0]?.relativePath || '',
+        bytes: itemBytes,
+        imageCount: images.length,
+        kind: 'generated-images'
+      });
+    }
+  }
+  await writeJson(paths.runs, nextRuns);
+  return {
+    deletedCount: deleted.length,
+    releasedBytes,
+    deleted
+  };
+}
+
 export async function previewRunsDeletionByFilters(filters = {}) {
   validateRunMaintenanceFilters(filters);
   const runs = await readJson(paths.runs, []);
@@ -2579,6 +2727,7 @@ export async function maintenanceOverview() {
     usageCounters,
     safePreview,
     summaryPreview,
+    generatedImagesPreview,
     dataSize,
     workspaceSize,
     artifactSize,
@@ -2600,6 +2749,7 @@ export async function maintenanceOverview() {
     readJson(paths.usageCounters, {}),
     previewSafeMaintenanceCleanup(),
     previewArtBriefOutputDeletion({}),
+    previewGeneratedImageArtifactsDeletion({ from: '1970-01-01 00:00:00', to: '2099-12-31 23:59:59' }),
     directorySize(paths.dataDir),
     directorySize(paths.workspaceDir),
     directorySize(paths.artifactDir),
@@ -2620,6 +2770,7 @@ export async function maintenanceOverview() {
       { key: 'data', label: '平台业务数据 data', path: paths.dataDir, bytes: dataSize, protected: true, cleanupLevel: 'protected', cleanupLevelLabel: '不要删，会影响功能', fileActionLabel: '打开 data 目录', actionLabel: '仅查看体量', note: '这里放账号、任务、缓存、调用次数和看板状态；手动删目录会让工作台数据缺失或统计不准。' },
       { key: 'workspace', label: '执行工作区 workspace', path: paths.workspaceDir, bytes: workspaceSize, protected: true, cleanupLevel: 'caution', cleanupLevelLabel: '慎重删，会少历史材料', maintenanceType: 'runs', cleanupActionLabel: '按范围删除执行历史', cleanupActionHint: '推荐范围删除：先选时间、状态或执行人，只删确认不用追查的旧执行；不会删除任务中心任务。', route: '/ai-archive', fileActionLabel: '打开 workspace', actionLabel: '查看 AI档案', note: '这里是执行过程材料和本机工作区；删了不会删除任务中心任务，但会让对应执行过程材料以后看不到。' },
       { key: 'artifacts', label: '执行产物归档 workspace/artifacts', path: paths.artifactDir, bytes: artifactSize, protected: true, cleanupLevel: 'caution', cleanupLevelLabel: '慎重删，会少产物证据', maintenanceType: 'runs', cleanupActionLabel: '按范围删除执行产物', cleanupActionHint: '推荐范围删除：必须跟执行记录一起预览删除；不会删任务，但会少执行结果证据。', route: '/ai-archive', fileActionLabel: '打开产物归档', actionLabel: '查看 AI档案', note: '这里是美术执行台和 AI档案会查看的归档产物；删了不影响任务本身，但以后可能看不到执行结果证据。' },
+      { key: 'generatedImages', label: '生图产物归档', path: paths.artifactDir, bytes: generatedImagesPreview.estimatedBytes || 0, count: generatedImagesPreview.matchedCount || 0, protected: false, cleanupLevel: 'range', cleanupLevelLabel: '能删，但建议按范围', maintenanceType: 'generated-images', cleanupActionLabel: '按范围删除生图产物', cleanupActionHint: '推荐范围删除：按时间、状态、执行人预览，只删执行归档里的生成图片，不删执行记录本身。', route: '/runs', fileActionLabel: '打开生图产物目录', actionLabel: '查看执行台', note: '这里是执行台归档的生成图片成品。删除后不会删任务和执行记录，但这批成品图以后无法在执行台和 AI档案里预览或下载。' },
       { key: 'artBriefOutputs', label: '美术摘要 outputs/art-briefs', path: path.join(paths.root, 'outputs', 'art-briefs'), bytes: artBriefOutputsSize, protected: false, cleanupLevel: 'range', cleanupLevelLabel: '能删，但要先选范围', maintenanceType: 'art-briefs', cleanupActionLabel: '按范围删除摘要文件', cleanupActionHint: '推荐范围删除：按任务号、关键词或时间预览后再删；不会影响禅道任务和任务量级，但对应摘要以后看不到。', fileActionLabel: '打开摘要目录', actionLabel: '定位摘要清理', note: '这里是任务中心生成的摘要 HTML 和 AI 工作说明；删了不影响禅道任务、任务中心任务和量级，但对应摘要文件以后看不到。' },
       { key: 'outputs', label: '输出目录 outputs', path: path.join(paths.root, 'outputs'), bytes: outputsSize, protected: true, cleanupLevel: 'caution', cleanupLevelLabel: '慎重删，别删整个目录', maintenanceType: 'art-briefs', cleanupActionLabel: '按范围删除摘要产物', cleanupActionHint: '推荐范围删除：只允许删 outputs/art-briefs 的摘要范围，不会删除整个 outputs。', fileActionLabel: '打开 outputs', actionLabel: '定位摘要清理', note: '这里可能混有正式输出和业务产物；不要手动删整个 outputs，只能在维护中心按明确业务类型清理。' },
       { key: 'logs', label: '运行日志 logs', path: path.join(paths.root, 'logs'), bytes: logsSize, protected: false, cleanupLevel: 'range', cleanupLevelLabel: '能删，但排障后再删', route: '/operation-logs', fileActionLabel: '打开 logs', actionLabel: '查看操作日志', note: '这里主要用于排查问题；删了不会影响工作台业务数据，但会少本机排障线索。日志文件建议排障结束后归档或截断。' }
@@ -2646,6 +2797,7 @@ export async function previewMaintenanceAction(input = {}) {
     return { type, ...(await previewOperationLogDeletion(filters)) };
   }
   if (type === 'runs') return { type, ...(await previewRunsDeletionByFilters(filters)) };
+  if (type === 'generated-images') return { type, ...(await previewGeneratedImageArtifactsDeletion(filters)) };
   if (type === 'art-briefs') {
     validateArtBriefMaintenanceFilters(filters);
     return { type, ...(await previewArtBriefOutputDeletion(filters)) };
@@ -2668,6 +2820,7 @@ export async function applyMaintenanceAction(input = {}) {
     const result = await deleteRunsByFilters(filters);
     return { type, deletedCount: result.deleted.length, deletedIds: result.deleted.map(run => run.id), deleted: result.deleted };
   }
+  if (type === 'generated-images') return { type, ...(await deleteGeneratedImageArtifactsByFilters(filters)) };
   if (type === 'art-briefs') return { type, ...(await deleteArtBriefOutputsByFilters(filters)) };
   const error = new Error('不支持的维护类型。');
   error.status = 400;

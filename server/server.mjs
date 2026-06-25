@@ -10400,6 +10400,7 @@ function maintenanceActionLabel(type = '') {
     'safe-clean': '安全维护清理',
     'operation-logs': '操作日志范围删除',
     runs: 'AI档案 / 执行记录范围删除',
+    'generated-images': '生图产物清理',
     'art-briefs': '美术摘要产物清理'
   }[String(type || '').trim()] || '维护中心清理';
 }
