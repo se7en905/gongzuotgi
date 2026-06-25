@@ -8947,7 +8947,7 @@ export default {
       const normalizedUsedProductCount = Math.min(usageResultCount, Math.max(usedProductCount, usageResultCount > 0 ? 1 : 0));
       const usagePeopleCount = this.aiMemberScoreUsagePeopleCount(productRows);
       const usageCoverageRate = this.aiMemberScoreUsageCoverageRate(usagePeopleCount);
-      const usageRatioBonus = Math.min(independentScoreMode ? 4 : 6, Math.round(usageCoverageRate / 20));
+      const usageRatioBonus = Math.min(independentScoreMode ? 4 : 5, Math.round(usageCoverageRate / (independentScoreMode ? 20 : 25)));
       const completedRunCount = Math.max(monthRuns.length, Number(monthRunBucket.completedRunCount || 0));
       const normalizedCompletedRunSkillCount = Math.min(completedRunCount, Math.max(completedRunSkillCount, completedRunCount > 0 ? 1 : 0));
       const repeatedUsageCount = Math.max(0, usageResultCount - normalizedUsedProductCount);
@@ -8956,10 +8956,10 @@ export default {
       const repeatedRunBonus = this.aiMemberScoreRepeatedRunBonus(repeatedRunCount, independentScoreMode);
       const usageScore = independentScoreMode
         ? Math.min(20, normalizedUsedProductCount * 7 + repeatedUsageBonus + usageRatioBonus)
-        : Math.min(30, normalizedUsedProductCount * 6 + repeatedUsageBonus + usageRatioBonus + validationProductCount * 3);
+        : Math.min(25, normalizedUsedProductCount * 5 + repeatedUsageBonus + usageRatioBonus);
       const runScore = independentScoreMode
         ? Math.min(15, normalizedCompletedRunSkillCount * 8 + repeatedRunBonus)
-        : Math.min(15, normalizedCompletedRunSkillCount * 5.5 + repeatedRunBonus);
+        : Math.min(30, normalizedCompletedRunSkillCount * 6 + repeatedRunBonus + validationProductCount * 3);
       const penalty = 0;
       const score = Math.max(0, Math.min(100, Math.round(productScore + usageScore + runScore)));
       return {
@@ -9012,27 +9012,27 @@ export default {
         repeatCount,
         independentScoreMode ? [1.5, 1, 0.75, 0.5] : [2, 1.5, 1, 0.5],
         0.25,
-        independentScoreMode ? 6 : 10
+        independentScoreMode ? 6 : 8
       );
     },
 
     aiMemberScoreRepeatedRunBonus(repeatCount = 0, independentScoreMode = false) {
       return this.aiMemberScoreDecayBonus(
         repeatCount,
-        independentScoreMode ? [3, 2, 1, 0.5] : [2.5, 1.5, 1, 0.5],
+        independentScoreMode ? [3, 2, 1, 0.5] : [3.5, 2.5, 1.5, 1],
         0.25,
-        independentScoreMode ? 6 : 5
+        independentScoreMode ? 6 : 8
       );
     },
 
     aiMemberScoreProductValue(productRows = [], productItems = [], independentScoreMode = false) {
-      const cap = independentScoreMode ? 60 : 55;
+      const cap = independentScoreMode ? 60 : 35;
       const rows = Array.isArray(productRows) ? productRows.filter(row => row && row.hidden !== true) : [];
       const rowValueTotal = rows
         .map(row => this.aiScoreProductRowValue(row).value)
         .reduce((sum, value) => sum + value, 0);
       const unmatchedCount = Math.max(0, (Array.isArray(productItems) ? productItems.length : 0) - rows.length);
-      const fallbackValue = unmatchedCount * 3;
+      const fallbackValue = unmatchedCount * (independentScoreMode ? 3 : 2);
       const raw = Math.round((rowValueTotal + fallbackValue) * 10) / 10;
       return {
         raw,
@@ -9047,11 +9047,13 @@ export default {
       const peopleCount = Number(usage.peopleCount || 0);
       const usageRate = Number(usage.rate || 0);
       const versionMajor = Number(this.skillInventoryVersionMajor(row));
-      const versionValue = versionMajor >= 3 ? 6 : versionMajor >= 2 ? 4 : 2;
+      const versionValue = independentScoreMode
+        ? (versionMajor >= 3 ? 6 : versionMajor >= 2 ? 4 : 2)
+        : (versionMajor >= 3 ? 4.5 : versionMajor >= 2 ? 3 : 1.5);
       const fullTeamIntent = true;
       const riskMultiplier = this.aiScoreProductValueMultiplier(row, { usageCount, peopleCount, usageRate, fullTeamIntent });
       return {
-        value: Math.max(0, Math.min(6, versionValue * riskMultiplier)),
+        value: Math.max(0, Math.min(independentScoreMode ? 6 : 4.5, versionValue * riskMultiplier)),
         usageCount,
         peopleCount,
         usageRate,

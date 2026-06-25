@@ -9,6 +9,9 @@
       <div class="ai-score-actions">
         <span v-if="app.aiMemberScoreRowsSnapshotAt">上次刷新 {{ app.formatDateTime(app.aiMemberScoreRowsSnapshotAt) }}</span>
         <span v-else>暂无评分快照</span>
+        <ElButton plain @click="scoreRuleDialogVisible = true">
+          评分说明
+        </ElButton>
         <ElButton
           v-if="app.canRefreshAiMemberScore"
           type="primary"
@@ -40,13 +43,31 @@
         <div class="ai-score-metrics">
           <span>产物 {{ member.productCount }} · {{ member.productValueLevel || '基础沉淀' }}</span>
           <span>使用 {{ member.monthUsageCount }}</span>
-          <span>验证 {{ member.monthValidationCount }}</span>
           <span>执行 {{ member.monthRunCount }}</span>
         </div>
         <p>{{ member.reason }}</p>
       </article>
     </div>
   </section>
+  <ElDialog
+    v-model="scoreRuleDialogVisible"
+    title="AI 评分说明"
+    width="760px"
+    class="app-dialog ai-score-rule-dialog"
+    append-to-body
+    align-center
+  >
+    <div class="ai-score-rule-dialog__content">
+      <section
+        v-for="section in scoreRuleSections"
+        :key="section.title"
+        class="ai-score-rule-dialog__section"
+      >
+        <h4>{{ section.title }}</h4>
+        <p v-for="line in section.lines" :key="line">{{ line }}</p>
+      </section>
+    </div>
+  </ElDialog>
   <section class="ai-board-frame-shell" :class="{ locked: !app.canViewAiMembersBoardContent }">
     <div v-if="!app.canViewAiMembersBoardContent" class="ai-board-lock-mask">
       <div class="ai-board-lock-card">
@@ -90,13 +111,60 @@ export default {
     },
     activeBoardHtml() {
       return this.boardHtml;
+    },
+    scoreRuleSections() {
+      return [
+        {
+          title: '1. 总分怎么来',
+          lines: [
+            '当前总分 = 产物分 + 使用分 + 执行分，最终按 0 到 100 分封顶。',
+            '当前口径已经压低产物分权重、提高执行分权重，更强调真实落地执行，而不是只看沉淀数量。'
+          ]
+        },
+        {
+          title: '2. 产物数量怎么数',
+          lines: [
+            '产物数量按“看板内容 + 刷新后的实时库存”合并后去重统计。',
+            '这里只看有没有新增沉淀，不区分是否已验证；同名或同一路径产物会自动去重。'
+          ]
+        },
+        {
+          title: '3. 产物分怎么给',
+          lines: [
+            '单个产物按版本档位计分：1.0 记 1.5 分，2.0 记 3 分，3.0 记 4.5 分；3.0 代表更接近可直接使用。',
+            '总产物分上限已下调，作废、废弃、淘汰产物不计分；明显只适合单人、单项目、一次性使用的专项产物会按系数折减。'
+          ]
+        },
+        {
+          title: '4. 使用分怎么给',
+          lines: [
+            '普通成员使用分上限 25 分：按本月去重后的闭环使用产物数、重复使用加分、覆盖人数加分计算。',
+            '独立口径成员使用分上限 18 分：按本人闭环使用和覆盖率计算。'
+          ]
+        },
+        {
+          title: '5. 执行分怎么给',
+          lines: [
+            '普通成员执行分上限 30 分：按本月完成执行的 skill 数、重复执行加分，以及互验闭环一并计入。',
+            '独立口径成员执行分上限 25 分：同样更强调真实执行活跃度，而不是只看产物堆积。'
+          ]
+        },
+        {
+          title: '6. 负责人怎么看这个分',
+          lines: [
+            '这套分更适合看“本月沉淀、复用、执行活跃度”的综合趋势，适合作为月度管理看板。',
+            '如果要直接用于个人绩效结论，建议同时结合任务难度、实际业务价值、返工情况和负责人复核，不建议只看单一分值。'
+          ]
+        }
+      ];
     }
   },
   data() {
     return {
       frameHtml: '',
       lastRealFrameHtml: '',
-      frameHtmlUpdateTimer: 0
+      frameHtmlUpdateTimer: 0,
+      scoreRuleDialogVisible: false
     };
   },
   watch: {
@@ -380,7 +448,7 @@ export default {
 .ai-score-metrics {
   display: grid;
   gap: 6px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .ai-score-metrics span {
@@ -397,6 +465,31 @@ export default {
 }
 
 .ai-score-card p {
+  margin: 0;
+}
+
+.ai-score-rule-dialog__content {
+  display: grid;
+  gap: 16px;
+}
+
+.ai-score-rule-dialog__section {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-score-rule-dialog__section h4 {
+  color: var(--heading);
+  font-size: 14px;
+  font-weight: 760;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.ai-score-rule-dialog__section p {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.7;
   margin: 0;
 }
 
