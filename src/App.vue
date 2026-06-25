@@ -129,7 +129,7 @@
 
         <TaskCenterView v-if="activeView === 'tasks'" :app="appBridge" :revision="taskCenterRevision" />
 
-        <AiMembersView v-if="activeView === 'ai-members'" :app="appBridge" />
+        <AiMembersView v-if="aiMembersViewMounted" v-show="activeView === 'ai-members'" :app="appBridge" />
 
         <section v-show="activeView === 'codex-config'" class="view-grid codex-config-view">
           <ElCard shadow="never" class="panel-card page-card codex-config-card">
@@ -818,6 +818,7 @@ export default {
       taskReviews: readWorkbenchDisplayCacheArray('taskReviews'),
       aiMembersSnapshot: readAiMembersBoardHtmlDisplayCache(),
       aiMembersViewMounted: false,
+      aiMembersFirstPaintReady: false,
       aiMemberScoreReady: false,
       aiMemberScoreRowsSnapshot: [],
       aiMemberScoreRowsSnapshotKey: '',
@@ -3410,8 +3411,7 @@ export default {
         && this.aiMemberScoreRowsSnapshot.length
         && this.isCurrentAiMemberScoreSnapshotMonth(this.aiMemberScoreRowsSnapshotMonth)
       ) {
-        const liveRows = this.computeAiMemberScoreRows();
-        return this.mergeAiMemberScoreSnapshotRows(this.aiMemberScoreRowsSnapshot, liveRows);
+        return this.aiMemberScoreRowsSnapshot;
       }
       return [];
     },
@@ -5652,9 +5652,13 @@ export default {
           this.refreshAiMembersBoardDisplayCache({
             silent: true,
             minInterval: boardDirty ? 0 : undefined
+          }).finally(() => {
+            if (this.activeView === 'ai-members') this.prepareAiMembersView();
           }).catch(() => {});
         } else if (generalDirty && !scoreDirty && !this.loading.aiMembers && this.can('api.aiMembers.read')) {
-          this.refreshAiMembersBoardDisplayCache({ silent: true }).catch(() => {});
+          this.refreshAiMembersBoardDisplayCache({ silent: true }).finally(() => {
+            if (this.activeView === 'ai-members') this.prepareAiMembersView();
+          }).catch(() => {});
         }
       }
       if (view === 'codex-config') {
@@ -6040,8 +6044,17 @@ export default {
     async restoreAiMembersBeforeFirstPaint() {
       if (this.activeView !== 'ai-members' && window.location.pathname !== '/ai-members') return;
       this.restoreAiMembersBoardHtmlSnapshot();
-      if (this.hasAiMembersBoardHtml(this.aiMembersSnapshot) || !this.currentUser) return;
-      await this.refreshAiMembersBoardDisplayCache({ silent: true, minInterval: 0 });
+      this.restoreAiMemberScoreSnapshot();
+      const jobs = [];
+      if (!this.hasAiMembersBoardHtml(this.aiMembersSnapshot) && this.currentUser && this.can('api.aiMembers.read')) {
+        jobs.push(this.refreshAiMembersBoardDisplayCache({ silent: true, minInterval: 0 }));
+      }
+      if (!this.aiMemberScoreReady && this.currentUser && this.canViewAiMemberScore && this.can('api.aiMembers.score.read')) {
+        jobs.push(this.refreshAiMemberScoreSnapshotFromServer({ silent: true, background: false, minInterval: 0 }));
+      }
+      if (jobs.length) await Promise.allSettled(jobs);
+      this.restoreAiMembersBoardHtmlSnapshot();
+      this.restoreAiMemberScoreSnapshot();
     },
 
     async restoreWorkbenchServerState() {
@@ -6098,9 +6111,9 @@ export default {
       } finally {
         this.workbenchStateRestoring = false;
         if (this.activeView === 'ai-members') {
-          this.aiMembersBoardFrameReady = true;
+          this.restoreAiMembersBoardHtmlSnapshot();
           this.restoreAiMemberScoreSnapshot();
-          await this.refreshAiMemberScoreSnapshotFromServer();
+          this.prepareAiMembersView();
         }
       }
     },
@@ -7307,6 +7320,7 @@ export default {
         }
         this.schedulePlatformRefresh('ai-member-score-snapshot', async () => {
           await this.refreshAiMemberScoreSnapshotFromServer({ background: true, minInterval: 1500 });
+          if (this.activeView === 'ai-members') this.prepareAiMembersView();
         }, 300);
       }
       if (type === 'ai-members-board.changed' && this.can('api.aiMembers.read')) {
@@ -7316,6 +7330,7 @@ export default {
         }
         this.schedulePlatformRefresh('ai-members-board', async () => {
           await this.refreshAiMembersBoardDisplayCache({ silent: true, minInterval: 0 });
+          if (this.activeView === 'ai-members') this.prepareAiMembersView();
         }, 800);
       }
     },
@@ -8966,7 +8981,8 @@ export default {
     },
 
     prepareAiMembersView() {
-      this.aiMembersBoardFrameReady = false;
+      this.aiMembersViewMounted = true;
+      this.restoreAiMembersBoardHtmlSnapshot();
       this.cancelAiMembersDeferredWork();
       if (
         Array.isArray(this.aiMemberScoreRowsSnapshot)
@@ -8980,13 +8996,10 @@ export default {
           && this.aiMemberScoreRowsSnapshot.length
           && this.isCurrentAiMemberScoreSnapshotMonth(this.aiMemberScoreRowsSnapshotMonth);
       }
-      this.refreshAiMemberScoreSnapshotFromServer({ background: true }).catch(() => {});
-      if (this.workbenchStateRestoring) return;
-      this.aiMembersBoardFrameReadyTimer = setTimeout(() => {
-        if (this.activeView !== 'ai-members') return;
-        this.aiMembersBoardFrameReady = true;
-        this.aiMembersBoardFrameReadyTimer = 0;
-      }, 80);
+      const hasBoardHtml = this.hasAiMembersBoardHtml(this.aiMembersSnapshot);
+      const scoreReady = !this.canViewAiMemberScore || this.aiMemberScoreReady;
+      this.aiMembersFirstPaintReady = hasBoardHtml && scoreReady;
+      this.aiMembersBoardFrameReady = hasBoardHtml;
     },
 
     cancelAiMembersDeferredWork() {
@@ -19533,6 +19546,41 @@ export default {
           : 'Image2 配置已发现，API 未验证';
       }
       return 'Image2 配置待读取';
+    },
+
+    directSkillWorkerImage2SourceLabel(worker = null) {
+      if (!worker) return '未发现 Worker';
+      const checks = worker.checks && typeof worker.checks === 'object' ? worker.checks : {};
+      const sources = Array.isArray(checks.image2Sources) ? checks.image2Sources.filter(Boolean) : [];
+      const baseSource = sources.find(item => /OpenAI\/Image2 API 入口：/i.test(String(item || '')));
+      if (baseSource) {
+        const match = String(baseSource).match(/（([^（）]+)）/);
+        if (match?.[1]) return match[1];
+        return baseSource.replace(/^.*?OpenAI\/Image2 API 入口：[^（]+/i, '').trim() || '已发现入口';
+      }
+      const message = String(checks.image2Message || '').trim();
+      const messageMatch = message.match(/入口来源[:：]\s*([^；。\n]+)/);
+      if (messageMatch?.[1]) return messageMatch[1].trim();
+      if (/config\.toml/i.test(message)) return 'CODEX_HOME/config.toml';
+      if (/OPENAI_BASE_URL|OPENAI_API_BASE_URL|OPENAI_API_BASE/i.test(message)) return '环境变量';
+      if (/\.env/i.test(message)) return '.env';
+      if (/auth\.json/i.test(message)) return 'auth.json';
+      return worker.image2Configured === true || checks.image2Configured === true ? '已发现但未识别来源' : '未命中';
+    },
+
+    directSkillWorkerImage2BaseUrlLabel(worker = null) {
+      if (!worker) return '未命中';
+      const checks = worker.checks && typeof worker.checks === 'object' ? worker.checks : {};
+      const sources = Array.isArray(checks.image2Sources) ? checks.image2Sources.filter(Boolean) : [];
+      const baseSource = sources.find(item => /OpenAI\/Image2 API 入口：/i.test(String(item || '')));
+      if (baseSource) {
+        const match = String(baseSource).match(/OpenAI\/Image2 API 入口：([^（\s]+)(?:\s*（|$)/i);
+        if (match?.[1]) return match[1].trim();
+      }
+      const message = String(checks.image2Message || '').trim();
+      const urlMatch = message.match(/https?:\/\/[^\s））；，]+/i);
+      if (urlMatch?.[0]) return urlMatch[0].trim();
+      return worker.image2Configured === true || checks.image2Configured === true ? '已发现但未解析到入口' : '未命中';
     },
 
     localWorkerRunNeedsFigma(run = null) {

@@ -1,5 +1,13 @@
 <template>
-  <section v-show="app.activeView === 'ai-members'" class="ai-board-embed-view">
+  <section
+    v-show="app.activeView === 'ai-members'"
+    class="ai-board-embed-view"
+    :class="{ 'is-ready': displayReady }"
+  >
+  <div v-if="!displayReady" class="ai-board-first-paint">
+    正在准备 AI部门看板...
+  </div>
+  <div class="ai-board-ready-content" :aria-hidden="!displayReady">
   <section v-if="app.canViewAiMemberScore" class="ai-score-panel">
     <div class="ai-score-head">
       <div>
@@ -93,6 +101,7 @@
       @load="handleFrameLoad"
     />
   </section>
+  </div>
 </section>
 </template>
 
@@ -118,6 +127,12 @@ export default {
     hasActiveBoardHtml() {
       const html = this.activeBoardHtml || '';
       return this.app.isAiMembersBoardHtml ? this.app.isAiMembersBoardHtml(html) : html.length > 1000;
+    },
+    scoreDisplayReady() {
+      return !this.app.canViewAiMemberScore || this.app.aiMemberScoreReady;
+    },
+    displayReady() {
+      return this.scoreDisplayReady && this.hasActiveBoardHtml && this.frameReady;
     },
     activeBoardHtml() {
       return this.boardHtml;
@@ -183,6 +198,7 @@ export default {
     return {
       frameHtml: '',
       lastRealFrameHtml: '',
+      frameReady: false,
       frameHtmlUpdateTimer: 0,
       scoreRuleDialogVisible: false
     };
@@ -196,8 +212,12 @@ export default {
         if (nextValue === this.frameHtml) return;
         if (this.frameHtmlUpdateTimer) window.clearTimeout(this.frameHtmlUpdateTimer);
         this.frameHtmlUpdateTimer = 0;
-        if (isRealBoardHtml) this.lastRealFrameHtml = value;
+        if (isRealBoardHtml) {
+          this.lastRealFrameHtml = value;
+          this.frameReady = false;
+        }
         this.frameHtml = nextValue;
+        this.$nextTick(() => this.markFrameReadyIfLoaded());
       }
     }
   },
@@ -205,7 +225,18 @@ export default {
     if (this.frameHtmlUpdateTimer) window.clearTimeout(this.frameHtmlUpdateTimer);
   },
   methods: {
-    handleFrameLoad() {},
+    handleFrameLoad() {
+      if (this.hasActiveBoardHtml) this.frameReady = true;
+    },
+    markFrameReadyIfLoaded() {
+      const frame = this.$refs.boardFrame;
+      if (!frame || !this.hasActiveBoardHtml) return;
+      try {
+        const doc = frame.contentDocument;
+        if (doc && doc.readyState === 'complete') this.frameReady = true;
+      } catch {
+      }
+    },
     async handleOpenScoreConfig() {
       try {
         await this.app.api('/api/maintenance/open-path', {
@@ -225,6 +256,44 @@ export default {
   display: grid;
   gap: 10px;
   min-height: 0;
+  position: relative;
+}
+
+.ai-board-ready-content {
+  display: grid;
+  gap: 10px;
+  inset: 0;
+  min-height: 0;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  transition: opacity 120ms ease;
+  visibility: hidden;
+  width: 100%;
+}
+
+.ai-board-embed-view.is-ready .ai-board-ready-content {
+  opacity: 1;
+  pointer-events: auto;
+  position: static;
+  visibility: visible;
+}
+
+.ai-board-first-paint {
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  display: flex;
+  font-size: 12px;
+  justify-content: center;
+  min-height: 180px;
+  padding: 24px;
+}
+
+.ai-board-embed-view.is-ready .ai-board-first-paint {
+  display: none;
 }
 
 .ai-board-frame-shell {

@@ -93,11 +93,11 @@
       </div>
       <div>
         <strong>命令影响</strong>
-        <p>本次没有修改 Worker 启动命令；已安装开机自启的组员不需要重新替换命令，等待 Worker 自更新或下一次领取即可。</p>
+        <p>本次已更新 Worker 启动命令和 Windows 开机自启安装命令，新增自动继承执行人本机 `OPENAI_BASE_URL` / `CODEX_HOME/config.toml` 中转入口的逻辑。</p>
       </div>
       <div>
         <strong>需要组员操作</strong>
-        <p>仅手动启动旧终端需要关闭后重新启动；如果后续改到启动命令、账号、地址、安装器或 runner，这里会明确提示组员重新复制执行。</p>
+        <p>Windows 组员需要重新复制并执行一次最新 `复制开机自启` 命令；只临时手动启动的旧终端也需要关闭后，用最新 `复制手动启动` 命令重启。后续若命令再次变化，这里会继续明确提示。</p>
       </div>
       <div>
         <strong>已运行任务</strong>
@@ -127,6 +127,8 @@
           <div><span>Codex</span><strong>{{ row.codexReady ? '已就绪' : '未就绪' }}</strong></div>
           <div><span>Figma MCP</span><strong>{{ row.figmaMcpReady ? '已就绪' : '未就绪' }}</strong></div>
           <div><span>Image2</span><strong>{{ app.directSkillWorkerImage2StatusLabel(row.worker) }}</strong></div>
+          <div><span>Image2 来源</span><strong>{{ app.directSkillWorkerImage2SourceLabel(row.worker) }}</strong></div>
+          <div><span>Image2 入口</span><strong>{{ app.directSkillWorkerImage2BaseUrlLabel(row.worker) }}</strong></div>
           <div><span>最近心跳</span><strong>{{ app.directSkillWorkerLastSeenText(row.worker) }}</strong></div>
           <div><span>待领取</span><strong>{{ row.pendingRuns.length }}</strong></div>
           <div><span>执行中</span><strong>{{ row.activeRuns.length }}</strong></div>
