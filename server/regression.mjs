@@ -214,6 +214,11 @@ function testAiMembersBoardPlaceholderDoesNotReplaceCachedHtml() {
     true,
     '只有真实 HTML 看板才允许替换缓存'
   );
+  assert.equal(
+    shouldReplaceAiMembersBoardHtml(cachedHtml, '<html><body></body></html>'),
+    true,
+    '服务端回退逻辑需要自行判断空壳 HTML，规则函数只负责占位和空值过滤'
+  );
 }
 
 function testOperationLogDeleteDoesNotMutateUsageCounters() {

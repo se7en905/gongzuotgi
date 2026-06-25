@@ -140,7 +140,7 @@
 
         <TaskCenterView v-if="activeView === 'tasks'" :app="appBridge" :revision="taskCenterRevision" />
 
-        <AiMembersView v-if="aiMembersViewMounted" v-show="activeView === 'ai-members'" :app="appBridge" />
+        <AiMembersView v-if="aiMembersViewMounted || activeView === 'ai-members'" v-show="activeView === 'ai-members'" :app="appBridge" />
 
         <section v-show="activeView === 'codex-config'" class="view-grid codex-config-view">
           <ElCard shadow="never" class="panel-card page-card codex-config-card">
@@ -6564,6 +6564,25 @@ export default {
       return true;
     },
 
+    stabilizeAiMembersSnapshot(nextSnapshot = {}) {
+      const merged = this.mergeAiMembersSnapshotWithBoardCache(nextSnapshot);
+      const current = this.aiMembersSnapshot && typeof this.aiMembersSnapshot === 'object' ? this.aiMembersSnapshot : {};
+      const currentHasBoardHtml = this.hasAiMembersBoardHtml(current);
+      const nextHasBoardHtml = this.hasAiMembersBoardHtml(merged);
+      if (!currentHasBoardHtml || nextHasBoardHtml) return merged;
+      return {
+        ...merged,
+        ...current,
+        ...merged,
+        members: Array.isArray(merged.members) && merged.members.length
+          ? merged.members
+          : Array.isArray(current.members)
+            ? current.members
+            : [],
+        html: current.html
+      };
+    },
+
     restoreWorkbenchDisplayCacheKey(key = '') {
       if (!key) return false;
       try {
@@ -8647,7 +8666,7 @@ export default {
         if (!silent) this.loading.aiMembers = true;
         try {
           const snapshot = await this.api('/api/ai-members');
-          this.aiMembersSnapshot = this.mergeAiMembersSnapshotWithBoardCache(snapshot);
+          this.aiMembersSnapshot = this.stabilizeAiMembersSnapshot(snapshot);
           this.saveAiMembersBoardHtmlSnapshot(this.aiMembersSnapshot);
           this.saveWorkbenchDisplayCache('aiMembersSnapshot', this.aiMembersSnapshot);
           return this.aiMembersSnapshot;
@@ -9020,7 +9039,7 @@ export default {
       const cap = independentScoreMode ? 60 : 35;
       const rows = Array.isArray(productRows) ? productRows.filter(row => row && row.hidden !== true) : [];
       const rowValueTotal = rows
-        .map(row => this.aiScoreProductRowValue(row).value)
+        .map(row => this.aiScoreProductRowValue(row, independentScoreMode).value)
         .reduce((sum, value) => sum + value, 0);
       const unmatchedCount = Math.max(0, (Array.isArray(productItems) ? productItems.length : 0) - rows.length);
       const fallbackValue = unmatchedCount * (independentScoreMode ? 3 : 2);
@@ -9032,7 +9051,7 @@ export default {
       };
     },
 
-    aiScoreProductRowValue(row = {}) {
+    aiScoreProductRowValue(row = {}, independentScoreMode = false) {
       const usage = this.skillInventoryUsageStatsForList(row);
       const usageCount = Number(usage.count || 0);
       const peopleCount = Number(usage.peopleCount || 0);

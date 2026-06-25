@@ -118,6 +118,7 @@ import { buildWorkflowPlan, workflowLevels } from './workflow.mjs';
 import { getZentaoApi, getZentaoModules, resetZentaoApi } from './zentao-adapter.mjs';
 import { syncZentaoBugsForProject } from './zentao-bug-sync.mjs';
 import { applyZentaoSplitPlan, assignZentaoTask, buildZentaoSplitPlan, getZentaoClassicCookies as getZentaoActionClassicCookies } from './zentao-task-actions.mjs';
+import { shouldReplaceAiMembersBoardHtml } from './business-regression-rules.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, '..', process.env.STATIC_DIR || 'dist');
@@ -138,6 +139,21 @@ const defaultArtUsers = [
   { account: 'zhangzb', realname: '张宗斌', userId: 20, userID: 20 },
   { account: 'lanhj', realname: '兰韩界', userId: 17, userID: 17 }
 ];
+let lastValidAiMembersSnapshot = null;
+
+function isReadableAiMembersBoardHtml(html = '') {
+  const text = String(html || '').trim();
+  if (!text) return false;
+  if (/正在加载\s*AI部门看板/i.test(text)) return false;
+  if (!/<(?:html|body|section|main|div|table|article|iframe)\b/i.test(text)) return false;
+  const bodyText = text
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .trim();
+  return bodyText.length >= 20;
+}
 const zentaoBugProductIds = process.env.ZENTAO_BUG_PRODUCT_IDS || 'all';
 const zentaoAutoSyncIntervalMs = Number(process.env.ZENTAO_AUTO_SYNC_INTERVAL_MS || 30 * 60 * 1000);
 const zentaoAutoSyncInitialDelayMs = Number(process.env.ZENTAO_AUTO_SYNC_INITIAL_DELAY_MS || 5000);
@@ -9794,24 +9810,50 @@ async function loadAiMembersSnapshot(currentUser = {}) {
     readTextIfExists(boardPath)
   ]);
   const embeddedHtml = buildEmbeddedAiBoardHtml(boardHtml);
-  return {
+  const source = {
+    root: aiWeekDir,
+    boardFile: boardPath,
+    boardView: '全员看板',
+    boardUpdatedAt: boardStat?.mtime?.toISOString?.() || '',
+    fetchedAt: new Date().toISOString()
+  };
+  const snapshot = {
     mode: 'all',
     viewer: {
       username: currentUser.username || '',
       displayName: currentUser.displayName || '',
       role: currentUser.role || ''
     },
-    source: {
-      root: aiWeekDir,
-      boardFile: boardPath,
-      boardView: '全员看板',
-      boardUpdatedAt: boardStat?.mtime?.toISOString?.() || '',
-      fetchedAt: new Date().toISOString()
-    },
+    source,
     members: parseAiBoardMembers(boardHtml),
     html: embeddedHtml,
     privacyNotice: '全员视角：原样展示美术部AI看板。'
   };
+  const canUseCurrentHtml = isReadableAiMembersBoardHtml(snapshot.html)
+    && shouldReplaceAiMembersBoardHtml(lastValidAiMembersSnapshot?.html || '', snapshot.html);
+  if (canUseCurrentHtml) {
+    lastValidAiMembersSnapshot = {
+      mode: snapshot.mode,
+      members: snapshot.members,
+      html: snapshot.html,
+      privacyNotice: snapshot.privacyNotice,
+      source
+    };
+    return snapshot;
+  }
+  if (lastValidAiMembersSnapshot?.html) {
+    return {
+      ...snapshot,
+      members: Array.isArray(snapshot.members) && snapshot.members.length ? snapshot.members : lastValidAiMembersSnapshot.members || [],
+      html: lastValidAiMembersSnapshot.html,
+      source: {
+        ...lastValidAiMembersSnapshot.source,
+        ...source,
+        fallbackToLastValidHtml: true
+      }
+    };
+  }
+  return snapshot;
 }
 
 function parseAiBoardMembers(html = '') {
