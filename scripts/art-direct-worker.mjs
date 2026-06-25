@@ -563,6 +563,7 @@ async function executeRun(run) {
     exitCode: effectiveExitCode,
     startedAt,
     finishedAt,
+    completedAt: finishedAt,
     durationMs,
     stages: [
       {
@@ -628,6 +629,7 @@ async function failRunBeforeCodex(run, reason) {
     exitCode: -1,
     startedAt,
     finishedAt,
+    completedAt: finishedAt,
     durationMs,
     stages: [
       {

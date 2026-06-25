@@ -3300,7 +3300,8 @@ export default {
         && this.aiMemberScoreRowsSnapshot.length
         && this.isCurrentAiMemberScoreSnapshotMonth(this.aiMemberScoreRowsSnapshotMonth)
       ) {
-        return this.aiMemberScoreRowsSnapshot;
+        const liveRows = this.computeAiMemberScoreRows();
+        return this.mergeAiMemberScoreSnapshotRows(this.aiMemberScoreRowsSnapshot, liveRows);
       }
       return [];
     },
@@ -8796,6 +8797,23 @@ export default {
       return rows;
     },
 
+    mergeAiMemberScoreSnapshotRows(snapshotRows = [], liveRows = []) {
+      const liveMap = new Map((Array.isArray(liveRows) ? liveRows : [])
+        .map(row => [this.normalizeAiScorePersonKey(row.name || row.account), row]));
+      return (Array.isArray(snapshotRows) ? snapshotRows : []).map(row => {
+        const liveRow = liveMap.get(this.normalizeAiScorePersonKey(row.name || row.account));
+        if (!liveRow) return row;
+        return {
+          ...liveRow,
+          score: row.score,
+          productScore: row.productScore,
+          usageScore: row.usageScore,
+          runScore: row.runScore,
+          penalty: row.penalty
+        };
+      });
+    },
+
     async refreshAiMemberScoreSnapshotManually() {
       if (!this.canRefreshAiMemberScore) {
         ElMessage.warning('当前账号没有刷新 AI 评分的权限');
@@ -9085,8 +9103,9 @@ export default {
       const boardItems = Array.isArray(summary?.boardProductItems)
         ? summary.boardProductItems
         : this.visibleAiBoardMemberProductItems(member);
-      const inventoryItems = this.aiMemberScoreInventoryProductItems(member.name || member.realname || member.account || '', summary, boardItems);
-      return this.dedupeMemberProductItems([...boardItems, ...inventoryItems]);
+      const finishedInventoryItems = this.aiMemberScoreInventoryProductItems(member.name || member.realname || member.account || '', summary, boardItems);
+      const liveInventoryItems = this.aiMemberScoreLiveInventoryProductItems(member, summary, boardItems);
+      return this.dedupeMemberProductItems([...boardItems, ...finishedInventoryItems, ...liveInventoryItems]);
     },
 
     aiMemberScoreInventoryProductItems(memberName = '', summary = null, preferredItems = []) {
@@ -9094,6 +9113,18 @@ export default {
       return this.dedupeMemberProductItems(
         rows
           .filter(row => row.hidden !== true)
+          .map(row => this.aiMemberScoreDisplayProductNameForRow(row, preferredItems))
+          .filter(Boolean)
+      );
+    },
+
+    aiMemberScoreLiveInventoryProductItems(member = {}, summary = null, preferredItems = []) {
+      const memberName = member.name || member.realname || member.account || '';
+      if (!memberName) return [];
+      return this.dedupeMemberProductItems(
+        this.skillInventoryAssetRows
+          .filter(row => row.hidden !== true)
+          .filter(row => this.skillInventoryRowBelongsToMember(row, memberName, summary?.purposes || [], []))
           .map(row => this.aiMemberScoreDisplayProductNameForRow(row, preferredItems))
           .filter(Boolean)
       );
@@ -21772,8 +21803,8 @@ export default {
           summary: this.resultStatusLabel(this.effectiveResultStatus(run)),
           status: normalize(resultStepStatus),
           startedAt: workerFinishedAt || run.finishedAt || '',
-          finishedAt: run.updatedAt || run.finishedAt || workerFinishedAt || '',
-          time: run.finishedAt || run.updatedAt || '',
+          finishedAt: this.focusedRunStableResultCompletedAt(run) || run.finishedAt || workerFinishedAt || '',
+          time: this.focusedRunStableResultCompletedAt(run) || run.finishedAt || run.updatedAt || '',
           durationMs: resultDurationMs
         },
         {
@@ -21833,11 +21864,22 @@ export default {
 
     focusedRunResultDurationMs(run = null, resultStage = {}, resultStageIndex = -1) {
       const start = Date.parse(run?.finishedAt || run?.completedAt || '');
-      const end = Date.parse(run?.updatedAt || '');
+      const end = Date.parse(this.focusedRunStableResultCompletedAt(run) || '');
       if (this.isLocalWorkerRun(run)) return start && end && end > start ? end - start : 0;
       const value = resultStageIndex >= 0 ? this.focusedRunStepDurationMs(run, resultStage, resultStageIndex) : 0;
       if (value > 0) return value;
       return start && end && end >= start ? end - start : 0;
+    },
+
+    focusedRunStableResultCompletedAt(run = null) {
+      if (!run) return '';
+      const explicit = String(run.completedAt || '').trim();
+      if (explicit) return explicit;
+      const parsedAt = String(run?.resultSummary?.parsedAt || '').trim();
+      const parsedMs = Date.parse(parsedAt);
+      const finishedMs = Date.parse(run?.finishedAt || run?.completedAt || '');
+      if (!parsedMs || !finishedMs || parsedMs < finishedMs) return '';
+      return parsedMs - finishedMs <= 5 * 60 * 1000 ? parsedAt : '';
     },
 
     focusedRunPreflightDurationMs(run = null, stage = {}, index = -1, workerStartedAt = '') {

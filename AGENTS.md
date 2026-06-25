@@ -332,6 +332,9 @@
   - `继续执行` 和 `重新执行` 必须保持语义分离：继续执行复用当前记录，重新执行新建记录；不得把失败/阻塞后的主按钮做成重新执行，也不得把重新执行做成清空当前记录。
   - `继续执行` 不等于恢复已被 kill 的 Codex 进程内存；它必须通过读取已有产物、阶段报告、旧日志尾部和当前 Figma 状态来续跑，避免重复创建已完成节点或重复执行已完成步骤。
   - 每条美术执行记录必须长期保留 `startedAt`、`finishedAt`、`durationMs`、`stages[].startedAt`、`stages[].finishedAt`、`stages[].durationMs` 和必要阶段状态；除非负责人通过对应业务删除入口明确删除该执行记录，否则刷新、切页、操作日志删除、AI档案筛选或轻量恢复都不得清空这些字段。
+  - 每条进入 `completed`、`blocked`、`failed`、`cancelled` 等终态的执行记录都必须具备稳定 `completedAt`；该字段表示“本机这一轮执行结束并完成本轮结果回传/落盘”的稳定完成时间，不得用后续补解析、人工复核、历史纠偏或二次归一化时间覆盖。
+  - 美术执行台、AI档案、步骤明细、导出和后端补丁对同一条执行记录的耗时口径必须统一：真实累计执行耗时只认 `startedAt -> finishedAt` 或明确落盘的 `durationMs`，不得把 `updatedAt`、后续补解析、状态纠偏、AI档案补写或历史修复时间混入本机真实执行耗时。
+  - 历史终态执行记录缺少 `completedAt` 时，服务端必须按稳定优先级补齐：优先已有 `completedAt`，否则回退到紧邻本次执行结束的 `resultSummary.parsedAt`，再回退 `finishedAt`；只有在确实没有其它稳定时间时才允许用更晚的兜底时间，且不得覆盖已存在的稳定 `completedAt`。
   - 本机执行状态不得只看 `claimedAt`、`startedAt` 或 `status=running` 判定为真实执行。必须结合 Worker 心跳 `currentRunId`、服务端 `run.log`、`workerLocalLogPath/workerLocalLogSize`、`workerResult`、`resultSummary`、`figmaWriteResult`、产物目录和最近真实活动时间共同判断。
   - Worker 已领取并回传 running，但长时间没有 Codex stdout/stderr、没有最终状态、没有 Figma 放置/替换/写入证据，且领取设备在线但 `currentRunId` 已为空或不等于该执行时，平台必须判为 `本机回传失联` / `本机阻塞`，不得继续显示普通 `本机执行中`。
   - Worker 已领取后领取设备心跳超时、失联或没有可用心跳记录，同时没有 Codex 输出、最终状态或产物证据时，也必须判为 `本机回传失联` / `本机阻塞`；不得因为 Worker 不在线就跳过对账，长期保留 `running` / `claimed`。
@@ -710,6 +713,7 @@
   - Worker 离线队列必须有容量、单条日志长度和事件去重上限，默认只保留有限条数、日志尾部和必要执行状态，避免断网期间无限写入导致组员电脑卡顿或数据暴增。
   - Worker 离线补同步必须按原 `runId` 幂等更新原执行记录，不得因为网络恢复、重复轮询或重复补传而新增执行记录、重复累计调用次数、重建任务中心记录或触发库存/评分/禅道同步。
   - Worker 补回执行耗时时，执行台累计耗时和阶段耗时必须优先使用执行人本机记录的真实 `startedAt`、`finishedAt`、`durationMs`、`stages[].durationMs`；不得使用负责人电脑恢复网络那一刻的服务器时间伪造成执行耗时。
+  - Worker 最终回传 `completed`、`blocked`、`failed`、`cancelled` 时，必须同时落盘稳定 `completedAt`；成功、失败、阻塞和中断链路都不得遗漏该字段，不得只写 `finishedAt` 或把更晚的 `updatedAt` 当作结果回传完成时间。
   - Worker 只能恢复执行人本机已经存在未完成快照的同一条 `claimed/running` 直接执行；不得仅因服务端残留 `running` 状态就擅自重跑一条没有本机上下文的旧任务。
   - 平台删除某条执行记录后，Worker 下次成功联网必须通过轻量对账清理执行人本机对应 `runId` 的快照、离线事件和缓存；删除对账不得依赖永久增长的全局墓碑表。
   - 组员本机已经闭环但断网期间未同步的平台数据，必须在负责人电脑恢复原工作台地址可访问后由 Worker 自动补传；补传失败继续保留有限离线队列，不得阻塞组员当前电脑操作。
@@ -836,6 +840,8 @@
   - `/api/runs/:id/retry`：用于 Web Codex 对话追加沟通和美术执行台 `重新执行`，基于当前执行记录创建一条新的执行记录；只允许白名单字段和 `codexRequest` 覆盖新执行，核心 Figma 链接、md/Skill、Skill 快照、流程/模板和执行要求必须从原记录继承，旧运行状态和结果证据不得继承。
   - `/api/runs/:id/start`：启动普通执行；必须应用全局 Codex 配置和该执行上的 `codexRequest` 单次模型/推理配置；不得启动 `direct-skill`。`start/resume` 只能把当前 `run.id` 排队给当前点击账号本机 Worker；请求体中的 `targetUserId` 不得被用于改派给原执行人或他人。`mode: "resume"` 表示业务断点续跑，必须保留旧上下文和可续跑线索；`mode: "restart"` 只能用于已经由 `/retry` 新建出的记录从第一步执行，不得清空原记录。
   - `/api/runs` 返回的执行记录必须包含阶段耗时相关字段：`startedAt`、`finishedAt`、`durationMs`、`stages[].startedAt`、`stages[].finishedAt`、`stages[].durationMs`；历史补齐出来的估算耗时必须标记 `durationEstimated: true`，不得伪装成原始实时计时。
+  - `/api/runs` 返回的终态执行记录还必须返回稳定 `completedAt`；步骤 5 `结果回传` 只能使用 `completedAt` 计时。历史记录如果缺少 `completedAt`，只能受控回退到紧邻 `finishedAt` 的 `resultSummary.parsedAt`；明显晚于本轮执行结束的解析/补写时间不得算进 `结果回传` 或累计执行耗时。
+  - 美术执行台右侧 `执行步骤明细` 中，步骤 4 `Codex 执行`、步骤 5 `结果回传` 和右上角 `累计执行耗时` 必须共用同一套真实时间口径；不得出现累计耗时二十分钟但结果回传显示数小时这类相互矛盾的展示。
   - `scripts/restore_run_durations.mjs` 是执行记录耗时恢复脚本；运行前必须先备份 `data/runs.json` 到 `data/restore-backups/`。该脚本只允许补齐 `durationMs`、`startedAt`、`finishedAt`、`durationEstimated` 和必要阶段状态，不得修改 Figma 链接、补充要求、任务描述、Skill/md 线索、执行对象、执行模式、执行人、设备、日志正文或其它业务上下文字段。
   - `DELETE /api/runs?from=...&to=...`：AI档案按筛选范围删除执行明细；只允许有 `api.aiArchive.delete` 权限的账号调用。
   - `/api/runs/direct-skill`：创建直接执行。

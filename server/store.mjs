@@ -3690,16 +3690,28 @@ function normalizeFinalWorkerStatusConflict(run = {}, now = new Date()) {
   const finalStatus = normalizeCanonicalFinalWorkerStatus(run.status);
   if (!finalStatus) return run;
   const workerStatus = cleanString(run.workerStatus).toLowerCase();
+  const stableCompletedAt = cleanString(
+    run.completedAt
+    || run.resultSummary?.parsedAt
+    || run.finishedAt
+    || run.updatedAt
+    || now.toISOString()
+  );
   const clearStalePatch = run.localWorkerStale || run.localWorkerStaleDetectedAt
-    ? { localWorkerStale: false, localWorkerStaleDetectedAt: '', updatedAt: now.toISOString() }
+    ? { localWorkerStale: false, localWorkerStaleDetectedAt: '', updatedAt: now.toISOString(), ...(stableCompletedAt ? { completedAt: stableCompletedAt } : {}) }
     : null;
-  if (!workerStatus || workerStatus === finalStatus) return clearStalePatch ? { ...run, ...clearStalePatch } : run;
+  if (!workerStatus || workerStatus === finalStatus) {
+    if (clearStalePatch) return { ...run, ...clearStalePatch };
+    if (finalStatus && !cleanString(run.completedAt) && stableCompletedAt) return { ...run, completedAt: stableCompletedAt };
+    return run;
+  }
   if (finalStatus === 'cancelled' && isFinalWorkerRunStatus(workerStatus)) {
     return {
       ...run,
       status: finalStatus,
       workerStatus: finalStatus,
       currentStage: '已中断',
+      ...(stableCompletedAt ? { completedAt: stableCompletedAt } : {}),
       ...(run.blocker ? { blocker: null } : {}),
       resultSummary: {
         ...(run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {}),
@@ -3719,6 +3731,7 @@ function normalizeFinalWorkerStatusConflict(run = {}, now = new Date()) {
     status: finalStatus,
     workerStatus: finalStatus,
     currentStage: finalStatus === 'cancelled' ? '已中断' : run.currentStage,
+    ...(stableCompletedAt ? { completedAt: stableCompletedAt } : {}),
     ...(finalStatus === 'cancelled' && !run.finishedAt ? { finishedAt: cleanString(run.updatedAt || run.startedAt || run.claimedAt || run.createdAt || now.toISOString()) } : {}),
     ...clearStalePatch,
     updatedAt: now.toISOString()
@@ -8018,6 +8031,7 @@ function resolveWorkerStageEventCurrentStage(currentStage = '', stageName = '') 
 function normalizeWorkerTimingPatch(input = {}, existing = {}) {
   const startedAt = cleanString(input.startedAt || existing.startedAt);
   const finishedAt = cleanString(input.finishedAt || existing.finishedAt);
+  const completedAt = cleanString(input.completedAt || existing.completedAt || (/completed|blocked|failed|cancelled/.test(String(input.status || input.workerStatus || '')) ? finishedAt : ''));
   const durationMs = normalizeDurationMs(input.durationMs, startedAt, finishedAt, existing.durationMs);
   const stages = Array.isArray(input.stages)
     ? mergeWorkerStages(existing.stages, input.stages)
@@ -8025,6 +8039,7 @@ function normalizeWorkerTimingPatch(input = {}, existing = {}) {
   return {
     ...(startedAt ? { startedAt } : {}),
     ...(finishedAt ? { finishedAt } : {}),
+    ...(completedAt ? { completedAt } : {}),
     ...(durationMs > 0 ? { durationMs } : {}),
     ...(Array.isArray(stages) ? { stages } : {})
   };
