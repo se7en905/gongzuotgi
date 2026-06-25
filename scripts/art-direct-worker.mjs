@@ -1577,7 +1577,58 @@ async function loadWorkerEnvOverrides() {
       'no_proxy'
     ]));
   }
+  const credential = await resolveOpenAiApiCredentialFromFiles();
+  if (credential.key && !String(env.OPENAI_API_KEY || '').trim()) {
+    env.OPENAI_API_KEY = credential.key;
+  }
+  const baseUrl = await resolveOpenAiBaseUrlFromFiles();
+  if (baseUrl.configured) {
+    const normalized = String(baseUrl.url || '').trim();
+    if (normalized && !String(env.OPENAI_BASE_URL || env.OPENAI_API_BASE_URL || env.OPENAI_API_BASE || '').trim()) {
+      env.OPENAI_BASE_URL = normalized;
+    }
+  }
   return Object.fromEntries(Object.entries(env).filter(([, value]) => String(value || '').trim()));
+}
+
+async function resolveOpenAiApiCredentialFromFiles() {
+  for (const file of [
+    path.join(process.cwd(), '.env'),
+    path.join(defaultProjectRoot, '.env'),
+    path.join(workerHome, '.env'),
+    path.join(os.homedir(), '.env')
+  ]) {
+    const key = await readEnvFileKey(file, 'OPENAI_API_KEY');
+    if (key) return { key, source: file.replace(os.homedir(), '~') };
+  }
+  const codexHome = String(process.env.CODEX_HOME || '').trim() || path.join(os.homedir(), '.codex');
+  const authPath = path.join(codexHome, 'auth.json');
+  try {
+    const auth = JSON.parse(await readFile(authPath, 'utf8'));
+    const key = String(auth?.OPENAI_API_KEY || '').trim();
+    if (key) return { key, source: authPath.replace(os.homedir(), '~') };
+  } catch {
+  }
+  return { key: '', source: '' };
+}
+
+async function resolveOpenAiBaseUrlFromFiles() {
+  const keys = ['OPENAI_BASE_URL', 'OPENAI_API_BASE_URL', 'OPENAI_API_BASE'];
+  for (const file of [
+    path.join(process.cwd(), '.env'),
+    path.join(defaultProjectRoot, '.env'),
+    path.join(workerHome, '.env'),
+    path.join(os.homedir(), '.env')
+  ]) {
+    const values = await readEnvFileKeys(file, keys);
+    for (const key of keys) {
+      const value = String(values[key] || '').trim();
+      if (value) return normalizeOpenAiBaseUrl(value, `${file.replace(os.homedir(), '~')} ${key}`);
+    }
+  }
+  const config = await resolveCodexConfigBaseUrl();
+  if (config?.url) return normalizeOpenAiBaseUrl(config.url, config.source);
+  return normalizeOpenAiBaseUrl('', '', false);
 }
 
 async function readEnvFileKeys(file = '', keys = []) {

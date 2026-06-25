@@ -5627,7 +5627,7 @@ export default {
     },
 
     ensureActiveViewData(view = this.activeView) {
-      const dirty = this.consumeViewDataDirty(view);
+      const dirty = view === 'ai-members' ? false : this.consumeViewDataDirty(view);
       if (view === 'tasks') {
         const hasTaskCache = this.businessTasks.length > 0;
         if ((dirty || !hasTaskCache) && !this.loading.tasks) {
@@ -5642,16 +5642,19 @@ export default {
         this.ensureSkillInventoryTabData(this.skillInventoryTab || 'assets');
       }
       if (view === 'ai-members') {
+        const boardDirty = this.consumeViewDataDirty(view, 'board');
+        const scoreDirty = this.consumeViewDataDirty(view, 'score');
+        const generalDirty = this.consumeViewDataDirty(view);
         this.ensureAiMemberScoreData();
         this.restoreAiMembersBoardHtmlSnapshot();
         const hasBoardHtml = this.hasAiMembersBoardHtml(this.aiMembersSnapshot);
-        if (!hasBoardHtml && !this.loading.aiMembers && this.can('api.aiMembers.read')) {
-          this.refreshAiMembersBoardDisplayCache({ silent: true }).catch(() => {});
-        } else if (dirty && !this.loading.aiMembers && this.can('api.aiMembers.read')) {
-          this.refreshAiMembers({
-            silent: hasBoardHtml,
-            background: false
+        if ((boardDirty || !hasBoardHtml) && !this.loading.aiMembers && this.can('api.aiMembers.read')) {
+          this.refreshAiMembersBoardDisplayCache({
+            silent: true,
+            minInterval: boardDirty ? 0 : undefined
           }).catch(() => {});
+        } else if (generalDirty && !scoreDirty && !this.loading.aiMembers && this.can('api.aiMembers.read')) {
+          this.refreshAiMembersBoardDisplayCache({ silent: true }).catch(() => {});
         }
       }
       if (view === 'codex-config') {
@@ -5959,16 +5962,18 @@ export default {
       try {
         const result = await this.api('/api/auth/me', {}, { allowUnauthorized: true });
         this.currentUser = result.user || null;
-        this.authChecked = true;
         if (this.currentUser) {
           this.forcePasswordDialog = this.currentUser.mustChangePassword === true;
           this.syncRoute();
+          await this.restoreAiMembersBeforeFirstPaint();
+          this.authChecked = true;
           await this.refreshConfig();
           this.checkFrontendVersion({ silent: true }).catch(() => {});
           await this.restoreWorkbenchServerState();
           this.ensureActiveViewData(this.activeView);
-        } else if (window.location.pathname !== '/login') {
-          this.pushRoute('/login');
+        } else {
+          this.authChecked = true;
+          if (window.location.pathname !== '/login') this.pushRoute('/login');
         }
       } catch {
         this.currentUser = null;
@@ -5991,6 +5996,7 @@ export default {
         this.forcePasswordDialog = this.currentUser?.mustChangePassword === true;
         if (window.location.pathname === '/login') this.pushRoute(this.firstAllowedRoute());
         else this.syncRoute();
+        await this.restoreAiMembersBeforeFirstPaint();
         await this.refreshConfig();
         this.checkFrontendVersion({ silent: true }).catch(() => {});
         await this.restoreWorkbenchServerState();
@@ -6029,6 +6035,13 @@ export default {
         this.platformEventSource = null;
       }
       this.pushRoute('/login');
+    },
+
+    async restoreAiMembersBeforeFirstPaint() {
+      if (this.activeView !== 'ai-members' && window.location.pathname !== '/ai-members') return;
+      this.restoreAiMembersBoardHtmlSnapshot();
+      if (this.hasAiMembersBoardHtml(this.aiMembersSnapshot) || !this.currentUser) return;
+      await this.refreshAiMembersBoardDisplayCache({ silent: true, minInterval: 0 });
     },
 
     async restoreWorkbenchServerState() {
@@ -7302,7 +7315,7 @@ export default {
           return;
         }
         this.schedulePlatformRefresh('ai-members-board', async () => {
-          await this.refreshAiMembers({ silent: true, background: true, minInterval: 1500 });
+          await this.refreshAiMembersBoardDisplayCache({ silent: true, minInterval: 0 });
         }, 800);
       }
     },
@@ -8860,6 +8873,27 @@ export default {
         }
       })();
       return this.trackRefreshRequest('aiMembers', request);
+    },
+
+    async refreshAiMembersBoardDisplayCache(options = {}) {
+      const silent = options.silent === true;
+      const refresh = this.requestRefreshKey('aiMembersBoardCache', { background: true, minInterval: options.minInterval ?? 3000 });
+      if (refresh.skip) return refresh.promise || this.aiMembersSnapshot;
+      const request = (async () => {
+        try {
+          const snapshot = await this.api('/api/ai-members/board-cache');
+          if (!this.hasAiMembersBoardHtml(snapshot)) return this.aiMembersSnapshot;
+          this.aiMembersSnapshot = this.stabilizeAiMembersSnapshot(snapshot);
+          this.saveAiMembersBoardHtmlSnapshot(this.aiMembersSnapshot);
+          this.saveWorkbenchDisplayCache('aiMembersSnapshot', this.aiMembersSnapshotCachePayload(this.aiMembersSnapshot));
+          return this.aiMembersSnapshot;
+        } catch (error) {
+          this.restoreAiMembersBoardHtmlSnapshot();
+          if (!silent) ElMessage.error(this.readApiError(error) || 'AI部门看板缓存读取失败');
+          return this.aiMembersSnapshot;
+        }
+      })();
+      return this.trackRefreshRequest('aiMembersBoardCache', request);
     },
 
     ensureAiMemberScoreData() {

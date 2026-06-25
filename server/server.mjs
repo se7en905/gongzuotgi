@@ -253,6 +253,9 @@ server.listen(port, host, () => {
   console.log(`Data: ${paths.dataDir}`);
   scheduleDataRetentionCleanup();
   scheduleZentaoAutoSync();
+  refreshAiMembersBoardDisplayCacheFromSource('startup').catch(error => {
+    console.warn(`AI部门看板显示缓存预热失败：${error.message}`);
+  });
   watchAiMembersBoardFiles();
 });
 
@@ -3136,11 +3139,15 @@ function watchAiMembersBoardFiles() {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
-      broadcastPlatformEvent('ai-members-board.changed', {
-        module: 'ai-members-board',
-        root: aiWeekDir,
-        fileName: fileName || '',
-        changedAt: new Date().toISOString()
+      refreshAiMembersBoardDisplayCacheFromSource('file-change').catch(error => {
+        console.warn(`AI部门看板显示缓存刷新失败：${error.message}`);
+      }).finally(() => {
+        broadcastPlatformEvent('ai-members-board.changed', {
+          module: 'ai-members-board',
+          root: aiWeekDir,
+          fileName: fileName || '',
+          changedAt: new Date().toISOString()
+        });
       });
     }, 800);
   };
@@ -3150,9 +3157,11 @@ function watchAiMembersBoardFiles() {
       if (!boardFiles.includes(name)) return;
       emitChanged(name);
     });
-    watcher.on('error', error => {
-      console.warn(`AI部门看板目录监听失败：${error.message}`);
-    });
+    if (watcher && typeof watcher.on === 'function') {
+      watcher.on('error', error => {
+        console.warn(`AI部门看板目录监听失败：${error.message}`);
+      });
+    }
   } catch (error) {
     console.warn(`AI部门看板目录监听未启用：${error.message}`);
   }
@@ -9877,6 +9886,37 @@ async function loadAiMembersSnapshot(currentUser = {}) {
     };
   }
   return snapshot;
+}
+
+async function refreshAiMembersBoardDisplayCacheFromSource(reason = 'manual') {
+  const boardPath = path.join(aiWeekDir, '美术部AI看板.html');
+  const [boardStat, boardHtml] = await Promise.all([
+    statIfExists(boardPath),
+    readTextIfExists(boardPath)
+  ]);
+  const html = buildEmbeddedAiBoardHtml(boardHtml);
+  if (!isReadableAiMembersBoardHtml(html)) return null;
+  const cached = await readAiMembersBoardDisplayCache();
+  if (cached?.html && !shouldReplaceAiMembersBoardHtml(cached.html, html)) {
+    lastValidAiMembersSnapshot = cached;
+    return cached;
+  }
+  const snapshot = {
+    mode: 'all',
+    members: parseAiBoardMembers(boardHtml),
+    html,
+    privacyNotice: '全员视角：原样展示美术部AI看板。',
+    source: {
+      root: aiWeekDir,
+      boardFile: boardPath,
+      boardView: '全员看板',
+      boardUpdatedAt: boardStat?.mtime?.toISOString?.() || '',
+      fetchedAt: new Date().toISOString(),
+      cacheReason: reason
+    }
+  };
+  lastValidAiMembersSnapshot = snapshot;
+  return writeAiMembersBoardDisplayCache(snapshot);
 }
 
 async function readAiMembersBoardDisplayCache() {
