@@ -1066,21 +1066,13 @@ async function handleApi(req, res, url) {
       sendJson(res, 400, { error: '缺少页面标识。' });
       return;
     }
-    const log = await writeOperationLog(req, {
-      user: currentUser,
-      module: 'workbench',
-      action: 'VIEW_PAGE',
-      actionName: '进入页面',
-      targetType: 'view',
-      targetId: view,
-      targetName: viewName,
-      result: 'success',
-      description: `${currentUser.displayName || currentUser.username} 进入「${viewName}」`,
-      metadata: {
-        path: body.path || ''
-      }
+    sendJson(res, 202, {
+      accepted: true,
+      skippedPersistence: true,
+      view,
+      viewName,
+      path: body.path || ''
     });
-    sendJson(res, 201, { log });
     return;
   }
 

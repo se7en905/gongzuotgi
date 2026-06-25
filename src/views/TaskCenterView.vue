@@ -70,14 +70,14 @@
       <div class="panel-head">
         <div>
           <div class="panel-title-row">
-            <ElSegmented class="task-center-mode-segment" :model-value="app.taskCenterModeForView(revision)" @update:model-value="value => app.switchTaskCenterMode(value)" :options="app.taskCenterModeOptions" />
+            <ElSegmented class="task-center-mode-segment" :model-value="taskCenterMode" @update:model-value="value => app.switchTaskCenterMode(value)" :options="app.taskCenterModeOptions" />
           </div>
         </div>
         <div class="panel-actions task-filter-actions">
           <ElInput
             v-if="!app.isTaskPersonStatFilterActive"
             :model-value="app.taskFilters.keyword"
-            :placeholder="app.taskCenterModeForView(revision) === 'bug' ? '搜索 Bug 号、标题、指派人' : '搜索任务号、名称、人员'"
+            :placeholder="taskCenterMode === 'bug' ? '搜索 Bug 号、标题、指派人' : '搜索任务号、名称、人员'"
             clearable
             class="task-filter-keyword"
             @update:model-value="value => app.updateTaskFilter('keyword', value)"
@@ -90,9 +90,9 @@
     </template>
 
     <ElTable
-      v-if="app.taskCenterModeForView(revision) === 'task'"
+      v-if="taskCenterMode === 'task'"
       class="fill-table"
-      :data="app.pagedBusinessTaskRowsForView(revision)"
+      :data="pagedBusinessTaskRows"
       row-key="id"
       :current-row-key="app.selectedBusinessTaskId"
       highlight-current-row
@@ -105,7 +105,7 @@
           <div class="project-cell draggable-task-cell" draggable="true" @dragstart.stop="event => app.startTaskAssignDrag(row, event)" @dragend="app.clearTaskAssignDrag" @click.stop="selectTask(row)">
             <div class="task-title-row">
               <ElPopover
-                v-if="app.taskRequirementPreviewHtml(row)"
+                v-if="row.requirementPreviewHtml"
                 trigger="hover"
                 placement="right-start"
                 popper-class="task-requirement-popover"
@@ -130,7 +130,7 @@
                     <strong>{{ row.displayTitle }}</strong>
                     <span>{{ row.developer || '未指定' }} · {{ row.deadline || row.zentao?.deadline || '无截止时间' }}</span>
                   </div>
-                  <div class="task-requirement-preview-body" v-html="app.taskRequirementPreviewHtml(row)"></div>
+                  <div class="task-requirement-preview-body" v-html="row.requirementPreviewHtml"></div>
                 </div>
               </ElPopover>
               <a
@@ -212,9 +212,9 @@
       </ElTableColumn>
     </ElTable>
     <ElTable
-      v-else-if="app.taskCenterModeForView(revision) === 'bug'"
+      v-else-if="taskCenterMode === 'bug'"
       class="fill-table"
-      :data="app.pagedBugRowsForView(revision)"
+      :data="pagedBugRows"
       row-key="id"
       :empty-text="app.hasActiveTaskFiltersForView(revision) ? '当前筛选下暂无 Bug' : '暂无 Bug'"
       @row-click="app.selectBug"
@@ -253,13 +253,13 @@
       </ElTableColumn>
     </ElTable>
     <div class="pagination-bar">
-      <span>共 {{ app.taskCenterTotalForView(revision) }} 条</span>
+      <span>共 {{ taskCenterTotal }} 条</span>
       <ElPagination
         v-model:current-page="app.businessTaskPage"
         :page-size="app.businessTaskPageSize"
         @update:page-size="value => app.setWorkbenchPageSize(value, 'businessTaskPage')"
         :page-sizes="[10, 50, 100]"
-        :total="app.taskCenterTotalForView(revision)"
+        :total="taskCenterTotal"
         page-size-label="条/页"
         layout="sizes, prev, pager, next"
       />
@@ -360,6 +360,18 @@ export default {
     }
   },
   computed: {
+    taskCenterMode() {
+      return this.app.taskCenterModeForView(this.revision);
+    },
+    pagedBusinessTaskRows() {
+      return this.app.pagedBusinessTaskRowsForView(this.revision);
+    },
+    pagedBugRows() {
+      return this.app.pagedBugRowsForView(this.revision);
+    },
+    taskCenterTotal() {
+      return this.app.taskCenterTotalForView(this.revision);
+    },
     primaryTaskMetrics() {
       const preferred = ['业务任务', '今天截止', '临期任务', '卡点任务', '美术待处理 Bug'];
       const metrics = this.app.taskCenterMetrics || [];
@@ -371,7 +383,6 @@ export default {
   methods: {
     selectTask(row) {
       this.app.selectBusinessTask(row);
-      this.$forceUpdate();
     },
     startRun(row) {
       this.app.selectBusinessTask(row);

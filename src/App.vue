@@ -759,6 +759,7 @@ export default {
           projectsRef: null,
           runsByTaskKeyRef: null,
           taskReviewsByTaskKeyRef: null,
+          bugsByTaskNoRef: null,
           rows: []
         },
         bugRows: {
@@ -1273,6 +1274,10 @@ export default {
       return new Map((this.users || []).map(user => [String(user.id || '').trim(), user]));
     },
 
+    projectsById() {
+      return new Map((this.projects || []).map(project => [String(project.id || '').trim(), project]));
+    },
+
     businessTasksByRunKey() {
       const map = new Map();
       for (const task of this.businessTasks || []) {
@@ -1280,6 +1285,39 @@ export default {
         const taskNo = String(task.taskNo || '').trim();
         if (taskId) map.set(`id:${taskId}`, task);
         if (taskNo) map.set(`zentao:${taskNo}`, task);
+      }
+      return map;
+    },
+
+    bugsByTaskNo() {
+      const map = new Map();
+      const push = (key, bug) => {
+        if (!key) return;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(bug);
+      };
+      for (const bug of this.bugs || []) {
+        push(String(bug.zentao?.task || bug.taskNo || '').trim(), bug);
+      }
+      for (const rows of map.values()) {
+        rows.sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: BUG_LIST_TIME_FIELDS }));
+      }
+      return map;
+    },
+
+    aiFlowRecordsByTaskKey() {
+      const map = new Map();
+      const push = (key, record) => {
+        if (!key) return;
+        if (!map.has(key)) map.set(key, record);
+      };
+      for (const record of this.aiFlowRecords || []) {
+        if (record.status === 'deleted') continue;
+        const projectId = String(record.projectId || '').trim();
+        const taskNo = String(record.taskNo || '').trim();
+        const taskId = String(record.taskId || '').trim();
+        if (projectId && taskNo) push(`no:${projectId}:${taskNo}`, record);
+        if (projectId && taskId) push(`id:${projectId}:${taskId}`, record);
       }
       return map;
     },
@@ -2212,18 +2250,26 @@ export default {
         && cache.projectsRef === this.projects
         && cache.runsByTaskKeyRef === this.runsByTaskKey
         && cache.taskReviewsByTaskKeyRef === this.taskReviewsByTaskKey
+        && cache.bugsByTaskNoRef === this.bugsByTaskNo
       ) {
         return cache.rows;
       }
+      const projectsById = this.projectsById;
+      const runsByTaskKey = this.runsByTaskKey;
+      const taskReviewsByTaskKey = this.taskReviewsByTaskKey;
+      const bugsByTaskNo = this.bugsByTaskNo;
       const rows = this.businessTasks
         .filter(task => !isBugLikeTask(task))
         .map(task => {
-          const project = this.projects.find(item => item.id === task.projectId);
-          const relatedRuns = this.runsForTask(task);
+          const project = projectsById.get(String(task.projectId || '').trim());
+          const relatedRuns = this.runsForTask(task, runsByTaskKey);
           const latestRun = relatedRuns[0] || null;
-          const relatedReviews = this.reviewsForTask(task);
+          const relatedReviews = this.reviewsForTask(task, taskReviewsByTaskKey);
           const platformStatus = this.platformStatusForTask(latestRun, relatedReviews);
-          const quality = this.taskQualityMetrics(task, relatedRuns, platformStatus);
+          const quality = this.taskQualityMetrics(task, relatedRuns, platformStatus, {
+            relatedBugs: this.bugsForTask(task, bugsByTaskNo),
+            reviews: relatedReviews
+          });
           const isLowEffortAcceptance = isLowEffortArtAcceptanceTask(task);
           const savedWorkloadLevel = normalizeWorkloadLevel(task.workloadLevel || task.workloadEstimate?.level || task.zentao?.workloadLevel || task.zentao?.workloadEstimate?.level);
           const inferredWorkloadEstimate = isLowEffortAcceptance ? null : inferTaskWorkloadLevel(task, project);
@@ -2235,6 +2281,7 @@ export default {
           return {
             ...task,
             displayTitle: this.taskDisplayTitle(task),
+            requirementPreviewHtml: this.taskRequirementPreviewHtml(task),
             isLowEffortAcceptance,
             priorityFlags: isLowEffortAcceptance ? [] : this.taskPriorityFlags(task),
             projectName: project?.name || task.projectId || '-',
@@ -2259,6 +2306,7 @@ export default {
         projectsRef: this.projects,
         runsByTaskKeyRef: this.runsByTaskKey,
         taskReviewsByTaskKeyRef: this.taskReviewsByTaskKey,
+        bugsByTaskNoRef: this.bugsByTaskNo,
         rows
       };
       return rows;
@@ -2642,28 +2690,36 @@ export default {
       const today = localDateKey(new Date());
       const map = new Map();
       this.artDeptDisplayPeople.forEach(name => {
-        map.set(name, { name, taskCount: 0, todayDueCount: 0, riskCount: 0, bugCount: 0, tasks: [] });
+        map.set(name, { name, taskCount: 0, todayDueCount: 0, riskCount: 0, pressureDueTodayCount: 0, pressureRiskCount: 0, bugCount: 0, tasks: [] });
       });
       this.taskCenterCurrentArtMemberTaskRows.forEach(task => {
         const name = this.taskAssigneeDisplayName(task);
         if (!this.isArtDeptPerson(name)) return;
-        const row = map.get(name) || { name, taskCount: 0, todayDueCount: 0, riskCount: 0, bugCount: 0, tasks: [] };
+        const row = map.get(name) || { name, taskCount: 0, todayDueCount: 0, riskCount: 0, pressureDueTodayCount: 0, pressureRiskCount: 0, bugCount: 0, tasks: [] };
         row.taskCount += 1;
         row.tasks.push(task);
         if (task.deadline && task.deadline === today) row.todayDueCount += 1;
-        if (this.isArtTaskRisk(task)) row.riskCount += 1;
+        const pressureExcluded = this.isPressureExcludedArtTask(task);
+        if (!pressureExcluded && task.deadline && task.deadline === today) row.pressureDueTodayCount += 1;
+        if (this.taskRiskFlag(task)) {
+          row.riskCount += 1;
+          if (!pressureExcluded) row.pressureRiskCount += 1;
+        }
         map.set(name, row);
       });
       bugCounts.forEach((count, name) => {
         if (!map.has(name)) return;
-        const row = map.get(name) || { name, taskCount: 0, todayDueCount: 0, riskCount: 0, bugCount: 0, tasks: [] };
+        const row = map.get(name) || { name, taskCount: 0, todayDueCount: 0, riskCount: 0, pressureDueTodayCount: 0, pressureRiskCount: 0, bugCount: 0, tasks: [] };
         row.bugCount = count;
         map.set(name, row);
       });
       return [...map.values()]
         .map(row => ({
           ...row,
-          ...this.taskAcceptanceAssessmentForPerson(row.name, row.tasks || [], row.bugCount)
+          ...this.taskAcceptanceAssessmentForPerson(row.name, row.tasks || [], row.bugCount, {
+            dueTodayCount: row.pressureDueTodayCount,
+            riskCount: row.pressureRiskCount
+          })
         }))
         .sort((a, b) => this.taskPersonCardSortRank(a) - this.taskPersonCardSortRank(b) || b.todayDueCount - a.todayDueCount || b.riskCount - a.riskCount || b.bugCount - a.bugCount || b.taskCount - a.taskCount || a.name.localeCompare(b.name, 'zh-Hans-CN'));
     },
@@ -7000,7 +7056,6 @@ export default {
         'customWorkflows',
         'artProgressEvents',
         'skillValidationRows',
-        'operationLogs',
         'artProgressSummary',
         'usageCounters',
         'skillVersionOverrides',
@@ -16001,7 +16056,9 @@ export default {
     },
 
     switchView(view) {
+      const currentRoute = typeof window !== 'undefined' ? window.location.pathname : this.currentPath;
       if (['skill-assets', 'skill-inventory'].includes(view)) {
+        if (this.isSkillInventoryViewActive && currentRoute === '/skills/assets') return;
         this.pushRoute('/skills/assets');
         this.recordWorkbenchViewLog(view, '/skills/assets');
         return;
@@ -16024,9 +16081,11 @@ export default {
         'ai-archive': '/ai-archive',
         runs: '/runs'
       };
+      const route = routes[view] || '/tasks';
+      if (this.activeView === view && currentRoute === route) return;
       if (view === 'ai-members') this.prepareAiMembersView();
-      this.pushRoute(routes[view] || '/tasks');
-      this.recordWorkbenchViewLog(view, routes[view] || '/tasks');
+      this.pushRoute(route);
+      this.recordWorkbenchViewLog(view, route);
     },
 
     recordWorkbenchViewLog(view = '', route = '') {
@@ -17899,8 +17958,10 @@ export default {
 
     aiFlowRecordForTask(task = {}) {
       const taskNo = String(task.taskNo || task.zentaoId || '').trim();
-      return this.aiFlowRecords.find(record => record.status !== 'deleted' && record.projectId === task.projectId && taskNo && record.taskNo === taskNo)
-        || this.aiFlowRecords.find(record => record.status !== 'deleted' && record.projectId === task.projectId && record.taskId && record.taskId === task.id)
+      const projectId = String(task.projectId || '').trim();
+      const taskId = String(task.id || '').trim();
+      return (projectId && taskNo ? this.aiFlowRecordsByTaskKey.get(`no:${projectId}:${taskNo}`) : null)
+        || (projectId && taskId ? this.aiFlowRecordsByTaskKey.get(`id:${projectId}:${taskId}`) : null)
         || null;
     },
 
@@ -18861,13 +18922,13 @@ export default {
         || ['task', 'task-center', 'task-linked'].includes(String(run.sourceType || ''));
     },
 
-    runsForTask(task) {
+    runsForTask(task, sourceMap = this.runsByTaskKey) {
       if (!task?.id) return [];
       const taskId = String(task.id || '').trim();
       const taskNo = String(task.taskNo || '').trim();
       const rows = [
-        ...(taskId ? this.runsByTaskKey.get(`id:${taskId}`) || [] : []),
-        ...(taskNo ? this.runsByTaskKey.get(`zentao:${taskNo}`) || [] : [])
+        ...(taskId ? sourceMap.get(`id:${taskId}`) || [] : []),
+        ...(taskNo ? sourceMap.get(`zentao:${taskNo}`) || [] : [])
       ];
       const seen = new Set();
       return rows
@@ -20387,9 +20448,31 @@ export default {
     },
 
     taskRequirementPreviewHtml(task = {}) {
+      const rawSignature = [
+        task.requirement,
+        task.description,
+        task.zentao?.desc,
+        task.zentao?.description,
+        task.zentao?.requirement,
+        task.summary,
+        task.zentao?.taskUrl,
+        task.zentaoUrl,
+        task.taskUrl,
+        task.zentaoId,
+        task.taskNo
+      ].map(value => String(value || '')).join('\u0001');
+      if (task.__requirementPreviewSignature === rawSignature && typeof task.__requirementPreviewHtml === 'string') {
+        return task.__requirementPreviewHtml;
+      }
       const raw = this.taskRequirementPreviewSource(task);
-      if (!raw) return '';
-      return sanitizeTaskRequirementHtml(raw, this.zentaoTaskUrl(task) || this.appConfig.zentaoBaseUrl || '');
+      const html = raw ? sanitizeTaskRequirementHtml(raw, this.zentaoTaskUrl(task) || this.appConfig.zentaoBaseUrl || '') : '';
+      try {
+        Object.defineProperties(task, {
+          __requirementPreviewSignature: { value: rawSignature, writable: true, configurable: true },
+          __requirementPreviewHtml: { value: html, writable: true, configurable: true }
+        });
+      } catch {}
+      return html;
     },
 
     taskRequirementPreviewSource(task = {}) {
@@ -20440,6 +20523,10 @@ export default {
     },
 
     isArtTaskRisk(task = {}) {
+      return this.taskRiskFlag(task);
+    },
+
+    taskRiskFlag(task = {}) {
       if (this.isLowEffortArtAcceptanceTask(task)) return false;
       const risks = Array.isArray(task.zentao?.risks) ? task.zentao.risks : [];
       if (risks.length) return true;
@@ -20456,12 +20543,16 @@ export default {
       return isLowEffortArtAcceptanceTask(task);
     },
 
-    taskAcceptanceAssessmentForPerson(_name, tasks = [], bugCount = 0) {
+    taskAcceptanceAssessmentForPerson(_name, tasks = [], bugCount = 0, precomputed = {}) {
       const today = localDateKey(new Date());
       const pressureTasks = tasks.filter(task => !this.isPressureExcludedArtTask(task));
       const excludedPressureTaskCount = tasks.length - pressureTasks.length;
-      const dueTodayCount = pressureTasks.filter(task => task.deadline === today).length;
-      const riskCount = pressureTasks.filter(task => this.isArtTaskRisk(task)).length;
+      const dueTodayCount = Number.isFinite(Number(precomputed.dueTodayCount))
+        ? Number(precomputed.dueTodayCount)
+        : pressureTasks.filter(task => task.deadline === today).length;
+      const riskCount = Number.isFinite(Number(precomputed.riskCount))
+        ? Number(precomputed.riskCount)
+        : pressureTasks.filter(task => this.taskRiskFlag(task)).length;
       const workloadScore = Math.round(pressureTasks.reduce((sum, task) => sum + workloadEstimateWeight(task.workloadEstimate?.level), 0) * 10) / 10;
       const pressureScore = Math.round((workloadScore + dueTodayCount * 1.6 + riskCount * 1.8 + bugCount * 1.2) * 10) / 10;
       const status = pressureScore >= 7 || riskCount >= 3 || dueTodayCount >= 3
@@ -22416,9 +22507,9 @@ export default {
       return 'pending';
     },
 
-    taskQualityMetrics(task, relatedRuns = [], platformStatus = '') {
-      const relatedBugs = this.bugsForTask(task);
-      const reviews = this.reviewsForTask(task);
+    taskQualityMetrics(task, relatedRuns = [], platformStatus = '', options = {}) {
+      const relatedBugs = Array.isArray(options.relatedBugs) ? options.relatedBugs : this.bugsForTask(task);
+      const reviews = Array.isArray(options.reviews) ? options.reviews : this.reviewsForTask(task);
       const latestReview = reviews[0] || null;
       const stageCompletion = this.taskStageCompletion(task, relatedRuns);
       const stageQualityScore = this.taskStageQualityScore(task, relatedRuns);
@@ -22464,12 +22555,12 @@ export default {
       };
     },
 
-    reviewsForTask(task) {
+    reviewsForTask(task, sourceMap = this.taskReviewsByTaskKey) {
       const taskId = String(task?.id || '').trim();
       const taskNo = String(task?.taskNo || '').trim();
       const rows = [
-        ...(taskId ? this.taskReviewsByTaskKey.get(`id:${taskId}`) || [] : []),
-        ...(taskNo ? this.taskReviewsByTaskKey.get(`zentao:${taskNo}`) || [] : [])
+        ...(taskId ? sourceMap.get(`id:${taskId}`) || [] : []),
+        ...(taskNo ? sourceMap.get(`zentao:${taskNo}`) || [] : [])
       ];
       const seen = new Set();
       return rows.filter(review => {
@@ -22480,12 +22571,10 @@ export default {
       }).sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: ['createdAt', 'submittedAt', 'updatedAt'] }));
     },
 
-    bugsForTask(task) {
+    bugsForTask(task, sourceMap = this.bugsByTaskNo) {
       const taskNo = String(task?.taskNo || task?.zentao?.id || '').trim();
       if (!taskNo) return [];
-      return this.bugs
-        .filter(bug => String(bug.zentao?.task || bug.taskNo || '').trim() === taskNo)
-        .sort((a, b) => this.compareDisplayTimeDesc(a, b, { fields: BUG_LIST_TIME_FIELDS }));
+      return sourceMap.get(taskNo) || [];
     },
 
     taskStageCompletion(task, relatedRuns = []) {
