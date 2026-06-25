@@ -1514,7 +1514,7 @@ async function enrichRunGeneratedArtifactEvidence(run = null) {
 }
 
 async function enrichRunWithImageGenerationEvidence(run = null) {
-  if (!run || !isImageGenerationRun(run)) return run;
+  if (!run || !isPureImageGenerationRun(run)) return stripNonImageRunGeneratedArtifacts(run);
   if (!isFinishedRun(run.status) && !isFinishedRun(run.workerStatus)) return run;
   let workingRun = run;
   const importedArtifacts = await importLocalGeneratedImageArtifactsForRun(workingRun);
@@ -1571,7 +1571,7 @@ async function enrichRunWithImageGenerationEvidence(run = null) {
 }
 
 function sanitizeNoFigmaImageGenerationRunSummary(run = {}, generatedArtifacts = []) {
-  if (!run || !isImageGenerationRun(run) || cleanString(run.figmaLinks)) return run;
+  if (!run || !isPureImageGenerationRun(run) || cleanString(run.figmaLinks)) return run;
   const summary = run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {};
   const blockerReason = cleanString(summary.blockerReason);
   const nextStep = cleanString(summary.nextStep);
@@ -1769,7 +1769,7 @@ function normalizeImageGenerationProviderMode(value = '') {
 
 async function importLocalGeneratedImageArtifactsForRun(run = {}) {
   if (!run?.artifactRoot || !isPathInsideStore(run.artifactRoot, paths.artifactDir)) return [];
-  if (!isImageGenerationRun(run)) return [];
+  if (!isPureImageGenerationRun(run)) return [];
   const cwd = cleanString(run.workerResult?.cwd);
   if (!cwd || !path.isAbsolute(cwd)) return [];
   const cwdStat = await fs.stat(cwd).catch(() => null);
@@ -2066,6 +2066,7 @@ function blockRunForImageGenerationEvidence(run = {}, reason = '', options = {})
 }
 
 async function scanRunGeneratedImageArtifacts(run = {}) {
+  if (!isPureImageGenerationRun(run)) return [];
   const rootDir = cleanString(run.artifactRoot);
   if (!rootDir || !isPathInsideStore(rootDir, paths.artifactDir)) return [];
   const rows = [];
@@ -3948,6 +3949,39 @@ async function artifactDirMtimeMs(dir = '', depth = 0) {
 async function enrichRunWithFigmaLogEvidence(run) {
   if (!run || !shouldDeriveFigmaEvidenceFromLog(run)) return run;
   const evidence = await deriveFigmaLogEvidence(run);
+  if (!evidence?.written && evidence?.preWriteBlockerReason) {
+    return {
+      ...run,
+      figmaWriteResult: {
+        required: true,
+        written: false,
+        createdNodeIds: [],
+        mutatedNodeIds: [],
+        evidence: [],
+        postWriteVerificationRequired: false,
+        verifiedAfterWrite: false,
+        verificationEvidence: [],
+        postWriteBlockers: [],
+        partialWrite: false,
+        blockerReason: evidence.preWriteBlockerReason,
+        derivedFromLog: true
+      },
+      blocker: {
+        ...(run.blocker && typeof run.blocker === 'object' ? run.blocker : {}),
+        reason: evidence.preWriteBlockerReason
+      },
+      resultSummary: {
+        ...(run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {}),
+        status: 'failed',
+        statusText: 'failed',
+        summary: '本机直接执行失败，请查看阻塞原因和原始日志。',
+        blockerReason: evidence.preWriteBlockerReason,
+        needsHumanReview: true,
+        figmaWritten: false,
+        figmaVerifiedAfterWrite: false
+      }
+    };
+  }
   if (!evidence?.written) return run;
   const blockerReason = evidence.blockerReason || 'Figma 已有部分写入，但写入后的最终回读/截图验收未闭环，不能判定整条任务完整完成。';
   const restoredStatus = evidence.verifiedAfterWrite && Number(run.exitCode) === 0 ? 'completed' : (run.status || 'blocked');
@@ -4106,8 +4140,7 @@ function shouldDeriveFigmaEvidenceFromLog(run = {}) {
   if (!isFinishedRun(run.status) && !isFinishedRun(run.workerStatus)) return false;
   const result = run.figmaWriteResult && typeof run.figmaWriteResult === 'object' ? run.figmaWriteResult : {};
   const statusText = `${cleanString(run.status)} ${cleanString(run.workerStatus)}`.toLowerCase();
-  if (hasFigmaWriteEvidence(run) && !(result.partialWrite === true || /blocked|failed/.test(statusText))) return false;
-  if (result.written === false && !/blocked|failed/.test(statusText)) return false;
+  if (hasFigmaWriteEvidence(run) && hasFigmaPostWriteVerification(run) && !(result.partialWrite === true || /blocked|failed/.test(statusText))) return false;
   return Boolean(cleanString(run.logPath) || cleanString(run.id));
 }
 
@@ -4118,7 +4151,7 @@ async function deriveFigmaLogEvidence(run = {}) {
   if (!stat?.isFile()) return null;
   const cacheKey = `${logPath}:${stat.size}:${stat.mtimeMs}`;
   if (runFigmaLogEvidenceCache.has(cacheKey)) return runFigmaLogEvidenceCache.get(cacheKey);
-  const maxBytes = 512 * 1024;
+  const maxBytes = 2 * 1024 * 1024;
   const handle = await fs.open(logPath, 'r').catch(() => null);
   if (!handle) return null;
   try {
@@ -4143,11 +4176,14 @@ function parseFigmaLogEvidence(text = '') {
   const writeEvidenceText = figmaLogEvidenceWriteText(source);
   const createdNodeIds = extractFigmaNodeIdsFromLog(writeEvidenceText, 'createdNodeIds').slice(0, 80);
   const mutatedNodeIds = extractFigmaNodeIdsFromLog(writeEvidenceText, 'mutatedNodeIds').slice(0, 120);
+  const derivedMutationNodeIds = mutatedNodeIds.length ? [] : extractDerivedMutationNodeIdsFromLog(writeEvidenceText).slice(0, 120);
   const imagePlacementLines = extractAffirmativeFigmaImagePlacementLines(source);
-  const written = createdNodeIds.length > 0 || mutatedNodeIds.length > 0 || imagePlacementLines.length > 0;
+  const effectiveMutatedNodeIds = mutatedNodeIds.length ? mutatedNodeIds : derivedMutationNodeIds;
+  const written = createdNodeIds.length > 0 || effectiveMutatedNodeIds.length > 0 || imagePlacementLines.length > 0;
+  const preWriteBlockerReason = !written ? extractFigmaPreWriteBlockerReason(source) : '';
   const evidence = [];
   if (createdNodeIds.length) evidence.push(`日志识别到 createdNodeIds：${createdNodeIds.slice(0, 12).join('、')}`);
-  if (mutatedNodeIds.length) evidence.push(`日志识别到 mutatedNodeIds：${mutatedNodeIds.slice(0, 12).join('、')}`);
+  if (effectiveMutatedNodeIds.length) evidence.push(`日志识别到 mutatedNodeIds：${effectiveMutatedNodeIds.slice(0, 12).join('、')}`);
   imagePlacementLines.slice(0, 8).forEach(item => evidence.push(item.line.slice(0, 500)));
   const postWriteBlockers = written ? extractPostWriteBlockersFromLog(source) : [];
   if (written && !postWriteBlockers.length && /Auth required/i.test(source)) {
@@ -4163,13 +4199,48 @@ function parseFigmaLogEvidence(text = '') {
   return {
     written,
     createdNodeIds,
-    mutatedNodeIds,
+    mutatedNodeIds: effectiveMutatedNodeIds,
     evidence,
     verifiedAfterWrite,
     verificationEvidence,
     postWriteBlockers,
-    blockerReason
+    blockerReason,
+    preWriteBlockerReason
   };
+}
+
+function extractFigmaPreWriteBlockerReason(text = '') {
+  const source = String(text || '');
+  if (/AuthRequired|Auth required|scope="mcp:connect"|oauth-protected-resource|authorization_uri=.*figma/i.test(source)) {
+    return '执行人本机 Figma MCP OAuth / mcp:connect 未授权，导致任务未真正写入 Figma。需要在执行人本机完成 Figma 授权后再执行。';
+  }
+  if (/permission|denied|forbidden|tool call failed|Transport send error/i.test(source) && /figma/i.test(source)) {
+    return '执行人本机 Figma 写入工具权限或连接异常，导致任务未真正写入 Figma。需要先恢复本机 Figma 工具与权限。';
+  }
+  return '';
+}
+
+function extractDerivedMutationNodeIdsFromLog(text = '') {
+  const values = new Set();
+  const source = String(text || '');
+  const patterns = [
+    /deletedNodeIds"\s*:\s*\[([^\]]*)\]/gi,
+    /"renamed"\s*:\s*\[([^\]]*)\]/gi,
+    /"modified"\s*:\s*\[([^\]]*)\]/gi,
+    /"cleanedPaint"\s*:\s*\[([^\]]*)\]/gi,
+    /"unwrapped"\s*:\s*\[([^\]]*)\]/gi,
+    /"removed"\s*:\s*\[([^\]]*)\]/gi
+  ];
+  for (const pattern of patterns) {
+    let match = pattern.exec(source);
+    while (match) {
+      const segment = String(match[1] || '');
+      const idMatches = segment.match(/[A-Za-z0-9_-]+:[A-Za-z0-9_-]+/g) || [];
+      idMatches.forEach(id => values.add(id));
+      match = pattern.exec(source);
+    }
+  }
+  return [...values];
 }
 
 function extractAffirmativeFigmaImagePlacementLines(source = '') {
@@ -4195,9 +4266,20 @@ function figmaLogEvidenceWriteText(source = '') {
   return String(source || '')
     .split(/\r?\n/)
     .map(figmaLogEvidenceWriteChunk)
+    .flatMap(expandFigmaWriteEvidenceChunk)
     .filter(Boolean)
     .filter(hasAffirmativeFigmaWriteEvidenceText)
     .join('\n');
+}
+
+function expandFigmaWriteEvidenceChunk(chunk = '') {
+  const value = String(chunk || '').trim();
+  if (!value) return [];
+  const rows = [value];
+  for (const line of figmaLogEvidenceLineTexts(value)) {
+    if (line && line !== value) rows.push(line);
+  }
+  return rows;
 }
 
 function figmaLogEvidenceWriteChunk(line = '') {
@@ -4212,6 +4294,9 @@ function figmaLogEvidenceWriteChunk(line = '') {
       if (item.status !== 'completed' || item.error) return '';
       const resultText = figmaLogToolResultText(item.result);
       if (!/figma/i.test(`${item.server || ''} ${item.tool || ''}`)) return '';
+      if (/use_figma/i.test(String(item.tool || '')) && isAffirmativeFigmaMutationToolResult(resultText, item.arguments?.description || '')) {
+        return `__FIGMA_WRITE_EVENT__ ${item.tool || 'use_figma'} ${item.arguments?.description || ''} ${resultText}`.trim();
+      }
       if (!/createdNodeIds|mutatedNodeIds/i.test(resultText)) return '';
       return `__FIGMA_WRITE_EVENT__ ${item.tool || 'use_figma'} ${item.arguments?.description || ''} ${resultText}`.trim();
     }
@@ -4221,12 +4306,22 @@ function figmaLogEvidenceWriteChunk(line = '') {
   }
 }
 
+function isAffirmativeFigmaMutationToolResult(resultText = '', description = '') {
+  const text = `${String(description || '')}\n${String(resultText || '')}`;
+  if (!/createdNodeIds|mutatedNodeIds/i.test(text)) return false;
+  const createdNodeIds = extractFigmaNodeIdsFromLog(text, 'createdNodeIds');
+  const mutatedNodeIds = extractFigmaNodeIdsFromLog(text, 'mutatedNodeIds');
+  if (createdNodeIds.length || mutatedNodeIds.length) return true;
+  return /deletedNodeIds|renamed|modified|cleanedPaint|unwrapped|removed/i.test(text);
+}
+
 function hasAffirmativeFigmaWriteEvidenceText(text = '') {
   const value = String(text || '');
   if (!/createdNodeIds|mutatedNodeIds|figmaWriteResult/i.test(value)) return false;
   const hasNodeIds = extractFigmaNodeIdsFromLog(value, 'createdNodeIds').length > 0
     || extractFigmaNodeIdsFromLog(value, 'mutatedNodeIds').length > 0;
-  if (!hasNodeIds) return false;
+  const hasMutationEvidence = /deletedNodeIds|renamed|modified|cleanedPaint|unwrapped|removed/i.test(value);
+  if (!hasNodeIds && !hasMutationEvidence) return false;
   if (/未生成|未检测到|未完成\s*Figma\s*写入|没有执行写入|没有实际写入|无，本次未完成|no mutation|no canvas mutation/i.test(value)) return false;
   return /^__FIGMA_WRITE_EVENT__\b/.test(value)
     || /写入成功|Figma 写入证据|figmaWriteResult\s*[:=]\s*["']?(?:rename_applied|applied|written|true)|mutationCount/i.test(value);
@@ -4235,7 +4330,7 @@ function hasAffirmativeFigmaWriteEvidenceText(text = '') {
 function extractFigmaNodeIdsFromLog(text = '', field = '') {
   const values = new Set();
   const source = String(text || '');
-  const arrayPattern = new RegExp(`"${field}"\\s*:\\s*\\[([^\\]]*)\\]`, 'gi');
+  const arrayPattern = new RegExp(`"?${field}"?\\s*:\\s*\\[([^\\]]*)\\]`, 'gi');
   let match = arrayPattern.exec(source);
   while (match) {
     String(match[1] || '')
@@ -4266,6 +4361,36 @@ function extractFigmaNodeIdsFromLog(text = '', field = '') {
     match = equalsPattern.exec(source);
   }
   return [...values];
+}
+
+function stripNonImageRunGeneratedArtifacts(run = {}) {
+  if (!run || isPureImageGenerationRun(run)) return run;
+  const existingSummary = run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {};
+  const existingWorkerResult = run.workerResult && typeof run.workerResult === 'object' ? run.workerResult : {};
+  const currentGenerated = Array.isArray(run.generatedArtifacts) ? run.generatedArtifacts : [];
+  const summaryGenerated = Array.isArray(existingSummary.generatedArtifacts) ? existingSummary.generatedArtifacts : [];
+  const workerGenerated = Array.isArray(existingWorkerResult.generatedArtifacts) ? existingWorkerResult.generatedArtifacts : [];
+  const artifacts = Array.isArray(existingSummary.artifacts) ? existingSummary.artifacts : [];
+  const hasAnyGenerated = currentGenerated.length || summaryGenerated.length || workerGenerated.length || artifacts.length;
+  if (!hasAnyGenerated) return run;
+  const keepArtifacts = artifacts.filter(value => {
+    const resolved = resolveRunArtifactSourcePath(value);
+    if (!resolved) return true;
+    return !/\/(?:生成图片|outputs)\//.test(resolved.replaceAll('\\', '/'));
+  });
+  return {
+    ...run,
+    generatedArtifacts: [],
+    resultSummary: {
+      ...existingSummary,
+      generatedArtifacts: [],
+      artifacts: keepArtifacts
+    },
+    workerResult: {
+      ...existingWorkerResult,
+      generatedArtifacts: []
+    }
+  };
 }
 
 function isLikelyFigmaNodeId(value = '') {
@@ -7690,7 +7815,12 @@ function runRequiresFigmaWriteEvidence(run = {}) {
 }
 
 function runFigmaTargetIsImagePlacement(run = {}) {
-  return Boolean(cleanString(run.figmaLinks) && isImageGenerationRun(run) && !runExplicitlySkipsFigmaWrite(run));
+  return Boolean(cleanString(run.figmaLinks) && isExplicitImageGenerationRun(run) && !runExplicitlySkipsFigmaWrite(run));
+}
+
+function isPureImageGenerationRun(run = {}) {
+  if (!cleanString(run.figmaLinks)) return isImageGenerationRun(run);
+  return runFigmaTargetIsImagePlacement(run);
 }
 
 function isImageGenerationRun(run = {}) {
@@ -7707,6 +7837,24 @@ function isImageGenerationRun(run = {}) {
     ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
     ...(Array.isArray(run.selectedMaterialSnapshots)
       ? run.selectedMaterialSnapshots.flatMap(item => [item?.path, item?.title, item?.name, item?.content])
+      : [])
+  ].filter(Boolean).join('\n');
+  return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|same[-_\s]*ip[-_\s]*image|sameipimage|gpt[-_\s]?image|imagegen|image[-_\s]*gen|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)|(?:main|key)[-_\s]*visual|concept[-_\s]*art|character[-_\s]*(?:design|art)|image[-_\s]*(?:generation|creation|editing)|text[-_\s]*to[-_\s]*image|img2img|image[-_\s]*to[-_\s]*image|visual[-_\s]*asset|game[-_\s]*asset|poster[-_\s]*(?:design|generation)|banner[-_\s]*(?:design|generation)|(?:generate|create|make|design).{0,40}(?:image|poster|banner|illustration|character|avatar|asset|texture|visual)/i.test(text);
+}
+
+function isExplicitImageGenerationRun(run = {}) {
+  const text = [
+    run.requirement,
+    run.title,
+    run.sourceTitle,
+    run.customWorkflowName,
+    run.customWorkflowDescription,
+    run.primarySkillPath,
+    run.primarySkillTitle,
+    run.stage,
+    ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
+    ...(Array.isArray(run.selectedMaterialSnapshots)
+      ? run.selectedMaterialSnapshots.flatMap(item => [item?.path, item?.title, item?.name])
       : [])
   ].filter(Boolean).join('\n');
   return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|same[-_\s]*ip[-_\s]*image|sameipimage|gpt[-_\s]?image|imagegen|image[-_\s]*gen|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)|(?:main|key)[-_\s]*visual|concept[-_\s]*art|character[-_\s]*(?:design|art)|image[-_\s]*(?:generation|creation|editing)|text[-_\s]*to[-_\s]*image|img2img|image[-_\s]*to[-_\s]*image|visual[-_\s]*asset|game[-_\s]*asset|poster[-_\s]*(?:design|generation)|banner[-_\s]*(?:design|generation)|(?:generate|create|make|design).{0,40}(?:image|poster|banner|illustration|character|avatar|asset|texture|visual)/i.test(text);
