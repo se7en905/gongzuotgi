@@ -870,15 +870,6 @@ export default {
         skill: null,
         html: ''
       },
-      directSkillRunDialog: {
-        visible: false,
-        row: null,
-        figmaLinks: '',
-        figmaWriteMode: 'target-node',
-        assignedToUserId: '',
-        requirement: '',
-        submitting: false
-      },
       aiExecutionArchiveFilters: {
         keyword: '',
         userId: '',
@@ -13779,111 +13770,6 @@ export default {
       await this.openSkillPreview(targetRow.skill || targetRow);
     },
 
-    openDirectSkillRunDialog(row = this.skillPreview.skill || {}) {
-      if (!this.can('run.directSkill.create')) {
-        ElMessage.warning('当前账号没有创建直接执行的权限');
-        return;
-      }
-      const projectId = row.projectId || this.selectedProjectId || this.projects[0]?.id || '';
-      if (projectId && !this.scans[projectId]) this.ensureRunProjectScanCache(projectId).catch(() => {});
-      if (this.can('api.users.manage') && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
-      const currentUserId = this.currentUser?.id || '';
-      this.directSkillRunDialog = {
-        visible: true,
-        row: { ...row, projectId },
-        figmaLinks: '',
-        figmaWriteMode: 'target-node',
-        assignedToUserId: currentUserId,
-        requirement: '',
-        submitting: false
-      };
-    },
-
-    async createDirectSkillRun() {
-      const dialog = this.directSkillRunDialog;
-      const row = dialog.row || {};
-      const projectId = row.projectId || this.selectedProjectId || this.projects[0]?.id || '';
-      const skillPath = this.directSkillPath(row);
-      const figmaLinks = String(dialog.figmaLinks || '').trim();
-      if (!projectId) {
-        ElMessage.warning('请先选择项目');
-        return;
-      }
-      if (!skillPath) {
-        ElMessage.warning('当前产物缺少可执行的 Skill 或 md 路径');
-        return;
-      }
-      const assignee = this.directSkillAssigneeOptions.find(user => user.id === dialog.assignedToUserId) || this.currentUser || {};
-      const productName = row.productDisplayName || row.productFileName || row.title || this.fileNameFromPath(skillPath) || 'AI 产物';
-      const imageGenerationProviderMode = this.inferDefaultImageGenerationProviderMode(skillPath, row.preview || row.skill?.preview || String(dialog.requirement || '').trim());
-      const requirement = this.ensureFigmaTargetInRunRequirement({
-        requirement: String(dialog.requirement || '').trim(),
-        materialNames: [productName],
-        materialPaths: [skillPath],
-        figmaLinks,
-        writeMode: dialog.figmaWriteMode || 'target-node',
-        imageGenerationProviderMode
-      });
-      let primarySkillContent = this.skillContentCache[row.id] || row.preview || row.skill?.preview || this.skillPreviewText || '';
-      if (!primarySkillContent || /技能内容读取失败/i.test(primarySkillContent)) {
-        try {
-          const snapshot = await this.loadRunMaterialSnapshot(skillPath, projectId);
-          primarySkillContent = snapshot?.content || '';
-        } catch (error) {
-          ElMessage.error(this.readApiError(error) || error.message || 'Skill / md 内容读取失败，不能创建直接执行');
-          return;
-        }
-      }
-      if (!primarySkillContent || /技能内容读取失败/i.test(primarySkillContent)) {
-        ElMessage.warning('当前 Skill / md 内容快照不可用，不能创建直接执行');
-        return;
-      }
-      dialog.submitting = true;
-      try {
-        const run = await this.api('/api/runs', {
-          method: 'POST',
-          body: JSON.stringify({
-            projectId,
-            title: `直接执行 ${productName}`,
-            productName,
-            sourceTitle: row.title || row.productDisplayName || row.productFileName || '',
-            primarySkillPath: skillPath,
-            primarySkillContent,
-            primarySkillTitle: productName,
-            stage: skillPath,
-            selectedMaterialHints: [skillPath],
-            selectedMaterialSnapshots: [{
-              path: skillPath,
-              sourceValue: skillPath,
-              title: productName,
-              kind: row.skillInventoryKind || row.skill?.inventoryKind || '',
-              content: primarySkillContent
-            }],
-            figmaLinks,
-            imageGenerationProviderMode,
-            figmaWriteMode: dialog.figmaWriteMode || 'target-node',
-            assignedToUserId: assignee.id || this.currentUser?.id || '',
-            assignedToName: assignee.displayName || assignee.username || this.defaultRunDeveloperName,
-            developer: assignee.displayName || assignee.username || this.defaultRunDeveloperName,
-            requirement,
-            codexRequest: this.defaultRunCodexRequest('direct-skill'),
-            sourceType: 'direct-skill',
-            executionMode: 'direct-skill'
-          })
-        });
-        this.upsertRunInLocalState(run, { select: true });
-        this.directSkillRunDialog.visible = false;
-        this.skillPreview.visible = false;
-        this.activeView = 'runs';
-        this.pushRoute('/runs');
-        ElMessage.success('直接执行已创建，等待对应组员本机 Worker 领取');
-      } catch (error) {
-        ElMessage.error(this.readApiError(error) || '直接执行创建失败');
-      } finally {
-        dialog.submitting = false;
-      }
-    },
-
     directSkillPath(row = {}) {
       return row.skill?.git?.relativePath
         || row.relativePath
@@ -18156,20 +18042,38 @@ export default {
       });
     },
 
-    createRunFromSkillInventoryRow(row = {}) {
+    async createRunFromSkillInventoryRow(row = {}) {
+      if (!this.can('run.create')) {
+        ElMessage.warning('当前账号没有创建直接执行的权限');
+        return;
+      }
       const projectId = row.projectId || this.selectedProjectId || this.projects[0]?.id || '';
-      const skillPath = row.skill?.git?.relativePath || row.relativePath || row.skill?.relativePath || row.path || row.skill?.path || row.id || '';
+      const skillPath = this.directSkillPath(row) || row.id || '';
       const productName = row.productDisplayName || row.productFileName || row.title || this.fileNameFromPath(skillPath) || row.id || 'AI 产物';
-      const ownerText = this.displayChinesePersonList(row.uploader || row.owner || '');
-      const owner = ownerText && ownerText !== '-' ? ownerText : this.defaultRunDeveloperName;
-      const scene = this.skillSceneText(row, '');
-      const sourceLines = [
-        skillPath ? `产物路径：${skillPath}` : '',
-        row.source ? `来源：${row.source}` : '',
-        owner ? `贡献人：${owner}` : '',
-        scene ? `适用场景：${scene}` : ''
-      ].filter(Boolean);
-      this.openRunCreateDrawer({
+      if (!projectId) {
+        ElMessage.warning('请先选择项目');
+        return;
+      }
+      if (!skillPath) {
+        ElMessage.warning('当前产物缺少可执行的 Skill 或 md 路径');
+        return;
+      }
+      if (projectId && !this.scans[projectId]) {
+        try {
+          await this.ensureRunProjectScanCache(projectId);
+        } catch {
+          // openRunCreateDrawer will keep the existing error handling path.
+        }
+      }
+      const imageGenerationProviderMode = this.inferDefaultImageGenerationProviderMode(skillPath, row.preview || row.skill?.preview || '');
+      const requirement = this.defaultSkillRunRequirement({
+        materialNames: [productName],
+        materialPaths: [skillPath],
+        figmaLinks: '',
+        writeMode: 'target-node',
+        imageGenerationProviderMode
+      });
+      await this.openRunCreateDrawer({
         projectId,
         sourceMode: 'standalone',
         executionMode: 'single-skill',
@@ -18184,17 +18088,12 @@ export default {
         developer: this.defaultRunDeveloperName,
         targetPage: skillPath || productName,
         showdocHints: skillPath,
-        imageGenerationProviderMode: this.inferDefaultImageGenerationProviderMode(skillPath, row.preview || row.skill?.preview || ''),
+        imageGenerationProviderMode,
         selectedMaterialHints: skillPath ? [skillPath] : [],
-        requirement: [
-          `请基于 AI 产物清单中的「${productName}」发起单skill/md 执行。`,
-          ...sourceLines,
-          '执行时优先读取该 md / SKILL.md 或产物路径，按当前对话补充要求处理，并在产物明细中保留执行依据和结果。'
-        ].join('\n'),
+        requirement,
         sourceType: 'standalone'
       });
-      this.activeView = 'runs';
-      this.pushRoute('/runs');
+      this.skillPreview.visible = false;
     },
 
     createRunFromBug(bug) {

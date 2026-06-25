@@ -66,6 +66,16 @@
         <h4>{{ section.title }}</h4>
         <p v-for="line in section.lines" :key="line">{{ line }}</p>
       </section>
+      <section class="ai-score-rule-dialog__section ai-score-rule-dialog__section--file">
+        <h4>7. 负责人配置表</h4>
+        <p>完整配置表已整理到项目输出目录，后续调权重时优先看这份文件。</p>
+        <p class="ai-score-rule-dialog__path">{{ scoreConfigFilePath }}</p>
+        <div class="ai-score-rule-dialog__actions">
+          <ElButton plain @click="handleOpenScoreConfig">
+            打开配置表
+          </ElButton>
+        </div>
+      </section>
     </div>
   </ElDialog>
   <section class="ai-board-frame-shell" :class="{ locked: !app.canViewAiMembersBoardContent }">
@@ -157,6 +167,9 @@ export default {
           ]
         }
       ];
+    },
+    scoreConfigFilePath() {
+      return '/Users/se7en/ArtProject/platform/outputs/ai-score-owner-config.md';
     }
   },
   data() {
@@ -194,6 +207,16 @@ export default {
     if (this.frameHtmlUpdateTimer) window.clearTimeout(this.frameHtmlUpdateTimer);
   },
   methods: {
+    async handleOpenScoreConfig() {
+      try {
+        await this.app.api('/api/maintenance/open-path', {
+          method: 'POST',
+          body: JSON.stringify({ path: this.scoreConfigFilePath })
+        });
+      } catch (error) {
+        ElMessage.error(this.app.readApiError?.(error) || '配置表打开失败');
+      }
+    },
     syncThemeToFrame() {
       const frame = this.$refs.boardFrame;
       if (!frame?.contentWindow) return;
@@ -491,6 +514,26 @@ export default {
   font-size: 13px;
   line-height: 1.7;
   margin: 0;
+}
+
+.ai-score-rule-dialog__section--file {
+  padding-top: 4px;
+}
+
+.ai-score-rule-dialog__path {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  padding: 10px 12px;
+  background: var(--soft-card);
+}
+
+.ai-score-rule-dialog__actions {
+  display: flex;
+  justify-content: flex-start;
 }
 
 .ai-board-switcher {
