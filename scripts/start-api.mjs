@@ -56,7 +56,10 @@ async function shutdown(signal) {
 
 async function stopExistingProjectServer(targetPort) {
   const pids = await listeningPids(targetPort);
-  const stopPids = new Set(pids);
+  const stopPids = [];
+  const addStopPid = pid => {
+    if (pid && !stopPids.includes(pid)) stopPids.push(pid);
+  };
   for (const pid of pids) {
     if (pid === process.pid) continue;
     const command = await processCommand(pid);
@@ -67,9 +70,10 @@ async function stopExistingProjectServer(targetPort) {
     }
     const parentPid = await processParentPid(pid);
     const parentCommand = parentPid ? await processCommand(parentPid) : '';
-    if (parentPid && isProjectServer(parentCommand)) stopPids.add(parentPid);
+    addStopPid(pid);
+    if (parentPid && isProjectServer(parentCommand)) addStopPid(parentPid);
   }
-  for (const pid of [...stopPids].sort((a, b) => a - b)) {
+  for (const pid of stopPids) {
     if (pid === process.pid) continue;
     await stopProcess(pid);
   }

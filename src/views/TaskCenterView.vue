@@ -105,7 +105,7 @@
           <div class="project-cell draggable-task-cell" draggable="true" @dragstart.stop="event => app.startTaskAssignDrag(row, event)" @dragend="app.clearTaskAssignDrag" @click.stop="selectTask(row)">
             <div class="task-title-row">
               <ElPopover
-                v-if="row.requirementPreviewHtml"
+                v-if="row.hasRequirementPreview"
                 trigger="hover"
                 placement="right-start"
                 popper-class="task-requirement-popover"
@@ -130,7 +130,7 @@
                     <strong>{{ row.displayTitle }}</strong>
                     <span>{{ row.developer || '未指定' }} · {{ row.deadline || row.zentao?.deadline || '无截止时间' }}</span>
                   </div>
-                  <div class="task-requirement-preview-body" v-html="row.requirementPreviewHtml"></div>
+                  <div class="task-requirement-preview-body" v-html="app.taskRequirementPreviewHtml(row)"></div>
                 </div>
               </ElPopover>
               <a
@@ -364,9 +364,11 @@ export default {
       return this.app.taskCenterModeForView(this.revision);
     },
     pagedBusinessTaskRows() {
+      if (this.taskCenterMode !== 'task') return [];
       return this.app.pagedBusinessTaskRowsForView(this.revision);
     },
     pagedBugRows() {
+      if (this.taskCenterMode !== 'bug') return [];
       return this.app.pagedBugRowsForView(this.revision);
     },
     taskCenterTotal() {

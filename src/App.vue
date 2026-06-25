@@ -734,20 +734,6 @@ export default {
       skillValidationRefreshPromise: null,
       skillValidationLastRefreshAt: 0,
       skillValidationDirty: false,
-      taskCenterFilterCache: {
-        task: {
-          revision: -1,
-          source: null,
-          key: '',
-          rows: []
-        },
-        bug: {
-          revision: -1,
-          source: null,
-          key: '',
-          rows: []
-        }
-      },
       derivedListCache: {
         projectRows: {
           projectsRef: null,
@@ -2281,7 +2267,7 @@ export default {
           return {
             ...task,
             displayTitle: this.taskDisplayTitle(task),
-            requirementPreviewHtml: this.taskRequirementPreviewHtml(task),
+            hasRequirementPreview: Boolean(this.taskRequirementPreviewSource(task)),
             isLowEffortAcceptance,
             priorityFlags: isLowEffortAcceptance ? [] : this.taskPriorityFlags(task),
             projectName: project?.name || task.projectId || '-',
@@ -4935,6 +4921,20 @@ export default {
 
   created() {
     this.appBridge = this;
+    this.taskCenterFilterCache = {
+      task: {
+        revision: -1,
+        source: null,
+        key: '',
+        rows: []
+      },
+      bug: {
+        revision: -1,
+        source: null,
+        key: '',
+        rows: []
+      }
+    };
   },
 
   mounted() {
@@ -5607,7 +5607,8 @@ export default {
     ensureActiveViewData(view = this.activeView) {
       const dirty = this.consumeViewDataDirty(view);
       if (view === 'tasks') {
-        if ((!this.businessTasks.length || !this.bugs.length || !this.taskReviews.length || dirty) && !this.loading.tasks) {
+        const hasTaskCache = this.businessTasks.length > 0;
+        if ((dirty || !hasTaskCache) && !this.loading.tasks) {
           this.refreshTasks({ background: !dirty }).catch(() => {});
         }
         if ((!this.appConfig || !Object.keys(this.appConfig).length || dirty) && !this.loading.config) {
@@ -6024,7 +6025,7 @@ export default {
             jobs.push(['账号列表', () => this.refreshUsers()]);
           }
         } else if (this.activeView === 'tasks') {
-          if ((!this.businessTasks.length || !this.bugs.length || !this.taskReviews.length) && this.can('menu.tasks')) {
+          if (!this.businessTasks.length && this.can('menu.tasks')) {
             jobs.push(['任务中心', () => this.refreshTasks()]);
           }
         } else if (this.isSkillInventoryViewActive && this.can('menu.skillList')) {
@@ -6503,6 +6504,13 @@ export default {
     },
 
     clearDeprecatedWorkbenchDisplayCache() {
+      if (typeof localStorage === 'undefined') return;
+      ['operationLogs'].forEach(key => {
+        try {
+          localStorage.removeItem(this.workbenchDisplayCacheKey(key));
+        } catch {
+        }
+      });
     },
 
     saveWorkbenchDisplayCache(key = '', value) {
@@ -7033,6 +7041,10 @@ export default {
 
     restoreWorkbenchDisplayCache() {
       const path = typeof window !== 'undefined' ? window.location.pathname : '';
+      if (path === '/tasks' || path === '/' || path === '/workspace') {
+        ['businessTasks', 'bugs', 'taskReviews', 'taskProcessingNotes'].forEach(key => this.restoreWorkbenchDisplayCacheKey(key));
+        return;
+      }
       if (['/runs', '/agent-workers', '/ai-archive'].includes(path)) {
         ['runs', 'projects', 'agentWorkers', 'customWorkflows'].forEach(key => this.restoreWorkbenchDisplayCacheKey(key));
         return;
@@ -7041,6 +7053,17 @@ export default {
         this.restoreWorkbenchDisplayCacheKey('aiMembersSnapshot');
         this.restoreAiMembersBoardHtmlSnapshot();
         this.restoreAiMemberScoreSnapshot();
+        return;
+      }
+      if (path === '/operation-logs') {
+        return;
+      }
+      if (path === '/skills/assets' || path === '/skills/list' || path === '/skill-inventory') {
+        [
+          'projects',
+          'skillInventoryProductStatsSnapshot',
+          'skillInventoryFirstPageSnapshot'
+        ].forEach(key => this.restoreWorkbenchDisplayCacheKey(key));
         return;
       }
       [
@@ -16090,6 +16113,7 @@ export default {
 
     recordWorkbenchViewLog(view = '', route = '') {
       if (!this.currentUser || !view || view === 'operation-logs') return;
+      if (this.isPlatformAdmin) return;
       const now = Date.now();
       const key = `${view}:${route}`;
       if (this._lastWorkbenchViewLogKey === key && now - Number(this._lastWorkbenchViewLogAt || 0) < 3000) return;
@@ -20448,31 +20472,9 @@ export default {
     },
 
     taskRequirementPreviewHtml(task = {}) {
-      const rawSignature = [
-        task.requirement,
-        task.description,
-        task.zentao?.desc,
-        task.zentao?.description,
-        task.zentao?.requirement,
-        task.summary,
-        task.zentao?.taskUrl,
-        task.zentaoUrl,
-        task.taskUrl,
-        task.zentaoId,
-        task.taskNo
-      ].map(value => String(value || '')).join('\u0001');
-      if (task.__requirementPreviewSignature === rawSignature && typeof task.__requirementPreviewHtml === 'string') {
-        return task.__requirementPreviewHtml;
-      }
       const raw = this.taskRequirementPreviewSource(task);
-      const html = raw ? sanitizeTaskRequirementHtml(raw, this.zentaoTaskUrl(task) || this.appConfig.zentaoBaseUrl || '') : '';
-      try {
-        Object.defineProperties(task, {
-          __requirementPreviewSignature: { value: rawSignature, writable: true, configurable: true },
-          __requirementPreviewHtml: { value: html, writable: true, configurable: true }
-        });
-      } catch {}
-      return html;
+      if (!raw) return '';
+      return sanitizeTaskRequirementHtml(raw, this.zentaoTaskUrl(task) || this.appConfig.zentaoBaseUrl || '');
     },
 
     taskRequirementPreviewSource(task = {}) {
