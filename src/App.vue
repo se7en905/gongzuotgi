@@ -19801,6 +19801,27 @@ export default {
       return origin || 'http://工作台服务器IP:4288';
     },
 
+    windowsWorkerOpenAiBootstrapLines() {
+      return [
+        '$resolvedOpenAiBaseUrl = if ($env:OPENAI_BASE_URL) { $env:OPENAI_BASE_URL } elseif ($env:OPENAI_API_BASE_URL) { $env:OPENAI_API_BASE_URL } elseif ($env:OPENAI_API_BASE) { $env:OPENAI_API_BASE } else { "" }',
+        '$codexConfig = Join-Path $codexHome "config.toml"',
+        'if (-not $resolvedOpenAiBaseUrl -and (Test-Path $codexConfig)) {',
+        '  $configText = Get-Content -Raw -Path $codexConfig',
+        `  $providerMatch = [regex]::Match($configText, '(?m)^\\s*model_provider\\s*=\\s*["'']?([^"''\\r\\n]+)')`,
+        '  if ($providerMatch.Success) {',
+        '    $providerName = $providerMatch.Groups[1].Value.Trim()',
+        '    $escapedProvider = [regex]::Escape($providerName)',
+        '    $sectionMatch = [regex]::Match($configText, "(?ms)^\\[model_providers\\.$escapedProvider\\]\\s*(.*?)^(?=\\[|\\z)")',
+        '    if ($sectionMatch.Success) {',
+        `      $baseUrlMatch = [regex]::Match($sectionMatch.Groups[1].Value, '(?m)^\\s*base_url\\s*=\\s*["'']?([^"''\\r\\n]+)')`,
+        '      if ($baseUrlMatch.Success) { $resolvedOpenAiBaseUrl = $baseUrlMatch.Groups[1].Value.Trim() }',
+        '    }',
+        '  }',
+        '}',
+        'if ($resolvedOpenAiBaseUrl) { $env:OPENAI_BASE_URL = $resolvedOpenAiBaseUrl }'
+      ];
+    },
+
     directSkillWorkerStartCommand(user = this.currentUser || {}, os = 'dual') {
       const username = String(user.username || '').trim();
       const password = String(user.passwordDisplay || '').trim();
@@ -19835,6 +19856,7 @@ export default {
           'if (-not $codex) { throw "缺少可用于后台 Worker 的真实 Codex CLI。WindowsApps 应用别名不能用于后台自检；请安装 Codex CLI 或配置 CODEX_CLI_PATH 为真实 codex.exe 路径。" }',
           '$codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } elseif (Test-Path "$env:USERPROFILE\\.codex") { "$env:USERPROFILE\\.codex" } elseif (Test-Path "C:\\Users\\Administrator\\.codex") { "C:\\Users\\Administrator\\.codex" } else { "$env:USERPROFILE\\.codex" }',
           'if (-not (Test-Path $codexHome)) { Write-Warning "未找到 CODEX_HOME：$codexHome。请先用当前 Windows 账号打开 Codex 并完成 Figma MCP 授权。" }',
+          ...this.windowsWorkerOpenAiBootstrapLines(),
           '$env:CODEX_CLI_PATH = $codex',
           '$env:CODEX_HOME = $codexHome',
           '$env:ART_PLATFORM_API = ' + this.powershellQuote(apiBase),
@@ -19894,6 +19916,7 @@ export default {
           '$installScript = Get-Content -Raw -Path "$root\\scripts\\install_art_direct_worker_windows.ps1"; Set-Content -Path "$root\\scripts\\install_art_direct_worker_windows.ps1" -Value $installScript -Encoding UTF8',
           '$codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } elseif (Test-Path "$env:USERPROFILE\\.codex") { "$env:USERPROFILE\\.codex" } elseif (Test-Path "C:\\Users\\Administrator\\.codex") { "C:\\Users\\Administrator\\.codex" } else { "$env:USERPROFILE\\.codex" }',
           'if (-not (Test-Path $codexHome)) { Write-Warning "未找到 CODEX_HOME：$codexHome。请先用当前 Windows 账号打开 Codex 并完成 Figma MCP 授权。" }',
+          ...this.windowsWorkerOpenAiBootstrapLines(),
           '$env:ART_PLATFORM_API = ' + this.powershellQuote(apiBase),
           '$env:ART_PLATFORM_USERNAME = ' + this.powershellQuote(username || '组员账号'),
           '$env:ART_PLATFORM_PASSWORD = ' + this.powershellQuote(safePassword),
