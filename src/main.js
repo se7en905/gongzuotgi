@@ -16,11 +16,9 @@ import {
   Link,
   Loading,
   Monitor,
-  Moon,
   Operation,
   Refresh,
   Setting,
-  Sunny,
   Tickets,
   Timer,
   TrendCharts,
@@ -57,7 +55,6 @@ app
   .component('Connection', Connection)
   .component('DataLine', DataLine)
   .component('Monitor', Monitor)
-  .component('Moon', Moon)
   .component('Operation', Operation)
   .component('FolderChecked', FolderChecked)
   .component('Guide', Guide)
@@ -67,7 +64,6 @@ app
   .component('Loading', Loading)
   .component('Refresh', Refresh)
   .component('Setting', Setting)
-  .component('Sunny', Sunny)
   .component('Tickets', Tickets)
   .component('Timer', Timer)
   .component('TrendCharts', TrendCharts)

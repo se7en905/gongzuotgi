@@ -90,7 +90,7 @@
       class="ai-board-embed-frame"
       :srcdoc="frameHtml || activeBoardHtml"
       title="AI部门看板"
-      @load="syncThemeToFrame"
+      @load="handleFrameLoad"
     />
   </section>
 </section>
@@ -188,16 +188,12 @@ export default {
     };
   },
   watch: {
-    'app.theme'() {
-      this.syncThemeToFrame();
-    },
     activeBoardHtml: {
       immediate: true,
       handler(value) {
         const isRealBoardHtml = this.app.isAiMembersBoardHtml ? this.app.isAiMembersBoardHtml(value) : String(value || '').length > 1000;
         const nextValue = isRealBoardHtml ? value : this.lastRealFrameHtml || this.frameHtml || value;
         if (nextValue === this.frameHtml) {
-          this.$nextTick(() => this.syncThemeToFrame());
           return;
         }
         if (this.frameHtmlUpdateTimer) window.clearTimeout(this.frameHtmlUpdateTimer);
@@ -205,7 +201,6 @@ export default {
           if (isRealBoardHtml) this.lastRealFrameHtml = value;
           this.frameHtml = nextValue;
           this.frameHtmlUpdateTimer = 0;
-          this.$nextTick(() => this.syncThemeToFrame());
         }, 0);
       }
     }
@@ -214,6 +209,7 @@ export default {
     if (this.frameHtmlUpdateTimer) window.clearTimeout(this.frameHtmlUpdateTimer);
   },
   methods: {
+    handleFrameLoad() {},
     async handleOpenScoreConfig() {
       try {
         await this.app.api('/api/maintenance/open-path', {
@@ -223,11 +219,6 @@ export default {
       } catch (error) {
         ElMessage.error(this.app.readApiError?.(error) || '配置表打开失败');
       }
-    },
-    syncThemeToFrame() {
-      const frame = this.$refs.boardFrame;
-      if (!frame?.contentWindow) return;
-      frame.contentWindow.postMessage({ type: 'platform-theme', theme: this.app.theme || 'light' }, '*');
     }
   }
 };

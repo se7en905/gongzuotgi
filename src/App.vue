@@ -1,15 +1,15 @@
 <template>
   <LoginView v-if="authChecked && !currentUser" :model="loginForm" :error="loginError" :loading="loginLoading"
-    :theme="theme" @submit="login" />
+    @submit="login" />
 
-  <div v-else-if="!authChecked" class="boot-shell" :data-theme="theme">
+  <div v-else-if="!authChecked" class="boot-shell">
     <ElIcon class="boot-icon">
       <Monitor />
     </ElIcon>
     <span>正在检查登录状态...</span>
   </div>
 
-  <ElContainer v-else class="app-shell" :data-theme="theme">
+  <ElContainer v-else class="app-shell">
     <ElAside class="side-nav" width="236px">
       <div class="side-head">
         <button type="button" class="brand" @click="switchView('tasks')" aria-label="回到任务中心">
@@ -87,17 +87,6 @@
         </ElMenuItem>
       </ElMenu>
 
-      <div class="side-controls">
-        <ElTooltip :content="theme === 'dark' ? '切换浅色模式' : '切换深色模式'" placement="right">
-          <button type="button" data-testid="theme-toggle" @click="toggleTheme">
-            <ElIcon>
-              <Sunny v-if="theme === 'dark'" />
-              <Moon v-else />
-            </ElIcon>
-            <span>{{ theme === 'dark' ? '浅色模式' : '深色模式' }}</span>
-          </button>
-        </ElTooltip>
-      </div>
     </ElAside>
 
     <ElContainer>
@@ -140,7 +129,7 @@
 
         <TaskCenterView v-if="activeView === 'tasks'" :app="appBridge" :revision="taskCenterRevision" />
 
-        <AiMembersView v-if="aiMembersViewMounted || activeView === 'ai-members'" v-show="activeView === 'ai-members'" :app="appBridge" />
+        <AiMembersView v-if="activeView === 'ai-members'" :app="appBridge" />
 
         <section v-show="activeView === 'codex-config'" class="view-grid codex-config-view">
           <ElCard shadow="never" class="panel-card page-card codex-config-card">
@@ -696,7 +685,6 @@ export default {
       },
       activeView: 'tasks',
       currentPath: typeof window !== 'undefined' ? window.location.pathname : '/',
-      theme: 'light',
       projectPage: 1,
       projectPageSize: 10,
       artProjectSheetRows: [],
@@ -811,10 +799,6 @@ export default {
       taskPageSize: 10,
       detailProjectTasks: [],
       detailPagedProjectTasks: [],
-      themeOptions: [
-        { label: '深色模式', value: 'dark' },
-        { label: '浅色模式', value: 'light' }
-      ],
       projects: [],
       projectsCatalogLoaded: false,
       customWorkflows: readWorkbenchDisplayCacheArray('customWorkflows'),
@@ -4650,10 +4634,6 @@ export default {
   },
 
   watch: {
-    theme(value) {
-      this.applyTheme(value);
-    },
-
     selectedProjectId(value) {
       this.runForm.projectId = value || this.runForm.projectId;
       this.taskPage = 1;
@@ -4902,13 +4882,11 @@ export default {
   },
 
   mounted() {
-    this.theme = localStorage.getItem('awp-theme') || 'light';
     this.clearDeprecatedWorkbenchDisplayCache();
     this.applyRememberedWorkbenchPageSize();
     this.restoreWorkbenchDisplayCache();
     this.taskProcessingNotes = this.loadTaskProcessingNotes();
     this.taskArtBriefs = this.loadTaskArtBriefs();
-    this.applyTheme(this.theme);
     window.addEventListener('popstate', this.syncRoute);
     window.addEventListener('visibilitychange', this.handleVisibilityVersionCheck);
     this.bootstrapAuth();
@@ -6429,16 +6407,6 @@ export default {
       }
     },
 
-    applyTheme(theme) {
-      document.documentElement.dataset.theme = theme;
-      document.documentElement.style.colorScheme = theme === 'light' ? 'light' : 'dark';
-      localStorage.setItem('awp-theme', theme);
-    },
-
-    toggleTheme() {
-      this.theme = this.theme === 'dark' ? 'light' : 'dark';
-    },
-
     async copyText(value, label = '内容') {
       const text = String(value || '').trim();
       if (!text) {
@@ -6638,6 +6606,15 @@ export default {
         html: this.isAiMembersBoardHtml(snapshot.html) ? snapshot.html : ''
       };
       this.saveWorkbenchDisplayCache('aiMembersBoardHtmlSnapshot', payload);
+    },
+
+    aiMembersSnapshotCachePayload(snapshot = {}) {
+      const source = snapshot && typeof snapshot === 'object' ? snapshot : {};
+      const payload = { ...source };
+      delete payload.html;
+      delete payload.ownerHtml;
+      delete payload.memberHtml;
+      return payload;
     },
 
     mergeAiMembersSnapshotWithBoardCache(snapshot = {}) {
@@ -8768,7 +8745,7 @@ export default {
           const snapshot = await this.api('/api/ai-members');
           this.aiMembersSnapshot = this.stabilizeAiMembersSnapshot(snapshot);
           this.saveAiMembersBoardHtmlSnapshot(this.aiMembersSnapshot);
-          this.saveWorkbenchDisplayCache('aiMembersSnapshot', this.aiMembersSnapshot);
+          this.saveWorkbenchDisplayCache('aiMembersSnapshot', this.aiMembersSnapshotCachePayload(this.aiMembersSnapshot));
           return this.aiMembersSnapshot;
         } catch (error) {
           this.restoreAiMembersBoardHtmlSnapshot();
@@ -8852,7 +8829,6 @@ export default {
     },
 
     prepareAiMembersView() {
-      this.aiMembersViewMounted = true;
       this.aiMembersBoardFrameReady = false;
       this.cancelAiMembersDeferredWork();
       if (

@@ -1,5 +1,5 @@
 <template>
-  <div class="login-shell" :data-theme="theme">
+  <div class="login-shell">
     <div class="login-panel">
       <h1>美术部工作台</h1>
       <p>登录后进入部门排期、AI 协作与 Skill 平台</p>
@@ -32,10 +32,6 @@ export default {
     loading: {
       type: Boolean,
       default: false
-    },
-    theme: {
-      type: String,
-      default: 'light'
     }
   },
   emits: ['submit']

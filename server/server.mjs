@@ -9954,7 +9954,7 @@ function buildEmbeddedAiBoardHtml(html = '') {
   const themeBridge = `
     <style>
       :root {
-        color-scheme: light dark;
+        color-scheme: light;
         --platform-bg: #eef1f7;
         --platform-panel: rgba(255, 255, 255, 0.96);
         --platform-panel-soft: rgba(248, 249, 253, 0.92);
@@ -10031,66 +10031,7 @@ function buildEmbeddedAiBoardHtml(html = '') {
       th {
         color: var(--platform-muted) !important;
       }
-      html[data-platform-theme="dark"] {
-        --platform-bg: #1f242e;
-        --platform-panel: rgba(35, 40, 51, 0.94);
-        --platform-panel-soft: rgba(255, 255, 255, 0.065);
-        --platform-text: #e6e8ef;
-        --platform-muted: #a9adba;
-        --platform-line: rgba(255, 255, 255, 0.1);
-        --platform-shadow: 0 28px 90px rgba(0, 0, 0, 0.32);
-        --ink: #e6e8ef;
-        --muted: #a9adba;
-        --paper: #1f242e;
-        --panel: rgba(35, 40, 51, 0.94);
-        --line: rgba(255, 255, 255, 0.12);
-        --green: #31d17f;
-        --green-2: #51df99;
-        --amber: #f7b84b;
-        --red: #f06a5d;
-        --blue: #7aa9f6;
-        --clay: #f29b72;
-        --gold: #f4c864;
-        --silver: #b8c1cc;
-        --shadow: 0 28px 90px rgba(0, 0, 0, 0.46);
-      }
-      html[data-platform-theme="dark"] .hero,
-      html[data-platform-theme="dark"] .metric,
-      html[data-platform-theme="dark"] .panel,
-      html[data-platform-theme="dark"] .member-card,
-      html[data-platform-theme="dark"] .lane-card,
-      html[data-platform-theme="dark"] .road-card {
-        border-color: rgba(255, 255, 255, 0.1) !important;
-        background: var(--panel) !important;
-      }
-      html[data-platform-theme="dark"] .hero-note,
-      html[data-platform-theme="dark"] .criteria-item,
-      html[data-platform-theme="dark"] .todo,
-      html[data-platform-theme="dark"] .compare-line,
-      html[data-platform-theme="dark"] th,
-      html[data-platform-theme="dark"] table {
-        background: rgba(255, 255, 255, 0.065) !important;
-      }
-      html[data-platform-theme="dark"] .nav a,
-      html[data-platform-theme="dark"] .pill,
-      html[data-platform-theme="dark"] .member-meta span {
-        background: rgba(255, 255, 255, 0.08) !important;
-      }
     </style>
-    <script>
-      (function () {
-        function applyTheme() {
-          var params = new URLSearchParams(window.location.search);
-          document.documentElement.dataset.platformTheme = params.get('theme') || 'light';
-        }
-        applyTheme();
-        window.addEventListener('message', function (event) {
-          if (event.data && event.data.type === 'platform-theme') {
-            document.documentElement.dataset.platformTheme = event.data.theme || 'light';
-          }
-        });
-      })();
-    </script>
   `;
   if (/<\/head>/i.test(html)) return html.replace(/<\/head>/i, `${themeBridge}</head>`);
   return `${themeBridge}${html}`;
