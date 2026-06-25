@@ -364,6 +364,7 @@
   - 本机 Worker 生成给 `codex exec` 的 prompt 必须采用 Codex 客户端等价结构：先写明“请使用哪些 Skill/md”和用户原始执行要求，再列本机落地快照路径，最后才列工作台回传、日志和状态要求；不得把工作台流程、证据要求、阶段模板或 Figma 验收要求放在 Skill/md 和用户要求前面压过技能原始行为。
   - 本机 Worker 不得把所有任务都当成 Figma 写入任务；没有 Figma 链接时不得要求 Figma MCP、Figma OAuth 或 Figma 写入工具，不能因此阻塞纯生图、本地产物、提示词、报告或分析类 Skill/md 执行。
   - 有 Figma 链接也不等于必须把结果转为可编辑 Figma 图层。只有执行要求或 Skill/md 行为明确包含写入、修改、创建、清理、重命名、更新 Figma 节点/Frame/页面等动作，或纯生图需要落到 Figma 目标时，才要求 Figma 变更证据；纯参考、分析或无链接的本地产物任务不得因为没有 Figma 放置/替换/写入证据被判失败。
+  - 非纯生图 Skill/md 只要执行目标是 Figma 写入、清理、命名、缩放、结构整理、验收修正等任务，状态判定必须优先看 Figma 真实写入证据和写入后的最终回读/截图验收；不得因为没有生成图片产物、没有 `generatedArtifacts` 或没有本地成图目录就判失败。
   - 生图类 Skill/md 默认必须调用执行人电脑上的原生 `image2` / `gpt-image-2` / GPT Image 2 能力进行生图创作；只有新建执行时 `imageGenerationProviderMode=fallback`，或负责人 / 执行要求明确写明使用 Midjourney、Stable Diffusion、Flux、ComfyUI、DALL-E、豆包、即梦、可灵、通义万相、本地模型或其它非 image2 工具时，才允许按非 image2 方案执行。
   - 本机 Worker 生成 `codex exec` prompt 时必须把 `imageGenerationProviderMode` 写成明确执行口径：`image2` 模式必须写明失败即阻塞且禁止替代；`fallback` 模式必须写明允许使用执行人本机非 image2 生图方案，并要求最终报告写明实际使用工具。
   - 生图类 Skill/md 需要真实调用 OpenAI/Image2 API 时，Worker 启动 `codex exec` 必须使用执行人本机可联网、可读取本机代理和凭据的执行环境；不得把生图命令放进会阻断 DNS、OpenAI API 或代理继承的沙箱环境里，否则会造成 Codex 客户端可用但工作台 Worker 出图失败。
@@ -372,6 +373,7 @@
   - Image2 自检不得依赖组员 Windows 电脑必装 `python3`；如果 `python3`、`python` 或 `py` 不可用，必须使用 Node 内置网络能力做同等无效参数预检，避免 Codex 客户端能生图但 Worker 状态因缺 Python 误报未通过。
   - 纯生图 Skill/md 填写了 Figma 链接时，必须视为需要在 Figma 目标处放置或替换生成成品图；证据可以是 `use_figma` 返回的 `createdNodeIds` / `mutatedNodeIds`，也可以是图片上传、放置或替换工具返回的等价成功记录，但必须能证明成品图已落到该 Figma 目标。
   - 纯生图 Skill/md 未填写 Figma 链接时，本机 Worker 必须要求 Codex 把生成图片保存到本机执行目录，并在执行结束后扫描新增图片产物，上传归档到本次执行 `artifactRoot/生成图片/`；执行记录只保存路径、名称、类型、大小等元信息，不得把图片 base64 长期写入 `runs.json`。
+  - 只有纯生图 Skill/md 才允许把图片归档到本次执行 `artifactRoot/生成图片/` 并展示为 `generatedArtifacts`；Figma 收尾、图层清理、命名、缩放、结构整理、回读验收等非纯生图任务里产生的验证截图、回读截图、`final-figma-verification.png` 或其它 `outputs/*.png` 只能作为验证材料，不得当成生成成品图。
   - 生图状态判定必须先扫描并归档本机执行目录里的真实生成图片产物，再根据 `imageGenerationProviderMode`、Image2 调用结果和替代图证据判定最终状态；不得因为同一日志前段出现 Image2 连接失败、后段已经由 Image2 成功落盘成品图，就跳过归档或继续显示 `本机阻塞`。
   - 生图执行记录只要已归档至少一个真实生成图片产物，或填写了 Figma 链接且检测到图片放置、替换、填充、创建或修改节点等真实写入证据，执行清单、执行明细、AI档案和统计不得继续显示红色 `本机阻塞`；缺少最终回读/截图验收时只能显示 `部分写入` 或 `有条件通过`，并保留原失败原因供追查。
   - 生图执行记录没有生成图片产物、没有 Figma 写入证据，且 Image2 调用失败时才允许显示 `本机阻塞`；阻塞原因必须写明真实链路，例如未命中执行人本机中转站、直连官方 OpenAI 被地区/Cloudflare 拦截、Windows `python/py` 不可用、代理未继承、额度或权限失败。
@@ -671,11 +673,13 @@
   - 如果 Figma 已返回 `createdNodeIds` 或 `mutatedNodeIds`，但写入后最终回读、复扫或截图因 `Auth required`、OAuth 失效、权限不足、MCP 断开等原因失败，必须显示为 `阻塞` 或 `失败`，并在执行明细中明确“已有部分写入，最终验收未闭环”，不得显示为完成。
   - 工作台状态文案必须区分 `本机执行失败` 和 `部分写入 / 验收阻塞`：只要日志或结构化字段能证明已有 `createdNodeIds` 或 `mutatedNodeIds`，但最终回读/截图未闭环，就不得在列表、执行台、AI档案明细或统计卡里普通显示为纯失败；必须让负责人一眼看出“Figma 已真实改动，剩余问题是验收闭环/授权阻塞”。
   - 历史执行记录如果缺少结构化 `figmaWriteResult`，平台可以只读该 run 的尾部 `run.log` 派生展示态，识别 `createdNodeIds`、`mutatedNodeIds`、`Auth required` 等证据；该派生只用于展示和判定提示，不得自动改写历史执行事实、不得把未最终验收的任务改成完成。
+  - 历史 Figma 执行记录从 `run.log` 派生证据时，日志读取窗口必须足够覆盖长日志前段的真实写入事件，不得因为中后段截图 base64、图片路径或冗长报告挤掉前面的 `createdNodeIds`、`mutatedNodeIds`、删除/重命名/清理节点记录而误判成“未写入”。
   - Figma 执行状态解析必须优先以结构化 `figmaWriteResult`、真实 `use_figma` 工具返回和写入后的回读/截图工具结果为准；最终报告里复述 `createdNodeIds`、`mutatedNodeIds` 或阶段报告 diff，不得被当作新的“最后一次写入”事件。
   - Figma 写入后阻塞解析必须识别否定语义：`无最终阻塞`、`无硬阻塞`、`无阻塞`、`未发现阻塞`、`不构成阻塞`、`不作为阻塞` 等文本不得作为真实 blocker。
   - Figma 写入后截图解析必须区分“Figma MCP 截图已生成”和“本机 shell/curl 无法下载临时 figma.com 图片”：后者只代表本机下载环境受限，不得单独作为 Figma 验收失败或本机阻塞。
   - Figma 写入后验收证据必须来自实际执行结果，例如目标节点回读确认、截图工具返回、视觉复核通过、同类复扫清零、`最终回读/截图验收：已完成` 等；Skill/md 规范说明、操作要求、模板文案里的“必须回读/已验证/成功标准”等文本不得作为实际验收证据。
   - 只要 `figmaWriteResult.partialWrite === true`、`postWriteBlockers` 非空或 `blockerReason` 非空，就必须优先判为 `部分写入 / 验收阻塞`；不得因为早期存在一次回读成功或截图成功就把整条执行显示为完成。
+  - Figma 任务在真正写入前如果日志已出现 `AuthRequired`、`Auth required`、`mcp:connect`、OAuth 未授权、Figma MCP 未连接或同类预写入失败，必须直接标记为执行人本机 Figma 授权/连接阻塞；不得再笼统显示成“未检测到写入证据”或误归因为生成图片失败。
   - 平台服务器只负责任务创建、队列记录、Worker 心跳、日志回传、状态展示和权限审计。
   - 平台服务器不得保存 Figma OAuth token、OpenAI API Key、gpt-image2 / Image2 凭据或代理配置；不得代替组员执行 Figma 写入、Codex 执行或图片生成，不得依赖工作台管理者 admin 的本机 Codex、Figma、OpenAI 或网络环境。
   - 直接执行没有平台侧“开始”按钮；启动动作只能来自被指派执行人电脑上的本机 Worker 自动领取。
