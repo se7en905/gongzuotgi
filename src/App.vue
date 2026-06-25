@@ -746,6 +746,20 @@ export default {
       skillValidationRefreshPromise: null,
       skillValidationLastRefreshAt: 0,
       skillValidationDirty: false,
+      taskCenterFilterCache: {
+        task: {
+          revision: -1,
+          source: null,
+          key: '',
+          rows: []
+        },
+        bug: {
+          revision: -1,
+          source: null,
+          key: '',
+          rows: []
+        }
+      },
       skillValidationPage: 1,
       skillValidationPageSize: 10,
       skillValidationVisibleColumns: [],
@@ -4850,7 +4864,7 @@ export default {
   beforeUnmount() {
     if (this.zentaoSyncTimer) clearTimeout(this.zentaoSyncTimer);
     if (this.aiMembersBoardFrameReadyTimer) clearTimeout(this.aiMembersBoardFrameReadyTimer);
-    if (this._activeViewDataTimer) clearTimeout(this._activeViewDataTimer);
+    this.clearScheduledActiveViewData();
     if (this.skillInventoryFirstPageSnapshotSaveTimer) clearTimeout(this.skillInventoryFirstPageSnapshotSaveTimer);
     this.stopZentaoAutoSyncPolling();
     this.stopTaskBriefRealtimeSync();
@@ -5446,16 +5460,35 @@ export default {
 
     scheduleActiveViewData(view = this.activeView) {
       if (!view) return;
-      if (this._activeViewDataTimer) clearTimeout(this._activeViewDataTimer);
+      this.clearScheduledActiveViewData();
       const token = `${view}:${Date.now()}:${Math.random()}`;
       this._activeViewDataToken = token;
       const run = () => {
         this._activeViewDataTimer = 0;
+        this._activeViewDataTimerKind = '';
         if (this._activeViewDataToken !== token || this.activeView !== view) return;
         this.ensureActiveViewData(view);
       };
-      if (typeof window !== 'undefined') this._activeViewDataTimer = window.setTimeout(run, 0);
-      else this.$nextTick(run);
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+        this._activeViewDataTimerKind = 'raf';
+        this._activeViewDataTimer = window.requestAnimationFrame(() => {
+          this._activeViewDataTimer = window.requestAnimationFrame(run);
+        });
+        return;
+      }
+      this._activeViewDataTimerKind = 'tick';
+      this.$nextTick(run);
+    },
+
+    clearScheduledActiveViewData() {
+      if (!this._activeViewDataTimer) return;
+      if (typeof window !== 'undefined' && this._activeViewDataTimerKind === 'raf' && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(this._activeViewDataTimer);
+      } else {
+        clearTimeout(this._activeViewDataTimer);
+      }
+      this._activeViewDataTimer = 0;
+      this._activeViewDataTimerKind = '';
     },
 
     scheduleSkillInventoryFirstPaint(tab = this.skillInventoryTab || 'assets', options = {}) {
@@ -5512,9 +5545,7 @@ export default {
       }
       if (view === 'runs') {
         this.restoreWorkbenchDisplayCacheKeyIfEmpty('projects');
-        this.restoreWorkbenchDisplayCacheKeyIfEmpty('scans');
         this.restoreWorkbenchDisplayCacheKeyIfEmpty('customWorkflows');
-        this.restoreWorkbenchDisplayCacheKey('artProgressEvents');
         if (!this.projects.length && !this.loading.projects) this.refreshProjects().catch(() => {});
         if (!this.customWorkflows.length || dirty) this.refreshCustomWorkflows().catch(() => {});
         if (!this.loading.runs) this.refreshRuns({ background: !dirty }).catch(() => {});
@@ -16751,6 +16782,22 @@ export default {
       };
     },
 
+    taskCenterFilterCacheKey(state = null) {
+      const source = state || this.taskCenterFilterState();
+      const filters = source?.filters || {};
+      const person = source?.person || {};
+      return JSON.stringify({
+        mode: source?.mode || '',
+        projectId: filters.projectId || '',
+        zentaoStatus: filters.zentaoStatus || '',
+        platformStatus: filters.platformStatus || '',
+        metric: filters.metric || '',
+        keyword: String(filters.keyword || '').trim().toLowerCase(),
+        person: person.person || '',
+        personType: person.type || ''
+      });
+    },
+
     taskCenterModeForView(_revision = 0) {
       const { filters, mode } = this.taskCenterFilterState();
       return this.taskMetricMode(filters.metric) || mode;
@@ -16791,7 +16838,8 @@ export default {
     },
 
     filteredBusinessTaskRowsForView(_revision = 0) {
-      const { filters, person } = this.taskCenterFilterState();
+      const state = this.taskCenterFilterState();
+      const { filters, person } = state;
       if (!this.hasActiveTaskFiltersForView(_revision)) return this.taskCenterCurrentArtMemberTaskRows;
       const keyword = String(filters.keyword || '').trim().toLowerCase();
       const today = localDateKey(new Date());
@@ -16799,7 +16847,12 @@ export default {
       const sourceRows = includeNonCurrent
         ? this.taskCenterArtMemberTaskRows
         : this.taskCenterCurrentArtMemberTaskRows;
-      return sourceRows.filter(task => {
+      const cacheKey = this.taskCenterFilterCacheKey(state);
+      const cache = this.taskCenterFilterCache?.task;
+      if (cache && cache.revision === _revision && cache.source === sourceRows && cache.key === cacheKey) {
+        return cache.rows;
+      }
+      const rows = sourceRows.filter(task => {
         const projectMatched = !filters.projectId || task.projectId === filters.projectId;
         const zentaoStatusMatched = !filters.zentaoStatus || task.zentaoStatus === filters.zentaoStatus;
         const platformStatusMatched = !filters.platformStatus || task.platformStatus === filters.platformStatus;
@@ -16811,13 +16864,27 @@ export default {
         const haystack = `${task.taskNo || ''}\n${task.title || ''}\n${task.displayTitle || ''}\n${task.developer || ''}\n${(task.zentao?.risks || []).join(' ')}`.toLowerCase();
         return taskModeMetricMatched && projectMatched && zentaoStatusMatched && platformStatusMatched && metricMatched && personMatched && dueMatched && riskMatched && (!keyword || haystack.includes(keyword));
       });
+      this.taskCenterFilterCache.task = {
+        revision: _revision,
+        source: sourceRows,
+        key: cacheKey,
+        rows
+      };
+      return rows;
     },
 
     filteredBugRowsForView(_revision = 0) {
-      const { filters, person } = this.taskCenterFilterState();
+      const state = this.taskCenterFilterState();
+      const { filters, person } = state;
       if (!this.hasActiveTaskFiltersForView(_revision)) return this.taskCenterBugRows;
       const keyword = String(filters.keyword || '').trim().toLowerCase();
-      return this.taskCenterBugRows.filter(bug => {
+      const sourceRows = this.taskCenterBugRows;
+      const cacheKey = this.taskCenterFilterCacheKey(state);
+      const cache = this.taskCenterFilterCache?.bug;
+      if (cache && cache.revision === _revision && cache.source === sourceRows && cache.key === cacheKey) {
+        return cache.rows;
+      }
+      const rows = sourceRows.filter(bug => {
         const projectMatched = !filters.projectId || bug.projectId === filters.projectId;
         const statusMatched = !filters.zentaoStatus || bug.status === filters.zentaoStatus;
         const bugModeMetricMatched = !filters.metric || this.taskMetricMode(filters.metric) === 'bug';
@@ -16827,6 +16894,13 @@ export default {
         const haystack = `${bug.bugNo || ''}\n${bug.title || ''}\n${bug.displayTitle || ''}\n${bug.developer || ''}\n${bug.assignedTo || ''}`.toLowerCase();
         return bugModeMetricMatched && projectMatched && statusMatched && metricMatched && personMatched && riskFilterMatched && (!keyword || haystack.includes(keyword));
       });
+      this.taskCenterFilterCache.bug = {
+        revision: _revision,
+        source: sourceRows,
+        key: cacheKey,
+        rows
+      };
+      return rows;
     },
 
     taskCenterRowsForView(revision = 0) {
