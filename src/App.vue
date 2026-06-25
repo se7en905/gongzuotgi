@@ -9032,7 +9032,7 @@ export default {
         .map(row => this.aiScoreProductRowValue(row).value)
         .reduce((sum, value) => sum + value, 0);
       const unmatchedCount = Math.max(0, (Array.isArray(productItems) ? productItems.length : 0) - rows.length);
-      const fallbackValue = unmatchedCount * (independentScoreMode ? 4 : 3);
+      const fallbackValue = unmatchedCount * 3;
       const raw = Math.round((rowValueTotal + fallbackValue) * 10) / 10;
       return {
         raw,
@@ -9047,31 +9047,13 @@ export default {
       const peopleCount = Number(usage.peopleCount || 0);
       const usageRate = Number(usage.rate || 0);
       const versionMajor = Number(this.skillInventoryVersionMajor(row));
-      const isSkill = this.isSkillInventorySkillProduct(row);
-      const isStandard = this.isSkillInventoryStandardProduct(row);
-      const quality = isSkill ? Number(this.skillQualityScore(row) ?? 0) : 0;
-      const sceneText = this.skillSceneText(row, '');
-      const fullTeamIntent = /全员|部门|通用|公共|统一|规范|标准|流程|复用|多人|批量|自动|工作流/i.test([
-        row.productDisplayName,
-        row.productFileName,
-        row.title,
-        sceneText,
-        row.skill?.description,
-        row.skill?.summary
-      ].join('\n'));
-      const base = isSkill ? 3.5 : isStandard ? 3 : 2.5;
-      const qualityBonus = quality >= 85 ? 2.5 : quality >= 70 ? 1.5 : quality >= 55 ? 0.8 : 0;
-      const peopleBonus = peopleCount >= 6 ? 6 : peopleCount >= 3 ? 3.5 : peopleCount >= 1 ? 1.4 : 0;
-      const usageBonus = usageCount >= 20 ? 4 : usageCount >= 10 ? 3 : usageCount >= 3 ? 1.8 : usageCount >= 1 ? 0.8 : 0;
-      const rateBonus = usageRate >= 85 ? 2 : usageRate >= 45 ? 1 : 0;
-      const versionBonus = versionMajor >= 3 ? 3 : versionMajor >= 2 ? 1.5 : 0;
-      const scopeBonus = fullTeamIntent ? 2 : 0;
+      const versionValue = versionMajor >= 3 ? 6 : versionMajor >= 2 ? 4 : 2;
+      const fullTeamIntent = true;
       const riskMultiplier = this.aiScoreProductValueMultiplier(row, { usageCount, peopleCount, usageRate, fullTeamIntent });
       return {
-        value: Math.max(0, Math.min(16, (base + qualityBonus + peopleBonus + usageBonus + rateBonus + versionBonus + scopeBonus) * riskMultiplier)),
+        value: Math.max(0, Math.min(6, versionValue * riskMultiplier)),
         usageCount,
         peopleCount,
-        quality,
         usageRate,
         versionMajor,
         riskMultiplier
@@ -9134,7 +9116,6 @@ export default {
       const rows = Array.isArray(summary?.inventoryRows) ? summary.inventoryRows.filter(row => row.hidden !== true) : [];
       const directRows = this.skillInventoryAssetRows
         .filter(row => row.hidden !== true)
-        .filter(row => this.isFinishedSkillInventoryRow(row))
         .filter(row => this.skillInventoryRowBelongsToMember(row, memberName, summary?.purposes || [], []));
       const map = new Map();
       [...rows, ...directRows].forEach(row => {
