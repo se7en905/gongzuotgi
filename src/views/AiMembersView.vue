@@ -193,15 +193,11 @@ export default {
       handler(value) {
         const isRealBoardHtml = this.app.isAiMembersBoardHtml ? this.app.isAiMembersBoardHtml(value) : String(value || '').length > 1000;
         const nextValue = isRealBoardHtml ? value : this.lastRealFrameHtml || this.frameHtml || value;
-        if (nextValue === this.frameHtml) {
-          return;
-        }
+        if (nextValue === this.frameHtml) return;
         if (this.frameHtmlUpdateTimer) window.clearTimeout(this.frameHtmlUpdateTimer);
-        this.frameHtmlUpdateTimer = window.setTimeout(() => {
-          if (isRealBoardHtml) this.lastRealFrameHtml = value;
-          this.frameHtml = nextValue;
-          this.frameHtmlUpdateTimer = 0;
-        }, 0);
+        this.frameHtmlUpdateTimer = 0;
+        if (isRealBoardHtml) this.lastRealFrameHtml = value;
+        this.frameHtml = nextValue;
       }
     }
   },

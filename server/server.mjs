@@ -126,6 +126,7 @@ const publicDir = path.resolve(__dirname, '..', process.env.STATIC_DIR || 'dist'
 const port = Number(process.env.API_PORT || process.env.PORT || 4288);
 const host = process.env.API_HOST || process.env.HOST || '0.0.0.0';
 const aiWeekDir = process.env.AI_WEEK_DIR || path.join(paths.dataDir, 'ai-week');
+const aiMembersBoardCachePath = path.join(paths.dataDir, 'ai-members-board-cache.json');
 const artDashboardDataDir = process.env.ART_DASHBOARD_DATA_DIR || path.join(paths.dataDir, 'art-dashboard');
 const zentaoBaseUrl = 'https://cd.baa360.cc:20088/index.php';
 const zentaoArtDeptId = Number(process.env.ZENTAO_ART_DEPT_ID || 27);
@@ -938,6 +939,17 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'GET' && url.pathname === '/api/ai-members') {
     requireAnyPermission(currentUser, ['api.aiMembers.read', 'menu.aiMembers']);
+    sendJson(res, 200, await loadAiMembersSnapshot(currentUser));
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/ai-members/board-cache') {
+    requireAnyPermission(currentUser, ['api.aiMembers.read', 'menu.aiMembers']);
+    const cached = await readAiMembersBoardDisplayCache();
+    if (cached?.html) {
+      sendJson(res, 200, cached);
+      return;
+    }
     sendJson(res, 200, await loadAiMembersSnapshot(currentUser));
     return;
   }
@@ -2356,7 +2368,7 @@ async function handleApi(req, res, url) {
     const result = syncKind === 'bug'
       ? triggerZentaoBugSyncOnly(project, body, 'manual')
       : triggerZentaoTaskSync(project, { ...body, includeBugs: syncKind !== 'task' }, 'manual');
-    await writeOperationLog(req, {
+    writeOperationLogDeferred(req, {
       user: currentUser,
       module: 'task',
       action: syncKind === 'bug' ? 'TRIGGER_ZENTAO_BUG_SYNC' : syncKind === 'task' ? 'TRIGGER_ZENTAO_TASK_SYNC_ONLY' : 'TRIGGER_ZENTAO_TASK_SYNC',
@@ -2820,9 +2832,9 @@ async function writeOperationLog(req, input = {}) {
   try {
     const log = await createOperationLog({
       ...input,
-      ip: clientIp(req),
-      userAgent: req.headers['user-agent'] || '',
-      requestId: req.headers['x-request-id'] || ''
+      ip: req ? clientIp(req) : input.ip || '',
+      userAgent: req ? req.headers['user-agent'] || '' : input.userAgent || '',
+      requestId: req ? req.headers['x-request-id'] || '' : input.requestId || ''
     });
     if (log?._skipped === true) return log;
     const usagePatch = await recordUsageCountersForOperationLog(log).catch(error => {
@@ -2850,6 +2862,20 @@ async function writeOperationLog(req, input = {}) {
     console.error(`Operation log write failed: ${error.message}`);
     return null;
   }
+}
+
+function writeOperationLogDeferred(req, input = {}) {
+  const logInput = {
+    ...input,
+    ip: clientIp(req),
+    userAgent: req.headers['user-agent'] || '',
+    requestId: req.headers['x-request-id'] || ''
+  };
+  setTimeout(() => {
+    writeOperationLog(null, logInput).catch(error => {
+      console.error(`Deferred operation log write failed: ${error.message}`);
+    });
+  }, 0);
 }
 
 function redactProject(project = {}) {
@@ -9833,6 +9859,9 @@ async function loadAiMembersSnapshot(currentUser = {}) {
       privacyNotice: snapshot.privacyNotice,
       source
     };
+    writeAiMembersBoardDisplayCache(lastValidAiMembersSnapshot).catch(error => {
+      console.warn(`AI部门看板显示缓存写入失败：${error.message}`);
+    });
     return snapshot;
   }
   if (lastValidAiMembersSnapshot?.html) {
@@ -9848,6 +9877,30 @@ async function loadAiMembersSnapshot(currentUser = {}) {
     };
   }
   return snapshot;
+}
+
+async function readAiMembersBoardDisplayCache() {
+  try {
+    const raw = await fs.readFile(aiMembersBoardCachePath, 'utf8');
+    const parsed = JSON.parse(raw);
+    return isReadableAiMembersBoardHtml(parsed?.html) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeAiMembersBoardDisplayCache(snapshot = {}) {
+  if (!isReadableAiMembersBoardHtml(snapshot.html)) return null;
+  const payload = {
+    mode: snapshot.mode || 'all',
+    members: Array.isArray(snapshot.members) ? snapshot.members : [],
+    html: snapshot.html,
+    privacyNotice: snapshot.privacyNotice || '全员视角：原样展示美术部AI看板。',
+    source: snapshot.source || {},
+    cachedAt: new Date().toISOString()
+  };
+  await fs.writeFile(aiMembersBoardCachePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  return payload;
 }
 
 function parseAiBoardMembers(html = '') {

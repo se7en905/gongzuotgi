@@ -605,6 +605,28 @@ function readWorkbenchDisplayCacheArray(key = '') {
   return Array.isArray(value) ? value : [];
 }
 
+function isAiMembersPlaceholderHtmlText(html = '') {
+  return /正在加载\s*AI部门看板/.test(String(html || ''));
+}
+
+function isAiMembersBoardHtmlText(html = '') {
+  const text = String(html || '');
+  return text.length > 1000 && /<!doctype\s+html|<html[\s>]/i.test(text) && !isAiMembersPlaceholderHtmlText(text);
+}
+
+function readAiMembersBoardHtmlDisplayCache() {
+  const value = readWorkbenchDisplayCacheValue('aiMembersBoardHtmlSnapshot', null);
+  if (!value || typeof value !== 'object') return null;
+  const html = isAiMembersBoardHtmlText(value.html)
+    ? value.html
+    : isAiMembersBoardHtmlText(value.memberHtml)
+      ? value.memberHtml
+      : isAiMembersBoardHtmlText(value.ownerHtml)
+        ? value.ownerHtml
+        : '';
+  return html ? { ...value, html } : null;
+}
+
 function currentFrontendAssetVersion() {
   if (typeof document === 'undefined') return '';
   return [...document.querySelectorAll('script[src], link[href]')]
@@ -794,7 +816,7 @@ export default {
       bugs: readWorkbenchDisplayCacheArray('bugs'),
       aiFlowRecords: [],
       taskReviews: readWorkbenchDisplayCacheArray('taskReviews'),
-      aiMembersSnapshot: null,
+      aiMembersSnapshot: readAiMembersBoardHtmlDisplayCache(),
       aiMembersViewMounted: false,
       aiMemberScoreReady: false,
       aiMemberScoreRowsSnapshot: [],
@@ -5622,10 +5644,13 @@ export default {
       if (view === 'ai-members') {
         this.ensureAiMemberScoreData();
         this.restoreAiMembersBoardHtmlSnapshot();
-        if ((!this.aiMembersSnapshot?.members?.length || dirty || !this.hasAiMembersBoardHtml(this.aiMembersSnapshot)) && !this.loading.aiMembers && this.can('api.aiMembers.read')) {
+        const hasBoardHtml = this.hasAiMembersBoardHtml(this.aiMembersSnapshot);
+        if (!hasBoardHtml && !this.loading.aiMembers && this.can('api.aiMembers.read')) {
+          this.refreshAiMembersBoardDisplayCache({ silent: true }).catch(() => {});
+        } else if (dirty && !this.loading.aiMembers && this.can('api.aiMembers.read')) {
           this.refreshAiMembers({
-            silent: this.hasAiMembersBoardHtml(this.aiMembersSnapshot),
-            background: !dirty
+            silent: hasBoardHtml,
+            background: false
           }).catch(() => {});
         }
       }
@@ -6042,8 +6067,8 @@ export default {
         }
         if (aiMembersView && this.can('api.aiMembers.read')) {
           this.restoreAiMembersBoardHtmlSnapshot();
-          if (!this.aiMembersSnapshot?.members?.length || !this.hasAiMembersBoardHtml(this.aiMembersSnapshot)) {
-            jobs.push(['成员快照', () => this.refreshAiMembers({ silent: true })]);
+          if (!this.hasAiMembersBoardHtml(this.aiMembersSnapshot)) {
+            jobs.push(['AI部门看板缓存', () => this.refreshAiMembersBoardDisplayCache({ silent: true })]);
           }
         }
         const results = await Promise.allSettled(jobs.map(([, run]) => run()));
@@ -16757,7 +16782,7 @@ export default {
           this.appConfig = { ...this.appConfig, zentaoAutoSync: result.zentaoAutoSync };
         }
         this.startZentaoAutoSyncPolling();
-        this.pollZentaoSync(syncKind);
+        this.pollZentaoSync(syncKind, { delayMs: 300 });
         if (result.message && !/已开始|同步.*开始|后台正在刷新/.test(result.message)) {
           ElMessage.info(result.message);
         }
@@ -16831,7 +16856,7 @@ export default {
       }
     },
 
-    pollZentaoSync(syncKind = 'task') {
+    pollZentaoSync(syncKind = 'task', options = {}) {
       if (this.zentaoSyncTimer) clearTimeout(this.zentaoSyncTimer);
       this.zentaoSyncTimer = setTimeout(async () => {
         try {
@@ -16877,7 +16902,7 @@ export default {
         } finally {
           this.loading.syncTasks = false;
         }
-      }, 1000);
+      }, Math.max(200, Number(options.delayMs ?? 1000)));
     },
 
     zentaoSyncFailureText(message = '') {
