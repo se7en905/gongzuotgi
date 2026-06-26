@@ -825,6 +825,8 @@ export default {
       aiMemberScoreRowsSnapshotMonth: '',
       aiMemberScoreRowsSnapshotAt: '',
       aiMemberMonthlyRunScoreBuckets: {},
+      aiMemberMonthlyUsageScoreBuckets: {},
+      aiMemberMonthlyScoreResetAnchors: {},
       aiMemberScoreRefreshing: false,
       aiMembersBoardFrameReady: false,
       aiMembersBoardFrameReadyTimer: 0,
@@ -3434,6 +3436,10 @@ export default {
 
     canRefreshAiMemberScore() {
       return this.can('aiMembers.score.refresh') || this.isPlatformAdmin;
+    },
+
+    aiScoreMonthResetAt() {
+      return this.aiMemberMonthlyScoreResetAnchors?.[this.aiScoreMonthLabel] || '';
     },
 
     aiMemberScoreRuleText() {
@@ -6819,6 +6825,17 @@ export default {
             this.aiMemberMonthlyRunScoreBucketsFromSnapshotRows(rows, month || this.aiScoreMonthLabel)
           )
         );
+        this.aiMemberMonthlyUsageScoreBuckets = this.mergeAiMemberMonthlyUsageScoreBuckets(
+          this.aiMemberMonthlyUsageScoreBuckets,
+          this.mergeAiMemberMonthlyUsageScoreBuckets(
+            source.monthlyUsageScoreBuckets || {},
+            this.aiMemberMonthlyUsageScoreBucketsFromSnapshotRows(rows, month || this.aiScoreMonthLabel)
+          )
+        );
+        this.aiMemberMonthlyScoreResetAnchors = this.mergeAiMemberMonthlyScoreResetAnchors(
+          this.aiMemberMonthlyScoreResetAnchors,
+          source.monthlyScoreResetAnchors || {}
+        );
         if (month && !this.isCurrentAiMemberScoreSnapshotMonth(month)) {
           this.resetAiMemberScoreRowsForNewMonth();
           return false;
@@ -6846,6 +6863,17 @@ export default {
           this.aiMemberMonthlyRunScoreBucketsFromSnapshotRows(rows, month || this.aiScoreMonthLabel)
         )
       );
+      this.aiMemberMonthlyUsageScoreBuckets = this.mergeAiMemberMonthlyUsageScoreBuckets(
+        this.aiMemberMonthlyUsageScoreBuckets,
+        this.mergeAiMemberMonthlyUsageScoreBuckets(
+          source.monthlyUsageScoreBuckets || {},
+          this.aiMemberMonthlyUsageScoreBucketsFromSnapshotRows(rows, month || this.aiScoreMonthLabel)
+        )
+      );
+      this.aiMemberMonthlyScoreResetAnchors = this.mergeAiMemberMonthlyScoreResetAnchors(
+        this.aiMemberMonthlyScoreResetAnchors,
+        source.monthlyScoreResetAnchors || {}
+      );
       if (month && !this.isCurrentAiMemberScoreSnapshotMonth(month)) {
         this.resetAiMemberScoreRowsForNewMonth();
         return false;
@@ -6862,6 +6890,8 @@ export default {
           key: this.aiMemberScoreRowsSnapshotKey,
           month: this.aiMemberScoreRowsSnapshotMonth,
           monthlyRunScoreBuckets: this.aiMemberMonthlyRunScoreBuckets,
+          monthlyUsageScoreBuckets: this.aiMemberMonthlyUsageScoreBuckets,
+          monthlyScoreResetAnchors: this.aiMemberMonthlyScoreResetAnchors,
           savedAt: this.aiMemberScoreRowsSnapshotAt
         }));
       } catch {
@@ -6895,9 +6925,15 @@ export default {
           this.aiMemberMonthlyRunScoreBuckets,
           this.aiMemberMonthlyRunScoreBucketsFromSnapshotRows(rows, this.aiScoreMonthLabel)
         ),
+        monthlyUsageScoreBuckets: this.mergeAiMemberMonthlyUsageScoreBuckets(
+          this.aiMemberMonthlyUsageScoreBuckets,
+          this.aiMemberMonthlyUsageScoreBucketsFromSnapshotRows(rows, this.aiScoreMonthLabel)
+        ),
+        monthlyScoreResetAnchors: this.aiMemberMonthlyScoreResetAnchors,
         savedAt: new Date().toISOString()
       };
       this.aiMemberMonthlyRunScoreBuckets = payload.monthlyRunScoreBuckets;
+      this.aiMemberMonthlyUsageScoreBuckets = payload.monthlyUsageScoreBuckets;
       const saved = await this.api('/api/ai-member-score-snapshot', {
         method: 'PUT',
         body: JSON.stringify(payload)
@@ -6923,6 +6959,50 @@ export default {
                 completedRunSkillCount: Math.max(0, Number(value.completedRunSkillCount || 0) || 0, (Array.isArray(value.completedRunSkillKeys) ? value.completedRunSkillKeys : []).map(item => String(item || '').trim()).filter(Boolean).length),
                 blockedRunIds: [...new Set((Array.isArray(value.blockedRunIds) ? value.blockedRunIds : []).map(item => String(item || '').trim()).filter(Boolean))],
                 blockedCount: Math.max(0, Number(value.blockedCount || 0) || 0, (Array.isArray(value.blockedRunIds) ? value.blockedRunIds : []).map(item => String(item || '').trim()).filter(Boolean).length),
+                latestActivityAt: String(value.latestActivityAt || '').trim()
+              }];
+            })
+            .filter(Boolean));
+          return [monthKey, normalizedPeople];
+        })
+        .filter(Boolean));
+    },
+
+    normalizeAiMemberMonthlyUsageScoreBuckets(input = {}) {
+      const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+      return Object.fromEntries(Object.entries(source)
+        .map(([month, people]) => {
+          const monthKey = String(month || '').trim();
+          if (!/^\d{4}-\d{2}$/.test(monthKey) || !people || typeof people !== 'object' || Array.isArray(people)) return null;
+          const normalizedPeople = Object.fromEntries(Object.entries(people)
+            .map(([person, bucket]) => {
+              const personKey = String(person || '').trim();
+              const value = bucket && typeof bucket === 'object' ? bucket : {};
+              if (!personKey) return null;
+              const usagePeople = value.usagePeople && typeof value.usagePeople === 'object' ? value.usagePeople : {};
+              const normalizedUsagePeople = Object.fromEntries(Object.entries(usagePeople)
+                .map(([name, count]) => {
+                  const usagePerson = String(name || '').trim();
+                  if (!usagePerson) return null;
+                  return [usagePerson, Math.max(0, Number(count || 0) || 0)];
+                })
+                .filter(Boolean));
+              return [personKey, {
+                eventKeys: [...new Set((Array.isArray(value.eventKeys) ? value.eventKeys : []).map(item => String(item || '').trim()).filter(Boolean))],
+                usageCount: Math.max(
+                  0,
+                  Number(value.usageCount || 0) || 0,
+                  (Array.isArray(value.eventKeys) ? value.eventKeys : []).map(item => String(item || '').trim()).filter(Boolean).length
+                ),
+                usageResultCount: Math.max(0, Number(value.usageResultCount || 0) || 0, Number(value.usageCount || 0) || 0),
+                productKeys: [...new Set((Array.isArray(value.productKeys) ? value.productKeys : []).map(item => String(item || '').trim()).filter(Boolean))],
+                usedProductCount: Math.max(
+                  0,
+                  Number(value.usedProductCount || 0) || 0,
+                  (Array.isArray(value.productKeys) ? value.productKeys : []).map(item => String(item || '').trim()).filter(Boolean).length
+                ),
+                usagePeople: normalizedUsagePeople,
+                usagePeopleCount: Math.max(0, Number(value.usagePeopleCount || 0) || 0, Object.keys(normalizedUsagePeople).length),
                 latestActivityAt: String(value.latestActivityAt || '').trim()
               }];
             })
@@ -7012,10 +7092,90 @@ export default {
       return next;
     },
 
+    mergeAiMemberMonthlyUsageScoreBuckets(existing = {}, incoming = {}) {
+      const next = this.normalizeAiMemberMonthlyUsageScoreBuckets(existing);
+      const add = this.normalizeAiMemberMonthlyUsageScoreBuckets(incoming);
+      Object.entries(add).forEach(([month, people]) => {
+        if (!next[month]) next[month] = {};
+        Object.entries(people).forEach(([person, bucket]) => {
+          const current = next[month][person] || {
+            eventKeys: [],
+            usageCount: 0,
+            usageResultCount: 0,
+            productKeys: [],
+            usedProductCount: 0,
+            usagePeople: {},
+            usagePeopleCount: 0,
+            latestActivityAt: ''
+          };
+          const eventKeys = [...new Set([...(current.eventKeys || []), ...(bucket.eventKeys || [])])];
+          const productKeys = [...new Set([...(current.productKeys || []), ...(bucket.productKeys || [])])];
+          const usagePeople = { ...(current.usagePeople || {}) };
+          Object.entries(bucket.usagePeople || {}).forEach(([name, count]) => {
+            usagePeople[name] = Math.max(Number(usagePeople[name] || 0), Number(count || 0));
+          });
+          next[month][person] = {
+            eventKeys,
+            usageCount: Math.max(eventKeys.length, Number(current.usageCount || 0), Number(bucket.usageCount || 0)),
+            usageResultCount: Math.max(eventKeys.length, Number(current.usageResultCount || 0), Number(bucket.usageResultCount || 0)),
+            productKeys,
+            usedProductCount: Math.max(productKeys.length, Number(current.usedProductCount || 0), Number(bucket.usedProductCount || 0)),
+            usagePeople,
+            usagePeopleCount: Math.max(Object.keys(usagePeople).length, Number(current.usagePeopleCount || 0), Number(bucket.usagePeopleCount || 0)),
+            latestActivityAt: [current.latestActivityAt, bucket.latestActivityAt].filter(Boolean).sort().pop() || ''
+          };
+        });
+      });
+      return next;
+    },
+
+    normalizeAiMemberMonthlyScoreResetAnchors(input = {}) {
+      const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+      return Object.fromEntries(Object.entries(source)
+        .map(([month, value]) => {
+          const monthKey = String(month || '').trim();
+          const resetAt = String(value || '').trim();
+          if (!/^\d{4}-\d{2}$/.test(monthKey) || !resetAt) return null;
+          return [monthKey, resetAt];
+        })
+        .filter(Boolean));
+    },
+
+    mergeAiMemberMonthlyScoreResetAnchors(existing = {}, incoming = {}) {
+      return {
+        ...this.normalizeAiMemberMonthlyScoreResetAnchors(existing),
+        ...this.normalizeAiMemberMonthlyScoreResetAnchors(incoming)
+      };
+    },
+
     syncAiMemberMonthlyRunScoreBucketsFromCurrentRuns() {
       const fromRuns = this.collectAiMemberMonthlyRunScoreBucketsFromRuns(this.runs || []);
       this.aiMemberMonthlyRunScoreBuckets = this.mergeAiMemberMonthlyRunScoreBuckets(this.aiMemberMonthlyRunScoreBuckets, fromRuns);
       return this.aiMemberMonthlyRunScoreBuckets;
+    },
+
+    aiMemberMonthlyUsageScoreBucketsFromSnapshotRows(rows = [], month = this.aiScoreMonthLabel) {
+      const monthKey = String(month || '').trim();
+      if (!/^\d{4}-\d{2}$/.test(monthKey)) return {};
+      const people = {};
+      (Array.isArray(rows) ? rows : []).forEach(row => {
+        const personKey = this.normalizeAiScorePersonKey(row.account || row.name);
+        if (!personKey) return;
+        const usageCount = Math.max(0, Number(row.monthUsageCount || 0) || 0);
+        const usedProductCount = Math.max(0, Number(row.monthUsedProductCount || row.monthUsageResultCount || row.monthUsageCount || 0) || 0);
+        const usagePeopleCount = Math.max(0, Number(row.monthUsagePeopleCount || 0) || 0);
+        people[personKey] = {
+          eventKeys: [],
+          usageCount,
+          usageResultCount: Math.max(0, Number(row.monthUsageResultCount || 0) || 0, usageCount),
+          productKeys: [],
+          usedProductCount,
+          usagePeople: {},
+          usagePeopleCount,
+          latestActivityAt: String(row.latestActivityAt || '').trim()
+        };
+      });
+      return this.normalizeAiMemberMonthlyUsageScoreBuckets({ [monthKey]: people });
     },
 
     aiMemberMonthlyRunScoreBucketsFromSnapshotRows(rows = [], month = this.aiScoreMonthLabel) {
@@ -7065,6 +7225,8 @@ export default {
           key: '',
           month: this.aiScoreMonthLabel,
           monthlyRunScoreBuckets: this.aiMemberMonthlyRunScoreBuckets,
+          monthlyUsageScoreBuckets: this.aiMemberMonthlyUsageScoreBuckets,
+          monthlyScoreResetAnchors: this.aiMemberMonthlyScoreResetAnchors,
           savedAt: ''
         }));
       } catch {
@@ -9138,6 +9300,7 @@ export default {
         latestOf(this.aiAssetSheetRows, ['updatedAt', 'submittedAt', 'createdAt']),
         this.usageCounters?.updatedAt || '',
         Object.keys(this.usageCounters?.buckets || {}).length,
+        this.aiScoreMonthResetAt || '',
         Object.keys(this.skillOwnerOverrides || {}).length,
         Object.keys(this.skillDisplayNameOverrides || {}).length,
         Object.keys(this.skillAliasOverrides || {}).length,
@@ -9155,8 +9318,9 @@ export default {
       const independentScoreMode = this.isIndependentAiScoreMember(name, account);
       const productItems = this.aiMemberScoreProductItems(member, summary);
       const productRows = this.aiMemberScoreProductRows(name, summary);
-      const monthUsageLogs = this.aiMemberScoreEffectiveUsageLogs(name, productRows);
-      const monthUsageCount = monthUsageLogs.length;
+      const liveUsageSnapshot = this.aiMemberScoreUsageSnapshotForMember(name, summary);
+      const monthUsageBucket = this.aiMemberScoreMonthlyUsageBucket(name, account, liveUsageSnapshot);
+      const monthUsageCount = Math.max(0, Number(monthUsageBucket.usageCount || 0));
       const monthValidations = independentScoreMode ? [] : this.aiMemberScoreValidationRows(name, productRows);
       const monthRuns = this.aiMemberScoreRunRows(name, account);
       const monthRunBucket = this.aiMemberScoreMonthlyRunBucket(name, account, monthRuns);
@@ -9164,24 +9328,24 @@ export default {
       const blockedSources = independentScoreMode
         ? [
           ...monthRuns.map(run => run.status),
-          ...monthUsageLogs.map(log => `${log.type || ''} ${log.content || ''} ${log.summary || ''}`)
+          ...this.aiMemberScoreEffectiveUsageLogs(name, productRows).map(log => `${log.type || ''} ${log.content || ''} ${log.summary || ''}`)
         ]
         : [
         ...monthRuns.map(run => run.status),
-        ...monthUsageLogs.map(log => `${log.type || ''} ${log.content || ''} ${log.summary || ''}`),
+        ...this.aiMemberScoreEffectiveUsageLogs(name, productRows).map(log => `${log.type || ''} ${log.content || ''} ${log.summary || ''}`),
         ...monthValidations.map(row => `${row.status || ''} ${row.validationResult || ''} ${row.notes || ''}`)
         ];
       const liveBlockedCount = blockedSources.filter(text => /failed|blocked|失败|阻塞|不可用|不通过|返工/i.test(String(text || ''))).length;
       const blockedCount = Math.max(liveBlockedCount, Number(monthRunBucket.blockedCount || 0));
 
       const productScore = productValue.score;
-      const usedProductCount = this.aiMemberScoreUniqueProductKeyCount(monthUsageLogs.map(log => log.productKey || log.target).filter(Boolean));
+      const usedProductCount = Math.max(0, Number(monthUsageBucket.usedProductCount || 0));
       const validationProductCount = new Set(monthValidations.map(row => row.productKey || row.artifactKey || row.id).filter(Boolean)).size;
       const liveCompletedRunSkillKeys = this.aiMemberScoreCompletedRunSkillKeys(monthRuns);
       const completedRunSkillCount = Math.max(liveCompletedRunSkillKeys.size, Number(monthRunBucket.completedRunSkillCount || 0), Number(monthRunBucket.completedRunSkillKeys?.length || 0));
-      const usageResultCount = this.aiMemberScoreUsageResultCount(monthUsageLogs);
+      const usageResultCount = Math.max(0, Number(monthUsageBucket.usageResultCount || 0));
       const normalizedUsedProductCount = Math.min(usageResultCount, Math.max(usedProductCount, usageResultCount > 0 ? 1 : 0));
-      const usagePeopleCount = this.aiMemberScoreUsagePeopleCount(productRows);
+      const usagePeopleCount = Math.max(0, Number(monthUsageBucket.usagePeopleCount || 0));
       const usageCoverageRate = this.aiMemberScoreUsageCoverageRate(usagePeopleCount);
       const usageRatioBonus = Math.min(independentScoreMode ? 4 : 5, Math.round(usageCoverageRate / (independentScoreMode ? 20 : 25)));
       const completedRunCount = Math.max(monthRuns.length, Number(monthRunBucket.completedRunCount || 0));
@@ -9213,6 +9377,7 @@ export default {
         productValueLevel: productValue.level,
         monthUsageCount,
         monthUsageResultCount: usageResultCount,
+        monthUsedProductCount: usedProductCount,
         monthUsagePeopleCount: usagePeopleCount,
         monthUsageCoverageRate: usageCoverageRate,
         monthValidationCount: monthValidations.length,
@@ -9221,7 +9386,7 @@ export default {
         blockedCount,
         topProducts: productItems.slice(0, 3),
         latestActivityAt: [
-          ...monthUsageLogs.map(log => log.time),
+          monthUsageBucket.latestActivityAt,
           ...monthValidations.map(row => row.submittedAt || row.updatedAt || row.createdAt),
           ...monthRuns.map(run => run.finishedAt || run.completedAt || run.startedAt || run.createdAt),
           monthRunBucket.latestActivityAt
@@ -9468,9 +9633,111 @@ export default {
       });
     },
 
+    aiMemberScoreUsageEventStableKey(log = {}) {
+      const raw = log.raw && typeof log.raw === 'object' ? log.raw : {};
+      const eventId = String(log.id || raw.id || raw.eventId || raw.recordId || '').trim();
+      if (eventId) return eventId;
+      return [
+        String(log.time || '').trim(),
+        String(log.person || '').trim(),
+        String(log.target || log.productKey || '').trim(),
+        String(log.task || '').trim(),
+        String(log.summary || '').trim()
+      ].join('::');
+    },
+
+    aiMemberScoreCurrentMonthResetAt() {
+      return this.aiMemberMonthlyScoreResetAnchors?.[this.aiScoreMonthLabel] || '';
+    },
+
+    aiMemberScoreLogAfterReset(log = {}) {
+      const resetAt = this.aiMemberScoreCurrentMonthResetAt();
+      if (!resetAt) return true;
+      const time = String(log.time || '').trim();
+      if (!time) return true;
+      const logDate = new Date(time);
+      const resetDate = new Date(resetAt);
+      if (Number.isNaN(logDate.getTime()) || Number.isNaN(resetDate.getTime())) return true;
+      return logDate.getTime() >= resetDate.getTime();
+    },
+
+    aiMemberScoreValidationAfterReset(row = {}) {
+      const resetAt = this.aiMemberScoreCurrentMonthResetAt();
+      if (!resetAt) return true;
+      const time = String(row.submittedAt || row.updatedAt || row.createdAt || row.importedAt || '').trim();
+      if (!time) return true;
+      const rowDate = new Date(time);
+      const resetDate = new Date(resetAt);
+      if (Number.isNaN(rowDate.getTime()) || Number.isNaN(resetDate.getTime())) return true;
+      return rowDate.getTime() >= resetDate.getTime();
+    },
+
+    aiMemberScoreRunAfterReset(run = {}) {
+      const resetAt = this.aiMemberScoreCurrentMonthResetAt();
+      if (!resetAt) return true;
+      const time = String(run.finishedAt || run.completedAt || run.startedAt || run.createdAt || '').trim();
+      if (!time) return true;
+      const runDate = new Date(time);
+      const resetDate = new Date(resetAt);
+      if (Number.isNaN(runDate.getTime()) || Number.isNaN(resetDate.getTime())) return true;
+      return runDate.getTime() >= resetDate.getTime();
+    },
+
+    aiMemberScoreUsageSnapshotForMember(memberName = '', summary = null) {
+      const personKey = this.normalizeAiScorePersonKey(memberName);
+      if (!personKey) {
+        return {
+          eventKeys: [],
+          usageCount: 0,
+          usageResultCount: 0,
+          productKeys: [],
+          usedProductCount: 0,
+          usagePeople: {},
+          usagePeopleCount: 0,
+          latestActivityAt: ''
+        };
+      }
+      const productRows = this.aiMemberScoreProductRows(memberName, summary);
+      const seenEventKeys = new Set();
+      const seenProductKeys = new Set();
+      const usagePeople = {};
+      let latestActivityAt = '';
+      for (const row of productRows) {
+        const productKey = this.aiMemberScoreStableProductKeyForRow(row) || this.skillInventoryProductNameKey(row) || this.skillInventoryRowProductName(row) || row.id || '';
+        const matchedLogs = this.skillUsageLogs(row)
+          .filter(log => this.isAiScoreMonthTime(log.time))
+          .filter(log => this.aiMemberScoreLogAfterReset(log))
+          .filter(log => this.isAiScoreClosedLoopUsageLog(log));
+        const rowPeople = new Set();
+        matchedLogs.forEach(log => {
+          const eventKey = this.aiMemberScoreUsageEventStableKey(log);
+          if (eventKey) seenEventKeys.add(eventKey);
+          if (productKey) seenProductKeys.add(productKey);
+          const usagePerson = this.canonicalArtDeptPerson(log.person) || String(log.person || '').trim();
+          if (usagePerson && usagePerson !== '-' && !this.isExcludedSkillVersionUsagePerson(usagePerson)) {
+            rowPeople.add(usagePerson);
+            usagePeople[usagePerson] = Math.max(Number(usagePeople[usagePerson] || 0), 1);
+          }
+          const time = String(log.time || '').trim();
+          if (time && time.localeCompare(latestActivityAt) > 0) latestActivityAt = time;
+        });
+      }
+      return {
+        eventKeys: [...seenEventKeys],
+        usageCount: seenEventKeys.size,
+        usageResultCount: seenEventKeys.size,
+        productKeys: [...seenProductKeys],
+        usedProductCount: seenProductKeys.size,
+        usagePeople,
+        usagePeopleCount: Object.keys(usagePeople).length,
+        latestActivityAt
+      };
+    },
+
     aiMemberScoreEffectiveUsageLogs(memberName = '', productRows = []) {
       const logs = this.aiMemberScoreUsageLogs(memberName, productRows)
         .filter(log => this.isAiScoreMonthTime(log.time))
+        .filter(log => this.aiMemberScoreLogAfterReset(log))
         .filter(log => this.isAiScoreClosedLoopUsageLog(log));
       const seen = new Set();
       return logs.filter(log => {
@@ -9547,6 +9814,7 @@ export default {
       const seen = new Set();
       return (this.skillValidationRows || [])
         .filter(row => this.isAiScoreMonthTime(row.submittedAt || row.updatedAt || row.createdAt || row.importedAt))
+        .filter(row => this.aiMemberScoreValidationAfterReset(row))
         .filter(row => {
           const people = [
             row.validator,
@@ -9589,6 +9857,7 @@ export default {
       return (this.runs || [])
         .filter(run => this.isAiScoreCompletedRun(run))
         .filter(run => this.isAiScoreMonthTime(run.finishedAt || run.completedAt || run.startedAt || run.createdAt))
+        .filter(run => this.aiMemberScoreRunAfterReset(run))
         .filter(run => {
           const people = [
             run.developer,
@@ -9622,6 +9891,32 @@ export default {
         completedRunSkillCount: 0,
         blockedRunIds: [],
         blockedCount: 0,
+        latestActivityAt: ''
+      };
+    },
+
+    aiMemberScoreMonthlyUsageBucket(memberName = '', account = '', liveUsage = null) {
+      const monthBuckets = this.normalizeAiMemberMonthlyUsageScoreBuckets(this.aiMemberMonthlyUsageScoreBuckets)[this.aiScoreMonthLabel] || {};
+      const personKeys = [memberName, account]
+        .map(person => this.normalizeAiScorePersonKey(person))
+        .filter(Boolean);
+      const existing = personKeys.map(key => monthBuckets[key]).find(Boolean) || {};
+      const liveBucket = liveUsage && typeof liveUsage === 'object'
+        ? this.normalizeAiMemberMonthlyUsageScoreBuckets({ [this.aiScoreMonthLabel]: { current: liveUsage } })[this.aiScoreMonthLabel] || {}
+        : {};
+      const live = liveBucket.current || {};
+      const merged = this.mergeAiMemberMonthlyUsageScoreBuckets(
+        { [this.aiScoreMonthLabel]: { current: existing } },
+        { [this.aiScoreMonthLabel]: { current: live } }
+      );
+      return merged[this.aiScoreMonthLabel]?.current || {
+        eventKeys: [],
+        usageCount: 0,
+        usageResultCount: 0,
+        productKeys: [],
+        usedProductCount: 0,
+        usagePeople: {},
+        usagePeopleCount: 0,
         latestActivityAt: ''
       };
     },
@@ -9703,6 +9998,51 @@ export default {
       if (score >= 70) return '稳定';
       if (score >= 55) return '待提升';
       return '需关注';
+    },
+
+    async resetCurrentAiScoreMonthStats() {
+      if (!this.canRefreshAiMemberScore) {
+        ElMessage.warning('当前账号没有重置 AI 评分月度统计的权限');
+        return;
+      }
+      try {
+        const monthLabel = this.aiScoreMonthDisplay;
+        await ElMessageBox.confirm(
+          `${monthLabel} 的 AI 评分月度使用/执行统计会从现在开始重新累计。不会删除历史明细，也不会清空累计调用桶。是否继续？`,
+          '重置当月统计',
+          {
+            type: 'warning',
+            confirmButtonText: '确认重置',
+            cancelButtonText: '取消'
+          }
+        );
+        this.ensureAiMemberScoreData();
+        const resetAt = new Date().toISOString();
+        const nextRunBuckets = { ...this.normalizeAiMemberMonthlyRunScoreBuckets(this.aiMemberMonthlyRunScoreBuckets) };
+        const nextUsageBuckets = { ...this.normalizeAiMemberMonthlyUsageScoreBuckets(this.aiMemberMonthlyUsageScoreBuckets) };
+        nextRunBuckets[this.aiScoreMonthLabel] = {};
+        nextUsageBuckets[this.aiScoreMonthLabel] = {};
+        this.aiMemberMonthlyRunScoreBuckets = nextRunBuckets;
+        this.aiMemberMonthlyUsageScoreBuckets = nextUsageBuckets;
+        this.aiMemberMonthlyScoreResetAnchors = this.mergeAiMemberMonthlyScoreResetAnchors(this.aiMemberMonthlyScoreResetAnchors, {
+          [this.aiScoreMonthLabel]: resetAt
+        });
+        this.resetAiMemberScoreRowsForNewMonth();
+        this.clearAiMemberScoreCache();
+        const sourceMembers = this.currentAiMemberScoreSourceMembers();
+        const cacheKey = this.aiMemberScoreRowsCacheKey(sourceMembers);
+        const rows = this.computeAiMemberScoreRows();
+        if (!rows.length) {
+          ElMessage.warning('当前没有可保存的 AI 评分成员数据');
+          return;
+        }
+        await this.saveAiMemberScoreSnapshot(rows, `${cacheKey}::reset`);
+        this.aiMemberScoreReady = true;
+        ElMessage.success(`${monthLabel} 的 AI 评分月度统计已重置，后续将按本月新数据重新累计。`);
+      } catch (error) {
+        if (error === 'cancel' || error === 'close' || error?.message === 'cancel') return;
+        ElMessage.error(this.readApiError?.(error) || '重置当月统计失败');
+      }
     },
 
     async refreshRuns(options = {}) {

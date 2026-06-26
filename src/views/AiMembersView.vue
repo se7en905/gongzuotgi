@@ -17,8 +17,16 @@
       <div class="ai-score-actions">
         <span v-if="app.aiMemberScoreRowsSnapshotAt">上次刷新 {{ app.formatDateTime(app.aiMemberScoreRowsSnapshotAt) }}</span>
         <span v-else>暂无评分快照</span>
+        <span v-if="app.aiScoreMonthResetAt">本月已从 {{ app.formatDateTime(app.aiScoreMonthResetAt) }} 重新累计</span>
         <ElButton plain @click="scoreRuleDialogVisible = true">
           评分说明
+        </ElButton>
+        <ElButton
+          v-if="app.canRefreshAiMemberScore"
+          plain
+          @click="app.resetCurrentAiScoreMonthStats()"
+        >
+          重置本月统计
         </ElButton>
         <ElButton
           v-if="app.canRefreshAiMemberScore"

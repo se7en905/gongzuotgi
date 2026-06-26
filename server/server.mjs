@@ -971,6 +971,8 @@ async function handleApi(req, res, url) {
       key: body.key,
       month: body.month,
       monthlyRunScoreBuckets: body.monthlyRunScoreBuckets,
+      monthlyUsageScoreBuckets: body.monthlyUsageScoreBuckets,
+      monthlyScoreResetAnchors: body.monthlyScoreResetAnchors,
       savedAt: body.savedAt,
       savedBy: {
         id: currentUser.id || '',

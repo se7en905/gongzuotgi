@@ -289,6 +289,12 @@ export async function upsertAiMemberScoreSnapshot(input = {}) {
     monthlyRunScoreBuckets: input.monthlyRunScoreBuckets === undefined
       ? previous.monthlyRunScoreBuckets
       : input.monthlyRunScoreBuckets,
+    monthlyUsageScoreBuckets: input.monthlyUsageScoreBuckets === undefined
+      ? previous.monthlyUsageScoreBuckets
+      : input.monthlyUsageScoreBuckets,
+    monthlyScoreResetAnchors: input.monthlyScoreResetAnchors === undefined
+      ? previous.monthlyScoreResetAnchors
+      : input.monthlyScoreResetAnchors,
     savedAt: input.savedAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   });
@@ -5332,6 +5338,7 @@ function normalizeAiMemberScoreSnapshot(input = {}) {
       productValueLevel: cleanString(row.productValueLevel),
       monthUsageCount: clampNumber(row.monthUsageCount, 0, 10000),
       monthUsageResultCount: clampNumber(row.monthUsageResultCount, 0, 10000),
+      monthUsedProductCount: clampNumber(row.monthUsedProductCount, 0, 10000),
       monthUsagePeopleCount: clampNumber(row.monthUsagePeopleCount, 0, 10000),
       monthUsageCoverageRate: clampNumber(row.monthUsageCoverageRate, 0, 100),
       monthValidationCount: clampNumber(row.monthValidationCount, 0, 10000),
@@ -5350,9 +5357,15 @@ function normalizeAiMemberScoreSnapshot(input = {}) {
     normalizeAiMemberMonthlyRunScoreBuckets(input.monthlyRunScoreBuckets),
     aiMemberMonthlyRunScoreBucketsFromSnapshotRows(normalizedRows, month)
   );
+  const monthlyUsageScoreBuckets = mergeAiMemberMonthlyUsageScoreBuckets(
+    normalizeAiMemberMonthlyUsageScoreBuckets(input.monthlyUsageScoreBuckets),
+    aiMemberMonthlyUsageScoreBucketsFromSnapshotRows(normalizedRows, month)
+  );
   return {
     rows: normalizedRows,
     monthlyRunScoreBuckets,
+    monthlyUsageScoreBuckets,
+    monthlyScoreResetAnchors: normalizeAiMemberScoreResetAnchors(input.monthlyScoreResetAnchors),
     key: cleanString(input.key),
     month,
     savedAt: cleanString(input.savedAt),
@@ -5388,6 +5401,30 @@ function aiMemberMonthlyRunScoreBucketsFromSnapshotRows(rows = [], month = '') {
   return normalizeAiMemberMonthlyRunScoreBuckets({ [monthKey]: people });
 }
 
+function aiMemberMonthlyUsageScoreBucketsFromSnapshotRows(rows = [], month = '') {
+  const monthKey = cleanString(month);
+  if (!/^\d{4}-\d{2}$/.test(monthKey)) return {};
+  const people = {};
+  (Array.isArray(rows) ? rows : []).forEach(row => {
+    const personKey = cleanString(row.account || row.name);
+    if (!personKey) return;
+    const usageCount = clampNumber(row.monthUsageCount, 0, 10000);
+    const usagePeopleCount = clampNumber(row.monthUsagePeopleCount, 0, 10000);
+    const usedProductCount = clampNumber(row.monthUsedProductCount || row.monthUsageResultCount || row.monthUsageCount, 0, 10000);
+    people[personKey] = {
+      eventKeys: [],
+      usageCount,
+      usageResultCount: clampNumber(row.monthUsageResultCount, 0, 10000),
+      productKeys: [],
+      usedProductCount,
+      usagePeople: {},
+      usagePeopleCount,
+      latestActivityAt: cleanString(row.latestActivityAt)
+    };
+  });
+  return normalizeAiMemberMonthlyUsageScoreBuckets({ [monthKey]: people });
+}
+
 function normalizeAiMemberMonthlyRunScoreBuckets(input = {}) {
   const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   return Object.fromEntries(Object.entries(source)
@@ -5406,6 +5443,54 @@ function normalizeAiMemberMonthlyRunScoreBuckets(input = {}) {
             completedRunSkillCount: Math.max(clampNumber(value.completedRunSkillCount, 0, 10000), Array.isArray(value.completedRunSkillKeys) ? value.completedRunSkillKeys.map(cleanString).filter(Boolean).length : 0),
             blockedRunIds: Array.isArray(value.blockedRunIds) ? [...new Set(value.blockedRunIds.map(cleanString).filter(Boolean))].slice(0, 5000) : [],
             blockedCount: Math.max(clampNumber(value.blockedCount, 0, 10000), Array.isArray(value.blockedRunIds) ? value.blockedRunIds.map(cleanString).filter(Boolean).length : 0),
+            latestActivityAt: cleanString(value.latestActivityAt)
+          }];
+        })
+        .filter(Boolean));
+      return [monthKey, normalizedPeople];
+    })
+    .filter(Boolean));
+}
+
+function normalizeAiMemberMonthlyUsageScoreBuckets(input = {}) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  return Object.fromEntries(Object.entries(source)
+    .map(([month, people]) => {
+      const monthKey = cleanString(month);
+      if (!/^\d{4}-\d{2}$/.test(monthKey) || !people || typeof people !== 'object' || Array.isArray(people)) return null;
+      const normalizedPeople = Object.fromEntries(Object.entries(people)
+        .map(([person, bucket]) => {
+          const personKey = cleanString(person);
+          const value = bucket && typeof bucket === 'object' ? bucket : {};
+          if (!personKey) return null;
+          const usagePeople = value.usagePeople && typeof value.usagePeople === 'object' ? value.usagePeople : {};
+          const normalizedUsagePeople = Object.fromEntries(Object.entries(usagePeople)
+            .map(([name, count]) => {
+              const usagePerson = cleanString(name);
+              if (!usagePerson) return null;
+              return [usagePerson, clampNumber(count, 0, 10000)];
+            })
+            .filter(Boolean));
+          return [personKey, {
+            eventKeys: Array.isArray(value.eventKeys) ? [...new Set(value.eventKeys.map(cleanString).filter(Boolean))].slice(0, 10000) : [],
+            usageCount: Math.max(
+              clampNumber(value.usageCount, 0, 10000),
+              Array.isArray(value.eventKeys) ? value.eventKeys.map(cleanString).filter(Boolean).length : 0
+            ),
+            usageResultCount: Math.max(
+              clampNumber(value.usageResultCount, 0, 10000),
+              clampNumber(value.usageCount, 0, 10000)
+            ),
+            productKeys: Array.isArray(value.productKeys) ? [...new Set(value.productKeys.map(cleanString).filter(Boolean))].slice(0, 5000) : [],
+            usedProductCount: Math.max(
+              clampNumber(value.usedProductCount, 0, 10000),
+              Array.isArray(value.productKeys) ? value.productKeys.map(cleanString).filter(Boolean).length : 0
+            ),
+            usagePeople: normalizedUsagePeople,
+            usagePeopleCount: Math.max(
+              clampNumber(value.usagePeopleCount, 0, 10000),
+              Object.keys(normalizedUsagePeople).length
+            ),
             latestActivityAt: cleanString(value.latestActivityAt)
           }];
         })
@@ -5445,6 +5530,55 @@ function mergeAiMemberMonthlyRunScoreBuckets(existing = {}, incoming = {}) {
     });
   });
   return next;
+}
+
+function mergeAiMemberMonthlyUsageScoreBuckets(existing = {}, incoming = {}) {
+  const next = normalizeAiMemberMonthlyUsageScoreBuckets(existing);
+  const add = normalizeAiMemberMonthlyUsageScoreBuckets(incoming);
+  Object.entries(add).forEach(([month, people]) => {
+    if (!next[month]) next[month] = {};
+    Object.entries(people).forEach(([person, bucket]) => {
+      const current = next[month][person] || {
+        eventKeys: [],
+        usageCount: 0,
+        usageResultCount: 0,
+        productKeys: [],
+        usedProductCount: 0,
+        usagePeople: {},
+        usagePeopleCount: 0,
+        latestActivityAt: ''
+      };
+      const eventKeys = [...new Set([...(current.eventKeys || []), ...(bucket.eventKeys || [])])].slice(0, 10000);
+      const productKeys = [...new Set([...(current.productKeys || []), ...(bucket.productKeys || [])])].slice(0, 5000);
+      const usagePeople = { ...(current.usagePeople || {}) };
+      Object.entries(bucket.usagePeople || {}).forEach(([name, count]) => {
+        usagePeople[name] = Math.max(Number(usagePeople[name] || 0), Number(count || 0));
+      });
+      next[month][person] = {
+        eventKeys,
+        usageCount: Math.max(eventKeys.length, Number(current.usageCount || 0), Number(bucket.usageCount || 0)),
+        usageResultCount: Math.max(eventKeys.length, Number(current.usageResultCount || 0), Number(bucket.usageResultCount || 0)),
+        productKeys,
+        usedProductCount: Math.max(productKeys.length, Number(current.usedProductCount || 0), Number(bucket.usedProductCount || 0)),
+        usagePeople,
+        usagePeopleCount: Math.max(Object.keys(usagePeople).length, Number(current.usagePeopleCount || 0), Number(bucket.usagePeopleCount || 0)),
+        latestActivityAt: [current.latestActivityAt, bucket.latestActivityAt].filter(Boolean).sort().pop() || ''
+      };
+    });
+  });
+  return next;
+}
+
+function normalizeAiMemberScoreResetAnchors(input = {}) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  return Object.fromEntries(Object.entries(source)
+    .map(([month, value]) => {
+      const monthKey = cleanString(month);
+      const resetAt = cleanString(value);
+      if (!/^\d{4}-\d{2}$/.test(monthKey) || !resetAt) return null;
+      return [monthKey, resetAt];
+    })
+    .filter(Boolean));
 }
 
 function clampNumber(value, min = 0, max = Number.MAX_SAFE_INTEGER) {
