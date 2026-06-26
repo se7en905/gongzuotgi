@@ -19533,8 +19533,8 @@ export default {
       const online = this.directSkillWorkerOnline(worker);
       const figma = worker.figmaMcpReady ? 'Figma MCP 已就绪' : 'Figma MCP 未就绪';
       const codex = worker.codexReady ? 'Codex 已就绪' : 'Codex 未就绪';
-      const image2 = this.directSkillWorkerImage2StatusLabel(worker);
-      return `${this.directSkillWorkerDisplayName(worker)} · ${online ? '在线' : '离线'} · ${codex} · ${figma} · ${image2}`;
+      const relay = this.directSkillWorkerImage2RelayLabel(worker);
+      return `${this.directSkillWorkerDisplayName(worker)} · ${online ? '在线' : '离线'} · ${codex} · ${figma} · Image2 中转${relay}`;
     },
 
     directSkillWorkerImage2StatusLabel(worker = null) {
@@ -19548,6 +19548,36 @@ export default {
           : 'Image2 配置已发现，API 未验证';
       }
       return 'Image2 配置待读取';
+    },
+
+    directSkillWorkerImage2RelayLabel(worker = null) {
+      if (!worker) return '未发现 Worker';
+      const baseUrl = this.directSkillWorkerImage2BaseUrlValue(worker);
+      if (baseUrl) {
+        return /(^https?:\/\/)?([^/]+\.)?openai\.com(?=\/|$)/i.test(baseUrl) ? '未命中' : '已命中';
+      }
+      return '未命中';
+    },
+
+    directSkillWorkerImage2SelfCheckLabel(worker = null) {
+      if (!worker) return '未检查';
+      if (worker.image2Ready === true) return '当前自检通过';
+      if (this.directSkillWorkerHasImage2Config(worker)) {
+        return worker.image2NetworkReady === false || worker.checks?.image2NetworkReady === false
+          ? '当前自检未通过'
+          : '等待自检结果';
+      }
+      return '未检查到可用配置';
+    },
+
+    directSkillWorkerHasImage2Config(worker = null) {
+      const checks = worker?.checks && typeof worker.checks === 'object' ? worker.checks : {};
+      return Boolean(
+        worker?.image2Configured === true
+        || checks.image2Configured === true
+        || this.directSkillWorkerImage2BaseUrlValue(worker)
+        || (Array.isArray(checks.image2Sources) && checks.image2Sources.some(item => /OpenAI\/Image2 API 入口：/i.test(String(item || ''))))
+      );
     },
 
     directSkillWorkerImage2SourceLabel(worker = null) {
@@ -19571,6 +19601,13 @@ export default {
     },
 
     directSkillWorkerImage2BaseUrlLabel(worker = null) {
+      const baseUrl = this.directSkillWorkerImage2BaseUrlValue(worker);
+      if (baseUrl) return baseUrl;
+      const checks = worker?.checks && typeof worker.checks === 'object' ? worker.checks : {};
+      return worker?.image2Configured === true || checks.image2Configured === true ? '已发现但未解析到入口' : '未命中';
+    },
+
+    directSkillWorkerImage2BaseUrlValue(worker = null) {
       if (!worker) return '未命中';
       const checks = worker.checks && typeof worker.checks === 'object' ? worker.checks : {};
       const sources = Array.isArray(checks.image2Sources) ? checks.image2Sources.filter(Boolean) : [];
@@ -19582,7 +19619,40 @@ export default {
       const message = String(checks.image2Message || '').trim();
       const urlMatch = message.match(/https?:\/\/[^\s））；，]+/i);
       if (urlMatch?.[0]) return urlMatch[0].trim();
-      return worker.image2Configured === true || checks.image2Configured === true ? '已发现但未解析到入口' : '未命中';
+      return '';
+    },
+
+    directSkillLatestImageRun(row = {}) {
+      const userId = String(row.user?.id || row.worker?.userId || '').trim();
+      if (!userId) return null;
+      const candidates = this.directSkillRunRows
+        .filter(run => this.directSkillRunUserIds(run).includes(userId))
+        .filter(run => this.isImageGenerationRun(run))
+        .slice()
+        .sort((a, b) => {
+          const aTime = Date.parse(a.updatedAt || a.finishedAt || a.startedAt || a.createdAt || '') || 0;
+          const bTime = Date.parse(b.updatedAt || b.finishedAt || b.startedAt || b.createdAt || '') || 0;
+          return bTime - aTime;
+        });
+      return candidates[0] || null;
+    },
+
+    directSkillRecentImageRunStatusLabel(row = {}) {
+      const run = this.directSkillLatestImageRun(row);
+      if (!run) return '暂无记录';
+      const status = this.effectiveResultStatus(run);
+      const generatedImages = this.runGeneratedImageArtifacts(run);
+      const rawStatus = this.runDisplayStatusValue(run);
+      if (/pending|queued|created/i.test(rawStatus)) return '待执行';
+      if (/claimed|running|in_progress/i.test(rawStatus)) return '执行中';
+      if (generatedImages.length > 0 && ['passed', 'conditional_pass', 'completed', 'success'].includes(status)) return '最近真实生图成功';
+      if (generatedImages.length > 0 && status === 'partial_write') return '最近已出图，后续部分写入';
+      if (status === 'partial_write') return '最近未出图，仅部分写入';
+      if (status === 'blocked') return '最近真实生图阻塞';
+      if (status === 'failed') return '最近真实生图失败';
+      if (generatedImages.length > 0) return `最近真实生图${this.resultStatusLabel(status)}`;
+      if (['passed', 'conditional_pass', 'completed', 'success'].includes(status)) return '最近任务通过，未见出图证据';
+      return `最近任务${this.resultStatusLabel(status)}`;
     },
 
     localWorkerRunNeedsFigma(run = null) {
