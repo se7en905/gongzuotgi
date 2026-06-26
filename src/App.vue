@@ -19540,7 +19540,9 @@ export default {
     directSkillWorkerImage2StatusLabel(worker = null) {
       if (!worker) return 'Image2 未检查';
       if (worker.image2Ready === true) return 'Image2 API 已验证';
-      if (worker.image2Configured === true || worker.checks?.image2Configured === true) {
+      const checks = worker.checks && typeof worker.checks === 'object' ? worker.checks : {};
+      const hasImage2Source = Array.isArray(checks.image2Sources) && checks.image2Sources.some(item => /OpenAI\/Image2 API 入口：/i.test(String(item || '')));
+      if (worker.image2Configured === true || checks.image2Configured === true || hasImage2Source) {
         return worker.image2NetworkReady === false || worker.checks?.image2NetworkReady === false
           ? 'Image2 配置已发现，API 未通过'
           : 'Image2 配置已发现，API 未验证';
