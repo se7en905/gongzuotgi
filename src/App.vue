@@ -19999,6 +19999,14 @@ export default {
       return Boolean(run && this.runRequiresFigmaWriteEvidence(run));
     },
 
+    directSkillWorkerImage2FallbackIssueText(worker = null) {
+      const platform = String(worker?.platform || '').toLowerCase();
+      if (platform === 'win32') {
+        return 'Image2 未验证可用：Codex 客户端能用不等于计划任务 / PowerShell 启动的 Worker 能继承同一套 PATH、代理、DNS 和 OpenAI API 入口访问能力，请确认 Worker 进程能读取执行人本机 image2/OpenAI 配置和代理。';
+      }
+      return 'Image2 未验证可用：Codex 客户端能用不等于 LaunchAgent Worker 能继承同一套 PATH、代理、DNS 和 OpenAI API 入口访问能力，请确认 Worker 进程能读取执行人本机 image2/OpenAI 配置和代理。';
+    },
+
     directSkillWorkerIssueText(worker = null, run = null) {
       if (!worker) return '未发现本机 Worker 安装或心跳记录。';
       const needsFigma = this.localWorkerRunNeedsFigma(run);
@@ -20011,7 +20019,7 @@ export default {
       const messages = [];
       if (worker.codexReady !== true) messages.push(checks.codexMessage || 'Codex 未就绪，请确认组员电脑上能运行 codex --help。');
       if (needsFigma && worker.figmaMcpReady !== true) messages.push(checks.figmaMessage || 'Figma MCP 未就绪，请确认组员电脑上的 Codex 已完成 Figma MCP 授权。');
-      if (worker.image2Ready !== true) messages.push(checks.image2Message || 'Image2 未验证可用：Codex 客户端能用不等于 LaunchAgent Worker 能继承同一套 PATH、代理、DNS 和 OpenAI API 入口访问能力，请确认 Worker 进程能读取执行人本机 image2/OpenAI 配置和代理。');
+      if (worker.image2Ready !== true) messages.push(checks.image2Message || this.directSkillWorkerImage2FallbackIssueText(worker));
       if (!messages.length) return 'Worker 已在线并可自动领取。';
       return messages.join('；');
     },

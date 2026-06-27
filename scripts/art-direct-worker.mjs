@@ -59,6 +59,12 @@ let localChecks = {
   image2Message: ''
 };
 
+function image2HostEnvironmentHint() {
+  return process.platform === 'win32'
+    ? '计划任务 / PowerShell 启动器没继承 PATH、HTTP(S)_PROXY、DNS 或 OpenAI API 入口访问能力'
+    : 'LaunchAgent 没继承 PATH、HTTP(S)_PROXY、DNS 或 OpenAI API 入口访问能力';
+}
+
 main().catch(error => {
   console.error(`[worker] 启动失败：${error.message}`);
   process.exitCode = 1;
@@ -1281,7 +1287,7 @@ async function checkLocalImage2Config() {
     configured,
     networkReady: network.ready,
     sources,
-    message: `${missing || 'Worker 进程尚未验证可读取本机 Image2 配置'}。本检查不消耗额度；Codex 客户端可用但 Worker 不可用时，通常是 LaunchAgent 没继承 PATH、HTTP(S)_PROXY、DNS 或 OpenAI API 入口访问能力。`
+    message: `${missing || 'Worker 进程尚未验证可读取本机 Image2 配置'}。本检查不消耗额度；Codex 客户端可用但 Worker 不可用时，通常是${image2HostEnvironmentHint()}。`
   };
 }
 

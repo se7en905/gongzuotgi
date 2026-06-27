@@ -45,23 +45,19 @@
       <div class="panel-head">
         <div>
           <h3>{{ app.isWorkbenchAdmin ? '本机 Worker 绑定与实验操作' : '我的本机 Worker 绑定' }}</h3>
-          <p>{{ app.isWorkbenchAdmin ? '需要实际跑一次直接执行实验时，在目标执行人的电脑启动 Worker；启动命令同时包含 Windows 和 macOS 两段。' : '在自己的电脑启动 Worker 后，平台才会显示你的 Codex / Figma MCP 状态，并自动领取分配给你的直接执行任务。' }}</p>
+          <p>{{ app.isWorkbenchAdmin ? '需要给目标执行人的电脑安装 Worker 时，按系统复制对应的开机自启命令。' : '在自己的电脑安装 Worker 开机自启后，平台才会显示你的 Codex / Figma MCP 状态，并自动领取分配给你的直接执行任务。' }}</p>
         </div>
       </div>
     </template>
     <div class="agent-worker-bind-grid">
       <div class="agent-worker-bind-copy">
-        <strong>{{ app.isWorkbenchAdmin ? '当前账号实验命令' : '我的启动命令' }}</strong>
-        <p>如果你现在要在工作台里做一次实验：先用 Skill/md 创建直接执行并指派给自己，再复制“手动启动”。复制出的命令里同时包含 Windows PowerShell 和 macOS 终端两段，按自己电脑系统执行对应段落。Worker 在线且 Figma MCP 就绪后，会自动领取这个任务。</p>
+        <strong>{{ app.isWorkbenchAdmin ? '当前账号安装命令' : '我的安装命令' }}</strong>
+        <p>请按执行人电脑系统复制对应的开机自启命令。安装完成后，该电脑登录系统会自动启动 Worker，并持续回传心跳、自检 Codex / Figma MCP、自动领取分配给自己的任务。</p>
       </div>
       <div class="agent-worker-command-explain">
         <div>
-          <strong>手动启动</strong>
-          <p>适合临时实验或当天手动执行。复制内容同时支持 Windows 和 macOS；Windows 在 PowerShell 里运行，macOS 在终端里运行。窗口保持运行，关闭后 Worker 停止。</p>
-        </div>
-        <div>
           <strong>开机自启</strong>
-          <p>适合组员长期接任务。复制内容同时支持 Windows 和 macOS；Windows 会创建当前用户计划任务，macOS 会安装 LaunchAgent。以后该电脑登录系统时自动启动 Worker。</p>
+          <p>适合组员长期接任务。Windows 版会创建当前用户计划任务，macOS 版会安装 LaunchAgent。以后该电脑登录系统时自动启动 Worker。</p>
         </div>
         <div>
           <strong>工作台地址</strong>
@@ -80,8 +76,8 @@
           <span v-if="!app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" class="muted-text">当前账号没有复制 Worker 启动命令的权限。</span>
         </div>
         <div class="agent-worker-toolbar">
-          <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" type="primary" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, false)">复制手动启动</ElButton>
-          <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, true)">复制开机自启</ElButton>
+          <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" type="primary" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, true, 'windows')">复制 Windows 开机自启</ElButton>
+          <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, true, 'mac')">复制 macOS 开机自启</ElButton>
           <ElButton plain :loading="app.loading.agentWorkers || app.loading.runs" @click="app.refreshAgentWorkerStatusView">刷新状态</ElButton>
         </div>
       </div>
@@ -97,7 +93,7 @@
       </div>
       <div>
         <strong>需要组员操作</strong>
-        <p>Windows 组员需要重新复制并执行一次最新 `复制开机自启` 命令；只临时手动启动的旧终端也需要关闭后，用最新 `复制手动启动` 命令重启。后续若命令再次变化，这里会继续明确提示。</p>
+        <p>组员需要按自己系统重新复制并执行一次最新 `复制 Windows 开机自启` 或 `复制 macOS 开机自启` 命令。后续若命令再次变化，这里会继续明确提示。</p>
       </div>
       <div>
         <strong>已运行任务</strong>
