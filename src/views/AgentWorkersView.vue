@@ -131,7 +131,7 @@
         <div class="agent-worker-image2-section">
           <strong>Image2 生图链路</strong>
           <div class="agent-worker-image2-grid">
-            <div><span>Image2 自检</span><strong>{{ app.directSkillWorkerImage2SelfCheckLabel(row.worker) }}</strong></div>
+            <div><span>Image2 自检</span><strong>{{ app.directSkillWorkerImage2DisplayLabel(row) }}</strong></div>
             <div><span>Image2 来源</span><strong>{{ app.directSkillWorkerImage2SourceLabel(row.worker) }}</strong></div>
             <div><span>Image2 入口</span><strong>{{ app.directSkillWorkerImage2BaseUrlLabel(row.worker) }}</strong></div>
           </div>

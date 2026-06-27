@@ -20018,6 +20018,24 @@ export default {
       return '未检查到可用配置';
     },
 
+    directSkillWorkerImage2DisplayLabel(row = {}) {
+      const worker = row.worker || null;
+      if (!worker) return '未检查';
+      if (worker.image2Ready === true) return '自检通过';
+      const latestImageRun = this.directSkillLatestImageRun(row);
+      const latestStatus = latestImageRun ? this.effectiveResultStatus(latestImageRun) : '';
+      const generatedImages = latestImageRun ? this.runGeneratedImageArtifacts(latestImageRun) : [];
+      if (generatedImages.length > 0 && ['passed', 'conditional_pass', 'completed', 'success', 'partial_write'].includes(latestStatus)) {
+        return '自检未通过，但最近真实生图成功';
+      }
+      if (this.directSkillWorkerHasImage2Config(worker)) {
+        return worker.image2NetworkReady === false || worker.checks?.image2NetworkReady === false
+          ? '自检未通过，需结合真实任务判断'
+          : '等待自检结果';
+      }
+      return '未检查到可用配置';
+    },
+
     directSkillWorkerHasImage2Config(worker = null) {
       const checks = worker?.checks && typeof worker.checks === 'object' ? worker.checks : {};
       return Boolean(
@@ -20082,7 +20100,12 @@ export default {
           const bTime = Date.parse(b.updatedAt || b.finishedAt || b.startedAt || b.createdAt || '') || 0;
           return bTime - aTime;
         });
-      return candidates[0] || null;
+      const withGeneratedImages = candidates.find(run => {
+        const status = this.effectiveResultStatus(run);
+        const generatedImages = this.runGeneratedImageArtifacts(run);
+        return generatedImages.length > 0 && ['passed', 'conditional_pass', 'completed', 'success', 'partial_write'].includes(status);
+      });
+      return withGeneratedImages || candidates[0] || null;
     },
 
     directSkillRecentImageRunStatusLabel(row = {}) {
