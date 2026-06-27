@@ -122,31 +122,64 @@
           <div><span>状态</span><strong>{{ app.directSkillMemberReadyLabel(row) }}</strong></div>
           <div><span>Codex</span><strong>{{ row.codexReady ? '已就绪' : '未就绪' }}</strong></div>
           <div><span>Figma MCP</span><strong>{{ row.figmaMcpReady ? '已就绪' : '未就绪' }}</strong></div>
-          <div><span>中转命中</span><strong>{{ app.directSkillWorkerImage2RelayLabel(row.worker) }}</strong></div>
-          <div><span>最近生图</span><strong>{{ app.directSkillRecentImageRunStatusLabel(row) }}</strong></div>
-          <div><span>Image2 来源</span><strong>{{ app.directSkillWorkerImage2SourceLabel(row.worker) }}</strong></div>
-          <div><span>Image2 入口</span><strong>{{ app.directSkillWorkerImage2BaseUrlLabel(row.worker) }}</strong></div>
           <div><span>最近心跳</span><strong>{{ app.directSkillWorkerLastSeenText(row.worker) }}</strong></div>
           <div><span>最近退出</span><strong>{{ app.directSkillWorkerRunnerExitSummary(row.worker) }}</strong></div>
           <div><span>待领取</span><strong>{{ row.pendingRuns.length }}</strong></div>
           <div><span>执行中</span><strong>{{ row.activeRuns.length }}</strong></div>
           <div><span>已完成</span><strong>{{ row.completedRuns.length }}</strong></div>
         </div>
-        <p v-if="row.worker && !row.ready" class="agent-worker-issue">{{ app.directSkillWorkerIssueText(row.worker) }}</p>
-        <div class="agent-worker-health-card">
-          <strong>Worker 健康诊断</strong>
-          <div class="agent-worker-health-grid">
-            <div v-for="item in app.directSkillWorkerHealthRows(row)" :key="item.label">
-              <span>{{ item.label }}</span>
-              <strong>{{ item.value }}</strong>
-            </div>
+        <div class="agent-worker-image2-section">
+          <strong>Image2 生图链路</strong>
+          <div class="agent-worker-image2-grid">
+            <div><span>Image2 自检</span><strong>{{ app.directSkillWorkerImage2SelfCheckLabel(row.worker) }}</strong></div>
+            <div><span>Image2 来源</span><strong>{{ app.directSkillWorkerImage2SourceLabel(row.worker) }}</strong></div>
+            <div><span>Image2 入口</span><strong>{{ app.directSkillWorkerImage2BaseUrlLabel(row.worker) }}</strong></div>
           </div>
-          <p class="agent-worker-health-summary">{{ app.directSkillWorkerDiagnosisSummary(row) }}</p>
+        </div>
+        <p v-if="row.worker && !row.ready" class="agent-worker-issue">{{ app.directSkillWorkerIssueText(row.worker) }}</p>
+        <div class="agent-worker-card-actions">
+          <ElButton plain size="small" @click="openWorkerDiagnosis(row)">查看任务能力与健康诊断</ElButton>
         </div>
       </article>
       <div v-if="!app.agentWorkerHeartbeatRows.length" class="empty-block">暂无可查看的 Worker 信息。组员具备执行权限并启动本机 Worker 后会显示在这里。</div>
     </div>
   </ElCard>
+
+  <ElDialog
+    v-model="workerDiagnosisVisible"
+    title="任务能力与健康诊断"
+    width="720px"
+    destroy-on-close
+  >
+    <template v-if="workerDiagnosisRow">
+      <div class="agent-worker-diagnosis-dialog">
+        <div class="agent-worker-diagnosis-summary">
+          <strong>{{ workerDiagnosisRow.user.displayName || workerDiagnosisRow.user.username || workerDiagnosisRow.worker?.userName || '未命名组员' }}</strong>
+          <span>{{ app.directSkillWorkerDisplayName(workerDiagnosisRow.worker) }}</span>
+          <p>{{ app.directSkillWorkerDiagnosisSummary(workerDiagnosisRow) }}</p>
+        </div>
+        <div class="agent-worker-health-card">
+          <strong>任务能力</strong>
+          <div class="agent-worker-health-grid">
+            <div><span>普通任务</span><strong>{{ app.directSkillWorkerNormalTaskLabel(workerDiagnosisRow) }}</strong></div>
+            <div><span>Figma 任务</span><strong>{{ app.directSkillWorkerFigmaTaskLabel(workerDiagnosisRow) }}</strong></div>
+            <div><span>生图任务</span><strong>{{ app.directSkillWorkerImageTaskLabel(workerDiagnosisRow) }}</strong></div>
+            <div><span>最近生图</span><strong>{{ app.directSkillRecentImageRunStatusLabel(workerDiagnosisRow) }}</strong></div>
+          </div>
+        </div>
+        <div class="agent-worker-health-card">
+          <strong>Worker 健康诊断</strong>
+          <div class="agent-worker-health-grid">
+            <div v-for="item in app.directSkillWorkerHealthRows(workerDiagnosisRow)" :key="item.label">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+            </div>
+          </div>
+          <p class="agent-worker-health-summary">{{ app.directSkillWorkerDiagnosisSummary(workerDiagnosisRow) }}</p>
+        </div>
+      </div>
+    </template>
+  </ElDialog>
 
   <ElCard shadow="never" class="panel-card agent-direct-runs-card">
     <template #header>
@@ -211,6 +244,18 @@ export default {
     app: {
       type: Object,
       required: true
+    }
+  },
+  data() {
+    return {
+      workerDiagnosisVisible: false,
+      workerDiagnosisRow: null
+    };
+  },
+  methods: {
+    openWorkerDiagnosis(row) {
+      this.workerDiagnosisRow = row;
+      this.workerDiagnosisVisible = true;
     }
   }
 };
@@ -443,6 +488,51 @@ export default {
   }
 }
 
+.agent-worker-card-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.agent-worker-image2-section {
+  display: grid;
+  gap: 8px;
+
+  > strong {
+    color: var(--heading);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+}
+
+.agent-worker-image2-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+
+  > div {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    padding: 8px 9px;
+    border-radius: 6px;
+    background: #f8fafc;
+  }
+
+  span {
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  strong {
+    color: var(--heading);
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+}
+
 .agent-worker-issue {
   margin: 0;
   padding: 10px 12px;
@@ -491,6 +581,37 @@ export default {
   color: #475569;
   font-size: 13px;
   line-height: 1.6;
+}
+
+.agent-worker-diagnosis-dialog {
+  display: grid;
+  gap: 14px;
+}
+
+.agent-worker-diagnosis-summary {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+
+  strong {
+    color: var(--heading);
+    font-size: 15px;
+  }
+
+  span {
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  p {
+    margin: 0;
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.7;
+  }
 }
 
 .agent-heartbeat-badge {
@@ -667,7 +788,8 @@ export default {
   .agent-worker-impact-panel,
   .agent-worker-list,
   .agent-worker-state-grid,
-  .agent-worker-health-grid {
+  .agent-worker-health-grid,
+  .agent-worker-image2-grid {
     grid-template-columns: 1fr;
   }
 }
