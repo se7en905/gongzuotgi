@@ -20078,9 +20078,9 @@ export default {
     directSkillWorkerImage2FallbackIssueText(worker = null) {
       const platform = String(worker?.platform || '').toLowerCase();
       if (platform === 'win32') {
-        return 'Image2 未验证可用：Codex 客户端能用不等于计划任务 / PowerShell 启动的 Worker 能继承同一套 PATH、代理、DNS 和 OpenAI API 入口访问能力，请确认 Worker 进程能读取执行人本机 image2/OpenAI 配置和代理。';
+        return 'Image2 生图链路未验证可用：Codex 客户端能用不等于计划任务 / PowerShell 启动的 Worker 能继承同一套 PATH、代理、DNS 和生图中转入口访问能力，请确认 Worker 进程能读取执行人本机 image2 配置和代理。';
       }
-      return 'Image2 未验证可用：Codex 客户端能用不等于 LaunchAgent Worker 能继承同一套 PATH、代理、DNS 和 OpenAI API 入口访问能力，请确认 Worker 进程能读取执行人本机 image2/OpenAI 配置和代理。';
+      return 'Image2 生图链路未验证可用：Codex 客户端能用不等于 LaunchAgent Worker 能继承同一套 PATH、代理、DNS 和生图中转入口访问能力，请确认 Worker 进程能读取执行人本机 image2 配置和代理。';
     },
 
     directSkillWorkerIssueText(worker = null, run = null) {
@@ -20108,8 +20108,12 @@ export default {
 
     directSkillQueuedRunLabel(run = null) {
       const worker = this.directSkillWorkerForRun(run);
+      const queuedAtMs = Date.parse(run?.queuedAt || run?.updatedAt || run?.createdAt || '') || 0;
+      const queuedTooLong = queuedAtMs && Date.now() - queuedAtMs >= 2 * 60 * 1000;
       if (this.isDirectSkillWorkerReady(worker, run)) return '正在启动本机执行';
       if (worker && this.directSkillWorkerOnline(worker)) return '待本机自检';
+      if (queuedTooLong && worker?.lastHeartbeatAt) return '等待本机领取超时';
+      if (queuedTooLong) return '等待本机上线超时';
       if (worker?.lastHeartbeatAt) return '待本机恢复在线';
       return '待本机上线';
     },
@@ -20117,16 +20121,114 @@ export default {
     directSkillQueuedRunDetail(run = null) {
       const worker = this.directSkillWorkerForRun(run);
       const needsFigma = this.localWorkerRunNeedsFigma(run);
+      const queuedAtMs = Date.parse(run?.queuedAt || run?.updatedAt || run?.createdAt || '') || 0;
+      const queuedTooLong = queuedAtMs && Date.now() - queuedAtMs >= 2 * 60 * 1000;
       if (this.isDirectSkillWorkerReady(worker, run)) {
         return '已向执行人本机 Worker 发送定向唤醒，Worker 会立即心跳并领取；5 分钟轮询只作为事件断线兜底。';
       }
       if (worker && this.directSkillWorkerOnline(worker)) {
+        if (queuedTooLong) {
+          return `Worker 当前在线，但任务超过 2 分钟仍未被领取。优先检查平台事件唤醒是否命中、执行人本机是否刚重启 Worker，或本机自检是否尚未通过。${this.directSkillWorkerIssueText(worker, run)}`;
+        }
         return `${needsFigma ? 'Worker 已在线，待本机 Codex / Figma MCP 自检通过后自动领取。' : 'Worker 已在线，待本机 Codex 自检通过后自动领取。'}${this.directSkillWorkerIssueText(worker, run)}`;
       }
       if (worker?.lastHeartbeatAt) {
+        if (queuedTooLong) {
+          return '这台电脑曾启动过 Worker，但任务超过 2 分钟仍未被领取，且当前心跳已超时。请先检查执行人电脑上的计划任务 / Worker runner 是否仍在运行。';
+        }
         return '这台电脑曾启动过 Worker，但当前心跳已超时。若本机已有执行在跑，会继续操作并在恢复网络后补回；未领取的新任务会等 Worker 恢复在线后自动领取。';
       }
+      if (queuedTooLong) return '任务超过 2 分钟仍未被本机领取，且平台还没发现该执行人的 Worker。请先在执行人电脑安装并启动 Worker。';
       return '执行人本机 Worker 上线后会自动领取。';
+    },
+
+    directSkillWorkerRunnerExitSummary(worker = null) {
+      if (!worker?.lastExitAt && !worker?.lastExitReason) return '暂无记录';
+      const parts = [];
+      if (worker.lastExitAt) parts.push(`最近退出：${this.formatDateTime(worker.lastExitAt) || worker.lastExitAt}`);
+      if (worker.lastExitReason) parts.push(worker.lastExitReason);
+      else if (Number.isFinite(Number(worker.lastExitCode))) parts.push(`exitCode=${worker.lastExitCode}`);
+      return parts.join(' · ');
+    },
+
+    directSkillWorkerPlatformLabel(worker = null) {
+      const platform = String(worker?.platform || '').toLowerCase();
+      if (platform === 'win32') return 'Windows';
+      if (platform === 'darwin') return 'macOS';
+      return platform || '未知';
+    },
+
+    directSkillWorkerHealthRows(row = {}) {
+      const worker = row.worker || null;
+      const health = [
+        { label: '系统', value: this.directSkillWorkerPlatformLabel(worker) },
+        { label: '最近心跳', value: this.directSkillWorkerLastSeenText(worker) },
+        { label: '最近退出', value: this.directSkillWorkerRunnerExitSummary(worker) }
+      ];
+      if (String(worker?.platform || '').toLowerCase() === 'win32') {
+        health.push(
+          { label: '计划任务预期', value: worker ? '应为已安装并随登录自动拉起' : '未安装 Worker' },
+          { label: 'Runner 状态', value: worker?.lastExitAt ? '发现过退出记录，请检查最近退出' : row.online ? '未见退出记录' : '暂无在线心跳，需核对计划任务 / runner' },
+          { label: '生图链路', value: worker?.image2Ready === true ? '可执行生图' : this.directSkillWorkerImage2StatusLabel(worker) }
+        );
+      }
+      return health;
+    },
+
+    directSkillWorkerDiagnosisSummary(row = {}) {
+      const worker = row.worker || null;
+      if (!worker) return 'Worker 未安装，当前电脑不会自动领取任务。';
+      if (!row.online) {
+        const exitHint = worker.lastExitReason ? `最近退出：${worker.lastExitReason}` : '未看到新的 Worker 心跳';
+        return `Worker 未在线，优先检查执行人电脑上的计划任务 / runner 是否仍在运行。${exitHint}`;
+      }
+      if (row.pendingRuns?.length > 0) {
+        const longestQueued = (row.pendingRuns || [])
+          .map(run => Date.parse(run?.queuedAt || run?.updatedAt || run?.createdAt || '') || 0)
+          .reduce((max, value) => Math.max(max, value), 0);
+        if (longestQueued && Date.now() - longestQueued >= 2 * 60 * 1000) {
+          return 'Worker 已在线，但待领取任务超过 2 分钟仍未被领取，优先检查事件唤醒、当前账号环境和本机自检。';
+        }
+      }
+      if (worker.codexReady !== true) return 'Worker 已在线，但 Codex 未就绪，无法自动领取和执行。';
+      if (worker.figmaMcpReady !== true) return 'Worker 已在线，但 Figma MCP 未就绪，涉及 Figma 的任务无法执行。';
+      if (worker.image2Ready !== true && this.directSkillWorkerHasImage2Config(worker)) {
+        const latestImageRun = this.directSkillLatestImageRun(row);
+        const latestImageStatus = latestImageRun ? this.effectiveResultStatus(latestImageRun) : '';
+        const latestGeneratedImages = latestImageRun ? this.runGeneratedImageArtifacts(latestImageRun) : [];
+        if (latestImageRun && latestGeneratedImages.length > 0 && ['passed', 'conditional_pass', 'completed', 'success', 'partial_write'].includes(latestImageStatus)) {
+          return 'Worker 已在线；虽然 Image2 生图链路自检未通过，但最近一次真实生图任务已成功出图。请优先以真实任务结果为准，仅在后续生图再次失败时再排查本机生图环境。';
+        }
+        return 'Worker 已在线，但 Image2 生图链路自检未通过；这更像是风险提示，不代表当前所有生图任务都会失败。请优先结合最近一次真实生图结果判断，只有后续生图失败时再按生图环境排查。';
+      }
+      if (row.runningWhileDisconnected) return '任务已在本机执行，但当前心跳断开，待网络恢复后补传日志和结果。';
+      if (row.ready) return 'Worker 在线且自检通过，可自动领取任务。';
+      return 'Worker 已在线，但仍有本机环境检查未通过，请查看自检项。';
+    },
+
+    directSkillRunDiagnosisSummary(run = null) {
+      if (!run) return '暂无记录';
+      const status = this.runDisplayStatusValue(run);
+      const worker = this.directSkillWorkerForRun(run);
+      const blocker = String(this.sanitizedRunBlockerReason(run, run?.resultSummary?.blockerReason || run?.blockerReason || '') || '').trim();
+      if (/pending|queued|created/i.test(status)) {
+        return this.directSkillQueuedRunDetail(run);
+      }
+      if (/claimed|running|in_progress/i.test(status)) {
+        return this.directSkillRunSyncBadge(run).detail || 'Worker 已领取任务，等待本机继续回传日志。';
+      }
+      if (/blocked|failed/i.test(status)) {
+        if (/Image2|OpenAI|生图|502|gpt-image|uv/i.test(blocker)) return '生图链路阻塞：本机 Image2 / 生图中转入口未通过，需先修复本机生图环境后再重试；普通非生图任务不受这一项影响。';
+        if (/Figma|createdNodeIds|mutatedNodeIds|写入证据|截图验收|图片放置|图片替换/i.test(blocker)) return '执行已发生，但平台未看到足够的 Figma/图片写入验收证据，需要按结果要求补齐证据或修复写入链路。';
+        if (/心跳|失联|回传/i.test(blocker)) return '任务曾被领取，但本机后续回传失联，请优先检查 Worker 常驻与网络。';
+        return blocker || '任务执行失败，请查看阻塞原因和本机日志。';
+      }
+      if (/completed|partial_write|conditional|passed|success/.test(status)) {
+        if (/partial_write/.test(status)) return '任务有真实写入，但最终回读或截图验收证据不完整。';
+        return '任务已完成，平台已收到本机执行结果。';
+      }
+      if (worker && !this.directSkillWorkerOnline(worker)) return '当前关联 Worker 不在线，后续新任务不会自动执行。';
+      return '请结合本机 Worker 状态和执行日志继续排查。';
     },
 
     isDirectSkillClaimedRun(run = null) {

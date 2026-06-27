@@ -23,6 +23,7 @@ const defaultProjectRoot = process.env.ART_WORKER_PROJECT_ROOT || workerHome || 
 const offlineQueuePath = process.env.ART_WORKER_OFFLINE_QUEUE_PATH || path.join(workerHome, 'state', 'offline-run-updates.json');
 const runStateDir = process.env.ART_WORKER_RUN_STATE_DIR || path.join(workerHome, 'state', 'runs');
 const workerLockPath = process.env.ART_WORKER_LOCK_PATH || path.join(workerHome, 'state', 'worker.lock');
+const runnerStatePath = process.env.ART_WORKER_RUNNER_STATE_PATH || path.join(workerHome, 'state', 'runner-status.json');
 const offlineQueueMaxItems = Math.max(20, Number(process.env.ART_WORKER_OFFLINE_QUEUE_MAX_ITEMS || 200));
 const offlineLogChunkMaxChars = Math.max(1000, Number(process.env.ART_WORKER_OFFLINE_LOG_CHUNK_MAX_CHARS || 8000));
 const runEventQueueMaxItems = Math.max(20, Number(process.env.ART_WORKER_RUN_EVENT_QUEUE_MAX_ITEMS || 500));
@@ -59,6 +60,25 @@ let localChecks = {
   image2Message: ''
 };
 
+async function consumeRunnerExitState() {
+  try {
+    const raw = await readFile(runnerStatePath, 'utf8');
+    const parsed = JSON.parse(raw);
+    await writeFile(runnerStatePath, JSON.stringify({}, null, 2), 'utf8');
+    return {
+      lastExitCode: Number(parsed?.lastExitCode ?? NaN),
+      lastExitAt: String(parsed?.lastExitAt || '').trim(),
+      lastExitReason: String(parsed?.lastExitReason || '').trim()
+    };
+  } catch {
+    return {
+      lastExitCode: NaN,
+      lastExitAt: '',
+      lastExitReason: ''
+    };
+  }
+}
+
 function image2HostEnvironmentHint() {
   return process.platform === 'win32'
     ? '计划任务 / PowerShell 启动器没继承 PATH、HTTP(S)_PROXY、DNS 或 OpenAI API 入口访问能力'
@@ -72,6 +92,7 @@ main().catch(error => {
 
 async function main() {
   workerEnvOverrides = await loadWorkerEnvOverrides();
+  lastRunnerExitState = await consumeRunnerExitState();
   await acquireWorkerLock();
   await mkdir(runStateDir, { recursive: true });
   await waitForLogin();
@@ -1190,6 +1211,7 @@ function workerPayload() {
     currentRunId,
     workerHome,
     runStateDir,
+    ...runnerExitStatePayload(),
     heartbeatIntervalMs,
     pollIntervalMs,
     onlineGraceMs: onlineHeartbeatGraceMs,
@@ -1206,6 +1228,20 @@ function workerPayload() {
     image2Configured: localChecks.image2Configured,
     image2NetworkReady: localChecks.image2NetworkReady,
     checks: localChecks
+  };
+}
+
+let lastRunnerExitState = {
+  lastExitCode: NaN,
+  lastExitAt: '',
+  lastExitReason: ''
+};
+
+function runnerExitStatePayload() {
+  return {
+    lastExitCode: Number.isFinite(lastRunnerExitState.lastExitCode) ? lastRunnerExitState.lastExitCode : '',
+    lastExitAt: lastRunnerExitState.lastExitAt || '',
+    lastExitReason: lastRunnerExitState.lastExitReason || ''
   };
 }
 

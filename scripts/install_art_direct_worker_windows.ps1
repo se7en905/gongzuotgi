@@ -100,14 +100,17 @@ if ($NodeMajor -lt 20) {
 $SafeUsername = ($Username -replace '[\\/:*?"<>|]', '_')
 $TaskName = "ArtDirectWorker-$SafeUsername"
 $LogDir = Join-Path $Root 'logs'
+$StateDir = Join-Path $Root 'state'
 $Worker = Join-Path $Root 'scripts\art-direct-worker.mjs'
 $Runner = Join-Path $Root 'scripts\run-art-direct-worker-windows.ps1'
+$RunnerState = Join-Path $StateDir 'runner-status.json'
 $StartupDir = [Environment]::GetFolderPath('Startup')
 if (-not $StartupDir) {
   $StartupDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
 }
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $Root 'scripts') | Out-Null
 New-Item -ItemType Directory -Force -Path $StartupDir | Out-Null
 
@@ -137,6 +140,7 @@ Set-Location $(ConvertTo-PSLiteral $Root)
 `$env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS = $(ConvertTo-PSLiteral $LocalCheckInterval)
 `$env:ART_WORKER_HOME = $(ConvertTo-PSLiteral $Root)
 `$env:ART_WORKER_SUPERVISED = '1'
+`$env:ART_WORKER_RUNNER_STATE_PATH = $(ConvertTo-PSLiteral $RunnerState)
 `$env:CODEX_HOME = $(ConvertTo-PSLiteral $CodexHome)
 `$env:CODEX_CLI_PATH = $(ConvertTo-PSLiteral $CodexPath)
 if ($(ConvertTo-PSLiteral $OpenAiBaseUrl)) { `$env:OPENAI_BASE_URL = $(ConvertTo-PSLiteral $OpenAiBaseUrl) }
@@ -153,7 +157,11 @@ while (`$true) {
     Add-Content -Path $(ConvertTo-PSLiteral (Join-Path $LogDir "art-direct-worker.$SafeUsername.log")) -Value ("[" + (Get-Date).ToString("s") + "] worker update download failed: " + `$_.Exception.Message)
   }
   & $(ConvertTo-PSLiteral $Node) $(ConvertTo-PSLiteral $Worker) *>> $(ConvertTo-PSLiteral (Join-Path $LogDir "art-direct-worker.$SafeUsername.log"))
-  Add-Content -Path $(ConvertTo-PSLiteral (Join-Path $LogDir "art-direct-worker.$SafeUsername.log")) -Value ("[" + (Get-Date).ToString("s") + "] worker process exited, restarting in 5 seconds. exitCode=" + `$LASTEXITCODE)
+  `$runnerExitCode = if (`$null -eq `$LASTEXITCODE) { -1 } else { [int]`$LASTEXITCODE }
+  `$runnerExitAt = (Get-Date).ToString("s")
+  `$runnerReason = if (`$runnerExitCode -eq 0) { 'Worker 进程已退出，Runner 将在 5 秒后重启。' } else { "Worker 进程异常退出，Runner 将在 5 秒后重启。exitCode=`$runnerExitCode" }
+  @{ lastExitCode = `$runnerExitCode; lastExitAt = `$runnerExitAt; lastExitReason = `$runnerReason } | ConvertTo-Json -Compress | Set-Content -Path $(ConvertTo-PSLiteral $RunnerState) -Encoding UTF8
+  Add-Content -Path $(ConvertTo-PSLiteral (Join-Path $LogDir "art-direct-worker.$SafeUsername.log")) -Value ("[" + `$runnerExitAt + "] worker process exited, restarting in 5 seconds. exitCode=" + `$runnerExitCode)
   Start-Sleep -Seconds 5
 }
 "@ | Set-Content -Path $Runner -Encoding UTF8

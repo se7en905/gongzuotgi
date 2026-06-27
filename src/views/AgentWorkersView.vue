@@ -127,11 +127,22 @@
           <div><span>Image2 来源</span><strong>{{ app.directSkillWorkerImage2SourceLabel(row.worker) }}</strong></div>
           <div><span>Image2 入口</span><strong>{{ app.directSkillWorkerImage2BaseUrlLabel(row.worker) }}</strong></div>
           <div><span>最近心跳</span><strong>{{ app.directSkillWorkerLastSeenText(row.worker) }}</strong></div>
+          <div><span>最近退出</span><strong>{{ app.directSkillWorkerRunnerExitSummary(row.worker) }}</strong></div>
           <div><span>待领取</span><strong>{{ row.pendingRuns.length }}</strong></div>
           <div><span>执行中</span><strong>{{ row.activeRuns.length }}</strong></div>
           <div><span>已完成</span><strong>{{ row.completedRuns.length }}</strong></div>
         </div>
         <p v-if="row.worker && !row.ready" class="agent-worker-issue">{{ app.directSkillWorkerIssueText(row.worker) }}</p>
+        <div class="agent-worker-health-card">
+          <strong>Worker 健康诊断</strong>
+          <div class="agent-worker-health-grid">
+            <div v-for="item in app.directSkillWorkerHealthRows(row)" :key="item.label">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+            </div>
+          </div>
+          <p class="agent-worker-health-summary">{{ app.directSkillWorkerDiagnosisSummary(row) }}</p>
+        </div>
       </article>
       <div v-if="!app.agentWorkerHeartbeatRows.length" class="empty-block">暂无可查看的 Worker 信息。组员具备执行权限并启动本机 Worker 后会显示在这里。</div>
     </div>
@@ -172,6 +183,9 @@
       </ElTableColumn>
       <ElTableColumn label="本机 Worker" min-width="240">
         <template #default="{ row }">{{ app.directSkillWorkerStatusText(row) }}</template>
+      </ElTableColumn>
+      <ElTableColumn label="平台诊断" min-width="280">
+        <template #default="{ row }">{{ app.directSkillRunDiagnosisSummary(row) }}</template>
       </ElTableColumn>
       <ElTableColumn label="Figma 链接" min-width="180">
         <template #default="{ row }">
@@ -440,6 +454,45 @@ export default {
   line-height: 1.6;
 }
 
+.agent-worker-health-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.agent-worker-health-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.agent-worker-health-grid > div {
+  display: grid;
+  gap: 4px;
+}
+
+.agent-worker-health-grid span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.agent-worker-health-grid strong {
+  color: var(--heading);
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.agent-worker-health-summary {
+  margin: 0;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .agent-heartbeat-badge {
   display: inline-flex;
   align-items: center;
@@ -613,7 +666,8 @@ export default {
   .agent-worker-guide-grid,
   .agent-worker-impact-panel,
   .agent-worker-list,
-  .agent-worker-state-grid {
+  .agent-worker-state-grid,
+  .agent-worker-health-grid {
     grid-template-columns: 1fr;
   }
 }
