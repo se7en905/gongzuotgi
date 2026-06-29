@@ -6,67 +6,6 @@
     <small>直接执行不会在平台服务器写 Figma；必须由执行人本机 Worker 领取并使用本人 Figma 授权。</small>
   </div>
 
-  <ElCard v-if="app.isWorkbenchAdmin" shadow="never" class="panel-card agent-worker-guide-card">
-    <template #header>
-      <div class="panel-head">
-        <div>
-          <h3>直接执行启动方式</h3>
-          <p>直接执行没有平台侧“开始”按钮；任务创建后由执行人本机 Worker 自动领取。</p>
-        </div>
-        <ElTag type="warning" effect="plain">必须使用执行人本机 Figma 授权</ElTag>
-      </div>
-    </template>
-    <div class="agent-worker-guide-grid">
-      <div class="agent-worker-guide-step">
-        <span>1</span>
-        <strong>工作台管理者创建直接执行</strong>
-        <p>选择 Skill / md、填写 Figma 链接并指派执行人后，任务进入“待领取”。</p>
-      </div>
-      <div class="agent-worker-guide-step">
-        <span>2</span>
-        <strong>执行人启动本机 Worker</strong>
-        <p>Worker 在组员电脑上登录工作台，检查 Codex 和 Figma MCP。</p>
-      </div>
-      <div class="agent-worker-guide-step">
-        <span>3</span>
-        <strong>Worker 自动领取并执行</strong>
-        <p>自检通过后自动领取自己的任务，状态会变为“已领取 / 执行中”。</p>
-      </div>
-      <div class="agent-worker-guide-step">
-        <span>4</span>
-        <strong>平台展示日志和结果</strong>
-        <p>Worker 回传 Codex 输出、阻塞原因和最终执行状态，工作台管理者在执行台查看。</p>
-      </div>
-    </div>
-  </ElCard>
-
-  <ElCard v-if="app.isWorkbenchAdmin" shadow="never" class="panel-card agent-worker-bind-card">
-    <template #header>
-      <div class="panel-head">
-        <div>
-          <h3>{{ app.isWorkbenchAdmin ? '本机 Worker 绑定与实验操作' : '我的本机 Worker 绑定' }}</h3>
-          <p>{{ app.isWorkbenchAdmin ? '需要给目标执行人的电脑安装 Worker 时，按系统复制对应的开机自启命令。' : '在自己的电脑安装 Worker 开机自启后，平台才会显示你的 Codex / Figma MCP 状态，并自动领取分配给你的直接执行任务。' }}</p>
-        </div>
-      </div>
-    </template>
-    <div class="agent-worker-bind-grid">
-      <div class="agent-worker-bind-copy">
-        <strong>{{ app.isWorkbenchAdmin ? '当前账号安装命令' : '我的安装命令' }}</strong>
-        <p>请按执行人电脑系统复制对应的开机自启命令。安装完成后，该电脑登录系统会自动启动 Worker，并持续回传心跳、自检 Codex / Figma MCP、自动领取分配给自己的任务。</p>
-      </div>
-      <div class="agent-worker-command-explain">
-        <div>
-          <strong>开机自启</strong>
-          <p>适合组员长期接任务。Windows 版会创建当前用户计划任务，macOS 版会安装 LaunchAgent。以后该电脑登录系统时自动启动 Worker。</p>
-        </div>
-        <div>
-          <strong>工作台地址</strong>
-          <p>组员电脑不能使用管理者电脑上的 localhost。如果复制出的地址是 127.0.0.1，请替换成组员能访问的工作台服务器 IP 或域名。</p>
-        </div>
-      </div>
-    </div>
-  </ElCard>
-
   <ElCard shadow="never" class="panel-card agent-direct-runs-card">
     <template #header>
       <div class="panel-head">
@@ -102,20 +41,19 @@
           </div>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="领取设备" min-width="150">
-        <template #default="{ row }">{{ app.directSkillRunDeviceDisplayName(row) }}</template>
-      </ElTableColumn>
-      <ElTableColumn label="本机 Worker" min-width="220">
-        <template #default="{ row }">{{ app.directSkillWorkerStatusText(row) }}</template>
-      </ElTableColumn>
-      <ElTableColumn label="平台诊断" min-width="260">
-        <template #default="{ row }">{{ app.directSkillRunDiagnosisSummary(row) }}</template>
-      </ElTableColumn>
-      <ElTableColumn label="Figma" width="92">
+      <ElTableColumn label="本机 Worker" min-width="440" class-name="agent-run-worker-column">
         <template #default="{ row }">
-          <a v-if="row.figmaLinks" :href="row.figmaLinks" target="_blank" rel="noopener noreferrer">打开 Figma</a>
+          <span class="agent-run-worker-text">{{ app.directSkillWorkerStatusText(row) }}</span>
+        </template>
+      </ElTableColumn>
+      <ElTableColumn label="Figma" width="120">
+        <template #default="{ row }">
+          <a v-if="row.figmaLinks" class="agent-run-figma-link" :href="row.figmaLinks" target="_blank" rel="noopener noreferrer">打开 Figma</a>
           <span v-else>-</span>
         </template>
+      </ElTableColumn>
+      <ElTableColumn label="平台诊断" min-width="260">
+        <template #default="{ row }">{{ app.directSkillRunDiagnosisSummary(row).replace(/。/g, '') }}</template>
       </ElTableColumn>
       <ElTableColumn label="创建时间" width="190">
         <template #default="{ row }">{{ app.formatDateTime(row.createdAt) || '-' }}</template>
@@ -201,6 +139,67 @@
         </div>
       </article>
       <div v-if="!app.agentWorkerHeartbeatRows.length" class="empty-block">暂无可查看的 Worker 信息。组员具备执行权限并启动本机 Worker 后会显示在这里。</div>
+    </div>
+  </ElCard>
+
+  <ElCard v-if="app.isWorkbenchAdmin" shadow="never" class="panel-card agent-worker-guide-card">
+    <template #header>
+      <div class="panel-head">
+        <div>
+          <h3>直接执行启动方式</h3>
+          <p>直接执行没有平台侧“开始”按钮；任务创建后由执行人本机 Worker 自动领取。</p>
+        </div>
+        <ElTag type="warning" effect="plain">必须使用执行人本机 Figma 授权</ElTag>
+      </div>
+    </template>
+    <div class="agent-worker-guide-grid">
+      <div class="agent-worker-guide-step">
+        <span>1</span>
+        <strong>工作台管理者创建直接执行</strong>
+        <p>选择 Skill / md、填写 Figma 链接并指派执行人后，任务进入“待领取”。</p>
+      </div>
+      <div class="agent-worker-guide-step">
+        <span>2</span>
+        <strong>执行人启动本机 Worker</strong>
+        <p>Worker 在组员电脑上登录工作台，检查 Codex 和 Figma MCP。</p>
+      </div>
+      <div class="agent-worker-guide-step">
+        <span>3</span>
+        <strong>Worker 自动领取并执行</strong>
+        <p>自检通过后自动领取自己的任务，状态会变为“已领取 / 执行中”。</p>
+      </div>
+      <div class="agent-worker-guide-step">
+        <span>4</span>
+        <strong>平台展示日志和结果</strong>
+        <p>Worker 回传 Codex 输出、阻塞原因和最终执行状态，工作台管理者在执行台查看。</p>
+      </div>
+    </div>
+  </ElCard>
+
+  <ElCard v-if="app.isWorkbenchAdmin" shadow="never" class="panel-card agent-worker-bind-card">
+    <template #header>
+      <div class="panel-head">
+        <div>
+          <h3>{{ app.isWorkbenchAdmin ? '本机 Worker 绑定与实验操作' : '我的本机 Worker 绑定' }}</h3>
+          <p>{{ app.isWorkbenchAdmin ? '需要给目标执行人的电脑安装 Worker 时，按系统复制对应的开机自启命令。' : '在自己的电脑安装 Worker 开机自启后，平台才会显示你的 Codex / Figma MCP 状态，并自动领取分配给你的直接执行任务。' }}</p>
+        </div>
+      </div>
+    </template>
+    <div class="agent-worker-bind-grid">
+      <div class="agent-worker-bind-copy">
+        <strong>{{ app.isWorkbenchAdmin ? '当前账号安装命令' : '我的安装命令' }}</strong>
+        <p>请按执行人电脑系统复制对应的开机自启命令。安装完成后，该电脑登录系统会自动启动 Worker，并持续回传心跳、自检 Codex / Figma MCP、自动领取分配给自己的任务。</p>
+      </div>
+      <div class="agent-worker-command-explain">
+        <div>
+          <strong>开机自启</strong>
+          <p>适合组员长期接任务。Windows 版会创建当前用户计划任务，macOS 版会安装 LaunchAgent。以后该电脑登录系统时自动启动 Worker。</p>
+        </div>
+        <div>
+          <strong>工作台地址</strong>
+          <p>组员电脑不能使用管理者电脑上的 localhost。如果复制出的地址是 127.0.0.1，请替换成组员能访问的工作台服务器 IP 或域名。</p>
+        </div>
+      </div>
     </div>
   </ElCard>
 
@@ -780,6 +779,20 @@ export default {
 
   :deep(.el-tag) {
     max-width: 100%;
+  }
+}
+
+.agent-run-worker-text,
+.agent-run-figma-link {
+  display: inline-block;
+  width: 100%;
+  white-space: nowrap;
+}
+
+.agent-worker-runs-table {
+  :deep(.agent-run-worker-column .cell) {
+    overflow: visible;
+    text-overflow: clip;
   }
 }
 
