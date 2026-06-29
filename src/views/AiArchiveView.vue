@@ -6,7 +6,7 @@
         <div class="ai-archive-head-copy">
           <h3>AI档案</h3>
           <div class="ai-archive-head-meta">
-            <p>完整保存美术执行台和直接执行的明细记录；删除明细只清理后端执行数据，不回退产物调用次数。累计归档任务 {{ app.archiveMetrics.totalArchivedRuns || 0 }}，按工作台累计口径统计，不受明细删除影响。</p>
+            <p>累计归档任务 {{ app.archiveMetrics.totalArchivedRuns || 0 }} 条，删除明细不回退产物调用次数。</p>
           </div>
         </div>
         <label class="ai-archive-search-field">
@@ -97,7 +97,7 @@
       <ElTableColumn label="状态" width="150">
         <template #default="{ row }">
           <div class="ai-archive-status-row">
-            <ElTag size="small" :type="app.runTagType(app.runDisplayStatusValue(row))">{{ app.directSkillRunStatusLabel(row) || app.runStatusLabel(app.runDisplayStatusValue(row)) }}</ElTag>
+            <ElTag size="small" :type="app.runTagType(app.effectiveResultStatus(row))">{{ app.directSkillRunStatusLabel(row) || app.runStatusLabel(app.runDisplayStatusValue(row)) }}</ElTag>
             <ElTag v-if="app.isRunSourceDeleted(row)" size="small" type="warning">来源已删除</ElTag>
           </div>
         </template>

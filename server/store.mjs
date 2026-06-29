@@ -1015,7 +1015,20 @@ export async function getUsageCounters() {
 
 export async function getArchiveMetrics() {
   const counters = await getUsageCounters();
-  return normalizeArchiveMetrics(counters.archiveMetrics, counters.updatedAt || new Date().toISOString());
+  const current = normalizeArchiveMetrics(counters.archiveMetrics, counters.updatedAt || new Date().toISOString());
+  if (current.totalArchivedRuns > 0) return current;
+  const runs = await readJson(paths.runs, []);
+  const totalArchivedRuns = Array.isArray(runs) ? runs.length : 0;
+  if (totalArchivedRuns <= 0) return current;
+  const now = new Date().toISOString();
+  const archiveMetrics = {
+    totalArchivedRuns,
+    updatedAt: now
+  };
+  counters.archiveMetrics = archiveMetrics;
+  counters.updatedAt = now;
+  await writeJson(paths.usageCounters, counters, { skipRetention: true });
+  return archiveMetrics;
 }
 
 export async function incrementArchiveMetrics(input = {}) {

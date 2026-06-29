@@ -5698,7 +5698,14 @@ export default {
         if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
       }
       if (view === 'ai-archive') {
+        if (Array.isArray(this.runs) && this.runs.length) {
+          this.archiveMetrics = {
+            totalArchivedRuns: Math.max(Number(this.archiveMetrics?.totalArchivedRuns || 0), this.runs.length),
+            updatedAt: String(this.archiveMetrics?.updatedAt || '').trim()
+          };
+        }
         if ((!this.runs.length || dirty) && !this.loading.runs) this.refreshRuns({ background: !dirty }).catch(() => {});
+        if ((!this.archiveMetrics?.totalArchivedRuns || dirty) && this.can('menu.aiArchive')) this.refreshArchiveMetrics().catch(() => {});
         if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
       }
       if (view === 'operation-logs') {
@@ -7497,8 +7504,13 @@ export default {
       }
       if (type === 'archive-metrics.changed' && this.can('menu.aiArchive')) {
         if (event.payload && typeof event.payload === 'object') {
+          const payloadTotal = Math.max(0, Number(event.payload.totalArchivedRuns || 0));
           this.archiveMetrics = {
-            totalArchivedRuns: Math.max(0, Number(event.payload.totalArchivedRuns || 0)),
+            totalArchivedRuns: Math.max(
+              Number(this.archiveMetrics?.totalArchivedRuns || 0),
+              payloadTotal,
+              Array.isArray(this.runs) ? this.runs.length : 0
+            ),
             updatedAt: String(event.payload.updatedAt || '').trim()
           };
         }
@@ -10172,12 +10184,24 @@ export default {
       if (!this.can('menu.aiArchive')) return this.archiveMetrics;
       try {
         const result = await this.api('/api/archive-metrics');
+        const resultTotal = Math.max(0, Number(result?.totalArchivedRuns || 0));
         this.archiveMetrics = {
-          totalArchivedRuns: Math.max(0, Number(result?.totalArchivedRuns || 0)),
+          totalArchivedRuns: Math.max(
+            Number(this.archiveMetrics?.totalArchivedRuns || 0),
+            resultTotal,
+            Array.isArray(this.runs) ? this.runs.length : 0
+          ),
           updatedAt: String(result?.updatedAt || '').trim()
         };
       } catch (error) {
         console.warn('AI档案累计指标读取失败', error);
+        this.archiveMetrics = {
+          totalArchivedRuns: Math.max(
+            Number(this.archiveMetrics?.totalArchivedRuns || 0),
+            Array.isArray(this.runs) ? this.runs.length : 0
+          ),
+          updatedAt: String(this.archiveMetrics?.updatedAt || '').trim()
+        };
       }
       return this.archiveMetrics;
     },
