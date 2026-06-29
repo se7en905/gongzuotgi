@@ -76,6 +76,10 @@ const taskArtBriefUsageCounterKey = 'zentaoartbriefproduct';
 const artProgressReporterUsageCounterKey = 'artprogressreporter';
 const artProgressReporterUsageTarget = 'art-progress-reporter';
 const unknownUsagePersonName = '未识别使用人';
+const defaultArchiveMetrics = Object.freeze({
+  totalArchivedRuns: 0,
+  updatedAt: ''
+});
 const artDeptAccountNameMap = new Map([
   ['zhangqw', '张倩文'],
   ['fengshuqi', '冯淑琪'],
@@ -1007,6 +1011,25 @@ export async function getUsageCounters() {
     await writeJson(paths.usageCounters, output, { skipRetention: true });
   }
   return output;
+}
+
+export async function getArchiveMetrics() {
+  const counters = await getUsageCounters();
+  return normalizeArchiveMetrics(counters.archiveMetrics, counters.updatedAt || new Date().toISOString());
+}
+
+export async function incrementArchiveMetrics(input = {}) {
+  const delta = Math.max(0, Number(input.totalArchivedRuns || 0));
+  if (!delta) return await getArchiveMetrics();
+  const counters = await getUsageCounters();
+  const now = new Date().toISOString();
+  const archiveMetrics = normalizeArchiveMetrics(counters.archiveMetrics, now);
+  archiveMetrics.totalArchivedRuns += delta;
+  archiveMetrics.updatedAt = now;
+  counters.archiveMetrics = archiveMetrics;
+  counters.updatedAt = now;
+  await writeJson(paths.usageCounters, counters, { skipRetention: true });
+  return archiveMetrics;
 }
 
 export async function recordUsageCountersForExpiredSkillValidations(records = []) {
@@ -5730,6 +5753,10 @@ function defaultUsageCounters() {
     logicVersion: usageCounterLogicVersion,
     retentionDays,
     updatedAt: now,
+    archiveMetrics: {
+      ...defaultArchiveMetrics,
+      updatedAt: now
+    },
     buckets: {}
   };
 }
@@ -5753,7 +5780,16 @@ function normalizeUsageCounters(input = {}) {
     logicVersion: input.logicVersion || '',
     retentionDays,
     updatedAt: input.updatedAt || fallback.updatedAt,
+    archiveMetrics: normalizeArchiveMetrics(input.archiveMetrics, fallback.updatedAt),
     buckets
+  };
+}
+
+function normalizeArchiveMetrics(input = {}, fallbackUpdatedAt = '') {
+  const source = input && typeof input === 'object' ? input : {};
+  return {
+    totalArchivedRuns: Math.max(0, Number(source.totalArchivedRuns || 0)),
+    updatedAt: cleanString(source.updatedAt || fallbackUpdatedAt)
   };
 }
 

@@ -3,9 +3,11 @@
   <ElCard shadow="never" class="panel-card page-card">
     <template #header>
       <div class="panel-head">
-        <div>
+        <div class="ai-archive-head-copy">
           <h3>AI档案</h3>
-          <p>完整保存美术执行台和直接执行的明细记录；删除明细只清理后端执行数据，不回退产物调用次数。</p>
+          <div class="ai-archive-head-meta">
+            <p>完整保存美术执行台和直接执行的明细记录；删除明细只清理后端执行数据，不回退产物调用次数。累计归档任务 {{ app.archiveMetrics.totalArchivedRuns || 0 }}，按工作台累计口径统计，不受明细删除影响。</p>
+          </div>
         </div>
         <label class="ai-archive-search-field">
           <span>关键词</span>
@@ -76,42 +78,41 @@
     </div>
 
     <ElTable class="skill-clean-table ai-archive-table" :data="app.aiExecutionArchivePagedRunRows" table-layout="fixed" empty-text="暂无 AI 执行档案" v-loading="app.loading.runs">
-      <ElTableColumn label="执行内容" min-width="260">
+      <ElTableColumn label="执行内容" min-width="250">
         <template #default="{ row }">
           <button type="button" class="ai-archive-run-title" :disabled="!app.canViewAiArchiveDetail" @click="app.openAiExecutionArchiveDetail(row)">
             <strong>{{ app.directSkillRunContentName(row) }}</strong>
-            <span>{{ app.directSkillRunContentKind(row) }}</span>
           </button>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="类型" width="100">
+      <ElTableColumn label="类型" width="96">
         <template #default="{ row }">{{ app.directSkillRunContentKind(row) }}</template>
       </ElTableColumn>
-      <ElTableColumn label="操作人" width="120">
+      <ElTableColumn label="操作人" width="110">
         <template #default="{ row }">{{ app.directSkillRunOperatorName(row) }}</template>
       </ElTableColumn>
-      <ElTableColumn label="执行人" width="120">
+      <ElTableColumn label="执行人" width="110">
         <template #default="{ row }">{{ app.directSkillRunExecutorName(row) }}</template>
       </ElTableColumn>
-      <ElTableColumn label="状态" width="110">
+      <ElTableColumn label="状态" width="150">
         <template #default="{ row }">
-          <div class="ai-archive-status-stack">
+          <div class="ai-archive-status-row">
             <ElTag size="small" :type="app.runTagType(app.runDisplayStatusValue(row))">{{ app.directSkillRunStatusLabel(row) || app.runStatusLabel(app.runDisplayStatusValue(row)) }}</ElTag>
             <ElTag v-if="app.isRunSourceDeleted(row)" size="small" type="warning">来源已删除</ElTag>
           </div>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="Figma 链接" min-width="180">
+      <ElTableColumn label="Figma 链接" width="110">
         <template #default="{ row }">
           <a v-if="row.figmaLinks && app.canViewAiArchiveLinks" :href="row.figmaLinks" target="_blank" rel="noopener noreferrer">打开 Figma</a>
           <span v-else-if="row.figmaLinks">打开 Figma</span>
           <span v-else>-</span>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="创建时间" width="150">
+      <ElTableColumn label="创建时间" width="190">
         <template #default="{ row }">{{ app.formatDateTime(row.createdAt) || '-' }}</template>
       </ElTableColumn>
-      <ElTableColumn label="更新时间" width="150">
+      <ElTableColumn label="更新时间" width="190">
         <template #default="{ row }">{{ app.directSkillRunUpdatedText(row) }}</template>
       </ElTableColumn>
       <ElTableColumn label="操作" width="96" fixed="right" align="right">
@@ -378,6 +379,21 @@ export default {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.ai-archive-head-copy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ai-archive-head-meta {
+  min-width: 0;
+
+  p {
+    margin: 0;
+    min-width: 0;
+  }
+}
+
 .ai-archive-filters {
   display: grid;
   grid-template-columns: repeat(5, minmax(150px, 1fr)) auto;
@@ -511,16 +527,16 @@ export default {
   font-weight: 700;
 }
 
-.ai-archive-status-stack {
+.ai-archive-status-row {
   display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
+  flex-wrap: nowrap;
   gap: 4px;
+  min-width: 0;
 }
 
 .ai-archive-run-title {
-  display: grid;
-  gap: 4px;
+  display: block;
   width: 100%;
   padding: 0;
   border: 0;
@@ -531,16 +547,11 @@ export default {
   appearance: none;
   text-align: left;
 
-  strong,
-  span {
+  strong {
+    display: block;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  span {
-    color: var(--muted);
-    font-size: 12px;
   }
 }
 

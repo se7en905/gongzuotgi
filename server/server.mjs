@@ -64,6 +64,7 @@ import {
   getTask,
   getTaskCenterConfig,
   getUsageCounters,
+  getArchiveMetrics,
   appendRunLog,
   ensureRunLogPath,
   claimNextAgentRun,
@@ -92,6 +93,7 @@ import {
   recordUsageCountersForSkillValidation,
   recordUsageCountersForSkillValidationOperationLog,
   recordUsageCountersForSkillAliases,
+  incrementArchiveMetrics,
   queueRunForLocalWorker,
   reconcileZentaoTaskSnapshot,
   saveAgentRunGeneratedArtifacts,
@@ -1110,6 +1112,12 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/usage-counters') {
     requireAnyPermission(currentUser, ['skill.usageLogs.view', 'menu.skillList']);
     sendJson(res, 200, await getUsageCounters());
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/archive-metrics') {
+    requireAnyPermission(currentUser, ['menu.aiArchive', 'archive.detail.view']);
+    sendJson(res, 200, await getArchiveMetrics());
     return;
   }
 
@@ -2524,6 +2532,7 @@ async function handleApi(req, res, url) {
       },
       description: `${currentUser.displayName || currentUser.username} 创建执行「${run.title}」`
     });
+    const archiveMetrics = await incrementArchiveMetrics({ totalArchivedRuns: 1 });
     broadcastPlatformEvent('runs.changed', {
       projectId: project.id,
       runId: run.id,
@@ -2531,6 +2540,10 @@ async function handleApi(req, res, url) {
       module: 'run-created',
       targetUserId: run.queuedForUserId || run.assignedToUserId || run.ownerUserId || currentUser.id,
       wakeWorker: true
+    });
+    broadcastPlatformEvent('archive-metrics.changed', {
+      totalArchivedRuns: archiveMetrics.totalArchivedRuns,
+      updatedAt: archiveMetrics.updatedAt
     });
     sendJson(res, 201, run);
     return;
@@ -3052,6 +3065,7 @@ async function createDirectSkillRunFromBody(req, project, body = {}, currentUser
     },
     description: `${currentUser.displayName || currentUser.username} 创建直接执行「${run.title}」，指派给 ${assigneeName || assigneeUserId || '未指定成员'}`
   });
+  const archiveMetrics = await incrementArchiveMetrics({ totalArchivedRuns: 1 });
   broadcastPlatformEvent('runs.changed', {
     projectId: project.id,
     runId: run.id,
@@ -3059,6 +3073,10 @@ async function createDirectSkillRunFromBody(req, project, body = {}, currentUser
     module: 'direct-skill-run',
     targetUserId: run.queuedForUserId || run.assignedToUserId || run.ownerUserId || assigneeUserId || currentUser.id,
     wakeWorker: true
+  });
+  broadcastPlatformEvent('archive-metrics.changed', {
+    totalArchivedRuns: archiveMetrics.totalArchivedRuns,
+    updatedAt: archiveMetrics.updatedAt
   });
   return run;
 }

@@ -792,6 +792,10 @@ export default {
       artProgressOperationLogRows: [],
       taskArtBriefUsageLogs: [],
       usageCounters: readCurrentUsageCountersDisplayCache(),
+      archiveMetrics: {
+        totalArchivedRuns: 0,
+        updatedAt: ''
+      },
       artProgressLogDialog: false,
       artProgressLogType: 'operation',
       artProgressPage: 1,
@@ -6072,6 +6076,7 @@ export default {
       try {
         if (lightRunViews.includes(this.activeView)) {
           if (!this.runs.length) jobs.push(['执行记录', () => this.refreshRuns()]);
+          if (this.activeView === 'ai-archive') jobs.push(['AI档案累计指标', () => this.refreshArchiveMetrics()]);
           if (this.can('menu.runs')) {
             if (!this.customWorkflows.length) jobs.push(['自定义流程模板', () => this.refreshCustomWorkflows()]);
           }
@@ -7489,6 +7494,21 @@ export default {
         this.schedulePlatformRefresh('runs', async () => {
           await this.refreshRuns({ background: true, minInterval: 1500 });
         }, 300);
+      }
+      if (type === 'archive-metrics.changed' && this.can('menu.aiArchive')) {
+        if (event.payload && typeof event.payload === 'object') {
+          this.archiveMetrics = {
+            totalArchivedRuns: Math.max(0, Number(event.payload.totalArchivedRuns || 0)),
+            updatedAt: String(event.payload.updatedAt || '').trim()
+          };
+        }
+        if (this.activeView !== 'ai-archive') {
+          this.markViewDataDirty('ai-archive', 'archive-metrics');
+          return;
+        }
+        this.schedulePlatformRefresh('archive-metrics', async () => {
+          await this.refreshArchiveMetrics();
+        }, 200);
       }
       if (type === 'custom-workflows.changed' && this.can('menu.runs')) {
         if (this.activeView !== 'runs') {
@@ -10146,6 +10166,20 @@ export default {
         }
       })();
       return this.trackRefreshRequest('runs', request);
+    },
+
+    async refreshArchiveMetrics() {
+      if (!this.can('menu.aiArchive')) return this.archiveMetrics;
+      try {
+        const result = await this.api('/api/archive-metrics');
+        this.archiveMetrics = {
+          totalArchivedRuns: Math.max(0, Number(result?.totalArchivedRuns || 0)),
+          updatedAt: String(result?.updatedAt || '').trim()
+        };
+      } catch (error) {
+        console.warn('AI档案累计指标读取失败', error);
+      }
+      return this.archiveMetrics;
     },
 
     upsertRunInLocalState(run = null, options = {}) {
