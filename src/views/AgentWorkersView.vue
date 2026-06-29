@@ -67,6 +67,65 @@
     </div>
   </ElCard>
 
+  <ElCard shadow="never" class="panel-card agent-direct-runs-card">
+    <template #header>
+      <div class="panel-head">
+        <div>
+          <h3>执行明细</h3>
+          <p>仅展示最近 10 条执行工作台记录；完整明细请到左侧 AI档案 查看。</p>
+        </div>
+        <ElButton plain :loading="app.loading.runs" @click="app.refreshRuns">刷新明细</ElButton>
+      </div>
+    </template>
+    <ElTable class="skill-clean-table agent-worker-runs-table" :data="app.recentExecutionRunRows" table-layout="fixed" empty-text="暂无执行明细">
+      <ElTableColumn label="执行内容" min-width="250">
+        <template #default="{ row }">
+          <button type="button" class="agent-run-title" @click="app.openRun(row)">
+            <strong>{{ app.directSkillRunContentName(row) }}</strong>
+          </button>
+        </template>
+      </ElTableColumn>
+      <ElTableColumn label="类型" width="96">
+        <template #default="{ row }">{{ app.directSkillRunContentKind(row) }}</template>
+      </ElTableColumn>
+      <ElTableColumn label="操作人" width="110">
+        <template #default="{ row }">{{ app.directSkillRunOperatorName(row) }}</template>
+      </ElTableColumn>
+      <ElTableColumn label="执行人" width="110">
+        <template #default="{ row }">{{ row.assignedToName || row.developer || '-' }}</template>
+      </ElTableColumn>
+      <ElTableColumn label="状态" width="150">
+        <template #default="{ row }">
+          <div class="agent-run-status-row">
+            <ElTag size="small" :type="app.runTagType(app.effectiveResultStatus(row))">{{ app.directSkillRunStatusLabel(row) || app.runStatusLabel(app.runDisplayStatusValue(row)) }}</ElTag>
+            <ElTag v-if="app.isRunSourceDeleted(row)" size="small" type="warning">来源已删除</ElTag>
+          </div>
+        </template>
+      </ElTableColumn>
+      <ElTableColumn label="领取设备" min-width="150">
+        <template #default="{ row }">{{ app.directSkillRunDeviceDisplayName(row) }}</template>
+      </ElTableColumn>
+      <ElTableColumn label="本机 Worker" min-width="220">
+        <template #default="{ row }">{{ app.directSkillWorkerStatusText(row) }}</template>
+      </ElTableColumn>
+      <ElTableColumn label="平台诊断" min-width="260">
+        <template #default="{ row }">{{ app.directSkillRunDiagnosisSummary(row) }}</template>
+      </ElTableColumn>
+      <ElTableColumn label="Figma" width="92">
+        <template #default="{ row }">
+          <a v-if="row.figmaLinks" :href="row.figmaLinks" target="_blank" rel="noopener noreferrer">打开 Figma</a>
+          <span v-else>-</span>
+        </template>
+      </ElTableColumn>
+      <ElTableColumn label="创建时间" width="190">
+        <template #default="{ row }">{{ app.formatDateTime(row.createdAt) || '-' }}</template>
+      </ElTableColumn>
+      <ElTableColumn label="更新时间" width="190">
+        <template #default="{ row }">{{ app.directSkillRunUpdatedText(row) }}</template>
+      </ElTableColumn>
+    </ElTable>
+  </ElCard>
+
   <ElCard shadow="never" class="panel-card agent-worker-summary-card">
     <template #header>
       <div class="panel-head agent-worker-summary-head">
@@ -181,59 +240,6 @@
     </template>
   </ElDialog>
 
-  <ElCard shadow="never" class="panel-card agent-direct-runs-card">
-    <template #header>
-      <div class="panel-head">
-        <div>
-          <h3>执行明细</h3>
-          <p>仅展示最近 10 条执行工作台记录；完整明细请到左侧 AI档案 查看。</p>
-        </div>
-        <ElButton plain :loading="app.loading.runs" @click="app.refreshRuns">刷新明细</ElButton>
-      </div>
-    </template>
-    <ElTable class="skill-clean-table" :data="app.recentExecutionRunRows" table-layout="fixed" empty-text="暂无执行明细">
-      <ElTableColumn label="执行内容" min-width="240">
-        <template #default="{ row }">
-          <button type="button" class="agent-run-title" @click="app.openRun(row)">
-            <strong>{{ app.directSkillRunContentName(row) }}</strong>
-            <span>{{ app.directSkillRunContentKind(row) }}</span>
-          </button>
-        </template>
-      </ElTableColumn>
-      <ElTableColumn label="操作人" width="120">
-        <template #default="{ row }">{{ app.directSkillRunOperatorName(row) }}</template>
-      </ElTableColumn>
-      <ElTableColumn label="执行人" width="120">
-        <template #default="{ row }">{{ row.assignedToName || row.developer || '-' }}</template>
-      </ElTableColumn>
-      <ElTableColumn label="状态" width="110">
-        <template #default="{ row }">
-          <ElTag size="small" :type="app.runTagType(app.runDisplayStatusValue(row))">{{ app.directSkillRunStatusLabel(row) }}</ElTag>
-        </template>
-      </ElTableColumn>
-      <ElTableColumn label="领取设备" min-width="150">
-        <template #default="{ row }">{{ app.directSkillRunDeviceDisplayName(row) }}</template>
-      </ElTableColumn>
-      <ElTableColumn label="本机 Worker" min-width="240">
-        <template #default="{ row }">{{ app.directSkillWorkerStatusText(row) }}</template>
-      </ElTableColumn>
-      <ElTableColumn label="平台诊断" min-width="280">
-        <template #default="{ row }">{{ app.directSkillRunDiagnosisSummary(row) }}</template>
-      </ElTableColumn>
-      <ElTableColumn label="Figma 链接" min-width="180">
-        <template #default="{ row }">
-          <a v-if="row.figmaLinks" :href="row.figmaLinks" target="_blank" rel="noopener noreferrer">打开 Figma</a>
-          <span v-else>-</span>
-        </template>
-      </ElTableColumn>
-      <ElTableColumn label="创建时间" width="150">
-        <template #default="{ row }">{{ app.formatDateTime(row.createdAt) || '-' }}</template>
-      </ElTableColumn>
-      <ElTableColumn label="更新时间" width="150">
-        <template #default="{ row }">{{ app.directSkillRunUpdatedText(row) }}</template>
-      </ElTableColumn>
-    </ElTable>
-  </ElCard>
 </section>
 </template>
 
@@ -721,8 +727,7 @@ export default {
 }
 
 .agent-run-title {
-  display: grid;
-  gap: 4px;
+  display: block;
   width: 100%;
   padding: 0;
   border: 0;
@@ -733,17 +738,54 @@ export default {
   appearance: none;
   text-align: left;
 
-  strong,
-  span {
+  strong {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.agent-run-status-row {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.agent-worker-runs-table {
+  :deep(.el-table__cell) {
+    white-space: nowrap;
+  }
+
+  :deep(.cell) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
+  a,
   span {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  a {
+    vertical-align: bottom;
+  }
+
+  :deep(.el-tag) {
+    max-width: 100%;
+  }
+}
+
+.agent-run-title span {
     color: var(--muted);
     font-size: 12px;
-  }
 }
 
 .agent-worker-rename-button {
