@@ -1,0 +1,1016 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>平台删除按钮关系速查</title>
+  <style>
+    :root {
+      --bg: #f6f3ee;
+      --panel: #fffdf9;
+      --text: #221f1a;
+      --muted: #6f675d;
+      --line: #ded6ca;
+      --green: #2f6b45;
+      --green-bg: #e5f2e9;
+      --yellow: #8b6a12;
+      --yellow-bg: #fbf1cc;
+      --orange: #9a4f17;
+      --orange-bg: #f9e3d3;
+      --red: #8e2b2b;
+      --red-bg: #f7dddd;
+      --shadow: 0 14px 40px rgba(45, 35, 25, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(166, 118, 78, 0.12), transparent 24rem),
+        linear-gradient(180deg, #f7f1e7 0%, var(--bg) 30%, #f3efe8 100%);
+      color: var(--text);
+    }
+
+    .page {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 32px 24px 56px;
+    }
+
+    .hero,
+    .panel {
+      background: rgba(255, 253, 249, 0.92);
+      border: 1px solid rgba(222, 214, 202, 0.95);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    .hero {
+      padding: 28px;
+      margin-bottom: 24px;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      font-weight: 700;
+    }
+
+    h1 {
+      font-size: 32px;
+      letter-spacing: 0.02em;
+    }
+
+    h2 {
+      font-size: 20px;
+      margin-bottom: 16px;
+    }
+
+    p {
+      margin: 0;
+      line-height: 1.65;
+    }
+
+    .hero p {
+      margin-top: 12px;
+      color: var(--muted);
+      max-width: 980px;
+    }
+
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .hero-details {
+      margin-top: 20px;
+      border: 1px solid rgba(222, 214, 202, 0.95);
+      border-radius: 20px;
+      background: rgba(255, 250, 242, 0.9);
+      overflow: hidden;
+    }
+
+    .hero-details summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 16px 18px;
+      font-weight: 700;
+      font-size: 15px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .hero-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .hero-details summary::after {
+      content: "展开";
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .hero-details[open] summary::after {
+      content: "收起";
+    }
+
+    .hero-details-body {
+      padding: 0 18px 18px;
+      border-top: 1px solid rgba(222, 214, 202, 0.95);
+    }
+
+    .hero-details-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .hero-note {
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: #fff;
+      border: 1px solid #e8e0d5;
+    }
+
+    .hero-note h3 {
+      font-size: 15px;
+      margin-bottom: 8px;
+    }
+
+    .hero-note p {
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .mini-flow {
+      margin-top: 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .mini-flow-head {
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: linear-gradient(180deg, #fff7ec 0%, #fff 100%);
+      border: 1px solid #e8e0d5;
+      font-weight: 700;
+      text-align: center;
+      font-size: 15px;
+    }
+
+    .mini-flow-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .mini-lane {
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid #e8e0d5;
+      background: #fff;
+    }
+
+    .mini-lane h3 {
+      font-size: 15px;
+      margin-bottom: 8px;
+    }
+
+    .mini-lane ul {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      line-height: 1.65;
+      font-size: 13px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 24px;
+    }
+
+    .risk-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin-bottom: 24px;
+    }
+
+    .risk-card {
+      padding: 20px;
+      border-radius: 22px;
+      border: 1px solid transparent;
+    }
+
+    .risk-card h3 {
+      font-size: 18px;
+      margin-bottom: 10px;
+    }
+
+    .risk-card p {
+      color: var(--muted);
+      font-size: 14px;
+      min-height: 68px;
+    }
+
+    .risk-card ul {
+      margin: 14px 0 0;
+      padding-left: 18px;
+      line-height: 1.7;
+      font-size: 14px;
+    }
+
+    .risk-low {
+      background: var(--green-bg);
+      border-color: rgba(47, 107, 69, 0.18);
+    }
+
+    .risk-mid {
+      background: var(--yellow-bg);
+      border-color: rgba(139, 106, 18, 0.18);
+    }
+
+    .risk-high {
+      background: var(--orange-bg);
+      border-color: rgba(154, 79, 23, 0.18);
+    }
+
+    .risk-top {
+      background: var(--red-bg);
+      border-color: rgba(142, 43, 43, 0.18);
+    }
+
+    .panel {
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    .flow-wrap {
+      overflow-x: auto;
+    }
+
+    .flow {
+      min-width: 1160px;
+      display: grid;
+      grid-template-columns: 210px 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .flow-main {
+      padding: 18px;
+      border-radius: 20px;
+      background: linear-gradient(180deg, #fffaf2 0%, #fff 100%);
+      border: 1px solid var(--line);
+      font-weight: 700;
+      text-align: center;
+      font-size: 18px;
+    }
+
+    .flow-lanes {
+      display: grid;
+      gap: 14px;
+    }
+
+    .lane {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .lane-head,
+    .lane-body {
+      border-radius: 20px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .lane-head strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 16px;
+    }
+
+    .lane-head span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .items {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .item {
+      min-width: 180px;
+      flex: 1 1 220px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: #faf7f1;
+      border: 1px solid #e8e0d5;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .item strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 14px;
+    }
+
+    .matrix-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    .matrix-table th,
+    .matrix-table td {
+      border-bottom: 1px solid var(--line);
+      padding: 14px 12px;
+      vertical-align: top;
+      text-align: left;
+      line-height: 1.65;
+    }
+
+    .matrix-table th {
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      background: #fbf7f1;
+      position: sticky;
+      top: 0;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .b-low { background: var(--green-bg); color: var(--green); }
+    .b-mid { background: var(--yellow-bg); color: var(--yellow); }
+    .b-high { background: var(--orange-bg); color: var(--orange); }
+    .b-top { background: var(--red-bg); color: var(--red); }
+
+    .scope-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    .scope-table th,
+    .scope-table td {
+      border-bottom: 1px solid var(--line);
+      padding: 14px 12px;
+      vertical-align: top;
+      text-align: left;
+      line-height: 1.7;
+    }
+
+    .scope-table th {
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      background: #fbf7f1;
+      position: sticky;
+      top: 0;
+    }
+
+    .flag {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .flag-soft {
+      background: #edf7ef;
+      color: #2f6b45;
+    }
+
+    .flag-hard {
+      background: #fbe6df;
+      color: #9a4f17;
+    }
+
+    .flag-dir {
+      background: #f7dddd;
+      color: #8e2b2b;
+    }
+
+    .flag-none {
+      background: #ece9e2;
+      color: #6f675d;
+    }
+
+    .tips {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .tip {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: linear-gradient(180deg, #fffdf9 0%, #faf5ec 100%);
+    }
+
+    .tip h3 {
+      font-size: 16px;
+      margin-bottom: 10px;
+    }
+
+    .tip p {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    code {
+      padding: 1px 6px;
+      border-radius: 8px;
+      background: #f3ece2;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 12px;
+    }
+
+    @media (max-width: 1180px) {
+      .risk-grid,
+      .tips,
+      .hero-details-grid,
+      .mini-flow-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        padding: 20px 14px 40px;
+      }
+
+      .risk-grid,
+      .tips,
+      .hero-details-grid,
+      .mini-flow-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .lane {
+        grid-template-columns: 1fr;
+      }
+
+      .matrix-table {
+        display: block;
+        overflow-x: auto;
+      }
+
+      h1 {
+        font-size: 26px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <h1>平台删除按钮关系速查</h1>
+      <p>
+        这份页面用于快速判断平台里每个“删除 / 隐藏 / 作废 / 清理”入口到底动了哪层数据、会不会删目录、哪些内容明确保留。
+        核心目的不是解释实现细节，而是帮负责人快速看清风险边界。
+      </p>
+      <div class="hero-meta">
+        <span class="chip">项目：美术部工作台</span>
+        <span class="chip">视角：负责人管理口径</span>
+        <span class="chip">重点：删什么 / 不删什么 / 风险等级</span>
+        <span class="chip">文件位置：项目根目录</span>
+      </div>
+      <details class="hero-details">
+        <summary>关系图速览</summary>
+        <div class="hero-details-body">
+          <div class="mini-flow">
+            <div class="mini-flow-head">删除按钮 / 清理入口 -> 4 类结果</div>
+            <div class="mini-flow-grid">
+              <article class="mini-lane">
+                <h3>硬删除业务记录</h3>
+                <ul>
+                  <li>平台任务删除</li>
+                  <li>项目删除</li>
+                  <li>模板删除</li>
+                  <li>账号/角色删除</li>
+                </ul>
+              </article>
+              <article class="mini-lane">
+                <h3>执行档案 + 目录删除</h3>
+                <ul>
+                  <li>删除执行记录</li>
+                  <li>AI档案范围删除</li>
+                  <li>生图产物清理</li>
+                </ul>
+              </article>
+              <article class="mini-lane">
+                <h3>软删除 / 隐藏</h3>
+                <ul>
+                  <li>人工研究隐藏</li>
+                  <li>验证回填删除</li>
+                  <li>字段/项目行隐藏</li>
+                  <li>AI全流程软删除</li>
+                </ul>
+              </article>
+              <article class="mini-lane">
+                <h3>维护中心范围清理</h3>
+                <ul>
+                  <li>安全清理</li>
+                  <li>操作日志清理</li>
+                  <li>摘要范围清理</li>
+                  <li>执行历史清理</li>
+                </ul>
+              </article>
+            </div>
+          </div>
+        </div>
+      </details>
+      <details class="hero-details">
+        <summary>文字版速读</summary>
+        <div class="hero-details-body">
+          <div class="hero-details-grid">
+            <article class="hero-note">
+              <h3>先分 4 类看</h3>
+              <p>平台里的“删除”不是一回事，主要分成：硬删除业务记录、删除执行档案和目录、软删除/隐藏、维护中心范围清理。</p>
+            </article>
+            <article class="hero-note">
+              <h3>最危险的不是普通删除</h3>
+              <p>真正要谨慎的是会动 <code>workspace</code>、<code>artifactRoot</code>、生图目录、执行归档目录的入口，这类会删历史材料和结果证据。</p>
+            </article>
+            <article class="hero-note">
+              <h3>项目删除不是全删</h3>
+              <p>删除项目只会清项目接入、同步任务/Bug、扫描缓存等平台数据，不会顺手删除执行记录、自定义流程模板和累计调用次数。</p>
+            </article>
+            <article class="hero-note">
+              <h3>很多“删除”其实是隐藏</h3>
+              <p>人工研究记录、验证回填、项目字段/项目行这几类，本质是给工作台加隐藏标记或删除标记，不会回写 Google 表或外部源数据。</p>
+            </article>
+            <article class="hero-note">
+              <h3>操作日志删除不回退统计</h3>
+              <p>操作日志范围删除只删日志本身，不会影响任务、模板、执行记录，也不会扣减 AI 产物累计调用次数。</p>
+            </article>
+            <article class="hero-note">
+              <h3>AI 全流程人工记录是软删除</h3>
+              <p>这类删除当前是把记录状态改成 <code>deleted</code>，前端不再展示，并不是把底层数据文件里的记录物理移除。</p>
+            </article>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="grid risk-grid">
+      <article class="risk-card risk-low">
+        <h3>低风险：隐藏 / 作废</h3>
+        <p>主要影响工作台展示或评分口径，不改外部源数据，不删原始文件。</p>
+        <ul>
+          <li>人工研究记录隐藏</li>
+          <li>验证回填删除</li>
+          <li>项目字段/项目行隐藏</li>
+          <li>产物作废</li>
+        </ul>
+      </article>
+
+      <article class="risk-card risk-mid">
+        <h3>中风险：业务记录硬删除</h3>
+        <p>会真删平台内业务记录，但通常不碰执行档案目录和累计指标。</p>
+        <ul>
+          <li>平台任务删除</li>
+          <li>项目删除</li>
+          <li>模板删除</li>
+          <li>账号/角色删除</li>
+        </ul>
+      </article>
+
+      <article class="risk-card risk-high">
+        <h3>高风险：执行档案删除</h3>
+        <p>不止删一条记录，还会清掉工作区、执行产物或归档目录。</p>
+        <ul>
+          <li>单条执行记录删除</li>
+          <li>AI档案范围删除</li>
+          <li>生图产物范围清理</li>
+        </ul>
+      </article>
+
+      <article class="risk-card risk-top">
+        <h3>最高注意：维护中心清理</h3>
+        <p>按范围批量生效，适合清理但也最容易误删整批历史材料。</p>
+        <ul>
+          <li>安全维护清理</li>
+          <li>操作日志范围删除</li>
+          <li>摘要范围清理</li>
+          <li>执行历史范围清理</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="panel">
+      <h2>总关系图</h2>
+      <div class="flow-wrap">
+        <div class="flow">
+          <div class="flow-main">删除按钮 / 清理入口</div>
+          <div class="flow-lanes">
+            <div class="lane">
+              <div class="lane-head">
+                <strong>硬删除业务记录</strong>
+                <span>删平台业务 JSON、配置或接入记录，通常不动执行工作区。</span>
+              </div>
+              <div class="lane-body">
+                <div class="items">
+                  <div class="item"><strong>平台任务删除</strong>删平台任务、备注、验收、美术摘要索引</div>
+                  <div class="item"><strong>项目删除</strong>删项目接入记录、同步任务/Bug、扫描缓存</div>
+                  <div class="item"><strong>模板删除</strong>删自定义流程模板</div>
+                  <div class="item"><strong>账号/角色删除</strong>删账号或角色配置</div>
+                  <div class="item"><strong>操作日志删除</strong>删命中的日志记录</div>
+                  <div class="item"><strong>研究同步删除</strong>删研究同步事件记录</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="lane">
+              <div class="lane-head">
+                <strong>执行档案 + 目录删除</strong>
+                <span>删记录的同时，还会删 <code>workspace</code>、<code>artifactRoot</code> 或生图目录。</span>
+              </div>
+              <div class="lane-body">
+                <div class="items">
+                  <div class="item"><strong>删除执行记录</strong>删单条 run、工作区、产物目录</div>
+                  <div class="item"><strong>AI档案范围删除</strong>按筛选批量删执行记录、工作区、归档</div>
+                  <div class="item"><strong>生图产物清理</strong>只删“生成图片”成品目录和图片引用</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="lane">
+              <div class="lane-head">
+                <strong>软删除 / 隐藏</strong>
+                <span>主要是给工作台加删除标记或隐藏覆盖，不会改外部源。</span>
+              </div>
+              <div class="lane-body">
+                <div class="items">
+                  <div class="item"><strong>人工研究隐藏</strong>本地 override 标记 <code>deleted=true</code></div>
+                  <div class="item"><strong>验证回填删除</strong>对工作台验证记录加删除标记</div>
+                  <div class="item"><strong>项目字段隐藏</strong>字段不再展示，已有数据保留</div>
+                  <div class="item"><strong>项目行隐藏</strong>保留隐藏标记，避免刷新后重现</div>
+                  <div class="item"><strong>AI全流程人工记录删除</strong>记录状态改为 <code>deleted</code></div>
+                  <div class="item"><strong>产物作废</strong>不计入评分，不删源文件</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="lane">
+              <div class="lane-head">
+                <strong>维护中心范围清理</strong>
+                <span>按业务域批量处理，必须用“预览后确认”的方式理解。</span>
+              </div>
+              <div class="lane-body">
+                <div class="items">
+                  <div class="item"><strong>安全清理</strong>只删系统垃圾：<code>.DS_Store</code>、临时 JSON、孤儿工作区</div>
+                  <div class="item"><strong>操作日志清理</strong>只删操作日志，不动累计调用指标</div>
+                  <div class="item"><strong>执行历史清理</strong>删非运行中执行档案、工作区、归档</div>
+                  <div class="item"><strong>摘要清理</strong>删 <code>outputs/art-briefs</code> 和对应索引</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>删除影响矩阵</h2>
+      <table class="matrix-table">
+        <thead>
+          <tr>
+            <th>入口</th>
+            <th>类型</th>
+            <th>实际删除 / 变更</th>
+            <th>明确保留</th>
+            <th>风险</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>任务中心 -> 删除平台创建任务</td>
+            <td>业务硬删除</td>
+            <td>平台任务、任务验收、处理备注、美术摘要索引</td>
+            <td>禅道任务、禅道同步任务、执行档案</td>
+            <td><span class="badge b-mid">中</span></td>
+          </tr>
+          <tr>
+            <td>项目接入 -> 删除项目</td>
+            <td>业务硬删除</td>
+            <td>项目接入记录、同步任务/Bug、备注、验收、扫描缓存</td>
+            <td>本地项目目录、执行记录、自定义流程模板、累计调用次数</td>
+            <td><span class="badge b-high">高</span></td>
+          </tr>
+          <tr>
+            <td>执行台 -> 删除执行记录</td>
+            <td>档案+目录删除</td>
+            <td>单条 run、执行工作区、产物目录</td>
+            <td>任务中心任务、禅道任务、累计调用次数</td>
+            <td><span class="badge b-top">高</span></td>
+          </tr>
+          <tr>
+            <td>AI档案 -> 删除当前范围</td>
+            <td>档案+目录删除</td>
+            <td>筛选命中的执行记录、工作区、归档目录</td>
+            <td>任务中心任务、累计调用次数</td>
+            <td><span class="badge b-top">高</span></td>
+          </tr>
+          <tr>
+            <td>操作日志 -> 删除当前范围</td>
+            <td>业务硬删除</td>
+            <td>命中的操作日志记录</td>
+            <td>任务、模板、执行记录、累计调用次数</td>
+            <td><span class="badge b-mid">中</span></td>
+          </tr>
+          <tr>
+            <td>研究同步 -> 删除单条 / 删除一组</td>
+            <td>业务硬删除</td>
+            <td>研究同步事件记录</td>
+            <td>禅道、本机文件、外部源</td>
+            <td><span class="badge b-mid">中</span></td>
+          </tr>
+          <tr>
+            <td>自定义流程模板 -> 删除</td>
+            <td>业务硬删除</td>
+            <td>模板库中的模板记录</td>
+            <td>已创建执行记录</td>
+            <td><span class="badge b-mid">中</span></td>
+          </tr>
+          <tr>
+            <td>账号管理 -> 删除账号</td>
+            <td>业务硬删除</td>
+            <td>用户账号、该账号会话</td>
+            <td>历史操作日志</td>
+            <td><span class="badge b-high">高</span></td>
+          </tr>
+          <tr>
+            <td>角色管理 -> 删除角色</td>
+            <td>业务硬删除</td>
+            <td>角色配置；如有在用账号，先切换到替换角色</td>
+            <td>账号本身不直接删</td>
+            <td><span class="badge b-high">高</span></td>
+          </tr>
+          <tr>
+            <td>AI全流程人工记录 -> 删除</td>
+            <td>软删除</td>
+            <td>状态改为 <code>deleted</code>，前端不再展示</td>
+            <td>原记录实体仍在数据文件中</td>
+            <td><span class="badge b-low">低</span></td>
+          </tr>
+          <tr>
+            <td>人工研究记录 -> 隐藏</td>
+            <td>软删除</td>
+            <td>写本地 override 删除标记</td>
+            <td>Google 表源数据</td>
+            <td><span class="badge b-low">低</span></td>
+          </tr>
+          <tr>
+            <td>验证回填 -> 删除</td>
+            <td>软删除</td>
+            <td>工作台验证记录删除标记</td>
+            <td>Google 表原始记录</td>
+            <td><span class="badge b-low">低</span></td>
+          </tr>
+          <tr>
+            <td>项目字段 -> 隐藏字段</td>
+            <td>软删除</td>
+            <td>字段不再展示</td>
+            <td>已有行数据、本地记录</td>
+            <td><span class="badge b-low">低</span></td>
+          </tr>
+          <tr>
+            <td>项目行 -> 隐藏项目行</td>
+            <td>软删除</td>
+            <td>项目行隐藏标记</td>
+            <td>外部表原始行</td>
+            <td><span class="badge b-low">低</span></td>
+          </tr>
+          <tr>
+            <td>AI产物清单 -> 作废产物</td>
+            <td>作废</td>
+            <td>从评分/有效统计口径中作废</td>
+            <td>源文件、共享盘内容</td>
+            <td><span class="badge b-low">低</span></td>
+          </tr>
+          <tr>
+            <td>维护中心 -> 安全维护清理</td>
+            <td>范围清理</td>
+            <td>系统垃圾、过期临时文件、孤儿工作区</td>
+            <td>业务 JSON、有效执行目录、正式产物</td>
+            <td><span class="badge b-mid">中</span></td>
+          </tr>
+          <tr>
+            <td>维护中心 -> 生图产物清理</td>
+            <td>范围清理</td>
+            <td>“生成图片”目录和执行记录中的图片引用</td>
+            <td>执行记录本身、任务、累计调用指标</td>
+            <td><span class="badge b-high">高</span></td>
+          </tr>
+          <tr>
+            <td>维护中心 -> 摘要范围清理</td>
+            <td>范围清理</td>
+            <td><code>outputs/art-briefs</code> 和摘要索引</td>
+            <td>任务中心任务、禅道任务</td>
+            <td><span class="badge b-high">高</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>负责人判断口诀</h2>
+      <div class="tips">
+        <article class="tip">
+          <h3>先看是不是“隐藏”</h3>
+          <p>只要文案里明确写了“不会删除源文件 / 不会修改 Google 表 / 只影响工作台展示”，这类一般先归到低风险的展示层隐藏。</p>
+        </article>
+        <article class="tip">
+          <h3>再看会不会动目录</h3>
+          <p>只要涉及 <code>workspace</code>、<code>artifactRoot</code>、生成图片目录、执行归档目录，这类就不是普通删记录，而是执行档案删除。</p>
+        </article>
+        <article class="tip">
+          <h3>批量范围删除优先谨慎</h3>
+          <p>维护中心、AI档案范围删除、生图范围清理这几类都应当按“先预览，再确认，再复核保留项”的管理方式处理。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>界面按钮逐项说明</h2>
+      <p style="margin-bottom:16px; color: var(--muted);">
+        这一节按“某个界面里的某个删除按钮”来写，重点回答 5 件事：只是前端不显示，还是后端数据销毁；会不会删目录/文件；会牵连哪些页面；明确不影响哪些页面。
+      </p>
+      <table class="scope-table">
+        <thead>
+          <tr>
+            <th>界面 / 按钮</th>
+            <th>删除层级</th>
+            <th>实际删除范围</th>
+            <th>会牵连的面</th>
+            <th>明确不影响</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>AI档案</strong><br />删除当前范围</td>
+            <td>
+              <span class="flag flag-hard">后端记录销毁</span>
+              <span class="flag flag-dir">目录一起删</span>
+            </td>
+            <td>删除当前筛选命中的执行记录；同时删除这些记录对应的执行工作区和产物归档目录。不是单纯前端隐藏。</td>
+            <td>AI档案列表会少这些记录；美术执行台里同一批 run 也会消失；对应过程材料、执行附件、执行产物以后无法再预览或下载。</td>
+            <td>不会删除任务中心任务；不会删除禅道任务；不会回退 AI产物累计调用次数；不会删项目接入记录和模板。</td>
+          </tr>
+          <tr>
+            <td><strong>执行台</strong><br />删除执行记录</td>
+            <td>
+              <span class="flag flag-hard">后端记录销毁</span>
+              <span class="flag flag-dir">目录一起删</span>
+            </td>
+            <td>删除当前这条 run 记录，同时删除它的工作区和 `artifactRoot` 产物目录。不是只清前端内存。</td>
+            <td>执行台当前记录消失；AI档案里对应明细也消失；该执行的日志、过程材料、产物证据不再可追。</td>
+            <td>不会删除任务中心任务；不会删除禅道任务；不会删除其它执行记录；不会影响累计调用统计。</td>
+          </tr>
+          <tr>
+            <td><strong>任务中心</strong><br />删除平台创建任务</td>
+            <td><span class="flag flag-hard">后端记录销毁</span></td>
+            <td>删除平台任务本身，以及和这条任务关联的任务处理备注、验收记录、美术摘要索引。不是只把列表这行隐藏。</td>
+            <td>任务中心该单据消失；关联备注、验收、摘要入口一并清掉；如果当前正查看该任务详情，会失去对应面板内容。</td>
+            <td>不会删除禅道同步任务；不会删除禅道原任务；不会删除已产生的执行档案和执行产物。</td>
+          </tr>
+          <tr>
+            <td><strong>项目接入 / 扫描来源</strong><br />删除项目</td>
+            <td><span class="flag flag-hard">后端记录销毁</span></td>
+            <td>删除项目接入记录、平台内同步任务/Bug、相关备注/验收/摘要索引、扫描缓存。不是删本地项目文件夹。</td>
+            <td>项目列表消失；任务中心里该项目下的平台同步任务和 Bug 消失；AI产物扫描来源和项目扫描缓存一起失效。</td>
+            <td>不会删除本地项目目录；不会删除执行记录；不会删除自定义流程模板；不会删除累计调用次数。</td>
+          </tr>
+          <tr>
+            <td><strong>操作日志</strong><br />删除当前范围</td>
+            <td><span class="flag flag-hard">后端记录销毁</span></td>
+            <td>只删除命中的操作日志记录；没有目录清理；不是仅前端不显示。</td>
+            <td>操作日志页少掉这些审计记录；研究同步里的“接入测试/操作日志联动展示”如果依赖该日志，后续也查不到原日志源。</td>
+            <td>不会删除任务、执行记录、模板、项目；不会扣减累计调用次数；不会删除产物文件。</td>
+          </tr>
+          <tr>
+            <td><strong>研究同步</strong><br />删除单条 / 删除某 Skill 下全部</td>
+            <td><span class="flag flag-hard">后端记录销毁</span></td>
+            <td>删除 `artProgressEvents` 研究同步记录本身；不删外部文件。</td>
+            <td>研究同步列表、相关汇总、按 Skill 聚合视图都会少这批记录；若验证回填或统计依赖这些研究展示，会失去这部分展示来源。</td>
+            <td>不会删禅道；不会删组员本机文件；不会删执行记录；不会删 Google 表源数据。</td>
+          </tr>
+          <tr>
+            <td><strong>人工研究清单</strong><br />隐藏 / 删除人工研究记录</td>
+            <td><span class="flag flag-soft">仅工作台隐藏</span></td>
+            <td>本地写一条 override 删除标记，让这条记录不再展示；不是物理删除源数据。</td>
+            <td>人工研究清单里该记录隐藏；如果当前统计口径依赖“可见记录”，页面展示会跟着变化。</td>
+            <td>不会修改 Google 表源数据；不会删除文件；不会删共享盘内容；不会删执行档案。</td>
+          </tr>
+          <tr>
+            <td><strong>验证回填</strong><br />删除</td>
+            <td><span class="flag flag-soft">仅工作台隐藏</span></td>
+            <td>给验证回填记录写删除标记，工作台不再展示；不是回写删 Google 表原始行。</td>
+            <td>验证回填列表会少这条；相关验证展示、匹配结果、基于当前记录的工作台视图会同步少一条。</td>
+            <td>不会修改 Google 表源数据；不会删本地产物文件；不会删任务和执行记录。</td>
+          </tr>
+          <tr>
+            <td><strong>项目字段表</strong><br />隐藏字段</td>
+            <td><span class="flag flag-soft">仅前端展示隐藏</span></td>
+            <td>字段不再展示，已有行数据保留；不做业务数据销毁。</td>
+            <td>项目字段表界面少一个字段；依赖该字段显示的局部视图不再显示该列。</td>
+            <td>不会删行数据；不会改外部源表；不会删其它业务记录。</td>
+          </tr>
+          <tr>
+            <td><strong>项目字段表</strong><br />隐藏项目行</td>
+            <td><span class="flag flag-soft">仅工作台隐藏</span></td>
+            <td>记录隐藏标记，避免外部刷新后又出现；不是真删源行。</td>
+            <td>项目字段表里这行消失；相关本地展示不再出现该行。</td>
+            <td>不会删除外部表原始行；不会删除其它页面业务数据。</td>
+          </tr>
+          <tr>
+            <td><strong>AI产物清单</strong><br />作废产物</td>
+            <td><span class="flag flag-soft">口径作废</span></td>
+            <td>把这条产物从有效统计 / 评分口径里作废，不是删除源文件，也不是删除记录目录。</td>
+            <td>AI评分、有效占比、清单展示口径会变化；相关统计卡会少掉这条有效产物贡献。</td>
+            <td>不会删除源文件；不会删共享盘文件；不会删执行档案；不会删调用日志。</td>
+          </tr>
+          <tr>
+            <td><strong>AI全流程人工记录</strong><br />删除</td>
+            <td><span class="flag flag-soft">软删除</span></td>
+            <td>把记录状态改成 `deleted`，前端过滤掉；底层记录还在文件里，不属于物理销毁。</td>
+            <td>AI全流程人工记录列表不再显示；相关人工补录视图会少一条。</td>
+            <td>不会删除 run；不会删任务；不会删目录和产物归档。</td>
+          </tr>
+          <tr>
+            <td><strong>维护中心</strong><br />安全维护清理</td>
+            <td>
+              <span class="flag flag-hard">文件清理</span>
+              <span class="flag flag-none">非业务删单</span>
+            </td>
+            <td>只删 `.DS_Store`、过期 JSON 临时文件、已无 run 对应的孤儿工作区。不是删业务记录。</td>
+            <td>磁盘垃圾减少；维护中心概览体量变化。</td>
+            <td>不会删业务 JSON；不会删有效执行工作区；不会删正式产物；不会删任务、模板、AI档案。</td>
+          </tr>
+          <tr>
+            <td><strong>维护中心</strong><br />生图产物清理</td>
+            <td>
+              <span class="flag flag-hard">产物引用变更</span>
+              <span class="flag flag-dir">图片目录删除</span>
+            </td>
+            <td>删除执行归档里的“生成图片”目录，并从 run 记录里删掉对应图片引用；run 本身保留。</td>
+            <td>执行台和 AI档案里这些图片以后无法预览、打开、下载；同一执行记录仍在，但成品图区会空掉或减少。</td>
+            <td>不会删除执行记录本身；不会删任务；不会删禅道；不会回退累计调用指标。</td>
+          </tr>
+          <tr>
+            <td><strong>维护中心</strong><br />摘要范围清理</td>
+            <td>
+              <span class="flag flag-hard">索引销毁</span>
+              <span class="flag flag-dir">摘要目录删除</span>
+            </td>
+            <td>删除 `outputs/art-briefs/` 命中的摘要目录，并同步删摘要索引记录。不是只清界面缓存。</td>
+            <td>任务中心/摘要入口以后看不到这些摘要 HTML 和 AI 工作说明；相关摘要列表记录一并消失。</td>
+            <td>不会删除禅道任务；不会删除任务中心任务本身；不会删除执行记录。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </div>
+</body>
+</html>

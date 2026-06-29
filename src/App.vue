@@ -6088,8 +6088,9 @@ export default {
             jobs.push(['账号列表', () => this.refreshUsers()]);
           }
         } else if (this.activeView === 'tasks') {
-          if (!this.businessTasks.length && this.can('menu.tasks')) {
-            jobs.push(['任务中心', () => this.refreshTasks()]);
+          if (this.can('menu.tasks')) {
+            jobs.push(['任务中心', () => this.refreshTasks({ background: this.businessTasks.length > 0, minInterval: 0 })]);
+            jobs.push(['任务处理记录', () => this.refreshTaskProcessingNotes()]);
           }
         } else if (this.isSkillInventoryViewActive && this.can('menu.skillList')) {
           if (!this.skillInventoryRows.length && !this.hasProjectScanProducts(this.scans)) {
