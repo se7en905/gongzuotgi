@@ -22302,6 +22302,12 @@ export default {
       ];
       const rows = [];
       const seen = new Set();
+      const dedupeFingerprints = new Set();
+      const inputAttachmentKeys = new Set(
+        this.runInputAttachments(run)
+          .map(item => this.platformArtifactRequestPath(item.relativePath || item.path || item.name || ''))
+          .filter(Boolean)
+      );
       for (const pool of pools) {
         const items = Array.isArray(pool) ? pool : [];
         for (const item of items) {
@@ -22312,13 +22318,30 @@ export default {
           const rawPath = String(artifact.relativePath || artifact.path || '').trim();
           const rawName = String(artifact.name || rawPath.split('/').pop() || '').trim();
           const type = String(artifact.type || '').trim();
+          const role = String(artifact.role || '').trim().toLowerCase();
+          const source = String(artifact.source || '').trim().toLowerCase();
           if (!rawPath && !rawName) continue;
           if (type && !/^image\//i.test(type) && this.artifactTypeFromPath(rawPath || rawName) !== 'image') continue;
           if (!type && this.artifactTypeFromPath(rawPath || rawName) !== 'image') continue;
           const path = rawPath || rawName;
           const key = this.platformArtifactRequestPath(path);
           if (!key || seen.has(key)) continue;
+          if (inputAttachmentKeys.has(key)) continue;
+          if (role === 'reference-or-instruction') continue;
+          if (/\/执行附件\//.test(key)) continue;
+          const inGeneratedDir = /\/生成图片\//.test(key) || /(^|\/)outputs\//.test(key);
+          const isGeneratedRole = role === 'generated-image';
+          const isGeneratedSource = /local-worker|artifact-root-scan|reconciled|generated/.test(source);
+          if (!isGeneratedRole && !(inGeneratedDir && isGeneratedSource)) continue;
+          const duplicateFingerprint = this.generatedImageDuplicateFingerprint({
+            ...artifact,
+            path,
+            relativePath: rawPath,
+            name: rawName
+          });
+          if (duplicateFingerprint && dedupeFingerprints.has(duplicateFingerprint)) continue;
           seen.add(key);
+          if (duplicateFingerprint) dedupeFingerprints.add(duplicateFingerprint);
           const downloadName = rawName || key.split('/').pop() || '生成图片';
           rows.push({
             ...artifact,
@@ -24799,6 +24822,29 @@ export default {
         .replace(/^.*?\.task\//, '.task/')
         .replace(/^.*?workspace\/artifacts\//, 'platform-artifacts/')
         .replace(/^\.\//, '');
+    },
+
+    generatedImageDuplicateFingerprint(artifact = {}) {
+      const size = Number(artifact.size || 0);
+      if (!size) return '';
+      const normalizeStem = (value = '') => String(value || '')
+        .trim()
+        .replaceAll('\\', '/')
+        .split('/')
+        .filter(Boolean)
+        .pop()
+        ?.replace(/\.[^.]+$/, '')
+        .replace(/^\d+-/, '')
+        .replace(/-\d+$/, '')
+        .toLowerCase() || '';
+      const candidates = [
+        artifact.localPath,
+        artifact.name,
+        artifact.relativePath,
+        artifact.path
+      ].map(normalizeStem).filter(Boolean);
+      if (!candidates.length) return '';
+      return `${size}:${candidates[0]}`;
     },
 
     artifactTypeFromPath(path = '') {
