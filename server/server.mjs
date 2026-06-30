@@ -2596,6 +2596,12 @@ async function handleApi(req, res, url) {
     const filters = Object.fromEntries(url.searchParams.entries());
     if (!filters.from || !filters.to) throw new HttpError(400, '请选择要删除的开始时间和结束时间。');
     const result = await deleteRunsByFilters(filters);
+    const archiveBucketLabelMap = {
+      closed: '已闭环',
+      rework: '待返工',
+      review: '待验收'
+    };
+    const archiveBucketLabel = archiveBucketLabelMap[cleanText(filters.archiveBucket)] || '归档任务';
     await writeOperationLog(req, {
       user: currentUser,
       module: 'run',
@@ -2603,9 +2609,9 @@ async function handleApi(req, res, url) {
       actionName: '范围删除执行明细',
       targetType: 'run',
       targetId: 'range',
-      targetName: `${filters.from} - ${filters.to}`,
+      targetName: `${archiveBucketLabel} · ${filters.from} - ${filters.to}`,
       before: { filters, deletedCount: result.deleted.length },
-      description: `${currentUser.displayName || currentUser.username} 范围删除执行明细 ${result.deleted.length} 条`
+      description: `${currentUser.displayName || currentUser.username} 范围删除执行明细 ${result.deleted.length} 条（归档区域：${archiveBucketLabel}）`
     });
     broadcastPlatformEvent('runs.changed', { module: 'ai-archive', deletedCount: result.deleted.length });
     sendJson(res, 200, { ok: true, deletedCount: result.deleted.length, deletedIds: result.deleted.map(run => run.id) });

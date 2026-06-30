@@ -148,6 +148,37 @@ export function isRunningRunStatus(status = '') {
   return /running|in_progress|claimed/i.test(cleanText(status));
 }
 
+function archiveDeleteResultStatus(run = {}) {
+  const status = normalizeText(run.status);
+  const workerStatus = normalizeText(run.workerStatus);
+  const summaryStatus = normalizeText(run.resultSummary?.status);
+  const merged = `${status} ${workerStatus}`;
+  if (/cancelled|canceled/.test(merged)) return 'cancelled';
+  if (/partial_write/.test(merged) || summaryStatus === 'partial_write') return 'partial_write';
+  if (/completed|done|success|passed/.test(summaryStatus)) return 'passed';
+  if (/failed|error/.test(summaryStatus)) return 'failed';
+  if (/blocked/.test(summaryStatus)) return 'blocked';
+  if (/conditional/.test(summaryStatus)) return 'conditional_pass';
+  if (summaryStatus && !/unknown/.test(summaryStatus)) return summaryStatus;
+  if (/conditional/.test(merged)) return 'conditional_pass';
+  if (/done|success|passed|completed/.test(merged)) return 'passed';
+  if (/failed|error/.test(merged)) return 'failed';
+  if (/blocked/.test(merged)) return 'blocked';
+  return summaryStatus || status || workerStatus || 'unknown';
+}
+
+function archiveDeleteStatusBucket(run = {}) {
+  const resultStatus = archiveDeleteResultStatus(run);
+  const raw = `${cleanText(run.status)} ${cleanText(run.workerStatus)} ${cleanText(run.resultSummary?.status)}`.toLowerCase();
+  if (/rework|返工/.test(raw)) return 'rework';
+  if (resultStatus === 'partial_write') return 'review';
+  if (['failed', 'blocked'].includes(resultStatus) || /failed|error|blocked|失败|阻塞/.test(raw)) return 'rework';
+  if (['conditional_pass', 'skipped'].includes(resultStatus) || run.resultSummary?.needsHumanReview === true) return 'review';
+  if (['passed', 'completed', 'success'].includes(resultStatus) || /done|success|passed|completed|finished/.test(raw)) return 'closed';
+  if (/claimed|running|in_progress|pending|queued/.test(raw)) return 'open';
+  return 'open';
+}
+
 export function runMatchesArchiveDeleteFilters(run = {}, filters = {}) {
   const from = filters.from ? Date.parse(filters.from) : 0;
   const to = filters.to ? Date.parse(filters.to) : 0;
@@ -158,6 +189,7 @@ export function runMatchesArchiveDeleteFilters(run = {}, filters = {}) {
   const projectId = cleanText(filters.projectId);
   const userId = cleanText(filters.userId);
   const status = normalizeText(filters.status);
+  const archiveBucket = cleanText(filters.archiveBucket);
   const time = Date.parse(run.createdAt || run.updatedAt || run.finishedAt || run.startedAt || '');
   const inRange = Boolean(time && time >= from && time <= to);
   const matchesRunId = !runId || cleanText(run.id) === runId;
@@ -165,6 +197,7 @@ export function runMatchesArchiveDeleteFilters(run = {}, filters = {}) {
   const matchesSource = !sourceType || run.sourceType === sourceType || run.executionMode === sourceType;
   const matchesUser = !userId || [run.createdBy, run.ownerUserId, run.assignedToUserId, run.startedBy].map(cleanText).includes(userId);
   const matchesStatus = !status || normalizeText(run.status) === status;
+  const matchesArchiveBucket = !archiveBucket || archiveDeleteStatusBucket(run) === archiveBucket;
   const haystack = [
     run.title,
     run.primarySkillPath,
@@ -181,6 +214,7 @@ export function runMatchesArchiveDeleteFilters(run = {}, filters = {}) {
     && matchesSource
     && matchesUser
     && matchesStatus
+    && matchesArchiveBucket
     && matchesKeyword
     && !isRunningRunStatus(run.status);
 }

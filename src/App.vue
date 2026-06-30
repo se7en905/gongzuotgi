@@ -10271,7 +10271,7 @@ export default {
         }
       );
       const query = new URLSearchParams();
-      const allowedFilterKeys = new Set(['keyword', 'userId', 'status', 'projectId', 'sourceType', 'runId', 'from', 'to']);
+      const allowedFilterKeys = new Set(['keyword', 'userId', 'status', 'archiveBucket', 'projectId', 'sourceType', 'runId', 'from', 'to']);
       for (const [key, value] of Object.entries(filters)) {
         if (!allowedFilterKeys.has(key)) continue;
         if (String(value || '').trim()) query.set(key, String(value).trim());

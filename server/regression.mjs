@@ -139,6 +139,25 @@ function testAiArchiveDeleteFiltersMatchVisibleScope() {
       status: 'completed',
       title: '其它来源',
       createdAt: '2026-06-10T10:00:00.000Z'
+    },
+    {
+      id: 'run-review',
+      projectId: 'deleted-project',
+      sourceType: 'direct-skill',
+      createdBy: 'admin',
+      status: 'conditional_pass',
+      title: '待验收执行',
+      createdAt: '2026-06-10T11:00:00.000Z',
+      resultSummary: { status: 'conditional_pass', needsHumanReview: true }
+    },
+    {
+      id: 'run-rework',
+      projectId: 'deleted-project',
+      sourceType: 'direct-skill',
+      createdBy: 'admin',
+      status: 'failed',
+      title: '待返工执行',
+      createdAt: '2026-06-10T12:00:00.000Z'
     }
   ];
   const byProject = splitRunsByArchiveDeleteFilters(runs, {
@@ -146,7 +165,7 @@ function testAiArchiveDeleteFiltersMatchVisibleScope() {
     from: '2026-06-10T00:00:00.000Z',
     to: '2026-06-11T00:00:00.000Z'
   });
-  assert.deepEqual(byProject.deleted.map(run => run.id), ['run-target'], '按已删除来源 projectId 清理时不得误删其它来源或运行中记录');
+  assert.deepEqual(byProject.deleted.map(run => run.id), ['run-target', 'run-review', 'run-rework'], '按已删除来源 projectId 清理时不得误删其它来源或运行中记录');
   assert.deepEqual(byProject.remaining.map(run => run.id), ['run-same-project-running', 'run-other-project']);
 
   const byRunId = splitRunsByArchiveDeleteFilters(runs, {
@@ -156,6 +175,30 @@ function testAiArchiveDeleteFiltersMatchVisibleScope() {
     to: '2026-06-11T00:00:00.000Z'
   });
   assert.deepEqual(byRunId.deleted.map(run => run.id), ['run-target'], '后端范围删除必须支持前端传入的 runId 筛选');
+
+  const byClosedBucket = splitRunsByArchiveDeleteFilters(runs, {
+    projectId: 'deleted-project',
+    archiveBucket: 'closed',
+    from: '2026-06-10T00:00:00.000Z',
+    to: '2026-06-11T00:00:00.000Z'
+  });
+  assert.deepEqual(byClosedBucket.deleted.map(run => run.id), ['run-target'], '已闭环删除只应命中闭环记录');
+
+  const byReviewBucket = splitRunsByArchiveDeleteFilters(runs, {
+    projectId: 'deleted-project',
+    archiveBucket: 'review',
+    from: '2026-06-10T00:00:00.000Z',
+    to: '2026-06-11T00:00:00.000Z'
+  });
+  assert.deepEqual(byReviewBucket.deleted.map(run => run.id), ['run-review'], '待验收删除只应命中待验收记录');
+
+  const byReworkBucket = splitRunsByArchiveDeleteFilters(runs, {
+    projectId: 'deleted-project',
+    archiveBucket: 'rework',
+    from: '2026-06-10T00:00:00.000Z',
+    to: '2026-06-11T00:00:00.000Z'
+  });
+  assert.deepEqual(byReworkBucket.deleted.map(run => run.id), ['run-rework'], '待返工删除只应命中待返工记录');
 }
 
 function testZentaoAssignFailureKeepsLocalOwner() {
