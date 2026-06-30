@@ -404,7 +404,7 @@
         class="run-generated-image-panel"
       >
         <div class="run-generated-image-head">
-          <strong>生成图片产物</strong>
+          <strong>{{ app.runGeneratedArtifactSectionTitle(app.selectedRun) }}</strong>
           <span v-if="app.runGeneratedImageArtifacts(app.selectedRun).length">{{ app.runGeneratedImageArtifacts(app.selectedRun).length }} 张，可预览和下载</span>
           <span v-else>未检测到可下载成图</span>
         </div>
@@ -452,8 +452,8 @@
           </article>
         </div>
         <div v-else class="run-generated-image-empty">
-          <strong>这条无 Figma 链接的纯生图任务没有归档到成品图。</strong>
-          <span>请让执行人继续执行或重新执行，并把最终成品图保存到本机执行目录的“生成图片/”或“outputs/”目录；平台会自动在这里展示预览、打开和下载。</span>
+          <strong>{{ app.runGeneratedArtifactEmptyText(app.selectedRun).title }}</strong>
+          <span>{{ app.runGeneratedArtifactEmptyText(app.selectedRun).description }}</span>
         </div>
       </div>
       <div class="direct-run-actions">

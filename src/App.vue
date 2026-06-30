@@ -1101,6 +1101,7 @@ export default {
         developer: '',
         targetPage: '',
         figmaLinks: '',
+        runTaskKind: 'auto',
         imageGenerationProviderMode: 'image2',
         attachments: [],
         showdocHints: '',
@@ -1900,8 +1901,12 @@ export default {
 
     shouldShowImageGenerationProviderMode() {
       if (this.isBugFixRun) return false;
+      if (this.normalizedRunTaskKind(this.runForm.runTaskKind) === 'figma-modify') return false;
+      if (this.normalizedRunTaskKind(this.runForm.runTaskKind) === 'local-delivery') return false;
+      if (this.normalizedRunTaskKind(this.runForm.runTaskKind) === 'image-generation') return true;
       const materialHints = this.normalizedRunMaterialHints();
       return this.isImageGenerationRun({
+        runTaskKind: this.runForm.runTaskKind,
         requirement: this.runForm.requirement,
         title: this.runMaterialTitle(this.runForm.executionMode, materialHints),
         customWorkflowName: this.runForm.customWorkflowName,
@@ -1923,6 +1928,31 @@ export default {
           value: 'fallback',
           label: '兜底方案',
           description: '允许执行人本机使用非 image2 的可用生图方案；状态按实际产物归档结果判定。'
+        }
+      ];
+    },
+
+    runTaskKindOptions() {
+      return [
+        {
+          value: 'auto',
+          label: '自动判断',
+          description: '没有明确分类时，再按 Skill、要求和 Figma 链接推断。'
+        },
+        {
+          value: 'figma-modify',
+          label: '修改现有 Figma',
+          description: '适用于清理图层、修改命名、规范修正、界面收尾、替换现有内容。'
+        },
+        {
+          value: 'image-generation',
+          label: '纯生图 / 成图',
+          description: '适用于生成图片、改图、海报、头像、贴图，或生成后放置到 Figma。'
+        },
+        {
+          value: 'local-delivery',
+          label: '本地文件 / 报告',
+          description: '适用于报告、文档、本地资产整理，不按生图或 Figma 改界面处理。'
         }
       ];
     },
@@ -19362,6 +19392,7 @@ export default {
         }
       }
       const imageGenerationProviderMode = this.isImageGenerationRun({
+        runTaskKind: this.runForm.runTaskKind,
         requirement,
         title: generatedTitle,
         customWorkflowName: selectedTemplate?.name || this.runForm.customWorkflowName,
@@ -19393,6 +19424,7 @@ export default {
         workerExecution: true,
         title: generatedTitle,
         figmaLinks,
+        runTaskKind: this.normalizedRunTaskKind(this.runForm.runTaskKind),
         imageGenerationProviderMode,
         attachments: (this.runForm.attachments || []).map(item => ({
           id: item.id,
@@ -21627,6 +21659,8 @@ export default {
     },
 
     runRequiresFigmaWriteEvidence(run = {}) {
+      const taggedKind = this.normalizedRunTaskKind(run?.runTaskKind);
+      if (taggedKind === 'local-delivery') return false;
       if (!String(run?.figmaLinks || '').trim()) return false;
       if (this.runExplicitlySkipsFigmaWrite(run)) return false;
       if (!(this.isLocalWorkerRun(run) || this.isSkillOrMdFocusedRun(run) || run.executionMode === 'single-skill' || run.workflow === 'art-single-skill' || run.workflow === 'custom-workflow')) return false;
@@ -21644,10 +21678,18 @@ export default {
     },
 
     runFigmaTargetIsImagePlacement(run = {}) {
-      return Boolean(String(run?.figmaLinks || '').trim() && this.isImageGenerationRun(run) && !this.runExplicitlySkipsFigmaWrite(run));
+      const taggedKind = this.normalizedRunTaskKind(run?.runTaskKind);
+      if (taggedKind === 'figma-modify' || taggedKind === 'local-delivery') return false;
+      if (taggedKind === 'image-generation') {
+        return Boolean(String(run?.figmaLinks || '').trim() && !this.runExplicitlySkipsFigmaWrite(run));
+      }
+      return Boolean(String(run?.figmaLinks || '').trim() && this.isExplicitImageGenerationRun(run) && !this.runExplicitlySkipsFigmaWrite(run));
     },
 
     isImageGenerationRun(run = {}) {
+      const taggedKind = this.normalizedRunTaskKind(run?.runTaskKind);
+      if (taggedKind === 'image-generation') return true;
+      if (taggedKind === 'figma-modify' || taggedKind === 'local-delivery') return false;
       const text = [
         run.requirement,
         run.title,
@@ -21664,6 +21706,55 @@ export default {
           : [])
       ].filter(Boolean).join('\n');
       return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|same[-_\s]*ip[-_\s]*image|sameipimage|gpt[-_\s]?image|imagegen|image[-_\s]*gen|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)|(?:main|key)[-_\s]*visual|concept[-_\s]*art|character[-_\s]*(?:design|art)|image[-_\s]*(?:generation|creation|editing)|text[-_\s]*to[-_\s]*image|img2img|image[-_\s]*to[-_\s]*image|visual[-_\s]*asset|game[-_\s]*asset|poster[-_\s]*(?:design|generation)|banner[-_\s]*(?:design|generation)|(?:generate|create|make|design).{0,40}(?:image|poster|banner|illustration|character|avatar|asset|texture|visual)/i.test(text);
+    },
+
+    isExplicitImageGenerationRun(run = {}) {
+      const taggedKind = this.normalizedRunTaskKind(run?.runTaskKind);
+      if (taggedKind === 'image-generation') return true;
+      if (taggedKind === 'figma-modify' || taggedKind === 'local-delivery') return false;
+      const text = [
+        run.requirement,
+        run.title,
+        run.sourceTitle,
+        run.customWorkflowName,
+        run.customWorkflowDescription,
+        run.primarySkillPath,
+        run.primarySkillTitle,
+        run.stage,
+        ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : [])
+      ].filter(Boolean).join('\n');
+      return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|same[-_\s]*ip[-_\s]*image|sameipimage|gpt[-_\s]?image|imagegen|image[-_\s]*gen|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)|(?:main|key)[-_\s]*visual|concept[-_\s]*art|character[-_\s]*(?:design|art)|image[-_\s]*(?:generation|creation|editing)|text[-_\s]*to[-_\s]*image|img2img|image[-_\s]*to[-_\s]*image|visual[-_\s]*asset|game[-_\s]*asset|poster[-_\s]*(?:design|generation)|banner[-_\s]*(?:design|generation)|(?:generate|create|make|design).{0,40}(?:image|poster|banner|illustration|character|avatar|asset|texture|visual)/i.test(text);
+    },
+
+    normalizedRunTaskKind(value = '') {
+      const text = String(value || '').trim();
+      if (['auto', 'figma-modify', 'image-generation', 'local-delivery'].includes(text)) return text;
+      return 'auto';
+    },
+
+    runGeneratedArtifactSectionTitle(run = {}) {
+      if (this.isNoFigmaImageGenerationRun(run)) return '生成图片产物';
+      if (this.runRequiresFigmaWriteEvidence(run)) return '执行图片产物';
+      return '图片产物';
+    },
+
+    runGeneratedArtifactEmptyText(run = {}) {
+      if (this.isNoFigmaImageGenerationRun(run)) {
+        return {
+          title: '未检测到可下载成图。',
+          description: '无 Figma 链接的纯生图任务会在这里展示成品图；如果这里为空，说明本次执行没有把最终成品图归档到“生成图片/”或“outputs/”目录。'
+        };
+      }
+      if (this.runRequiresFigmaWriteEvidence(run)) {
+        return {
+          title: '未检测到可展示的执行截图或成品图。',
+          description: 'Figma 收尾、写入或验收类任务，回传的截图、放置成品图或验收图会展示在这里；这里为空不代表任务一定是生图。'
+        };
+      }
+      return {
+        title: '未检测到可展示图片。',
+        description: '如果本次执行有截图、成图或其它图片类交付，归档后会展示在这里。'
+      };
     },
 
     normalizedImageGenerationProviderMode(value = '') {
@@ -23878,6 +23969,7 @@ export default {
             title: sourceRun.title,
             requirement: sourceRun.requirement,
             figmaLinks: sourceRun.figmaLinks || '',
+            runTaskKind: sourceRun.runTaskKind || 'auto',
             imageGenerationProviderMode: sourceRun.imageGenerationProviderMode || 'image2',
             attachments: sourceRun.attachments || sourceRun.referenceImages || [],
             showdocHints: sourceRun.showdocHints || '',
@@ -25302,6 +25394,7 @@ function emptyRunForm() {
     developer: '',
     targetPage: '',
     figmaLinks: '',
+    runTaskKind: 'auto',
     imageGenerationProviderMode: 'image2',
     attachments: [],
     showdocHints: '',

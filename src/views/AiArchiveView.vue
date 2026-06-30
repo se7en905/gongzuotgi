@@ -308,7 +308,7 @@
         v-if="app.isNoFigmaImageGenerationRun(app.aiExecutionArchiveDetailRun) || app.runGeneratedImageArtifacts(app.aiExecutionArchiveDetailRun).length"
         class="ai-archive-detail-section"
       >
-        <h4>生成图片产物</h4>
+        <h4>{{ app.runGeneratedArtifactSectionTitle(app.aiExecutionArchiveDetailRun) }}</h4>
         <div v-if="app.runGeneratedImageArtifacts(app.aiExecutionArchiveDetailRun).length" class="ai-archive-generated-image-grid">
           <article
             v-for="image in app.runGeneratedImageArtifacts(app.aiExecutionArchiveDetailRun)"
@@ -353,8 +353,8 @@
           </article>
         </div>
         <div v-else class="ai-archive-generated-image-empty">
-          <strong>未检测到可下载成图。</strong>
-          <span>无 Figma 链接的纯生图任务会在这里展示成品图；如果这里为空，说明本次执行没有把最终成品图归档到“生成图片/”或“outputs/”目录。</span>
+          <strong>{{ app.runGeneratedArtifactEmptyText(app.aiExecutionArchiveDetailRun).title }}</strong>
+          <span>{{ app.runGeneratedArtifactEmptyText(app.aiExecutionArchiveDetailRun).description }}</span>
         </div>
       </section>
     </div>
