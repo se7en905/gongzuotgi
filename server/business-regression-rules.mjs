@@ -154,7 +154,10 @@ function archiveDeleteResultStatus(run = {}) {
   const summaryStatus = normalizeText(run.resultSummary?.status);
   const merged = `${status} ${workerStatus}`;
   if (/cancelled|canceled/.test(merged)) return 'cancelled';
-  if (/partial_write/.test(merged) || summaryStatus === 'partial_write') return 'partial_write';
+  if (archiveDeleteHasPartialFigmaWrite(run)) return 'partial_write';
+  if (archiveDeleteRunRequiresFigmaWriteEvidence(run) && archiveDeleteRunHasFinishedAsSuccess(run) && !archiveDeleteHasFigmaWriteEvidence(run)) {
+    return 'failed';
+  }
   if (/completed|done|success|passed/.test(summaryStatus)) return 'passed';
   if (/failed|error/.test(summaryStatus)) return 'failed';
   if (/blocked/.test(summaryStatus)) return 'blocked';
@@ -165,6 +168,102 @@ function archiveDeleteResultStatus(run = {}) {
   if (/failed|error/.test(merged)) return 'failed';
   if (/blocked/.test(merged)) return 'blocked';
   return summaryStatus || status || workerStatus || 'unknown';
+}
+
+function archiveDeleteRunRequiresFigmaWriteEvidence(run = {}) {
+  const figmaLinks = cleanText(run.figmaLinks);
+  if (!figmaLinks) return false;
+  if (archiveDeleteRunExplicitlySkipsFigmaWrite(run)) return false;
+  const isLocalWorkerRun = run?.sourceType === 'direct-skill'
+    || run?.executionMode === 'direct-skill'
+    || run?.executionHost === 'local-worker'
+    || run?.workerExecution === true;
+  const isSkillOrMdFocused = isLocalWorkerRun
+    || cleanText(run.workflow) === 'art-single-skill'
+    || cleanText(run.executionMode) === 'single-skill'
+    || cleanText(run.workflow) === 'custom-workflow';
+  if (!isSkillOrMdFocused) return false;
+  if (archiveDeleteRunFigmaTargetIsImagePlacement(run)) return true;
+  const text = [
+    run.requirement,
+    run.title,
+    run.sourceTitle,
+    run.customWorkflowName,
+    run.figmaWriteMode
+  ].filter(Boolean).join('\n');
+  if (!cleanText(text)) return false;
+  if (/报告|说明|总结|提示词|prompt|参考|分析|复盘/i.test(text)) return false;
+  return /写入|修改|改名|重命名|清理|整理|创建|新建|更新|覆盖|替换|应用|落到|同步到|放置|插入|填充|上传|还原|复刻|生成.*(?:Figma|Frame|节点|图层)|Figma.*(?:写入|修改|创建|新建|更新|节点|图层|Frame|页面|放置|替换|填充)|use_figma|upload_assets|createdNodeIds|mutatedNodeIds/i.test(text);
+}
+
+function archiveDeleteRunFigmaTargetIsImagePlacement(run = {}) {
+  return Boolean(cleanText(run.figmaLinks) && archiveDeleteIsImageGenerationRun(run) && !archiveDeleteRunExplicitlySkipsFigmaWrite(run));
+}
+
+function archiveDeleteIsImageGenerationRun(run = {}) {
+  const text = [
+    run.requirement,
+    run.title,
+    run.sourceTitle,
+    run.customWorkflowName,
+    run.customWorkflowDescription,
+    run.primarySkillPath,
+    run.primarySkillTitle,
+    run.stage,
+    run.primarySkillContent,
+    ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
+    ...(Array.isArray(run.selectedMaterialSnapshots)
+      ? run.selectedMaterialSnapshots.flatMap(item => [item?.path, item?.title, item?.name, item?.content])
+      : [])
+  ].filter(Boolean).join('\n');
+  return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|same[-_\s]*ip[-_\s]*image|sameipimage|gpt[-_\s]?image|imagegen|image[-_\s]*gen|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)|(?:main|key)[-_\s]*visual|concept[-_\s]*art|character[-_\s]*(?:design|art)|image[-_\s]*(?:generation|creation|editing)|text[-_\s]*to[-_\s]*image|img2img|image[-_\s]*to[-_\s]*image|visual[-_\s]*asset|game[-_\s]*asset|poster[-_\s]*(?:design|generation)|banner[-_\s]*(?:design|generation)|(?:generate|create|make|design).{0,40}(?:image|poster|banner|illustration|character|avatar|asset|texture|visual)/i.test(text);
+}
+
+function archiveDeleteRunExplicitlySkipsFigmaWrite(run = {}) {
+  const text = [
+    run.requirement,
+    run.title,
+    run.sourceTitle,
+    run.customWorkflowName,
+    run.figmaWriteMode
+  ].filter(Boolean).join('\n');
+  return /不写入\s*Figma|无需写入\s*Figma|不需要写入\s*Figma|不要写入\s*Figma|不放(?:入|到)\s*Figma|无需放(?:入|到)\s*Figma|不要替换\s*Figma|仅(?:生成|输出|保存).{0,20}(?:本地|文件|产物)|只(?:生成|输出|保存).{0,20}(?:本地|文件|产物)/i.test(text);
+}
+
+function archiveDeleteRunHasFinishedAsSuccess(run = {}) {
+  const raw = `${run?.status || ''} ${run?.workerStatus || ''} ${run?.resultSummary?.status || ''}`.toLowerCase();
+  return /done|success|passed|completed|finished/.test(raw);
+}
+
+function archiveDeleteHasFigmaWriteEvidence(run = {}) {
+  const result = run?.figmaWriteResult || {};
+  if (result.written === true) return true;
+  if (Array.isArray(result.createdNodeIds) && result.createdNodeIds.length) return true;
+  if (Array.isArray(result.mutatedNodeIds) && result.mutatedNodeIds.length) return true;
+  if (Array.isArray(result.evidence) && result.evidence.some(item => archiveDeleteIsFigmaWriteEvidenceText(item))) return true;
+  return run?.resultSummary?.figmaWritten === true;
+}
+
+function archiveDeleteIsFigmaWriteEvidenceText(value = '') {
+  const text = cleanText(value);
+  if (!text) return false;
+  return /createdNodeIds|mutatedNodeIds|figmaWriteResult.*written["']?\s*[:=]\s*true|use_figma\s+写入成功|日志识别到\s*(?:createdNodeIds|mutatedNodeIds)|(?:图片|成品图|位图).{0,80}(?:放置|替换|填充|插入).{0,80}(?:成功|完成|已)|(?:放置|替换|填充|插入).{0,80}(?:Figma|目标|节点).{0,80}(?:成功|完成|已)/i.test(text);
+}
+
+function archiveDeleteHasFigmaPostWriteVerification(run = {}) {
+  const result = run?.figmaWriteResult || {};
+  if (result.partialWrite === true) return false;
+  if (Array.isArray(result.postWriteBlockers) && result.postWriteBlockers.length) return false;
+  if (cleanText(result.blockerReason)) return false;
+  if (result.verifiedAfterWrite === true) return true;
+  if (Array.isArray(result.verificationEvidence) && result.verificationEvidence.some(Boolean)) return true;
+  return run?.resultSummary?.figmaVerifiedAfterWrite === true;
+}
+
+function archiveDeleteHasPartialFigmaWrite(run = {}) {
+  return archiveDeleteRunRequiresFigmaWriteEvidence(run)
+    && archiveDeleteHasFigmaWriteEvidence(run)
+    && !archiveDeleteHasFigmaPostWriteVerification(run);
 }
 
 function archiveDeleteStatusBucket(run = {}) {
@@ -190,7 +289,14 @@ export function runMatchesArchiveDeleteFilters(run = {}, filters = {}) {
   const userId = cleanText(filters.userId);
   const status = normalizeText(filters.status);
   const archiveBucket = cleanText(filters.archiveBucket);
-  const time = Date.parse(run.createdAt || run.updatedAt || run.finishedAt || run.startedAt || '');
+  const time = [
+    run.createdAt,
+    run.queuedAt,
+    run.startedAt,
+    run.finishedAt,
+    run.completedAt,
+    run.updatedAt
+  ].map(value => Date.parse(value || '')).find(value => Number.isFinite(value) && value > 0) || 0;
   const inRange = Boolean(time && time >= from && time <= to);
   const matchesRunId = !runId || cleanText(run.id) === runId;
   const matchesProject = !projectId || cleanText(run.projectId) === projectId;

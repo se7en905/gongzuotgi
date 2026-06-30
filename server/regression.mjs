@@ -158,6 +158,36 @@ function testAiArchiveDeleteFiltersMatchVisibleScope() {
       status: 'failed',
       title: '待返工执行',
       createdAt: '2026-06-10T12:00:00.000Z'
+    },
+    {
+      id: 'run-partial-without-write-evidence',
+      projectId: 'deleted-project',
+      sourceType: 'direct-skill',
+      executionHost: 'local-worker',
+      createdBy: 'admin',
+      status: 'partial_write',
+      workerStatus: 'partial_write',
+      title: '部分写入但实际未写入',
+      requirement: '图层清理',
+      figmaLinks: 'https://www.figma.com/design/test/file?node-id=1-1',
+      createdAt: '2026-06-10T13:00:00.000Z',
+      resultSummary: {
+        status: 'failed',
+        figmaWritten: false,
+        figmaVerifiedAfterWrite: false,
+        needsHumanReview: true,
+        blockerReason: '本机 Figma 写入权限异常'
+      },
+      figmaWriteResult: {
+        written: false,
+        createdNodeIds: [],
+        mutatedNodeIds: [],
+        evidence: [],
+        verifiedAfterWrite: false,
+        verificationEvidence: [],
+        postWriteBlockers: [],
+        blockerReason: '本机 Figma 写入权限异常'
+      }
     }
   ];
   const byProject = splitRunsByArchiveDeleteFilters(runs, {
@@ -165,7 +195,7 @@ function testAiArchiveDeleteFiltersMatchVisibleScope() {
     from: '2026-06-10T00:00:00.000Z',
     to: '2026-06-11T00:00:00.000Z'
   });
-  assert.deepEqual(byProject.deleted.map(run => run.id), ['run-target', 'run-review', 'run-rework'], '按已删除来源 projectId 清理时不得误删其它来源或运行中记录');
+  assert.deepEqual(byProject.deleted.map(run => run.id), ['run-target', 'run-review', 'run-rework', 'run-partial-without-write-evidence'], '按已删除来源 projectId 清理时不得误删其它来源或运行中记录');
   assert.deepEqual(byProject.remaining.map(run => run.id), ['run-same-project-running', 'run-other-project']);
 
   const byRunId = splitRunsByArchiveDeleteFilters(runs, {
@@ -198,7 +228,7 @@ function testAiArchiveDeleteFiltersMatchVisibleScope() {
     from: '2026-06-10T00:00:00.000Z',
     to: '2026-06-11T00:00:00.000Z'
   });
-  assert.deepEqual(byReworkBucket.deleted.map(run => run.id), ['run-rework'], '待返工删除只应命中待返工记录');
+  assert.deepEqual(byReworkBucket.deleted.map(run => run.id), ['run-rework', 'run-partial-without-write-evidence'], '待返工删除只应命中待返工记录，包括未产生真实写入证据的 partial_write');
 }
 
 function testZentaoAssignFailureKeepsLocalOwner() {
