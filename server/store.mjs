@@ -5421,7 +5421,30 @@ function normalizeAiMemberScoreSnapshot(input = {}) {
 
 function defaultAiMemberScoreConfig() {
   return {
+    _说明: [
+      '这份文件就是当前真实参与 AI 计分的配置文件，修改这里的数字后，工作台点击“刷新评分”就会按新规则重算。',
+      '这是 JSON 文件，不能写 // 或 /* */ 这种原生注释；如需备注，请继续写在以下划线开头的说明字段里，系统会自动忽略。',
+      '普通成员看 normal，独立口径成员看 independent，产物折减系数看 productMultiplier。'
+    ],
     normal: {
+      _说明: {
+        productCap: '产物分上限。',
+        productVersionScores: '不同版本档位的单个产物基础分：v1=1.0，v2=2.0，v3=3.0。',
+        unmatchedBoardProductScore: '看板里有但库存里没匹配到时，每个补多少产物分。',
+        usageCap: '使用分上限。',
+        usagePerProduct: '单个闭环使用产物的基础分。',
+        usageCoverageDivisor: '覆盖率加分的除数，覆盖率/这个值后取整。',
+        usageCoverageBonusCap: '覆盖率加分上限。',
+        usageRepeatWeights: '重复使用前几次的额外加分权重数组。',
+        usageRepeatTailWeight: '超过上面数组长度后的每次重复使用加分。',
+        usageRepeatBonusCap: '重复使用加分上限。',
+        runCap: '执行分上限。',
+        runPerSkill: '单个完成执行 skill 的基础分。',
+        validationPerProduct: '互验闭环每个产物加多少分。',
+        runRepeatWeights: '重复执行前几次的额外加分权重数组。',
+        runRepeatTailWeight: '超过上面数组长度后的每次重复执行加分。',
+        runRepeatBonusCap: '重复执行加分上限。'
+      },
       productCap: 35,
       productVersionScores: { v1: 1.5, v2: 3, v3: 4.5 },
       unmatchedBoardProductScore: 2,
@@ -5440,6 +5463,24 @@ function defaultAiMemberScoreConfig() {
       runRepeatBonusCap: 8
     },
     independent: {
+      _说明: {
+        productCap: '独立口径成员的产物分上限。',
+        productVersionScores: '独立口径成员不同版本档位的单个产物基础分。',
+        unmatchedBoardProductScore: '独立口径成员看板未匹配库存时的单个补分。',
+        usageCap: '独立口径成员的使用分上限。',
+        usagePerProduct: '独立口径成员单个闭环使用产物的基础分。',
+        usageCoverageDivisor: '独立口径成员覆盖率加分除数。',
+        usageCoverageBonusCap: '独立口径成员覆盖率加分上限。',
+        usageRepeatWeights: '独立口径成员重复使用前几次的额外加分权重数组。',
+        usageRepeatTailWeight: '独立口径成员超出数组后的每次重复使用加分。',
+        usageRepeatBonusCap: '独立口径成员重复使用加分上限。',
+        runCap: '独立口径成员的执行分上限。',
+        runPerSkill: '独立口径成员单个完成执行 skill 的基础分。',
+        validationPerProduct: '独立口径成员互验闭环分；当前设为 0 代表不计这项。',
+        runRepeatWeights: '独立口径成员重复执行前几次的额外加分权重数组。',
+        runRepeatTailWeight: '独立口径成员超出数组后的每次重复执行加分。',
+        runRepeatBonusCap: '独立口径成员重复执行加分上限。'
+      },
       productCap: 60,
       productVersionScores: { v1: 2, v2: 4, v3: 6 },
       unmatchedBoardProductScore: 3,
@@ -5458,6 +5499,13 @@ function defaultAiMemberScoreConfig() {
       runRepeatBonusCap: 6
     },
     productMultiplier: {
+      _说明: {
+        deprecated: '作废、废弃、淘汰类产物的折减系数；0 代表完全不计分。',
+        narrowAndLowReuse: '专项且低复用产物的折减系数。',
+        narrow: '专项产物的折减系数。',
+        lowReuse: '低复用产物的折减系数。',
+        default: '常规可复用沉淀的系数，通常保持 1。'
+      },
       deprecated: 0,
       narrowAndLowReuse: 0.45,
       narrow: 0.65,
@@ -5465,6 +5513,7 @@ function defaultAiMemberScoreConfig() {
       default: 1
     },
     independentMembers: ['余盛威', 'yushengwei', 'ysw'],
+    _independentMembers说明: '这里只填需要走独立口径的人名或账号别名；不需要在说明区域重复列人名。',
     updatedAt: ''
   };
 }
@@ -5500,6 +5549,9 @@ function normalizeAiMemberScoreConfig(input = {}) {
     runRepeatBonusCap: clampNumber(value.runRepeatBonusCap, 0, 1000) || fallback.runRepeatBonusCap || 0
   });
   return {
+    _说明: Array.isArray(input._说明) && input._说明.length
+      ? input._说明.map(item => cleanString(item)).filter(Boolean)
+      : defaults._说明,
     normal: normalizeRuleGroup(input.normal, defaults.normal),
     independent: normalizeRuleGroup(input.independent, defaults.independent),
     productMultiplier: {
@@ -5512,6 +5564,7 @@ function normalizeAiMemberScoreConfig(input = {}) {
     independentMembers: Array.isArray(input.independentMembers)
       ? input.independentMembers.map(item => cleanString(item)).filter(Boolean)
       : defaults.independentMembers,
+    _independentMembers说明: cleanString(input._independentMembers说明) || defaults._independentMembers说明,
     updatedAt: cleanString(input.updatedAt)
   };
 }
