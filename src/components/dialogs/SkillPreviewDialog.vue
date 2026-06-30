@@ -35,6 +35,18 @@
             <span v-for="alias in app.skillPreviewEffectiveAliases" :key="alias">{{ alias }}</span>
             <span v-if="!app.skillPreviewEffectiveAliases.length">暂无别名</span>
           </div>
+          <div v-if="app.skillPreviewCanEditExecutionKind" class="skill-preview-version-row skill-preview-alias-row">
+            <span>执行方式</span>
+            <ElSelect
+              :model-value="app.skillPreviewExecutionKindValue"
+              :disabled="app.loading.skillVersion"
+              class="skill-preview-execution-kind-select"
+              @change="value => app.saveSkillPreviewExecutionKind(value)"
+            >
+              <ElOption label="默认" value="default" />
+              <ElOption label="纯生图" value="image-generation" />
+            </ElSelect>
+          </div>
         </div>
         <article class="markdown-report skill-preview-content" v-html="app.skillPreviewHtml || '<div class=&quot;empty-block&quot;>正在读取技能内容...</div>'"></article>
       </template>

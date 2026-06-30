@@ -2710,7 +2710,7 @@ async function handleApi(req, res, url) {
       primarySkillContent: source.primarySkillContent,
       selectedMaterialHints: source.selectedMaterialHints,
       selectedMaterialSnapshots: source.selectedMaterialSnapshots,
-      runTaskKind: body.runTaskKind || source.runTaskKind,
+      executionKind: body.executionKind || source.executionKind,
       figmaWriteMode: source.figmaWriteMode,
       imageGenerationProviderMode: body.imageGenerationProviderMode || source.imageGenerationProviderMode,
       assignedToUserId: currentUser.id,
@@ -3044,7 +3044,7 @@ async function createDirectSkillRunFromBody(req, project, body = {}, currentUser
     primarySkillContent,
     showdocHints: [primarySkillPath, ...(Array.isArray(body.selectedMaterialHints) ? body.selectedMaterialHints : [])].filter(Boolean).join('\n'),
     selectedMaterialHints: body.selectedMaterialHints || [primarySkillPath],
-    runTaskKind: body.runTaskKind || 'auto',
+    executionKind: body.executionKind || 'default',
     figmaLinks,
     figmaWriteMode: body.figmaWriteMode || 'target-node',
     developer: assigneeName,
@@ -4575,6 +4575,13 @@ function scopedSkillInventoryKindOverrideKey(input = {}) {
   return `kind:${projectId}:${key}`;
 }
 
+function scopedSkillExecutionKindOverrideKey(input = {}) {
+  const projectId = String(input.projectId || '').trim();
+  const key = skillVersionOverrideKey(input);
+  if (!projectId || !key) return '';
+  return `exec:${projectId}:${key}`;
+}
+
 function hasSkillVersionOwnerChange(input = {}) {
   return Object.prototype.hasOwnProperty.call(input, 'owner')
     || Object.prototype.hasOwnProperty.call(input, 'uploader');
@@ -4590,30 +4597,38 @@ function hasSkillInventoryKindChange(input = {}) {
     || Object.prototype.hasOwnProperty.call(input, 'skillInventoryKind');
 }
 
+function hasSkillExecutionKindChange(input = {}) {
+  return Object.prototype.hasOwnProperty.call(input, 'executionKind');
+}
+
 async function saveSkillVersionOverride(input = {}) {
   const ownerChange = hasSkillVersionOwnerChange(input);
   const displayNameChange = hasSkillDisplayNameChange(input);
   const inventoryKindChange = hasSkillInventoryKindChange(input);
+  const executionKindChange = hasSkillExecutionKindChange(input);
   const allowVersion = input.allowVersion !== false;
   const allowAliases = input.allowAliases === true || input.aliases !== undefined;
   const scopedOwnerKey = ownerChange ? scopedSkillOwnerOverrideKey(input) : '';
   const scopedDisplayNameKey = displayNameChange ? scopedSkillDisplayNameOverrideKey(input) : '';
   const scopedInventoryKindKey = inventoryKindChange ? scopedSkillInventoryKindOverrideKey(input) : '';
+  const scopedExecutionKindKey = executionKindChange ? scopedSkillExecutionKindOverrideKey(input) : '';
   const versionChange = allowVersion && Object.prototype.hasOwnProperty.call(input, 'version');
   const scopedVersionKey = versionChange ? scopedSkillVersionOverrideKey(input) : '';
   const aliasOnlyChange = allowAliases && input.aliases !== undefined && !String(input.version || '').trim() && !ownerChange && !displayNameChange;
   const scopedAliasKey = aliasOnlyChange ? skillAliasOverrideKey(input) : '';
   const fallbackKey = versionChange ? skillVersionIdentityKey(input) : skillVersionOverrideKey(input);
-  const key = scopedOwnerKey || scopedDisplayNameKey || scopedInventoryKindKey || scopedAliasKey || scopedVersionKey || fallbackKey;
+  const key = scopedOwnerKey || scopedDisplayNameKey || scopedInventoryKindKey || scopedExecutionKindKey || scopedAliasKey || scopedVersionKey || fallbackKey;
   const version = String(input.version || '').trim();
-  if (!key) throw statusError(400, '缺少产物路径，无法保存版本。');
+  if (!key) throw new HttpError(400, '缺少产物路径，无法保存版本。');
   const owner = normalizePersonListText(input.owner || input.uploader || '');
   const aliases = allowAliases && input.aliases !== undefined ? normalizeSkillAliases(input.aliases) : null;
   const displayName = displayNameChange ? cleanText(input.displayName ?? input.commonName) : '';
   const inventoryKind = inventoryKindChange ? normalizeSkillInventoryKind(input.inventoryKind ?? input.skillInventoryKind) : '';
-  if (inventoryKindChange && !inventoryKind) throw statusError(400, '请选择产物类型。');
-  if (allowVersion && !version && !owner && aliases === null && !displayNameChange && !inventoryKindChange) throw statusError(400, '请填写版本、别名、归属人、常用名称或产物类型。');
-  if (!allowVersion && aliases === null) throw statusError(400, '请填写调用别名。');
+  const executionKind = executionKindChange ? normalizeSkillExecutionKind(input.executionKind) : '';
+  if (inventoryKindChange && !inventoryKind) throw new HttpError(400, '请选择产物类型。');
+  if (executionKindChange && !executionKind) throw new HttpError(400, '请选择执行方式。');
+  if (allowVersion && !version && !owner && aliases === null && !displayNameChange && !inventoryKindChange && !executionKindChange) throw new HttpError(400, '请填写版本、别名、归属人、常用名称、产物类型或执行方式。');
+  if (!allowVersion && aliases === null) throw new HttpError(400, '请填写调用别名。');
   const overrides = await loadSkillVersionOverrides();
   const previous = overrides[key] || {};
   const isVersionRecord = key.startsWith('version:');
@@ -4639,6 +4654,9 @@ async function saveSkillVersionOverride(input = {}) {
   }
   if (inventoryKindChange || Object.prototype.hasOwnProperty.call(previous, 'inventoryKind')) {
     record.inventoryKind = inventoryKindChange ? inventoryKind : (previous.inventoryKind || '');
+  }
+  if (executionKindChange || Object.prototype.hasOwnProperty.call(previous, 'executionKind')) {
+    record.executionKind = executionKindChange ? executionKind : (previous.executionKind || '');
   }
   overrides[key] = record;
   const aliasMirrorKey = aliases !== null ? skillAliasOverrideKey(input) : '';
@@ -4668,9 +4686,16 @@ function normalizeSkillInventoryKind(value = '') {
   return '';
 }
 
+function normalizeSkillExecutionKind(value = '') {
+  const text = cleanText(value).toLowerCase();
+  if (!text || text === 'default' || /默认/.test(text)) return 'default';
+  if (['image-generation', 'image_generation', 'imagegeneration'].includes(text) || /生图/.test(text)) return 'image-generation';
+  return '';
+}
+
 async function saveSkillInventoryVisibilityOverride(input = {}, currentUser = {}) {
   const key = skillVersionOverrideKey(input);
-  if (!key) throw statusError(400, '缺少产物路径，无法保存隐藏状态。');
+  if (!key) throw new HttpError(400, '缺少产物路径，无法保存隐藏状态。');
   const hidden = input.hidden !== false;
   const overrides = await loadSkillVersionOverrides();
   const previous = overrides[key] || {};
@@ -4696,7 +4721,7 @@ async function saveSkillInventoryVisibilityOverride(input = {}, currentUser = {}
 
 async function saveSkillInventoryDisplayVisibilityOverride(input = {}, currentUser = {}) {
   const key = skillDisplayVisibilityOverrideKey(input);
-  if (!key) throw statusError(400, '缺少产物路径，无法保存展示状态。');
+  if (!key) throw new HttpError(400, '缺少产物路径，无法保存展示状态。');
   const displayHidden = input.displayHidden === true || input.visible === false;
   const overrides = await loadSkillVersionOverrides();
   const previous = overrides[key] || {};
@@ -4822,6 +4847,12 @@ async function applySkillVersionOverridesToScan(scan = {}) {
         path: skill.path || '',
         id: skill.id || ''
       });
+      const executionKindKey = scopedSkillExecutionKindOverrideKey({
+        projectId: scan.projectId || '',
+        relativePath: skill.git?.relativePath || skill.relativePath || '',
+        path: skill.path || '',
+        id: skill.id || ''
+      });
       const rawBaseOverride = overrides[key]
         || overrides[skill.relativePath]
         || overrides[skill.git?.relativePath]
@@ -4831,6 +4862,7 @@ async function applySkillVersionOverridesToScan(scan = {}) {
       const versionOverride = overrides[versionKey]?.version ? overrides[versionKey] : (baseOverride?.version ? baseOverride : null);
       const aliasOverride = overrides[aliasKey] || null;
       const inventoryKindOverride = overrides[inventoryKindKey] || null;
+      const executionKindOverride = overrides[executionKindKey] || null;
       const ownerOverride = overrides[ownerKey]?.owner ? overrides[ownerKey] : null;
       const displayNameOverride = overrides[displayNameKey] || null;
       const displayOverride = overrides[displayKey];
@@ -4844,11 +4876,13 @@ async function applySkillVersionOverridesToScan(scan = {}) {
         || Object.prototype.hasOwnProperty.call(displayNameSource, 'commonName');
       const hasInventoryKindOverride = Object.prototype.hasOwnProperty.call(inventoryKindOverride || {}, 'inventoryKind')
         || Object.prototype.hasOwnProperty.call(baseOverride || {}, 'inventoryKind');
+      const hasExecutionKindOverride = Object.prototype.hasOwnProperty.call(executionKindOverride || {}, 'executionKind')
+        || Object.prototype.hasOwnProperty.call(baseOverride || {}, 'executionKind');
       const hasAliasHistoryOverride = Array.isArray(aliasOverride?.aliasHistory)
         || Array.isArray(legacyAliasOverride?.aliasHistory)
         || Array.isArray(baseOverride?.aliasHistory);
       const staleDisplayVersion = !versionOverride?.version && String(skill.displayVersionOverride || '').trim();
-      if (!versionOverride?.version && !staleDisplayVersion && !Array.isArray(legacyAliasOverride?.aliases) && !Array.isArray(aliasOverride?.aliases) && !hasAliasHistoryOverride && !baseOverride?.owner && !ownerOverride?.owner && !hasVisibilityOverride && !hasDisplayVisibilityOverride && !hasDisplayNameOverride && !hasInventoryKindOverride) return skill;
+      if (!versionOverride?.version && !staleDisplayVersion && !Array.isArray(legacyAliasOverride?.aliases) && !Array.isArray(aliasOverride?.aliases) && !hasAliasHistoryOverride && !baseOverride?.owner && !ownerOverride?.owner && !hasVisibilityOverride && !hasDisplayVisibilityOverride && !hasDisplayNameOverride && !hasInventoryKindOverride && !hasExecutionKindOverride) return skill;
       const hidden = hasVisibilityOverride ? baseOverride.hidden === true : skill.hidden === true;
       const displaySource = displayOverride || baseOverride || {};
       const displayHidden = hasDisplayVisibilityOverride ? displaySource.displayHidden === true : skill.displayHidden === true;
@@ -4873,6 +4907,7 @@ async function applySkillVersionOverridesToScan(scan = {}) {
         displayVersionOverride: versionOverride?.version || '',
         inventoryKind: hasInventoryKindOverride ? (inventoryKindOverride?.inventoryKind || baseOverride.inventoryKind || skill.inventoryKind) : skill.inventoryKind,
         inventoryKindOverride: hasInventoryKindOverride,
+        executionKind: hasExecutionKindOverride ? (executionKindOverride?.executionKind || baseOverride.executionKind || skill.executionKind || 'default') : (skill.executionKind || 'default'),
         aliases,
         manualAliases,
         aliasHistory,

@@ -74,21 +74,6 @@
         <ElInput v-model="app.runForm.figmaLinks" type="textarea" :rows="3" placeholder="需要处理 Figma 时粘贴具体 Frame、分区或整页链接；纯生图、本地产物或报告任务可不填。" />
         <div class="field-hint">填写后 Codex 会把它作为本次真实 Figma 目标；不填写时按当前 md / Skill 和执行要求直接产出图片、本地文件或报告。</div>
       </ElFormItem>
-      <ElFormItem v-if="!app.isBugFixRun" label="执行标签" class="is-required-field">
-        <div class="image-provider-choice-grid">
-          <button
-            v-for="option in app.runTaskKindOptions"
-            :key="option.value"
-            type="button"
-            :class="['image-provider-choice-card', { active: app.runForm.runTaskKind === option.value }]"
-            @click="app.runForm.runTaskKind = option.value"
-          >
-            <strong>{{ option.label }}</strong>
-            <span>{{ option.description }}</span>
-          </button>
-        </div>
-        <div class="field-hint">后续是否按纯生图、修改现有 Figma、还是本地文件/报告处理，优先以这里的标签为准，不再主要靠 Skill 内容猜测。</div>
-      </ElFormItem>
       <ElFormItem v-if="app.shouldShowImageGenerationProviderMode" label="生图调用方式">
         <div class="image-provider-choice-grid">
           <button

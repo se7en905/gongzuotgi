@@ -898,6 +898,7 @@ export default {
       skillAliasOverrides: {},
       skillAliasHistoryOverrides: {},
       skillInventoryKindOverrides: {},
+      skillExecutionKindOverrides: {},
       skillSourceDisplayDrafts: {},
       skillPreview: {
         visible: false,
@@ -1101,7 +1102,7 @@ export default {
         developer: '',
         targetPage: '',
         figmaLinks: '',
-        runTaskKind: 'auto',
+        executionKind: 'default',
         imageGenerationProviderMode: 'image2',
         attachments: [],
         showdocHints: '',
@@ -1901,18 +1902,15 @@ export default {
 
     shouldShowImageGenerationProviderMode() {
       if (this.isBugFixRun) return false;
-      if (this.normalizedRunTaskKind(this.runForm.runTaskKind) === 'figma-modify') return false;
-      if (this.normalizedRunTaskKind(this.runForm.runTaskKind) === 'local-delivery') return false;
-      if (this.normalizedRunTaskKind(this.runForm.runTaskKind) === 'image-generation') return true;
       const materialHints = this.normalizedRunMaterialHints();
       return this.isImageGenerationRun({
-        runTaskKind: this.runForm.runTaskKind,
         requirement: this.runForm.requirement,
         title: this.runMaterialTitle(this.runForm.executionMode, materialHints),
         customWorkflowName: this.runForm.customWorkflowName,
         customWorkflowDescription: this.runForm.customWorkflowDescription,
         primarySkillPath: this.runForm.primarySkillPath || this.runForm.stage,
         selectedMaterialHints: materialHints,
+        executionKind: this.inferExecutionKindFromMaterialHints(materialHints),
         figmaLinks: this.runForm.figmaLinks
       });
     },
@@ -1928,31 +1926,6 @@ export default {
           value: 'fallback',
           label: '兜底方案',
           description: '允许执行人本机使用非 image2 的可用生图方案；状态按实际产物归档结果判定。'
-        }
-      ];
-    },
-
-    runTaskKindOptions() {
-      return [
-        {
-          value: 'auto',
-          label: '自动判断',
-          description: '没有明确分类时，再按 Skill、要求和 Figma 链接推断。'
-        },
-        {
-          value: 'figma-modify',
-          label: '修改现有 Figma',
-          description: '适用于清理图层、修改命名、规范修正、界面收尾、替换现有内容。'
-        },
-        {
-          value: 'image-generation',
-          label: '纯生图 / 成图',
-          description: '适用于生成图片、改图、海报、头像、贴图，或生成后放置到 Figma。'
-        },
-        {
-          value: 'local-delivery',
-          label: '本地文件 / 报告',
-          description: '适用于报告、文档、本地资产整理，不按生图或 Figma 改界面处理。'
         }
       ];
     },
@@ -4462,6 +4435,17 @@ export default {
       const saved = this.normalizeSkillAliasList(this.skillPreview.skill?.manualAliases || []);
       const generated = this.generateSkillAliases(this.skillPreview.skill || {});
       return this.normalizeSkillAliasList(saved.length ? saved : generated);
+    },
+
+    skillPreviewCanEditExecutionKind() {
+      const skill = this.skillPreview?.skill;
+      if (!skill || !this.canEditSkillInventoryVersion) return false;
+      return Boolean(skill.git?.relativePath || String(skill.path || '').startsWith('skills/') || String(skill.path || '').startsWith('documents/'));
+    },
+
+    skillPreviewExecutionKindValue() {
+      const skill = this.skillPreview?.skill;
+      return this.skillExecutionKind(skill || {}) === 'image-generation' ? 'image-generation' : 'default';
     },
 
     activeRunStage() {
@@ -7916,6 +7900,7 @@ export default {
         const aliasOverrides = {};
         const aliasHistoryOverrides = {};
         const inventoryKindOverrides = {};
+        const executionKindOverrides = {};
         for (const [key, record] of Object.entries(overrides)) {
           const keyText = String(key || '').trim();
           const recordKeyText = String(record?.key || '').trim();
@@ -7981,6 +7966,14 @@ export default {
               inventoryKindOverrides[itemKey] = record.inventoryKind;
             });
           }
+          if (Object.prototype.hasOwnProperty.call(record || {}, 'executionKind')) {
+            const execKeys = keyText.startsWith('exec:') || recordKeyText.startsWith('exec:')
+              ? [key, record?.key].map(value => String(value || '').trim()).filter(Boolean)
+              : overrideKeys;
+            execKeys.forEach(itemKey => {
+              executionKindOverrides[itemKey] = this.normalizeSkillExecutionKind(record.executionKind) || 'default';
+            });
+          }
         }
         this.skillOwnerOverrides = ownerOverrides;
         this.skillDisplayNameOverrides = displayNameOverrides;
@@ -7988,6 +7981,7 @@ export default {
         this.skillAliasOverrides = aliasOverrides;
         this.skillAliasHistoryOverrides = aliasHistoryOverrides;
         this.skillInventoryKindOverrides = inventoryKindOverrides;
+        this.skillExecutionKindOverrides = executionKindOverrides;
         this.saveWorkbenchDisplayCache('skillVersionOverrides', this.skillVersionOverrides);
         this.clearSkillInventoryRowsCache({ keepScanSignature: true });
         return true;
@@ -7998,6 +7992,7 @@ export default {
         this.skillAliasOverrides = this.skillAliasOverrides || {};
         this.skillAliasHistoryOverrides = this.skillAliasHistoryOverrides || {};
         this.skillInventoryKindOverrides = this.skillInventoryKindOverrides || {};
+        this.skillExecutionKindOverrides = this.skillExecutionKindOverrides || {};
         return false;
       }
     },
@@ -16375,6 +16370,43 @@ export default {
       }
     },
 
+    async saveSkillPreviewExecutionKind(value = 'default') {
+      const skill = this.skillPreview?.skill;
+      if (!skill || !this.skillPreviewCanEditExecutionKind) return;
+      const executionKind = this.normalizeSkillExecutionKind(value);
+      if (!executionKind) {
+        ElMessage.warning('请选择执行方式');
+        return;
+      }
+      if (executionKind === this.skillPreviewExecutionKindValue) return;
+      this.loading.skillVersion = true;
+      try {
+        const result = await this.api('/api/skill-version', {
+          method: 'PATCH',
+          body: JSON.stringify({
+            id: skill.id,
+            projectId: skill.projectId || this.selectedProjectId || this.selectedProject?.id || '',
+            title: skill.title,
+            path: skill.path,
+            relativePath: skill.git?.relativePath || skill.relativePath || skill.path || '',
+            executionKind
+          })
+        });
+        const savedKind = this.normalizeSkillExecutionKind(result.executionKind) || executionKind;
+        const nextSkill = {
+          ...skill,
+          executionKind: savedKind
+        };
+        this.skillPreview = { ...this.skillPreview, skill: nextSkill };
+        this.patchSkillExecutionKindInScans(nextSkill, savedKind);
+        ElMessage.success(savedKind === 'image-generation' ? '已标记为纯生图' : '已恢复为默认执行方式');
+      } catch (error) {
+        ElMessage.error(this.readApiError(error) || '执行方式保存失败');
+      } finally {
+        this.loading.skillVersion = false;
+      }
+    },
+
     patchSkillVersionInScans(skill = {}, version = '', aliases = []) {
       const targetProjectId = String(skill.projectId || '').trim();
       const targetKeys = new Set(this.skillVersionOverrideKeys(skill));
@@ -16686,6 +16718,41 @@ export default {
           this.skillUsageDialog = this.buildSkillUsageDialogState(updatedDialogRow, this.skillUsageDialog);
         }
       }
+    },
+
+    patchSkillExecutionKindInScans(row = {}, executionKind = 'default') {
+      const normalizedKind = this.normalizeSkillExecutionKind(executionKind);
+      if (!normalizedKind) return;
+      const targetKeys = this.skillExecutionKindOverrideKeys(row).filter(key => String(key || '').startsWith('exec:'));
+      const nextOverrides = { ...(this.skillExecutionKindOverrides || {}) };
+      for (const key of targetKeys) nextOverrides[key] = normalizedKind;
+      this.skillExecutionKindOverrides = nextOverrides;
+      const targetProjectId = String(row.projectId || '');
+      const targetPath = String(row.skill?.git?.relativePath || row.relativePath || row.path || '');
+      const targetId = String(row.id || '');
+      const scans = {};
+      for (const [projectId, scan] of Object.entries(this.scans || {})) {
+        scans[projectId] = {
+          ...scan,
+          skills: Array.isArray(scan.skills)
+            ? scan.skills.map(item => {
+              const itemPath = String(item.git?.relativePath || item.relativePath || item.path || '');
+              const projectMatches = !targetProjectId || String(projectId) === targetProjectId;
+              if (projectMatches && ((targetPath && itemPath === targetPath) || (!targetPath && targetId && item.id === targetId))) {
+                return {
+                  ...item,
+                  executionKind: normalizedKind
+                };
+              }
+              return item;
+            })
+            : scan.skills
+        };
+      }
+      this.scans = scans;
+      this.clearValidationMatchCache();
+      this.clearSkillUsageLogCache();
+      this.clearSkillInventoryRowsCache();
     },
 
     async loadSkillContent(skill) {
@@ -18953,6 +19020,7 @@ export default {
         developer: this.defaultRunDeveloperName,
         targetPage: skillPath || productName,
         showdocHints: skillPath,
+        executionKind: this.skillExecutionKind(row),
         imageGenerationProviderMode,
         selectedMaterialHints: skillPath ? [skillPath] : [],
         requirement,
@@ -19240,6 +19308,7 @@ export default {
         title: saved.name,
         selectedMaterialHints: this.materialHintsFromCustomWorkflow(saved),
         showdocHints: this.materialHintsFromCustomWorkflow(saved).join('\n'),
+        executionKind: this.inferExecutionKindFromMaterialHints(this.materialHintsFromCustomWorkflow(saved), saved.projectId || this.selectedProjectId || ''),
         imageGenerationProviderMode: this.inferDefaultImageGenerationProviderMode(saved.name || '', `${saved.description || ''}\n${this.materialHintsFromCustomWorkflow(saved).join('\n')}`),
         requirement: saved.description || '请按自定义工作流模板执行，并在每个阶段记录产物与结论。',
         sourceType: 'standalone'
@@ -19391,8 +19460,8 @@ export default {
           return;
         }
       }
+      const executionKind = this.inferExecutionKindFromMaterialHints(materialHints, projectId);
       const imageGenerationProviderMode = this.isImageGenerationRun({
-        runTaskKind: this.runForm.runTaskKind,
         requirement,
         title: generatedTitle,
         customWorkflowName: selectedTemplate?.name || this.runForm.customWorkflowName,
@@ -19400,6 +19469,7 @@ export default {
         primarySkillPath: primaryMaterial,
         selectedMaterialHints: materialHints,
         selectedMaterialSnapshots,
+        executionKind,
         figmaLinks
       })
         ? this.normalizedImageGenerationProviderMode(this.runForm.imageGenerationProviderMode)
@@ -19424,7 +19494,7 @@ export default {
         workerExecution: true,
         title: generatedTitle,
         figmaLinks,
-        runTaskKind: this.normalizedRunTaskKind(this.runForm.runTaskKind),
+        executionKind,
         imageGenerationProviderMode,
         attachments: (this.runForm.attachments || []).map(item => ({
           id: item.id,
@@ -21365,7 +21435,7 @@ export default {
           ? '按该 md / Skill 的原始要求生成成品图，并将最终图片按比例放置或替换到该 Figma 目标；默认保留位图成品效果，不拉伸变形，不转为可编辑图层。'
           : figmaText
             ? `按该 md / Skill 的原始要求处理本次 Figma 目标；${writeMode === 'create-page' ? '如技能要求新建内容，则可新建页面或 Frame。' : '如技能要求修改内容，则优先处理 Figma 链接中的目标节点。'}`
-          : '如果该 md / Skill 本身要求生成图片、创建本地产物或输出说明，按原始要求完整执行，不强制 Figma 写入。'
+            : '如果该 md / Skill 本身要求生成图片、创建本地产物或输出说明，按原始要求完整执行，不强制 Figma 写入。'
       ].join('\n');
     },
 
@@ -21659,8 +21729,6 @@ export default {
     },
 
     runRequiresFigmaWriteEvidence(run = {}) {
-      const taggedKind = this.normalizedRunTaskKind(run?.runTaskKind);
-      if (taggedKind === 'local-delivery') return false;
       if (!String(run?.figmaLinks || '').trim()) return false;
       if (this.runExplicitlySkipsFigmaWrite(run)) return false;
       if (!(this.isLocalWorkerRun(run) || this.isSkillOrMdFocusedRun(run) || run.executionMode === 'single-skill' || run.workflow === 'art-single-skill' || run.workflow === 'custom-workflow')) return false;
@@ -21678,18 +21746,14 @@ export default {
     },
 
     runFigmaTargetIsImagePlacement(run = {}) {
-      const taggedKind = this.normalizedRunTaskKind(run?.runTaskKind);
-      if (taggedKind === 'figma-modify' || taggedKind === 'local-delivery') return false;
-      if (taggedKind === 'image-generation') {
+      if (this.normalizeSkillExecutionKind(run?.executionKind) === 'image-generation') {
         return Boolean(String(run?.figmaLinks || '').trim() && !this.runExplicitlySkipsFigmaWrite(run));
       }
       return Boolean(String(run?.figmaLinks || '').trim() && this.isExplicitImageGenerationRun(run) && !this.runExplicitlySkipsFigmaWrite(run));
     },
 
     isImageGenerationRun(run = {}) {
-      const taggedKind = this.normalizedRunTaskKind(run?.runTaskKind);
-      if (taggedKind === 'image-generation') return true;
-      if (taggedKind === 'figma-modify' || taggedKind === 'local-delivery') return false;
+      if (this.normalizeSkillExecutionKind(run?.executionKind) === 'image-generation') return true;
       const text = [
         run.requirement,
         run.title,
@@ -21709,9 +21773,7 @@ export default {
     },
 
     isExplicitImageGenerationRun(run = {}) {
-      const taggedKind = this.normalizedRunTaskKind(run?.runTaskKind);
-      if (taggedKind === 'image-generation') return true;
-      if (taggedKind === 'figma-modify' || taggedKind === 'local-delivery') return false;
+      if (this.normalizeSkillExecutionKind(run?.executionKind) === 'image-generation') return true;
       const text = [
         run.requirement,
         run.title,
@@ -21726,10 +21788,51 @@ export default {
       return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|same[-_\s]*ip[-_\s]*image|sameipimage|gpt[-_\s]?image|imagegen|image[-_\s]*gen|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)|(?:main|key)[-_\s]*visual|concept[-_\s]*art|character[-_\s]*(?:design|art)|image[-_\s]*(?:generation|creation|editing)|text[-_\s]*to[-_\s]*image|img2img|image[-_\s]*to[-_\s]*image|visual[-_\s]*asset|game[-_\s]*asset|poster[-_\s]*(?:design|generation)|banner[-_\s]*(?:design|generation)|(?:generate|create|make|design).{0,40}(?:image|poster|banner|illustration|character|avatar|asset|texture|visual)/i.test(text);
     },
 
-    normalizedRunTaskKind(value = '') {
+    normalizeSkillExecutionKind(value = '') {
       const text = String(value || '').trim();
-      if (['auto', 'figma-modify', 'image-generation', 'local-delivery'].includes(text)) return text;
-      return 'auto';
+      if (text === 'image-generation') return 'image-generation';
+      if (text === 'default') return 'default';
+      return '';
+    },
+
+    skillExecutionKindOverrideKeys(row = {}) {
+      const projectId = String(row.projectId || '').trim();
+      const relativePath = String(row.skill?.git?.relativePath || row.relativePath || row.path || '').replaceAll('\\', '/').replace(/^\/+/, '');
+      const id = String(row.id || '').trim();
+      const base = relativePath || id;
+      if (!projectId || !base) return [];
+      return [`exec:${projectId}:${base}`];
+    },
+
+    skillExecutionKind(row = {}) {
+      if (!(row?.isGitSource || row?.skill?.git?.relativePath || row?.git?.relativePath)) return 'default';
+      const overrideKeys = this.skillExecutionKindOverrideKeys(row);
+      for (const key of overrideKeys) {
+        const value = this.normalizeSkillExecutionKind(this.skillExecutionKindOverrides?.[key]);
+        if (value) return value;
+      }
+      return this.normalizeSkillExecutionKind(row.executionKind || row.skill?.executionKind) || 'default';
+    },
+
+    findSkillInventoryRowByMaterialHint(value = '', projectId = this.runForm.projectId || this.selectedProjectId || this.projects[0]?.id || '') {
+      const key = this.canonicalRunMaterialValue(value, projectId);
+      if (!key) return null;
+      return this.skillInventoryRows.find(row => {
+        if (projectId && String(row.projectId || '') !== String(projectId)) return false;
+        const rowValue = this.directSkillPath(row) || row.id || '';
+        return this.canonicalRunMaterialValue(rowValue, row.projectId || projectId) === key;
+      }) || null;
+    },
+
+    inferExecutionKindFromMaterialHints(values = [], projectId = this.runForm.projectId || this.selectedProjectId || this.projects[0]?.id || '') {
+      const hints = this.normalizedRunMaterialHints(values);
+      for (const hint of hints) {
+        const row = this.findSkillInventoryRowByMaterialHint(hint, projectId);
+        if (!row?.isGitSource) continue;
+        const kind = this.skillExecutionKind(row || {});
+        if (kind === 'image-generation') return kind;
+      }
+      return 'default';
     },
 
     runGeneratedArtifactSectionTitle(run = {}) {
@@ -23969,7 +24072,7 @@ export default {
             title: sourceRun.title,
             requirement: sourceRun.requirement,
             figmaLinks: sourceRun.figmaLinks || '',
-            runTaskKind: sourceRun.runTaskKind || 'auto',
+            executionKind: sourceRun.executionKind || 'default',
             imageGenerationProviderMode: sourceRun.imageGenerationProviderMode || 'image2',
             attachments: sourceRun.attachments || sourceRun.referenceImages || [],
             showdocHints: sourceRun.showdocHints || '',
@@ -25394,7 +25497,7 @@ function emptyRunForm() {
     developer: '',
     targetPage: '',
     figmaLinks: '',
-    runTaskKind: 'auto',
+    executionKind: 'default',
     imageGenerationProviderMode: 'image2',
     attachments: [],
     showdocHints: '',

@@ -2231,8 +2231,6 @@ function evaluateImageArtifactResult(run = {}, generatedArtifacts = [], imagePro
 }
 
 function requiresFigmaWriteEvidence(run = {}) {
-  const taggedKind = normalizeRunTaskKind(run.runTaskKind);
-  if (taggedKind === 'local-delivery') return false;
   if (!String(run.figmaLinks || '').trim()) return false;
   if (explicitlySkipsFigmaWrite(run)) return false;
   if (figmaTargetIsImagePlacement(run)) return true;
@@ -2249,18 +2247,14 @@ function requiresFigmaWriteEvidence(run = {}) {
 }
 
 function figmaTargetIsImagePlacement(run = {}) {
-  const taggedKind = normalizeRunTaskKind(run.runTaskKind);
-  if (taggedKind === 'figma-modify' || taggedKind === 'local-delivery') return false;
-  if (taggedKind === 'image-generation') {
+  if (normalizeExecutionKind(run.executionKind) === 'image-generation') {
     return Boolean(String(run.figmaLinks || '').trim() && !explicitlySkipsFigmaWrite(run));
   }
   return Boolean(String(run.figmaLinks || '').trim() && isExplicitImageGenerationRun(run) && !explicitlySkipsFigmaWrite(run));
 }
 
 function isImageGenerationRun(run = {}) {
-  const taggedKind = normalizeRunTaskKind(run.runTaskKind);
-  if (taggedKind === 'image-generation') return true;
-  if (taggedKind === 'figma-modify' || taggedKind === 'local-delivery') return false;
+  if (normalizeExecutionKind(run.executionKind) === 'image-generation') return true;
   const text = [
     run.requirement,
     run.title,
@@ -2280,9 +2274,7 @@ function isImageGenerationRun(run = {}) {
 }
 
 function isExplicitImageGenerationRun(run = {}) {
-  const taggedKind = normalizeRunTaskKind(run.runTaskKind);
-  if (taggedKind === 'image-generation') return true;
-  if (taggedKind === 'figma-modify' || taggedKind === 'local-delivery') return false;
+  if (normalizeExecutionKind(run.executionKind) === 'image-generation') return true;
   const text = [
     run.requirement,
     run.title,
@@ -2297,10 +2289,11 @@ function isExplicitImageGenerationRun(run = {}) {
   return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|same[-_\s]*ip[-_\s]*image|sameipimage|gpt[-_\s]?image|imagegen|image[-_\s]*gen|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)|(?:main|key)[-_\s]*visual|concept[-_\s]*art|character[-_\s]*(?:design|art)|image[-_\s]*(?:generation|creation|editing)|text[-_\s]*to[-_\s]*image|img2img|image[-_\s]*to[-_\s]*image|visual[-_\s]*asset|game[-_\s]*asset|poster[-_\s]*(?:design|generation)|banner[-_\s]*(?:design|generation)|(?:generate|create|make|design).{0,40}(?:image|poster|banner|illustration|character|avatar|asset|texture|visual)/i.test(text);
 }
 
-function normalizeRunTaskKind(value = '') {
+function normalizeExecutionKind(value = '') {
   const text = String(value || '').trim();
-  if (['auto', 'figma-modify', 'image-generation', 'local-delivery'].includes(text)) return text;
-  return 'auto';
+  if (text === 'image-generation') return 'image-generation';
+  if (text === 'default') return 'default';
+  return 'default';
 }
 
 function requestsNonImage2Provider(run = {}) {
