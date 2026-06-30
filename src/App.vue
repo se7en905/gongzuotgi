@@ -7589,6 +7589,19 @@ export default {
           if (this.activeView === 'ai-members') this.prepareAiMembersView();
         }, 300);
       }
+      if (type === 'ai-member-score-config.changed' && this.can('api.aiMembers.score.read')) {
+        this.schedulePlatformRefresh('ai-member-score-config', async () => {
+          await this.refreshAiMemberScoreConfig({ silent: true });
+          if (this.canRefreshAiMemberScore) {
+            await this.refreshAiMemberScoreSnapshotManually({ silentSuccess: true, silentNoData: true });
+          } else if (this.activeView === 'ai-members') {
+            await this.refreshAiMemberScoreSnapshotFromServer({ background: true, minInterval: 0 });
+            this.prepareAiMembersView();
+          } else {
+            this.markViewDataDirty('ai-members', 'score');
+          }
+        }, 300);
+      }
       if (type === 'ai-members-board.changed' && this.can('api.aiMembers.read')) {
         if (this.activeView !== 'ai-members') {
           this.markViewDataDirty('ai-members', 'board');
@@ -9373,7 +9386,7 @@ export default {
       });
     },
 
-    async refreshAiMemberScoreSnapshotManually() {
+    async refreshAiMemberScoreSnapshotManually({ silentSuccess = false, silentNoData = false } = {}) {
       if (!this.canRefreshAiMemberScore) {
         ElMessage.warning('当前账号没有刷新 AI 评分的权限');
         return;
@@ -9390,12 +9403,12 @@ export default {
         const cacheKey = this.aiMemberScoreRowsCacheKey(sourceMembers);
         const rows = this.computeAiMemberScoreRows();
         if (!rows.length) {
-          ElMessage.warning('暂无可计算的 AI 评分数据，已保留上次分值。');
+          if (!silentNoData) ElMessage.warning('暂无可计算的 AI 评分数据，已保留上次分值。');
           return;
         }
         await this.saveAiMemberScoreSnapshot(rows, cacheKey);
         this.aiMemberScoreReady = true;
-        ElMessage.success('AI 评分已按最新调用、产物、执行和验证数据刷新。');
+        if (!silentSuccess) ElMessage.success('AI 评分已按最新调用、产物、执行和验证数据刷新。');
       } catch (error) {
         this.restoreAiMemberScoreSnapshot();
         ElMessage.error(this.readApiError(error) || 'AI 评分刷新失败，已保留上次分值。');

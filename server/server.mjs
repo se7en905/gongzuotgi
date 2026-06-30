@@ -218,6 +218,7 @@ const dataRetentionDays = Math.max(1, Number(process.env.AWP_DATA_RETENTION_DAYS
 const dataRetentionEnabled = process.env.AWP_DATA_RETENTION_ENABLED !== '0';
 const dataRetentionCleanupIntervalMs = Math.max(60 * 60 * 1000, Number(process.env.AWP_DATA_RETENTION_CLEANUP_INTERVAL_MS || 6 * 60 * 60 * 1000) || 6 * 60 * 60 * 1000);
 let dataRetentionCleanupRunning = false;
+let aiMemberScoreConfigWatchTimer = null;
 
 await ensurePlatformDirs();
 await enforceServerFileRetention();
@@ -260,6 +261,7 @@ server.listen(port, host, () => {
     console.warn(`AI部门看板显示缓存预热失败：${error.message}`);
   });
   watchAiMembersBoardFiles();
+  watchAiMemberScoreConfigFile();
 });
 
 async function handleApi(req, res, url) {
@@ -3200,6 +3202,41 @@ function watchAiMembersBoardFiles() {
   }
 }
 
+function watchAiMemberScoreConfigFile() {
+  let timer = null;
+  const emitChanged = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(async () => {
+      timer = null;
+      try {
+        const config = await getAiMemberScoreConfig();
+        const changedAt = new Date().toISOString();
+        broadcastPlatformEvent('ai-member-score-config.changed', {
+          module: 'ai-members-score',
+          changedAt,
+          updatedAt: config.updatedAt || changedAt
+        });
+      } catch (error) {
+        console.warn(`AI评分配置变更广播失败：${error.message}`);
+      }
+    }, 500);
+  };
+  try {
+    const watcher = fsWatch(paths.dataDir, (eventType, fileName) => {
+      const name = String(fileName || '');
+      if (name !== path.basename(paths.aiMemberScoreConfig)) return;
+      emitChanged();
+    });
+    if (watcher && typeof watcher.on === 'function') {
+      watcher.on('error', error => {
+        console.warn(`AI评分配置监听失败：${error.message}`);
+      });
+    }
+  } catch (error) {
+    console.warn(`AI评分配置监听未启用：${error.message}`);
+  }
+}
+
 function runUsageLogMetadata(run = {}) {
   const selectedMaterialHints = Array.isArray(run.selectedMaterialHints)
     ? run.selectedMaterialHints.map(item => String(item || '').trim()).filter(Boolean)
@@ -3256,6 +3293,7 @@ function canReceivePlatformEvent(client, event = {}) {
   if (type === 'runs.changed') return canClientAccessProject(client, event.payload?.projectId || '');
   if (type === 'access-control.changed') return true;
   if (type === 'operation-logs.changed') return isAdminUser(client) && (client.permissions.has('api.operationLogs.read') || client.permissions.has('menu.operationLogs'));
+  if (type === 'ai-member-score-config.changed') return client.permissions.has('api.aiMembers.score.read') || client.permissions.has('aiMembers.score.view');
   return true;
 }
 
