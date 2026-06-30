@@ -824,6 +824,7 @@ export default {
       aiMembersViewMounted: false,
       aiMembersFirstPaintReady: false,
       aiMemberScoreReady: false,
+      aiMemberScoreConfig: null,
       aiMemberScoreRowsSnapshot: [],
       aiMemberScoreRowsSnapshotKey: '',
       aiMemberScoreRowsSnapshotMonth: '',
@@ -9202,6 +9203,62 @@ export default {
       return normalizePersonName(this.canonicalArtDeptPerson(value) || value);
     },
 
+    defaultAiMemberScoreConfig() {
+      return {
+        normal: {
+          productCap: 35,
+          productVersionScores: { v1: 1.5, v2: 3, v3: 4.5 },
+          unmatchedBoardProductScore: 2,
+          usageCap: 25,
+          usagePerProduct: 5,
+          usageCoverageDivisor: 25,
+          usageCoverageBonusCap: 5,
+          usageRepeatWeights: [2, 1.5, 1, 0.5],
+          usageRepeatTailWeight: 0.25,
+          usageRepeatBonusCap: 8,
+          runCap: 30,
+          runPerSkill: 6,
+          validationPerProduct: 3,
+          runRepeatWeights: [3.5, 2.5, 1.5, 1],
+          runRepeatTailWeight: 0.25,
+          runRepeatBonusCap: 8
+        },
+        independent: {
+          productCap: 60,
+          productVersionScores: { v1: 2, v2: 4, v3: 6 },
+          unmatchedBoardProductScore: 3,
+          usageCap: 20,
+          usagePerProduct: 7,
+          usageCoverageDivisor: 20,
+          usageCoverageBonusCap: 4,
+          usageRepeatWeights: [1.5, 1, 0.75, 0.5],
+          usageRepeatTailWeight: 0.25,
+          usageRepeatBonusCap: 6,
+          runCap: 15,
+          runPerSkill: 8,
+          validationPerProduct: 0,
+          runRepeatWeights: [3, 2, 1, 0.5],
+          runRepeatTailWeight: 0.25,
+          runRepeatBonusCap: 6
+        },
+        productMultiplier: {
+          deprecated: 0,
+          narrowAndLowReuse: 0.45,
+          narrow: 0.65,
+          lowReuse: 0.75,
+          default: 1
+        },
+        independentMembers: ['余盛威', 'yushengwei', 'ysw'],
+        updatedAt: ''
+      };
+    },
+
+    effectiveAiMemberScoreConfig() {
+      return this.aiMemberScoreConfig && typeof this.aiMemberScoreConfig === 'object'
+        ? this.aiMemberScoreConfig
+        : this.defaultAiMemberScoreConfig();
+    },
+
     dedupeAiScoreMembers(members = []) {
       const map = new Map();
       for (const member of Array.isArray(members) ? members : []) {
@@ -9242,7 +9299,8 @@ export default {
     },
 
     isIndependentAiScoreMember(memberName = '', account = '') {
-      return [memberName, account].some(value => samePerson(value, '余盛威') || samePerson(value, 'yushengwei') || samePerson(value, 'ysw'));
+      const independentMembers = this.effectiveAiMemberScoreConfig().independentMembers || [];
+      return [memberName, account].some(value => independentMembers.some(alias => samePerson(value, alias)));
     },
 
     prepareAiMembersView() {
@@ -9348,6 +9406,7 @@ export default {
 
     async refreshAiMemberScoreDependenciesForManualRefresh() {
       const jobs = [
+        ['评分配置', () => this.refreshAiMemberScoreConfig({ silent: true })],
         ['库存缓存', () => this.loadSkillInventorySavedSnapshot({ force: true, silent: true })],
         ['版本覆盖', () => this.refreshSkillVersionOverrides()],
         ['调用次数', () => this.refreshUsageCounters()],
@@ -9415,10 +9474,26 @@ export default {
       this._aiMemberScoreRowsCache = null;
     },
 
+    async refreshAiMemberScoreConfig({ silent = true } = {}) {
+      try {
+        const config = await this.api('/api/ai-member-score-config');
+        if (config && typeof config === 'object') {
+          this.aiMemberScoreConfig = config;
+          this.clearAiMemberScoreCache();
+        }
+        return this.aiMemberScoreConfig;
+      } catch (error) {
+        if (!silent) ElMessage.error(this.readApiError(error) || 'AI 评分配置读取失败');
+        return this.aiMemberScoreConfig || this.defaultAiMemberScoreConfig();
+      }
+    },
+
     aiMemberScoreRow(member = {}, summary = null) {
       const name = this.canonicalArtDeptPerson(member.name || member.realname || member.account) || member.name || member.realname || member.account || '-';
       const account = member.account || '';
       const independentScoreMode = this.isIndependentAiScoreMember(name, account);
+      const config = this.effectiveAiMemberScoreConfig();
+      const rule = independentScoreMode ? config.independent : config.normal;
       const productItems = this.aiMemberScoreProductItems(member, summary);
       const productRows = this.aiMemberScoreProductRows(name, summary);
       const liveUsageSnapshot = this.aiMemberScoreUsageSnapshotForMember(name, summary, account);
@@ -9450,19 +9525,15 @@ export default {
       const normalizedUsedProductCount = Math.min(usageResultCount, Math.max(usedProductCount, usageResultCount > 0 ? 1 : 0));
       const usagePeopleCount = Math.max(0, Number(monthUsageBucket.usagePeopleCount || 0));
       const usageCoverageRate = this.aiMemberScoreUsageCoverageRate(usagePeopleCount);
-      const usageRatioBonus = Math.min(independentScoreMode ? 4 : 5, Math.round(usageCoverageRate / (independentScoreMode ? 20 : 25)));
+      const usageRatioBonus = Math.min(rule.usageCoverageBonusCap, Math.round(usageCoverageRate / Math.max(1, rule.usageCoverageDivisor)));
       const completedRunCount = Math.max(monthRuns.length, Number(monthRunBucket.completedRunCount || 0));
       const normalizedCompletedRunSkillCount = Math.min(completedRunCount, Math.max(completedRunSkillCount, completedRunCount > 0 ? 1 : 0));
       const repeatedUsageCount = Math.max(0, usageResultCount - normalizedUsedProductCount);
-      const repeatedUsageBonus = this.aiMemberScoreRepeatedUsageBonus(repeatedUsageCount, independentScoreMode);
+      const repeatedUsageBonus = this.aiMemberScoreDecayBonus(repeatedUsageCount, rule.usageRepeatWeights, rule.usageRepeatTailWeight, rule.usageRepeatBonusCap);
       const repeatedRunCount = Math.max(0, completedRunCount - normalizedCompletedRunSkillCount);
-      const repeatedRunBonus = this.aiMemberScoreRepeatedRunBonus(repeatedRunCount, independentScoreMode);
-      const usageScore = independentScoreMode
-        ? Math.min(20, normalizedUsedProductCount * 7 + repeatedUsageBonus + usageRatioBonus)
-        : Math.min(25, normalizedUsedProductCount * 5 + repeatedUsageBonus + usageRatioBonus);
-      const runScore = independentScoreMode
-        ? Math.min(15, normalizedCompletedRunSkillCount * 8 + repeatedRunBonus)
-        : Math.min(30, normalizedCompletedRunSkillCount * 6 + repeatedRunBonus + validationProductCount * 3);
+      const repeatedRunBonus = this.aiMemberScoreDecayBonus(repeatedRunCount, rule.runRepeatWeights, rule.runRepeatTailWeight, rule.runRepeatBonusCap);
+      const usageScore = Math.min(rule.usageCap, normalizedUsedProductCount * rule.usagePerProduct + repeatedUsageBonus + usageRatioBonus);
+      const runScore = Math.min(rule.runCap, normalizedCompletedRunSkillCount * rule.runPerSkill + repeatedRunBonus + validationProductCount * rule.validationPerProduct);
       const penalty = 0;
       const score = Math.max(0, Math.min(100, Math.round(productScore + usageScore + runScore)));
       return {
@@ -9530,13 +9601,15 @@ export default {
     },
 
     aiMemberScoreProductValue(productRows = [], productItems = [], independentScoreMode = false) {
-      const cap = independentScoreMode ? 60 : 35;
+      const config = this.effectiveAiMemberScoreConfig();
+      const rule = independentScoreMode ? config.independent : config.normal;
+      const cap = rule.productCap;
       const rows = Array.isArray(productRows) ? productRows.filter(row => row && row.hidden !== true) : [];
       const rowValueTotal = rows
         .map(row => this.aiScoreProductRowValue(row, independentScoreMode).value)
         .reduce((sum, value) => sum + value, 0);
       const unmatchedCount = Math.max(0, (Array.isArray(productItems) ? productItems.length : 0) - rows.length);
-      const fallbackValue = unmatchedCount * (independentScoreMode ? 3 : 2);
+      const fallbackValue = unmatchedCount * rule.unmatchedBoardProductScore;
       const raw = Math.round((rowValueTotal + fallbackValue) * 10) / 10;
       return {
         raw,
@@ -9546,18 +9619,22 @@ export default {
     },
 
     aiScoreProductRowValue(row = {}, independentScoreMode = false) {
+      const config = this.effectiveAiMemberScoreConfig();
+      const rule = independentScoreMode ? config.independent : config.normal;
       const usage = this.skillInventoryUsageStatsForList(row);
       const usageCount = Number(usage.count || 0);
       const peopleCount = Number(usage.peopleCount || 0);
       const usageRate = Number(usage.rate || 0);
       const versionMajor = Number(this.skillInventoryVersionMajor(row));
-      const versionValue = independentScoreMode
-        ? (versionMajor >= 3 ? 6 : versionMajor >= 2 ? 4 : 2)
-        : (versionMajor >= 3 ? 4.5 : versionMajor >= 2 ? 3 : 1.5);
+      const versionValue = versionMajor >= 3
+        ? rule.productVersionScores.v3
+        : versionMajor >= 2
+          ? rule.productVersionScores.v2
+          : rule.productVersionScores.v1;
       const fullTeamIntent = true;
       const riskMultiplier = this.aiScoreProductValueMultiplier(row, { usageCount, peopleCount, usageRate, fullTeamIntent });
       return {
-        value: Math.max(0, Math.min(independentScoreMode ? 6 : 4.5, versionValue * riskMultiplier)),
+        value: Math.max(0, Math.min(rule.productVersionScores.v3, versionValue * riskMultiplier)),
         usageCount,
         peopleCount,
         usageRate,
@@ -9567,6 +9644,8 @@ export default {
     },
 
     aiScoreProductValueMultiplier(row = {}, stats = {}) {
+      const config = this.effectiveAiMemberScoreConfig();
+      const multiplierConfig = config.productMultiplier || {};
       if (row.hidden === true) return 0;
       const text = [
         row.productDisplayName,
@@ -9578,13 +9657,13 @@ export default {
         row.statusLabel
       ].map(value => String(value || '')).join('\n');
       const isDeprecated = /作废|废弃|不用|不再使用|已替代|被替代|淘汰/i.test(text);
-      if (isDeprecated) return 0;
+      if (isDeprecated) return multiplierConfig.deprecated ?? 0;
       const isNarrow = /专项|单人|个人|临时|一次性|仅.*项目|只.*项目|针对.*单|针对.*任务|复用率低|针对性不强/i.test(text);
       const lowReuse = Number(stats.peopleCount || 0) <= 1 && Number(stats.usageCount || 0) <= 2 && !stats.fullTeamIntent;
-      if (isNarrow && lowReuse) return 0.45;
-      if (isNarrow) return 0.65;
-      if (lowReuse) return 0.75;
-      return 1;
+      if (isNarrow && lowReuse) return multiplierConfig.narrowAndLowReuse ?? 0.45;
+      if (isNarrow) return multiplierConfig.narrow ?? 0.65;
+      if (lowReuse) return multiplierConfig.lowReuse ?? 0.75;
+      return multiplierConfig.default ?? 1;
     },
 
     aiMemberScoreProductItems(member = {}, summary = null) {

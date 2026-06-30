@@ -56,6 +56,7 @@ import {
   getCodexConfig,
   getCustomWorkflow,
   getAiMemberScoreSnapshot,
+  getAiMemberScoreConfig,
   getAiFlowRecord,
   getArtBriefByGroupKey,
   getOperationLog,
@@ -962,6 +963,12 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/ai-member-score-snapshot') {
     requireAnyPermission(currentUser, ['api.aiMembers.score.read', 'aiMembers.score.view']);
     sendJson(res, 200, await getAiMemberScoreSnapshot());
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/ai-member-score-config') {
+    requireAnyPermission(currentUser, ['api.aiMembers.score.read', 'aiMembers.score.view']);
+    sendJson(res, 200, await getAiMemberScoreConfig());
     return;
   }
 

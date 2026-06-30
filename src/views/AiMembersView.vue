@@ -82,9 +82,52 @@
         <h4>{{ section.title }}</h4>
         <p v-for="line in section.lines" :key="line">{{ line }}</p>
       </section>
+      <section class="ai-score-rule-dialog__section">
+        <h4>8. 当前生效计分配置</h4>
+        <p>下面这些数字就是当前真实参与计分的参数；你改配置文件时，直接对照这里看“该改哪一项”。</p>
+        <div class="ai-score-rule-dialog__config-grid">
+          <article class="ai-score-rule-dialog__config-card">
+            <h5>普通成员</h5>
+            <p>产物分上限：{{ normalRule.productCap }}</p>
+            <p>版本分：1.0 = {{ normalRule.productVersionScores.v1 }}，2.0 = {{ normalRule.productVersionScores.v2 }}，3.0 = {{ normalRule.productVersionScores.v3 }}</p>
+            <p>看板未匹配库存补分：{{ normalRule.unmatchedBoardProductScore }}/个</p>
+            <p>使用分上限：{{ normalRule.usageCap }}</p>
+            <p>单个闭环使用产物：{{ normalRule.usagePerProduct }} 分</p>
+            <p>覆盖率加分：按覆盖率 / {{ normalRule.usageCoverageDivisor }} 取整，最多 {{ normalRule.usageCoverageBonusCap }} 分</p>
+            <p>重复使用加分：{{ normalRule.usageRepeatWeights.join(' / ') }}，后续 {{ normalRule.usageRepeatTailWeight }}，封顶 {{ normalRule.usageRepeatBonusCap }} 分</p>
+            <p>执行分上限：{{ normalRule.runCap }}</p>
+            <p>单个完成执行 skill：{{ normalRule.runPerSkill }} 分</p>
+            <p>互验闭环：{{ normalRule.validationPerProduct }} 分/个</p>
+            <p>重复执行加分：{{ normalRule.runRepeatWeights.join(' / ') }}，后续 {{ normalRule.runRepeatTailWeight }}，封顶 {{ normalRule.runRepeatBonusCap }} 分</p>
+          </article>
+          <article class="ai-score-rule-dialog__config-card">
+            <h5>独立口径成员</h5>
+            <p>产物分上限：{{ independentRule.productCap }}</p>
+            <p>版本分：1.0 = {{ independentRule.productVersionScores.v1 }}，2.0 = {{ independentRule.productVersionScores.v2 }}，3.0 = {{ independentRule.productVersionScores.v3 }}</p>
+            <p>看板未匹配库存补分：{{ independentRule.unmatchedBoardProductScore }}/个</p>
+            <p>使用分上限：{{ independentRule.usageCap }}</p>
+            <p>单个闭环使用产物：{{ independentRule.usagePerProduct }} 分</p>
+            <p>覆盖率加分：按覆盖率 / {{ independentRule.usageCoverageDivisor }} 取整，最多 {{ independentRule.usageCoverageBonusCap }} 分</p>
+            <p>重复使用加分：{{ independentRule.usageRepeatWeights.join(' / ') }}，后续 {{ independentRule.usageRepeatTailWeight }}，封顶 {{ independentRule.usageRepeatBonusCap }} 分</p>
+            <p>执行分上限：{{ independentRule.runCap }}</p>
+            <p>单个完成执行 skill：{{ independentRule.runPerSkill }} 分</p>
+            <p>互验闭环：{{ independentRule.validationPerProduct }} 分/个</p>
+            <p>重复执行加分：{{ independentRule.runRepeatWeights.join(' / ') }}，后续 {{ independentRule.runRepeatTailWeight }}，封顶 {{ independentRule.runRepeatBonusCap }} 分</p>
+          </article>
+          <article class="ai-score-rule-dialog__config-card">
+            <h5>产物折减与特殊成员</h5>
+            <p>作废/废弃/淘汰：{{ multiplierRule.deprecated }}</p>
+            <p>专项且低复用：{{ multiplierRule.narrowAndLowReuse }}</p>
+            <p>专项：{{ multiplierRule.narrow }}</p>
+            <p>低复用：{{ multiplierRule.lowReuse }}</p>
+            <p>常规沉淀：{{ multiplierRule.default }}</p>
+            <p>独立口径成员：{{ independentMembersText }}</p>
+          </article>
+        </div>
+      </section>
       <section class="ai-score-rule-dialog__section ai-score-rule-dialog__section--file">
-        <h4>7. 负责人配置表</h4>
-        <p>完整配置表已整理到项目输出目录，后续调权重时优先看这份文件。</p>
+        <h4>9. 负责人配置表</h4>
+        <p>这里就是当前真实参与 AI 计分的配置文件；修改这份文件后，再点击“刷新评分”，组员分数会按新参数重新计算。</p>
         <p class="ai-score-rule-dialog__path">{{ scoreConfigFilePath }}</p>
         <div class="ai-score-rule-dialog__actions">
           <ElButton plain @click="handleOpenScoreConfig">
@@ -145,6 +188,22 @@ export default {
     activeBoardHtml() {
       return this.boardHtml;
     },
+    scoreConfig() {
+      return this.app.effectiveAiMemberScoreConfig ? this.app.effectiveAiMemberScoreConfig() : {};
+    },
+    normalRule() {
+      return this.scoreConfig.normal || { productVersionScores: {}, usageRepeatWeights: [], runRepeatWeights: [] };
+    },
+    independentRule() {
+      return this.scoreConfig.independent || { productVersionScores: {}, usageRepeatWeights: [], runRepeatWeights: [] };
+    },
+    multiplierRule() {
+      return this.scoreConfig.productMultiplier || {};
+    },
+    independentMembersText() {
+      const rows = Array.isArray(this.scoreConfig.independentMembers) ? this.scoreConfig.independentMembers : [];
+      return rows.length ? rows.join(' / ') : '未配置';
+    },
     scoreRuleSections() {
       return [
         {
@@ -199,7 +258,7 @@ export default {
       ];
     },
     scoreConfigFilePath() {
-      return '/Users/se7en/ArtProject/platform/outputs/ai-score-owner-config.md';
+      return '/Users/se7en/ArtProject/platform/data/ai-member-score-config.json';
     }
   },
   data() {
@@ -265,6 +324,27 @@ export default {
   gap: 10px;
   min-height: 0;
   position: relative;
+}
+
+.ai-score-rule-dialog__config-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.ai-score-rule-dialog__config-card {
+  padding: 14px 16px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.ai-score-rule-dialog__config-card h5 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.ai-score-rule-dialog__config-card p {
+  margin: 0 0 8px;
 }
 
 .ai-board-ready-content {

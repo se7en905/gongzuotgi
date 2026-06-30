@@ -45,6 +45,7 @@ export const paths = {
   projectScanCache: path.join(dataDir, 'project-scan-cache.json'),
   skillVersionOverrides: path.join(dataDir, 'skill-version-overrides.json'),
   aiMemberScoreSnapshot: path.join(dataDir, 'ai-member-score-snapshot.json'),
+  aiMemberScoreConfig: path.join(dataDir, 'ai-member-score-config.json'),
   agentWorkers: path.join(dataDir, 'agent-workers.json')
 };
 
@@ -283,6 +284,10 @@ export async function upsertTaskCenterConfig(input = {}) {
 
 export async function getAiMemberScoreSnapshot() {
   return normalizeAiMemberScoreSnapshot(await readJson(paths.aiMemberScoreSnapshot, {}));
+}
+
+export async function getAiMemberScoreConfig() {
+  return normalizeAiMemberScoreConfig(await readJson(paths.aiMemberScoreConfig, {}));
 }
 
 export async function upsertAiMemberScoreSnapshot(input = {}) {
@@ -5411,6 +5416,103 @@ function normalizeAiMemberScoreSnapshot(input = {}) {
       username: cleanString(input.savedBy?.username),
       displayName: cleanString(input.savedBy?.displayName)
     }
+  };
+}
+
+function defaultAiMemberScoreConfig() {
+  return {
+    normal: {
+      productCap: 35,
+      productVersionScores: { v1: 1.5, v2: 3, v3: 4.5 },
+      unmatchedBoardProductScore: 2,
+      usageCap: 25,
+      usagePerProduct: 5,
+      usageCoverageDivisor: 25,
+      usageCoverageBonusCap: 5,
+      usageRepeatWeights: [2, 1.5, 1, 0.5],
+      usageRepeatTailWeight: 0.25,
+      usageRepeatBonusCap: 8,
+      runCap: 30,
+      runPerSkill: 6,
+      validationPerProduct: 3,
+      runRepeatWeights: [3.5, 2.5, 1.5, 1],
+      runRepeatTailWeight: 0.25,
+      runRepeatBonusCap: 8
+    },
+    independent: {
+      productCap: 60,
+      productVersionScores: { v1: 2, v2: 4, v3: 6 },
+      unmatchedBoardProductScore: 3,
+      usageCap: 20,
+      usagePerProduct: 7,
+      usageCoverageDivisor: 20,
+      usageCoverageBonusCap: 4,
+      usageRepeatWeights: [1.5, 1, 0.75, 0.5],
+      usageRepeatTailWeight: 0.25,
+      usageRepeatBonusCap: 6,
+      runCap: 15,
+      runPerSkill: 8,
+      validationPerProduct: 0,
+      runRepeatWeights: [3, 2, 1, 0.5],
+      runRepeatTailWeight: 0.25,
+      runRepeatBonusCap: 6
+    },
+    productMultiplier: {
+      deprecated: 0,
+      narrowAndLowReuse: 0.45,
+      narrow: 0.65,
+      lowReuse: 0.75,
+      default: 1
+    },
+    independentMembers: ['余盛威', 'yushengwei', 'ysw'],
+    updatedAt: ''
+  };
+}
+
+function normalizeAiMemberScoreConfig(input = {}) {
+  const defaults = defaultAiMemberScoreConfig();
+  const normalizeWeights = (value = [], fallback = []) => {
+    const source = Array.isArray(value) ? value : fallback;
+    return source
+      .map(item => clampNumber(item, 0, 100))
+      .filter(item => Number.isFinite(item));
+  };
+  const normalizeRuleGroup = (value = {}, fallback = {}) => ({
+    productCap: clampNumber(value.productCap, 0, 1000) || fallback.productCap || 0,
+    productVersionScores: {
+      v1: clampNumber(value.productVersionScores?.v1, 0, 1000) || fallback.productVersionScores?.v1 || 0,
+      v2: clampNumber(value.productVersionScores?.v2, 0, 1000) || fallback.productVersionScores?.v2 || 0,
+      v3: clampNumber(value.productVersionScores?.v3, 0, 1000) || fallback.productVersionScores?.v3 || 0
+    },
+    unmatchedBoardProductScore: clampNumber(value.unmatchedBoardProductScore, 0, 1000) || fallback.unmatchedBoardProductScore || 0,
+    usageCap: clampNumber(value.usageCap, 0, 1000) || fallback.usageCap || 0,
+    usagePerProduct: clampNumber(value.usagePerProduct, 0, 1000) || fallback.usagePerProduct || 0,
+    usageCoverageDivisor: clampNumber(value.usageCoverageDivisor, 1, 1000) || fallback.usageCoverageDivisor || 1,
+    usageCoverageBonusCap: clampNumber(value.usageCoverageBonusCap, 0, 1000) || fallback.usageCoverageBonusCap || 0,
+    usageRepeatWeights: normalizeWeights(value.usageRepeatWeights, fallback.usageRepeatWeights),
+    usageRepeatTailWeight: clampNumber(value.usageRepeatTailWeight, 0, 1000) || fallback.usageRepeatTailWeight || 0,
+    usageRepeatBonusCap: clampNumber(value.usageRepeatBonusCap, 0, 1000) || fallback.usageRepeatBonusCap || 0,
+    runCap: clampNumber(value.runCap, 0, 1000) || fallback.runCap || 0,
+    runPerSkill: clampNumber(value.runPerSkill, 0, 1000) || fallback.runPerSkill || 0,
+    validationPerProduct: clampNumber(value.validationPerProduct, 0, 1000) || fallback.validationPerProduct || 0,
+    runRepeatWeights: normalizeWeights(value.runRepeatWeights, fallback.runRepeatWeights),
+    runRepeatTailWeight: clampNumber(value.runRepeatTailWeight, 0, 1000) || fallback.runRepeatTailWeight || 0,
+    runRepeatBonusCap: clampNumber(value.runRepeatBonusCap, 0, 1000) || fallback.runRepeatBonusCap || 0
+  });
+  return {
+    normal: normalizeRuleGroup(input.normal, defaults.normal),
+    independent: normalizeRuleGroup(input.independent, defaults.independent),
+    productMultiplier: {
+      deprecated: clampNumber(input.productMultiplier?.deprecated, 0, 1) || defaults.productMultiplier.deprecated,
+      narrowAndLowReuse: clampNumber(input.productMultiplier?.narrowAndLowReuse, 0, 1) || defaults.productMultiplier.narrowAndLowReuse,
+      narrow: clampNumber(input.productMultiplier?.narrow, 0, 1) || defaults.productMultiplier.narrow,
+      lowReuse: clampNumber(input.productMultiplier?.lowReuse, 0, 1) || defaults.productMultiplier.lowReuse,
+      default: clampNumber(input.productMultiplier?.default, 0, 1) || defaults.productMultiplier.default
+    },
+    independentMembers: Array.isArray(input.independentMembers)
+      ? input.independentMembers.map(item => cleanString(item)).filter(Boolean)
+      : defaults.independentMembers,
+    updatedAt: cleanString(input.updatedAt)
   };
 }
 
