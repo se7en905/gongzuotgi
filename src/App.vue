@@ -6106,9 +6106,7 @@ export default {
         }
         if (aiMembersView && this.can('api.aiMembers.read')) {
           this.restoreAiMembersBoardHtmlSnapshot();
-          if (!this.hasAiMembersBoardHtml(this.aiMembersSnapshot)) {
-            jobs.push(['AI部门看板缓存', () => this.refreshAiMembersBoardDisplayCache({ silent: true })]);
-          }
+          jobs.push(['AI部门看板缓存', () => this.refreshAiMembersBoardDisplayCache({ silent: true, minInterval: 0 })]);
         }
         const results = await Promise.allSettled(jobs.map(([, run]) => run()));
         results.forEach((result, index) => {
