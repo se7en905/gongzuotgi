@@ -5670,6 +5670,15 @@ export default {
             if (this.activeView === 'ai-members') this.prepareAiMembersView();
           }).catch(() => {});
         }
+        if (this.canViewAiMemberScore && this.can('api.aiMembers.score.read')) {
+          this.refreshAiMemberScoreSnapshotFromServer({
+            silent: true,
+            background: true,
+            minInterval: scoreDirty ? 0 : 1500
+          }).finally(() => {
+            if (this.activeView === 'ai-members') this.prepareAiMembersView();
+          }).catch(() => {});
+        }
       }
       if (view === 'codex-config') {
         if ((!this.codexConfig?.models?.length && !this.codexConfig?.model && !this.codexConfig?.baseUrl) && !this.loading.codexConfig) {
