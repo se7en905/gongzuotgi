@@ -52,9 +52,6 @@
           <span v-else>-</span>
         </template>
       </ElTableColumn>
-      <ElTableColumn label="平台诊断" min-width="260">
-        <template #default="{ row }">{{ app.directSkillRunDiagnosisSummary(row).replace(/。/g, '') }}</template>
-      </ElTableColumn>
       <ElTableColumn label="创建时间" width="190">
         <template #default="{ row }">{{ app.formatDateTime(row.createdAt) || '-' }}</template>
       </ElTableColumn>
