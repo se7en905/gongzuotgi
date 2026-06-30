@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
-import { appendRunLog, createArtProgressEvent, getCodexConfig, getRunWorkspace, paths, updateRun } from './store.mjs';
+import { appendRunLog, createArtProgressEvent, getCodexConfig, getRun, getRunWorkspace, paths, updateRun } from './store.mjs';
 
 const processes = new Map();
 const processTokens = new Map();
@@ -247,6 +247,7 @@ function isCompletedStageStatus(status = '') {
 
 export async function cancelRun(runId, cancelledBy = '') {
   const child = processes.get(runId);
+  const currentRun = await getRun(runId);
   const cancelledAt = new Date().toISOString();
   const cancelPatch = {
     status: 'cancelled',
@@ -257,6 +258,9 @@ export async function cancelRun(runId, cancelledBy = '') {
   };
   if (!child) {
     processTokens.delete(runId);
+    if (shouldKeepRunCompleted(currentRun)) {
+      return { cancelled: false, preserved: true, run: currentRun };
+    }
     await updateRun(runId, cancelPatch);
     await reportRunProgress(null, { id: runId, startedBy: cancelledBy }, {
       eventType: 'task_blocked',
@@ -276,6 +280,19 @@ export async function cancelRun(runId, cancelledBy = '') {
   });
   emit(runId, { type: 'status', status: 'cancelled', message: 'Run cancelled' });
   return { cancelled: true };
+}
+
+function shouldKeepRunCompleted(run = {}) {
+  if (!run || !run.id) return false;
+  const statusText = `${run.status || ''} ${run.workerStatus || ''} ${run.resultSummary?.status || ''}`.toLowerCase();
+  if (/completed|done|success|passed|conditional_pass/.test(statusText)) return true;
+  const generatedArtifacts = [
+    ...(Array.isArray(run.generatedArtifacts) ? run.generatedArtifacts : []),
+    ...(Array.isArray(run.resultSummary?.generatedArtifacts) ? run.resultSummary.generatedArtifacts : []),
+    ...(Array.isArray(run.workerResult?.generatedArtifacts) ? run.workerResult.generatedArtifacts : [])
+  ];
+  if (!String(run.figmaLinks || '').trim() && generatedArtifacts.length) return true;
+  return Array.isArray(run.stages) && run.stages.some(stage => /completed|done|success|passed|conditional_pass/i.test(String(stage?.status || '')));
 }
 
 async function buildPrompt(project, run) {

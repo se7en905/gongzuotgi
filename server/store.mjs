@@ -1563,7 +1563,6 @@ async function enrichRunGeneratedArtifactEvidence(run = null) {
 
 async function enrichRunWithImageGenerationEvidence(run = null) {
   if (!run || !isPureImageGenerationRun(run)) return stripNonImageRunGeneratedArtifacts(run);
-  if (!isFinishedRun(run.status) && !isFinishedRun(run.workerStatus)) return run;
   let workingRun = run;
   const importedArtifacts = await importLocalGeneratedImageArtifactsForRun(workingRun);
   if (importedArtifacts.length) {
@@ -1575,6 +1574,7 @@ async function enrichRunWithImageGenerationEvidence(run = null) {
     ...(Array.isArray(workingRun.workerResult?.generatedArtifacts) ? workingRun.workerResult.generatedArtifacts : [])
   ]);
   const hasGeneratedImage = hasGeneratedImageArtifacts(generatedArtifacts);
+  if (!hasGeneratedImage && !isFinishedRun(workingRun.status) && !isFinishedRun(workingRun.workerStatus)) return workingRun;
   if (isCancelledRunStatus(workingRun.status) || isCancelledRunStatus(workingRun.workerStatus)) {
     return sanitizeNoFigmaImageGenerationRunSummary(workingRun, generatedArtifacts);
   }
@@ -1998,14 +1998,23 @@ function reconcileGeneratedImageRun(run = {}, generatedArtifacts = [], options =
   const now = new Date().toISOString();
   const existingSummary = run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {};
   const existingWorkerResult = run.workerResult && typeof run.workerResult === 'object' ? run.workerResult : {};
-  const finishedAt = cleanString(run.finishedAt || run.completedAt || run.updatedAt || now);
+  const finishedAt = latestIso(
+    run.finishedAt,
+    run.completedAt,
+    latestArtifactTimestamp(generatedArtifacts),
+    latestArtifactTimestamp(existingSummary.generatedArtifacts),
+    latestArtifactTimestamp(existingWorkerResult.generatedArtifacts),
+    run.resultSummary?.parsedAt,
+    run.updatedAt,
+    now
+  );
   const startedAt = cleanString(run.startedAt || run.claimedAt || run.queuedAt || run.createdAt);
   const durationMs = normalizeDurationMs(run.durationMs, startedAt, finishedAt, run.durationMs);
   const artifactPaths = generatedArtifacts.map(item => cleanString(item.relativePath || item.path)).filter(Boolean);
   const stages = Array.isArray(run.stages)
     ? run.stages.map(stage => {
       const status = cleanString(stage.status).toLowerCase();
-      if (!/blocked/.test(status)) return stage;
+      if (!/blocked|running|in_progress|claimed|pending|queued|created/.test(status)) return stage;
       return {
         ...stage,
         status: 'completed',
@@ -2020,7 +2029,9 @@ function reconcileGeneratedImageRun(run = {}, generatedArtifacts = [], options =
     workerStatus: 'completed',
     currentStage: '生成图片已归档',
     finishedAt,
+    completedAt: finishedAt,
     ...(durationMs > 0 ? { durationMs } : {}),
+    durationEstimated: false,
     generatedArtifacts,
     blocker: {
       ...(run.blocker && typeof run.blocker === 'object' ? run.blocker : {}),
@@ -8546,11 +8557,23 @@ function earliestIso(a = '', b = '') {
   return a || b || '';
 }
 
-function latestIso(a = '', b = '') {
-  const left = Date.parse(a || '');
-  const right = Date.parse(b || '');
-  if (left && right) return left >= right ? a : b;
-  return a || b || '';
+function latestIso(...values) {
+  let latestValue = '';
+  let latestTime = 0;
+  for (const value of values) {
+    const text = cleanString(value);
+    if (!text) continue;
+    const parsed = Date.parse(text);
+    if (!parsed) {
+      if (!latestValue) latestValue = text;
+      continue;
+    }
+    if (!latestTime || parsed >= latestTime) {
+      latestTime = parsed;
+      latestValue = text;
+    }
+  }
+  return latestValue;
 }
 
 function findRunStage(stages = [], name = '') {
@@ -8571,6 +8594,13 @@ function normalizeDurationMs(value, startedAt = '', finishedAt = '', fallback = 
   if (start && finish && finish >= start) return finish - start;
   const previous = Number(fallback || 0);
   return Number.isFinite(previous) && previous > 0 ? Math.round(previous) : 0;
+}
+
+function latestArtifactTimestamp(items = []) {
+  return latestIso(...(Array.isArray(items) ? items : []).flatMap(item => [
+    cleanString(item?.createdAt),
+    cleanString(item?.updatedAt)
+  ]));
 }
 
 function isGenericUsageTarget(value = '') {

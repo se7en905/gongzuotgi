@@ -6218,6 +6218,7 @@ export default {
     handleVisibilityVersionCheck() {
       if (document.visibilityState === 'visible') {
         this.checkFrontendVersion({ silent: true }).catch(() => {});
+        if (this.currentUser) this.ensureActiveViewData(this.activeView);
       }
     },
 
@@ -7559,15 +7560,22 @@ export default {
         }, 300);
       }
       if (type === 'agent-workers.changed' && this.can('menu.agentWorkers')) {
-        if (document.visibilityState === 'hidden') return;
+        if (event.payload?.worker) {
+          this.upsertAgentWorkerInLocalState(event.payload.worker);
+        }
+        if (document.visibilityState === 'hidden') {
+          this.markViewDataDirty('agent-workers', 'agent-workers');
+          this.markViewDataDirty('runs', 'agent-workers');
+          return;
+        }
         if (!['agent-workers', 'runs'].includes(this.activeView)) {
           this.markViewDataDirty('agent-workers', 'agent-workers');
           this.markViewDataDirty('runs', 'agent-workers');
           return;
         }
         this.schedulePlatformRefresh('agent-workers', async () => {
-          await this.refreshAgentWorkers({ background: true, minInterval: 1500 });
-        }, 500);
+          await this.refreshAgentWorkers({ background: true, minInterval: 0 });
+        }, 200);
       }
       if (type === 'access-control.changed') {
         this.schedulePlatformRefresh('access-control-current-user', async () => {
@@ -10324,6 +10332,7 @@ export default {
         if (!silent) this.loading.agentWorkers = true;
         try {
           this.agentWorkers = await this.api('/api/agent-workers');
+          this.saveWorkbenchDisplayCache('agentWorkers', this.agentWorkers);
           return this.agentWorkers;
         } catch (error) {
           console.warn('本机 Worker 状态读取失败', error);
@@ -10333,6 +10342,21 @@ export default {
         }
       })();
       return this.trackRefreshRequest('agentWorkers', request);
+    },
+
+    upsertAgentWorkerInLocalState(worker = null) {
+      if (!worker?.id) return null;
+      const index = this.agentWorkers.findIndex(item => item.id === worker.id);
+      const merged = index >= 0 ? { ...this.agentWorkers[index], ...worker } : worker;
+      if (index >= 0) {
+        const nextWorkers = this.agentWorkers.slice();
+        nextWorkers.splice(index, 1, merged);
+        this.agentWorkers = nextWorkers;
+      } else {
+        this.agentWorkers = [merged, ...this.agentWorkers];
+      }
+      this.saveWorkbenchDisplayCache('agentWorkers', this.agentWorkers);
+      return merged;
     },
 
     async refreshAgentWorkerStatusView() {
@@ -11168,6 +11192,7 @@ export default {
       this.scans = scans;
       this.clearSkillInventoryRowsCache();
       this.syncOpenSkillPreviewAliasesFromOverrides();
+      this.syncOpenSkillPreviewExecutionKindFromOverrides();
       return true;
     },
 
@@ -11196,6 +11221,20 @@ export default {
       };
       this.skillPreview = { ...this.skillPreview, skill: nextSkill };
       this.skillPreviewAliasesDraft = normalizedAliases.join('、');
+    },
+
+    syncOpenSkillPreviewExecutionKindFromOverrides() {
+      const skill = this.skillPreview?.skill;
+      if (!this.skillPreview?.visible || !skill) return;
+      const normalizedKind = this.skillExecutionKind(skill);
+      if (!normalizedKind) return;
+      this.skillPreview = {
+        ...this.skillPreview,
+        skill: {
+          ...skill,
+          executionKind: normalizedKind
+        }
+      };
     },
 
     gitHistoryOwnerNames(skill = {}) {
@@ -16399,6 +16438,8 @@ export default {
         };
         this.skillPreview = { ...this.skillPreview, skill: nextSkill };
         this.patchSkillExecutionKindInScans(nextSkill, savedKind);
+        this.saveWorkbenchDisplayCache('scans', this.scans);
+        this.saveWorkbenchDisplayCache('skillVersionOverrides', this.skillVersionOverrides);
         ElMessage.success(savedKind === 'image-generation' ? '已标记为纯生图' : '已恢复为默认执行方式');
       } catch (error) {
         ElMessage.error(this.readApiError(error) || '执行方式保存失败');
@@ -16753,6 +16794,7 @@ export default {
       this.clearValidationMatchCache();
       this.clearSkillUsageLogCache();
       this.clearSkillInventoryRowsCache();
+      this.syncOpenSkillPreviewExecutionKindFromOverrides();
     },
 
     async loadSkillContent(skill) {

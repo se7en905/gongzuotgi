@@ -1534,7 +1534,7 @@ async function handleApi(req, res, url) {
       userName: currentUser.username || currentUser.displayName,
       lastHeartbeatAt: new Date().toISOString()
     });
-    broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, module: 'agent-worker' });
+    broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, worker, module: 'agent-worker' });
     sendJson(res, 200, worker);
     return;
   }
@@ -1557,7 +1557,7 @@ async function handleApi(req, res, url) {
       after: { id: worker.id, deviceAlias: worker.deviceAlias, deviceName: worker.deviceName, deviceId: worker.deviceId },
       description: `${currentUser.displayName || currentUser.username} 修改本机 Worker 设备花名为「${worker.deviceAlias || worker.deviceName || worker.deviceId}」`
     });
-    broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, module: 'agent-worker' });
+    broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, worker, module: 'agent-worker' });
     sendJson(res, 200, worker);
     return;
   }
@@ -1583,7 +1583,7 @@ async function handleApi(req, res, url) {
       canAccessAllProjects: isAdminUser(currentUser)
     });
     const worker = await upsertAgentWorker(workerInput);
-    broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, module: 'agent-worker' });
+    broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, worker, module: 'agent-worker' });
     if (!run) {
       sendJson(res, 200, { run: null, worker });
       return;
@@ -1631,7 +1631,7 @@ async function handleApi(req, res, url) {
       return;
     }
     const worker = await upsertAgentWorker(workerInput);
-    broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, module: 'agent-worker' });
+    broadcastPlatformEvent('agent-workers.changed', { userId: currentUser.id, deviceId: worker.deviceId, worker, module: 'agent-worker' });
     const { _changed, ...stableRun } = run;
     if (run._changed === false) {
       sendJson(res, 200, { run: stableRun, worker });
