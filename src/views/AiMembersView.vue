@@ -9,6 +9,23 @@
   </div>
   <div class="ai-board-ready-content" :aria-hidden="!displayReady">
   <section v-if="app.canViewAiMemberScore" class="ai-score-panel">
+    <section v-if="app.hasPreviousAiMemberScoreRows" class="ai-score-history-panel">
+      <div class="ai-score-history-panel__head">
+        <h4>{{ app.previousAiScoreMonthDisplay }} 最终总得分</h4>
+      </div>
+      <div class="ai-score-history-list">
+        <article
+          v-for="member in app.previousAiMemberScoreRows"
+          :key="`history-${member.account || member.name}`"
+          :class="['ai-score-history-card', app.aiScoreClass(member.score)]"
+        >
+          <strong>{{ member.name }}</strong>
+          <b>{{ member.score }}</b>
+          <span>产物 {{ member.productCount }} · {{ member.productValueLevel || '基础沉淀' }}</span>
+          <span>使用 {{ member.monthUsageCount }} · 执行 {{ member.monthRunCount }}</span>
+        </article>
+      </div>
+    </section>
     <div class="ai-score-head">
       <div>
         <h3>当月 AI 评分</h3>
@@ -137,11 +154,12 @@ export default {
       const html = this.activeBoardHtml || '';
       return this.app.isAiMembersBoardHtml ? this.app.isAiMembersBoardHtml(html) : html.length > 1000;
     },
-    scoreDisplayReady() {
-      return !this.app.canViewAiMemberScore || this.app.aiMemberScoreReady;
+    boardDisplayReady() {
+      if (!this.app.canViewAiMembersBoardContent) return true;
+      return this.hasActiveBoardHtml && this.frameReady;
     },
     displayReady() {
-      return this.scoreDisplayReady && this.hasActiveBoardHtml && this.frameReady;
+      return this.boardDisplayReady;
     },
     activeBoardHtml() {
       return this.boardHtml;
@@ -360,6 +378,76 @@ export default {
   display: grid;
   gap: 14px;
   padding: 14px;
+}
+
+.ai-score-history-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px dashed color-mix(in srgb, var(--line) 78%, var(--primary) 22%);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 94%, var(--primary-soft) 6%);
+}
+
+.ai-score-history-panel__head {
+  display: grid;
+}
+
+.ai-score-history-panel__head h4 {
+  margin: 0;
+  color: var(--heading);
+  font-size: 14px;
+  font-weight: 820;
+  line-height: 1.35;
+}
+
+.ai-score-history-list {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.ai-score-history-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 88%, white 12%);
+}
+
+.ai-score-history-card strong {
+  color: var(--heading);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.ai-score-history-card b {
+  font-size: 28px;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.ai-score-history-card span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ai-score-history-card.is-good b {
+  color: #15803d;
+}
+
+.ai-score-history-card.is-stable b {
+  color: #2563eb;
+}
+
+.ai-score-history-card.is-watch b {
+  color: #d97706;
+}
+
+.ai-score-history-card.is-low b {
+  color: #c0392b;
 }
 
 .ai-score-head {

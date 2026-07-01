@@ -3415,6 +3415,21 @@ export default {
       return year && month ? `${year}年${month}月` : '本月';
     },
 
+    previousAiScoreMonthLabel() {
+      const [yearText, monthText] = String(this.aiScoreMonthLabel || '').split('-');
+      const year = Number(yearText || 0);
+      const month = Number(monthText || 0);
+      if (!year || !month) return '';
+      const date = new Date(year, month - 2, 1);
+      if (Number.isNaN(date.getTime())) return '';
+      return this.aiScoreMonthKey(date);
+    },
+
+    previousAiScoreMonthDisplay() {
+      const [year, month] = String(this.previousAiScoreMonthLabel || '').split('-');
+      return year && month ? `${year}年${month}月` : '';
+    },
+
     aiMemberScoreRows() {
       if (
         Array.isArray(this.aiMemberScoreRowsSnapshot)
@@ -3424,6 +3439,24 @@ export default {
         return this.aiMemberScoreRowsSnapshot;
       }
       return [];
+    },
+
+    previousAiMemberScoreRows() {
+      const monthKey = this.previousAiScoreMonthLabel;
+      if (!monthKey) return [];
+      const sourceMembers = this.currentAiMemberScoreSourceMembers();
+      return sourceMembers
+        .filter(member => !this.isAiScoreOwnerMember(member))
+        .map(member => this.aiMemberHistoricalScoreRow(member, monthKey))
+        .filter(row => row.score > 0 || row.monthUsageCount > 0 || row.monthRunCount > 0 || row.productCount > 0)
+        .sort((left, right) => {
+          if (right.score !== left.score) return right.score - left.score;
+          return String(left.name || '').localeCompare(String(right.name || ''));
+        });
+    },
+
+    hasPreviousAiMemberScoreRows() {
+      return this.previousAiMemberScoreRows.length > 0;
     },
 
     aiMemberScoreOverview() {
@@ -10136,6 +10169,113 @@ export default {
         usagePeople: {},
         usagePeopleCount: 0,
         latestActivityAt: ''
+      };
+    },
+
+    aiMemberMonthlyRunScoreBucketForMonth(month = '', memberName = '', account = '') {
+      const monthKey = String(month || '').trim();
+      if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+        return {
+          runIds: [],
+          completedRunCount: 0,
+          completedRunSkillKeys: [],
+          completedRunSkillCount: 0,
+          blockedRunIds: [],
+          blockedCount: 0,
+          latestActivityAt: ''
+        };
+      }
+      const monthBuckets = this.normalizeAiMemberMonthlyRunScoreBuckets(this.aiMemberMonthlyRunScoreBuckets)[monthKey] || {};
+      const personKeys = [memberName, account]
+        .map(person => this.normalizeAiScorePersonKey(person))
+        .filter(Boolean);
+      return personKeys.map(key => monthBuckets[key]).find(Boolean) || {
+        runIds: [],
+        completedRunCount: 0,
+        completedRunSkillKeys: [],
+        completedRunSkillCount: 0,
+        blockedRunIds: [],
+        blockedCount: 0,
+        latestActivityAt: ''
+      };
+    },
+
+    aiMemberMonthlyUsageScoreBucketForMonth(month = '', memberName = '', account = '') {
+      const monthKey = String(month || '').trim();
+      if (!/^\d{4}-\d{2}$/.test(monthKey)) {
+        return {
+          eventKeys: [],
+          usageCount: 0,
+          usageResultCount: 0,
+          productKeys: [],
+          usedProductCount: 0,
+          usagePeople: {},
+          usagePeopleCount: 0,
+          latestActivityAt: ''
+        };
+      }
+      const monthBuckets = this.normalizeAiMemberMonthlyUsageScoreBuckets(this.aiMemberMonthlyUsageScoreBuckets)[monthKey] || {};
+      const personKeys = [memberName, account]
+        .map(person => this.normalizeAiScorePersonKey(person))
+        .filter(Boolean);
+      return personKeys.map(key => monthBuckets[key]).find(Boolean) || {
+        eventKeys: [],
+        usageCount: 0,
+        usageResultCount: 0,
+        productKeys: [],
+        usedProductCount: 0,
+        usagePeople: {},
+        usagePeopleCount: 0,
+        latestActivityAt: ''
+      };
+    },
+
+    aiMemberHistoricalScoreRow(member = {}, month = '') {
+      const monthKey = String(month || '').trim();
+      const name = this.canonicalArtDeptPerson(member.name || member.realname || member.account) || member.name || member.realname || member.account || '-';
+      const account = member.account || '';
+      const independentScoreMode = this.isIndependentAiScoreMember(name, account);
+      const config = this.effectiveAiMemberScoreConfig();
+      const rule = independentScoreMode ? config.independent : config.normal;
+      const summaryMap = new Map(this.skillInventoryMemberSummaries.map(summary => [this.normalizeAiScorePersonKey(summary.name || summary.account), summary]));
+      const summary = summaryMap.get(this.normalizeAiScorePersonKey(name)) || null;
+      const productItems = this.aiMemberScoreProductItems(member, summary);
+      const productRows = this.aiMemberScoreProductRows(name, summary);
+      const productValue = this.aiMemberScoreProductValue(productRows, productItems, independentScoreMode);
+      const monthUsageBucket = this.aiMemberMonthlyUsageScoreBucketForMonth(monthKey, name, account);
+      const monthRunBucket = this.aiMemberMonthlyRunScoreBucketForMonth(monthKey, name, account);
+      const productScore = productValue.score;
+      const usedProductCount = Math.max(0, Number(monthUsageBucket.usedProductCount || 0));
+      const usageResultCount = Math.max(0, Number(monthUsageBucket.usageResultCount || 0));
+      const normalizedUsedProductCount = Math.min(usageResultCount, Math.max(usedProductCount, usageResultCount > 0 ? 1 : 0));
+      const usagePeopleCount = Math.max(0, Number(monthUsageBucket.usagePeopleCount || 0));
+      const usageCoverageRate = this.aiMemberScoreUsageCoverageRate(usagePeopleCount);
+      const usageRatioBonus = Math.min(rule.usageCoverageBonusCap, Math.round(usageCoverageRate / Math.max(1, rule.usageCoverageDivisor)));
+      const repeatedUsageCount = Math.max(0, usageResultCount - normalizedUsedProductCount);
+      const repeatedUsageBonus = this.aiMemberScoreDecayBonus(repeatedUsageCount, rule.usageRepeatWeights, rule.usageRepeatTailWeight, rule.usageRepeatBonusCap);
+      const completedRunCount = Math.max(0, Number(monthRunBucket.completedRunCount || 0));
+      const completedRunSkillCount = Math.max(
+        0,
+        Number(monthRunBucket.completedRunSkillCount || 0),
+        Array.isArray(monthRunBucket.completedRunSkillKeys) ? monthRunBucket.completedRunSkillKeys.length : 0
+      );
+      const normalizedCompletedRunSkillCount = Math.min(completedRunCount, Math.max(completedRunSkillCount, completedRunCount > 0 ? 1 : 0));
+      const repeatedRunCount = Math.max(0, completedRunCount - normalizedCompletedRunSkillCount);
+      const repeatedRunBonus = this.aiMemberScoreDecayBonus(repeatedRunCount, rule.runRepeatWeights, rule.runRepeatTailWeight, rule.runRepeatBonusCap);
+      const usageScore = Math.min(rule.usageCap, normalizedUsedProductCount * rule.usagePerProduct + repeatedUsageBonus + usageRatioBonus);
+      const runScore = Math.min(rule.runCap, normalizedCompletedRunSkillCount * rule.runPerSkill + repeatedRunBonus);
+      const score = Math.max(0, Math.min(100, Math.round(productScore + usageScore + runScore)));
+      return {
+        name,
+        account,
+        score,
+        productCount: productItems.length,
+        productValueLevel: productValue.level,
+        monthUsageCount: Math.max(0, Number(monthUsageBucket.usageCount || 0)),
+        monthRunCount: completedRunCount,
+        reason: independentScoreMode
+          ? '上月总分参考：按上月沉淀、个人使用和执行活跃回看'
+          : '上月总分参考：按上月有效产物、闭环使用和执行活跃回看'
       };
     },
 
