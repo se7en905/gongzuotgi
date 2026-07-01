@@ -829,6 +829,7 @@ export default {
       aiMemberScoreRowsSnapshotKey: '',
       aiMemberScoreRowsSnapshotMonth: '',
       aiMemberScoreRowsSnapshotAt: '',
+      aiMemberScoreHistoryRowsByMonth: {},
       aiMemberMonthlyRunScoreBuckets: {},
       aiMemberMonthlyUsageScoreBuckets: {},
       aiMemberMonthlyScoreResetAnchors: {},
@@ -3444,11 +3445,11 @@ export default {
     previousAiMemberScoreRows() {
       const monthKey = this.previousAiScoreMonthLabel;
       if (!monthKey) return [];
-      const sourceMembers = this.currentAiMemberScoreSourceMembers();
-      return sourceMembers
-        .filter(member => !this.isAiScoreOwnerMember(member))
-        .map(member => this.aiMemberHistoricalScoreRow(member, monthKey))
-        .filter(row => row.score > 0 || row.monthUsageCount > 0 || row.monthRunCount > 0 || row.productCount > 0)
+      const rows = Array.isArray(this.aiMemberScoreHistoryRowsByMonth?.[monthKey])
+        ? this.aiMemberScoreHistoryRowsByMonth[monthKey]
+        : this.aiMemberHistoricalScoreFallbackRows(monthKey);
+      return rows
+        .filter(row => (row.score || row.monthUsageCount || row.monthRunCount || row.productCount))
         .sort((left, right) => {
           if (right.score !== left.score) return right.score - left.score;
           return String(left.name || '').localeCompare(String(right.name || ''));
@@ -6881,6 +6882,10 @@ export default {
         const source = parsed?.value && typeof parsed.value === 'object' ? parsed.value : parsed;
         const month = this.aiMemberScoreSnapshotMonth(source);
         const rows = Array.isArray(source?.rows) ? source.rows : [];
+        this.aiMemberScoreHistoryRowsByMonth = this.mergeAiMemberScoreHistoryRowsByMonth(
+          this.aiMemberScoreHistoryRowsByMonth,
+          source.historyRowsByMonth || {}
+        );
         this.aiMemberMonthlyRunScoreBuckets = this.mergeAiMemberMonthlyRunScoreBuckets(
           this.aiMemberMonthlyRunScoreBuckets,
           this.mergeAiMemberMonthlyRunScoreBuckets(
@@ -6919,6 +6924,10 @@ export default {
       const source = payload?.value && typeof payload.value === 'object' ? payload.value : payload;
       const month = this.aiMemberScoreSnapshotMonth(source);
       const rows = Array.isArray(source?.rows) ? source.rows : [];
+      this.aiMemberScoreHistoryRowsByMonth = this.mergeAiMemberScoreHistoryRowsByMonth(
+        this.aiMemberScoreHistoryRowsByMonth,
+        source.historyRowsByMonth || {}
+      );
       this.aiMemberMonthlyRunScoreBuckets = this.mergeAiMemberMonthlyRunScoreBuckets(
         this.aiMemberMonthlyRunScoreBuckets,
         this.mergeAiMemberMonthlyRunScoreBuckets(
@@ -6952,6 +6961,7 @@ export default {
           rows,
           key: this.aiMemberScoreRowsSnapshotKey,
           month: this.aiMemberScoreRowsSnapshotMonth,
+          historyRowsByMonth: this.aiMemberScoreHistoryRowsByMonth,
           monthlyRunScoreBuckets: this.aiMemberMonthlyRunScoreBuckets,
           monthlyUsageScoreBuckets: this.aiMemberMonthlyUsageScoreBuckets,
           monthlyScoreResetAnchors: this.aiMemberMonthlyScoreResetAnchors,
@@ -6980,10 +6990,19 @@ export default {
 
     async saveAiMemberScoreSnapshot(rows = [], key = '') {
       if (!Array.isArray(rows) || !rows.length) return;
+      const previousMonth = this.previousAiScoreMonthLabel;
+      const historyRowsByMonth = this.mergeAiMemberScoreHistoryRowsByMonth(this.aiMemberScoreHistoryRowsByMonth, {
+        [this.aiScoreMonthLabel]: rows,
+        ...(previousMonth && !this.aiMemberScoreHistoryRowsByMonth?.[previousMonth]
+          ? { [previousMonth]: this.aiMemberHistoricalScoreFallbackRows(previousMonth) }
+          : {})
+      });
+      this.aiMemberScoreHistoryRowsByMonth = historyRowsByMonth;
       const payload = {
         rows,
         key,
         month: this.aiScoreMonthLabel,
+        historyRowsByMonth,
         monthlyRunScoreBuckets: this.mergeAiMemberMonthlyRunScoreBuckets(
           this.aiMemberMonthlyRunScoreBuckets,
           this.aiMemberMonthlyRunScoreBucketsFromSnapshotRows(rows, this.aiScoreMonthLabel)
@@ -7284,6 +7303,37 @@ export default {
       };
     },
 
+    normalizeAiMemberScoreHistoryRowsByMonth(input = {}) {
+      const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+      return Object.fromEntries(Object.entries(source)
+        .map(([month, rows]) => {
+          const monthKey = String(month || '').trim();
+          if (!/^\d{4}-\d{2}$/.test(monthKey) || !Array.isArray(rows)) return null;
+          const normalizedRows = rows
+            .filter(row => row && typeof row === 'object')
+            .map(row => ({
+              name: String(row.name || '').trim(),
+              account: String(row.account || '').trim(),
+              score: Math.max(0, Number(row.score || 0) || 0),
+              productCount: Math.max(0, Number(row.productCount || 0) || 0),
+              productValueLevel: String(row.productValueLevel || '').trim(),
+              monthUsageCount: Math.max(0, Number(row.monthUsageCount || 0) || 0),
+              monthRunCount: Math.max(0, Number(row.monthRunCount || 0) || 0)
+            }))
+            .filter(row => row.name || row.account);
+          if (!normalizedRows.length) return null;
+          return [monthKey, normalizedRows];
+        })
+        .filter(Boolean));
+    },
+
+    mergeAiMemberScoreHistoryRowsByMonth(existing = {}, incoming = {}) {
+      return {
+        ...this.normalizeAiMemberScoreHistoryRowsByMonth(existing),
+        ...this.normalizeAiMemberScoreHistoryRowsByMonth(incoming)
+      };
+    },
+
     syncAiMemberMonthlyRunScoreBucketsFromCurrentRuns() {
       const fromRuns = this.collectAiMemberMonthlyRunScoreBucketsFromRuns(this.runs || []);
       this.aiMemberMonthlyRunScoreBuckets = this.mergeAiMemberMonthlyRunScoreBuckets(this.aiMemberMonthlyRunScoreBuckets, fromRuns);
@@ -7360,6 +7410,7 @@ export default {
           rows: [],
           key: '',
           month: this.aiScoreMonthLabel,
+          historyRowsByMonth: this.aiMemberScoreHistoryRowsByMonth,
           monthlyRunScoreBuckets: this.aiMemberMonthlyRunScoreBuckets,
           monthlyUsageScoreBuckets: this.aiMemberMonthlyUsageScoreBuckets,
           monthlyScoreResetAnchors: this.aiMemberMonthlyScoreResetAnchors,
@@ -10277,6 +10328,16 @@ export default {
           ? '上月总分参考：按上月沉淀、个人使用和执行活跃回看'
           : '上月总分参考：按上月有效产物、闭环使用和执行活跃回看'
       };
+    },
+
+    aiMemberHistoricalScoreFallbackRows(month = '') {
+      const monthKey = String(month || '').trim();
+      if (!/^\d{4}-\d{2}$/.test(monthKey)) return [];
+      const sourceMembers = this.currentAiMemberScoreSourceMembers();
+      return sourceMembers
+        .filter(member => !this.isAiScoreOwnerMember(member))
+        .map(member => this.aiMemberHistoricalScoreRow(member, monthKey))
+        .filter(row => row.score > 0 || row.monthUsageCount > 0 || row.monthRunCount > 0 || row.productCount > 0);
     },
 
     aiMemberScoreRunStableKey(run = {}) {

@@ -5430,7 +5430,7 @@ function normalizeCodexConfig(input = {}) {
 
 function normalizeAiMemberScoreSnapshot(input = {}) {
   const rows = Array.isArray(input.rows) ? input.rows : [];
-  const normalizedRows = rows
+  const normalizeScoreRows = (sourceRows = []) => (Array.isArray(sourceRows) ? sourceRows : [])
     .filter(row => row && typeof row === 'object')
     .map(row => ({
       name: cleanString(row.name),
@@ -5461,6 +5461,19 @@ function normalizeAiMemberScoreSnapshot(input = {}) {
       reason: cleanString(row.reason)
     }))
     .filter(row => row.name || row.account);
+  const normalizedRows = normalizeScoreRows(rows);
+  const historyRowsByMonthSource = input.historyRowsByMonth && typeof input.historyRowsByMonth === 'object' && !Array.isArray(input.historyRowsByMonth)
+    ? input.historyRowsByMonth
+    : {};
+  const historyRowsByMonth = Object.fromEntries(Object.entries(historyRowsByMonthSource)
+    .map(([month, monthRows]) => {
+      const monthKey = cleanString(month);
+      if (!/^\d{4}-\d{2}$/.test(monthKey)) return null;
+      const normalizedMonthRows = normalizeScoreRows(monthRows);
+      if (!normalizedMonthRows.length) return null;
+      return [monthKey, normalizedMonthRows];
+    })
+    .filter(Boolean));
   const month = cleanString(input.month);
   const monthlyRunScoreBuckets = mergeAiMemberMonthlyRunScoreBuckets(
     normalizeAiMemberMonthlyRunScoreBuckets(input.monthlyRunScoreBuckets),
@@ -5472,6 +5485,7 @@ function normalizeAiMemberScoreSnapshot(input = {}) {
   );
   return {
     rows: normalizedRows,
+    historyRowsByMonth,
     monthlyRunScoreBuckets,
     monthlyUsageScoreBuckets,
     monthlyScoreResetAnchors: normalizeAiMemberScoreResetAnchors(input.monthlyScoreResetAnchors),
