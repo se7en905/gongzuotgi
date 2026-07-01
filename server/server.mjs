@@ -1097,14 +1097,14 @@ async function handleApi(req, res, url) {
       user: currentUser,
       module: 'workbench',
       action: 'VIEW_PAGE',
-      actionName: '查看页面',
+      actionName: '进入页面',
       targetType: 'view',
       targetId: view,
       targetName: viewName,
       metadata: {
         path: pathValue
       },
-      description: `${currentUser.displayName || currentUser.username} 查看页面「${viewName}」`
+      description: `${currentUser.displayName || currentUser.username} 进入「${viewName}」`
     });
     sendJson(res, 202, {
       accepted: true,

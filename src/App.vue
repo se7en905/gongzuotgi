@@ -6654,6 +6654,16 @@ export default {
 
     normalizeOperationLogForDisplay(log = {}) {
       if (!log || typeof log !== 'object') return log;
+      if (String(log.action || '').trim() === 'VIEW_PAGE') {
+        const viewName = String(log.targetName || log.targetId || '工作台页面').trim() || '工作台页面';
+        const actorName = String(log.displayName || log.username || log.userId || '成员').trim() || '成员';
+        return {
+          ...log,
+          actionName: '进入页面',
+          targetName: viewName,
+          description: `${actorName} 进入「${viewName}」`
+        };
+      }
       if (!this.isSkillValidationOperationLogRecord(log)) return log;
       const targetName = this.operationLogSkillValidationTargetName(log) || String(log.targetName || '').trim();
       if (!targetName || targetName === log.targetName) return log;
