@@ -1092,12 +1092,26 @@ async function handleApi(req, res, url) {
       sendJson(res, 400, { error: '缺少页面标识。' });
       return;
     }
+    const pathValue = String(body.path || '').trim();
+    await writeOperationLog(req, {
+      user: currentUser,
+      module: 'workbench',
+      action: 'VIEW_PAGE',
+      actionName: '查看页面',
+      targetType: 'view',
+      targetId: view,
+      targetName: viewName,
+      metadata: {
+        path: pathValue
+      },
+      description: `${currentUser.displayName || currentUser.username} 查看页面「${viewName}」`
+    });
     sendJson(res, 202, {
       accepted: true,
-      skippedPersistence: true,
+      skippedPersistence: false,
       view,
       viewName,
-      path: body.path || ''
+      path: pathValue
     });
     return;
   }
