@@ -2341,6 +2341,7 @@ function buildResultSummary(status, exitCode, finalText, figmaWriteResult = {}, 
     generatedArtifacts: imageArtifactResult.disallowGeneratedArtifacts ? [] : generatedArtifacts,
     figmaWritten: figmaWriteResult.written === true,
     figmaVerifiedAfterWrite: figmaWriteResult.verifiedAfterWrite === true,
+    riskNotes: Array.isArray(figmaWriteResult.riskNotes) ? figmaWriteResult.riskNotes.slice(0, 5) : [],
     nextStep: status === 'blocked'
       ? (imageArtifactResult.blocked
         ? '修复当前执行人本机 Image2 / GPT Image 2 连接、额度或代理问题后重新执行；不要使用 Pillow、本地绘制或其它生成方式替代。'
@@ -2598,6 +2599,12 @@ function extractFigmaWriteEvidence(text = '', run = {}) {
   const verificationEvidence = postWriteVerificationRequired
     ? extractPostWriteVerificationEvidence(source, toolEvents, lastWriteOrder)
     : [];
+  const riskNotes = postWriteVerificationRequired
+    ? [...new Set([
+      ...extractPostWriteFigmaRiskNotes(source, toolEvents, lastWriteOrder),
+      ...verificationEvidence.filter(isFigmaRiskNoteLine)
+    ])].slice(0, 5)
+    : [];
   const verifiedAfterWrite = postWriteVerificationRequired
     ? verificationEvidence.length > 0 && postWriteBlockers.length === 0
     : false;
@@ -2617,6 +2624,7 @@ function extractFigmaWriteEvidence(text = '', run = {}) {
     verifiedAfterWrite,
     verificationEvidence,
     postWriteBlockers,
+    riskNotes,
     partialWrite,
     blockerReason
   };
@@ -2872,6 +2880,22 @@ function extractPostWriteVerificationEvidence(source = '', toolEvents = [], last
   return [...new Set(evidence)].slice(0, 5);
 }
 
+function extractPostWriteFigmaRiskNotes(source = '', toolEvents = [], lastWriteOrder = -1) {
+  if (lastWriteOrder < 0) return [];
+  const notes = [];
+  const effectiveLastWriteOrder = findEffectiveLastFigmaWriteOrder(source, toolEvents, lastWriteOrder);
+  const lines = String(source || '').split(/\r?\n/);
+  for (let index = Math.max(effectiveLastWriteOrder + 1, 0); index < lines.length; index += 1) {
+    for (const line of figmaEvidenceLineTexts(lines[index])) {
+      if (!isFigmaRiskNoteLine(line)) continue;
+      notes.push(compactReason(line));
+      if (notes.length >= 5) break;
+    }
+    if (notes.length >= 5) break;
+  }
+  return [...new Set(notes)].slice(0, 5);
+}
+
 function findEffectiveLastFigmaWriteOrder(source = '', toolEvents = [], fallbackOrder = -1) {
   const toolWriteOrders = toolEvents
     .filter(event => event.createdNodeIds.length || event.mutatedNodeIds.length)
@@ -2924,6 +2948,13 @@ function isFigmaVerificationSuccessLine(line = '') {
   if (isFigmaPostWriteBlockerLine(text)) return false;
   if (/^\d+\.\s*每批执行后回读|^\d+\.\s*每完成一个有意义的批次|`(?:已验证|部分验证|未验证)`|按以下|成功标准|工作流|必须|不要|不得|只允许/i.test(text)) return false;
   return /最终.*(?:回读|截图|验证|验收).*(?:完成|通过|成功|已完成|已生成|已返回|已保存|已验证)|(?:回读|截图|视觉|复核|验证|验收).*(?:完成|通过|成功|已完成|已生成|已返回|已保存|已验证|可见|确认)|(?:已回读|回读确认|截图复核已通过|视觉复核通过|内联截图可见|截图工具.*返回|MCP.*截图.*已生成|未见换行、遮挡、截断|画面无空白|无明显(?:遮挡|错位|截断|异常换行)|同类复扫.*(?:未发现|清零|无残留))/i.test(text);
+}
+
+function isFigmaRiskNoteLine(line = '') {
+  const text = compactReason(line);
+  if (!text || isNegatedFigmaBlockerLine(text) || isNonBlockingFigmaNoteLine(text) || isFigmaPostWriteBlockerLine(text)) return false;
+  if (/^\d+\.\s*每批执行后回读|^\d+\.\s*每完成一个有意义的批次|`(?:已验证|部分验证|未验证)`|按以下|成功标准|工作流|必须|不要|不得|只允许/i.test(text)) return false;
+  return /(?:复核建议|风险提示|风险|注意事项|注意：|需关注|建议(?:负责人|最终)?确认|建议人工确认|建议复核|存在.{0,40}风险)/i.test(text);
 }
 
 function figmaEvidenceLineTexts(line = '') {

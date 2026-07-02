@@ -4114,6 +4114,7 @@ async function enrichRunWithFigmaLogEvidence(run) {
       verifiedAfterWrite: evidence.verifiedAfterWrite,
       verificationEvidence: evidence.verificationEvidence,
       postWriteBlockers: evidence.postWriteBlockers,
+      riskNotes: evidence.riskNotes,
       partialWrite: !evidence.verifiedAfterWrite,
       blockerReason: evidence.verifiedAfterWrite ? '' : blockerReason,
       derivedFromLog: true
@@ -4128,7 +4129,8 @@ async function enrichRunWithFigmaLogEvidence(run) {
         ? '本机直接执行已完成，并从日志识别到 Figma 写入和写入后验收证据。'
         : 'Figma 已有部分写入，但最终回读/截图验收未闭环，本次不能判定完整完成。',
       blockerReason: evidence.verifiedAfterWrite ? '' : blockerReason,
-      needsHumanReview: true
+      needsHumanReview: true,
+      riskNotes: evidence.riskNotes
     }
   });
 }
@@ -4139,6 +4141,11 @@ function reconcileFigmaEvidenceRunStatus(run = {}) {
   const hasVerification = hasFigmaPostWriteVerification(run);
   const existingSummary = run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {};
   const existingResult = run.figmaWriteResult && typeof run.figmaWriteResult === 'object' ? run.figmaWriteResult : {};
+  const riskNotes = [...new Set([
+    ...(Array.isArray(existingResult.riskNotes) ? existingResult.riskNotes : []),
+    ...(Array.isArray(existingSummary.riskNotes) ? existingSummary.riskNotes : []),
+    ...(Array.isArray(existingResult.verificationEvidence) ? existingResult.verificationEvidence.filter(isFigmaRiskNoteLine) : [])
+  ].map(item => cleanString(item)).filter(Boolean))].slice(0, 5);
   const status = hasVerification ? 'completed' : 'partial_write';
   const blockerReason = hasVerification
     ? ''
@@ -4171,7 +4178,8 @@ function reconcileFigmaEvidenceRunStatus(run = {}) {
       required: true,
       written: true,
       partialWrite: !hasVerification,
-      blockerReason
+      blockerReason,
+      riskNotes
     },
     resultSummary: {
       ...existingSummary,
@@ -4184,6 +4192,7 @@ function reconcileFigmaEvidenceRunStatus(run = {}) {
       needsHumanReview: !hasVerification,
       figmaWritten: true,
       figmaVerifiedAfterWrite: hasVerification,
+      riskNotes,
       nextStep: hasVerification
         ? ''
         : '让执行人继续执行补齐最终回读、截图验收和剩余未完成项。'
@@ -4295,6 +4304,12 @@ function parseFigmaLogEvidence(text = '') {
     postWriteBlockers.push('Figma 写入后验收失败：Auth required，执行人本机 Figma MCP OAuth 或文件权限需要恢复。');
   }
   const verificationEvidence = written ? extractPostWriteVerificationFromLog(source) : [];
+  const riskNotes = written
+    ? [...new Set([
+      ...extractPostWriteRiskNotesFromLog(source),
+      ...verificationEvidence.filter(isFigmaRiskNoteLine)
+    ])].slice(0, 5)
+    : [];
   const verifiedAfterWrite = Boolean(written && verificationEvidence.length && !postWriteBlockers.length);
   const blockerReason = !written
     ? ''
@@ -4309,6 +4324,7 @@ function parseFigmaLogEvidence(text = '') {
     verifiedAfterWrite,
     verificationEvidence,
     postWriteBlockers,
+    riskNotes,
     blockerReason,
     preWriteBlockerReason
   };
@@ -4598,6 +4614,20 @@ function extractPostWriteVerificationFromLog(text = '') {
   return [...new Set(evidence)].slice(0, 5);
 }
 
+function extractPostWriteRiskNotesFromLog(text = '') {
+  const lines = String(text || '').split(/\r?\n/).flatMap(figmaLogEvidenceLineTexts);
+  const lastWriteIndex = findLastFigmaWriteLineIndex(lines);
+  if (lastWriteIndex < 0) return [];
+  const notes = [];
+  for (let index = lastWriteIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!isFigmaRiskNoteLine(line)) continue;
+    notes.push(compactEvidenceReason(line));
+    if (notes.length >= 5) break;
+  }
+  return [...new Set(notes)].slice(0, 5);
+}
+
 function findLastFigmaWriteLineIndex(lines = []) {
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     if (/^__FIGMA_WRITE_EVENT__\b/.test(lines[index] || '')) return index;
@@ -4646,6 +4676,13 @@ function isFigmaVerificationSuccessLine(line = '') {
   if (isFigmaPostWriteBlockerLine(text)) return false;
   if (/^\d+\.\s*每批执行后回读|^\d+\.\s*每完成一个有意义的批次|`(?:已验证|部分验证|未验证)`|按以下|成功标准|工作流|必须|不要|不得|只允许/i.test(text)) return false;
   return /最终.*(?:回读|截图|验证|验收).*(?:完成|通过|成功|已完成|已生成|已返回|已保存|已验证)|(?:回读|截图|视觉|复核|验证|验收).*(?:完成|通过|成功|已完成|已生成|已返回|已保存|已验证|可见|确认)|(?:已回读|回读确认|截图复核已通过|视觉复核通过|内联截图可见|截图工具.*返回|MCP.*截图.*已生成|未见换行、遮挡、截断|画面无空白|无明显(?:遮挡|错位|截断|异常换行)|同类复扫.*(?:未发现|清零|无残留))/i.test(text);
+}
+
+function isFigmaRiskNoteLine(line = '') {
+  const text = compactEvidenceReason(line);
+  if (!text || isNegatedFigmaBlockerLine(text) || isNonBlockingFigmaNoteLine(text) || isFigmaPostWriteBlockerLine(text)) return false;
+  if (/^\d+\.\s*每批执行后回读|^\d+\.\s*每完成一个有意义的批次|`(?:已验证|部分验证|未验证)`|按以下|成功标准|工作流|必须|不要|不得|只允许/i.test(text)) return false;
+  return /(?:复核建议|风险提示|风险|注意事项|注意：|需关注|建议(?:负责人|最终)?确认|建议人工确认|建议复核|存在.{0,40}风险)/i.test(text);
 }
 
 function figmaLogEvidenceLineTexts(line = '') {

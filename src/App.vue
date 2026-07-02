@@ -22489,11 +22489,16 @@ export default {
       const issueRows = [
         this.aiExecutionArchiveIssueRow('Figma 验收', noFigmaImageGeneration ? '' : this.figmaExecutionBlockerText(run)),
         this.aiExecutionArchiveIssueRow('阻塞原因', this.sanitizedRunBlockerReason(run, summary.blockerReason)),
+        ...this.runRiskNotes(run).map((note, index) => ({
+          label: index === 0 ? '风险提示' : `风险提示 ${index + 1}`,
+          value: note,
+          tone: 'warning'
+        })),
         this.aiExecutionArchiveIssueRow('退出码', run.exitCode === null || run.exitCode === undefined ? '' : `Codex 退出码 ${run.exitCode}`),
         this.aiExecutionArchiveIssueRow('人工确认', summary.needsHumanReview ? '需要人工确认' : '')
       ].filter(Boolean);
       if (!issueRows.length) {
-        issueRows.push({ label: '当前问题', value: '未记录阻塞或失败原因。', tone: 'muted' });
+        issueRows.push({ label: '当前问题', value: '未记录阻塞、风险或失败原因。', tone: 'muted' });
       }
       const readableDataRows = dataRows.filter(item => item.readable !== false);
       if (!readableDataRows.length && !stageRows.length && !validationRows.length && !changeRows.length && !artifactRows.length) {
@@ -22586,6 +22591,37 @@ export default {
         value: this.humanizeRunResultText(text),
         tone: /失败|阻塞|exit|退出码|error|failed|blocked/i.test(text) ? 'danger' : 'warning'
       };
+    },
+
+    isRunRiskNoteText(value = '') {
+      const text = String(value || '').trim();
+      if (!text || this.isPlaceholderResultText(text)) return false;
+      if (/失败|阻塞|未完成|不可用|无权限|denied|error|failed|blocked|Auth required|OAuth|permission/i.test(text)) return false;
+      if (/Step\s*13.{0,160}(?:generated|final_|最终写回|最终验证|contact)|只保留最终写回用的\s*`?final_|删除失败 alpha|旧棋盘格中间图|废弃重生成版本/i.test(text)) return false;
+      return /(?:复核建议|风险提示|风险|注意事项|注意：|需关注|建议(?:负责人|最终)?确认|建议人工确认|建议复核|存在.{0,40}风险)/i.test(text);
+    },
+
+    runRiskNotes(run = {}) {
+      const pools = [
+        run.resultSummary?.riskNotes,
+        run.figmaWriteResult?.riskNotes,
+        run.figmaWriteResult?.verificationEvidence
+      ];
+      const rows = [];
+      const seen = new Set();
+      for (const pool of pools) {
+        const items = Array.isArray(pool) ? pool : [];
+        for (const item of items) {
+          const text = String(item || '').trim();
+          if (!this.isRunRiskNoteText(text)) continue;
+          const normalized = this.humanizeRunResultText(text);
+          if (!normalized || seen.has(normalized)) continue;
+          seen.add(normalized);
+          rows.push(normalized);
+          if (rows.length >= 5) return rows;
+        }
+      }
+      return rows;
     },
 
     directSkillRunOverviewMetrics(run = null) {
@@ -22756,27 +22792,19 @@ export default {
         ? this.directSkillRunOverviewMetrics(run)
         : this.aiExecutionArchiveDetailMetrics(run);
       const summary = run.resultSummary || {};
-      const status = this.effectiveResultStatus(run);
       const isPending = /pending|created|queued/i.test(this.runDisplayStatusValue(run));
       const isRunning = this.isRunInProgress(run);
-      const issueRows = [];
-      const blocker = String(this.figmaExecutionBlockerText(run) || this.sanitizedRunBlockerReason(run, summary.blockerReason || run.blocker?.reason) || '').trim();
-      if (blocker && !this.isPlaceholderResultText(blocker)) {
-        issueRows.push({
-          label: status === 'failed' || status === 'blocked' ? '阻塞原因' : '风险提示',
-          value: this.humanizeRunResultText(blocker),
-          tone: status === 'failed' || status === 'blocked' ? 'danger' : 'warning'
-        });
-      } else if (isPending) {
-        issueRows.push({
+      let issueRows = Array.isArray(detail.issueRows) ? [...detail.issueRows] : [];
+      if (isPending) {
+        issueRows = [{
           label: '当前状态',
           value: this.isLocalWorkerRun(run) ? this.directSkillQueuedRunDetail(run) : '等待负责人点击启动执行。',
           tone: this.isLocalWorkerRun(run) && this.isDirectSkillWorkerReady(this.directSkillWorkerForRun(run), run) ? 'primary' : 'muted'
-        });
+        }];
       } else if (isRunning) {
-        issueRows.push({ label: '当前处理', value: 'Codex 正在按当前步骤执行，等待结果回传。', tone: 'muted' });
-      } else {
-        issueRows.push({ label: '当前问题', value: '未记录阻塞或失败原因。', tone: 'muted' });
+        issueRows = [{ label: '当前处理', value: 'Codex 正在按当前步骤执行，等待结果回传。', tone: 'muted' }];
+      } else if (!issueRows.length) {
+        issueRows = [{ label: '当前问题', value: '未记录阻塞、风险或失败原因。', tone: 'muted' }];
       }
       return {
         ...detail,
