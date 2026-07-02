@@ -22494,7 +22494,7 @@ export default {
           value: note,
           tone: 'warning'
         })),
-        this.aiExecutionArchiveIssueRow('退出码', run.exitCode === null || run.exitCode === undefined ? '' : `Codex 退出码 ${run.exitCode}`),
+        this.aiExecutionArchiveIssueRow('退出码', this.runVisibleExitCodeText(run)),
         this.aiExecutionArchiveIssueRow('人工确认', summary.needsHumanReview ? '需要人工确认' : '')
       ].filter(Boolean);
       if (!issueRows.length) {
@@ -22591,6 +22591,19 @@ export default {
         value: this.humanizeRunResultText(text),
         tone: /失败|阻塞|exit|退出码|error|failed|blocked/i.test(text) ? 'danger' : 'warning'
       };
+    },
+
+    runVisibleExitCodeValue(run = {}) {
+      const rawValue = run?.exitCode;
+      if (rawValue === null || rawValue === undefined || rawValue === '') return null;
+      const numericValue = Number(rawValue);
+      if (Number.isFinite(numericValue) && numericValue === 0) return null;
+      return rawValue;
+    },
+
+    runVisibleExitCodeText(run = {}) {
+      const visibleValue = this.runVisibleExitCodeValue(run);
+      return visibleValue === null ? '' : `Codex 退出码 ${visibleValue}`;
     },
 
     isRunRiskNoteText(value = '') {

@@ -287,7 +287,7 @@
       <div v-if="app.isDirectSkillClaimedRun(app.selectedRun)" class="run-worker-claim-evidence">
         <span>自动领取：{{ app.formatDateTime(app.selectedRun.claimedAt) || '-' }}</span>
         <span>开始执行：{{ app.formatDateTime(app.selectedRun.startedAt) || '-' }}</span>
-        <span v-if="app.selectedRun.exitCode !== null && app.selectedRun.exitCode !== undefined">Codex 退出码：{{ app.selectedRun.exitCode }}</span>
+        <span v-if="app.runVisibleExitCodeValue(app.selectedRun) !== null">Codex 退出码：{{ app.runVisibleExitCodeValue(app.selectedRun) }}</span>
       </div>
       <div v-if="/pending|created/i.test(app.runDisplayStatusValue(app.selectedRun))" class="run-worker-command-box">
         <div>
