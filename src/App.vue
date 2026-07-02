@@ -2782,6 +2782,34 @@ export default {
         .filter(Boolean);
     },
 
+    latestBusinessTaskSyncedAt() {
+      return (Array.isArray(this.businessTasks) ? this.businessTasks : []).reduce((latest, task) => {
+        const value = String(task?.lastSyncedAt || '').trim();
+        return value && value.localeCompare(String(latest || '')) > 0 ? value : latest;
+      }, '');
+    },
+
+    latestBugSyncedAt() {
+      return (Array.isArray(this.bugs) ? this.bugs : []).reduce((latest, bug) => {
+        const value = String(bug?.lastSyncedAt || '').trim();
+        return value && value.localeCompare(String(latest || '')) > 0 ? value : latest;
+      }, '');
+    },
+
+    taskCenterLastSyncAt() {
+      const sync = this.appConfig.zentaoAutoSync || {};
+      const queue = this.effectiveTaskCenterMode === 'bug' ? (sync.bugs || {}) : (sync.tasks || {});
+      const rowFallback = this.effectiveTaskCenterMode === 'bug'
+        ? this.latestBugSyncedAt
+        : this.latestBusinessTaskSyncedAt;
+      return queue.lastSuccessAt
+        || rowFallback
+        || queue.lastErrorAt
+        || sync.lastSuccessAt
+        || sync.lastErrorAt
+        || '';
+    },
+
     zentaoAutoSyncText() {
       const sync = this.appConfig.zentaoAutoSync || {};
       if (this.zentaoSyncRunning) return sync.trigger === 'manual' ? '同步中...' : '自动同步中...';
@@ -2798,10 +2826,8 @@ export default {
     },
 
     zentaoAutoSyncTimeText() {
-      const sync = this.appConfig.zentaoAutoSync || {};
       if (this.zentaoSyncRunning) return '同步中...';
-      if (sync.lastSuccessAt) return formatDateTime(sync.lastSuccessAt);
-      if (sync.lastErrorAt) return formatDateTime(sync.lastErrorAt);
+      if (this.taskCenterLastSyncAt) return formatDateTime(this.taskCenterLastSyncAt);
       return '-';
     },
 
