@@ -51,6 +51,7 @@ let currentRunId = '';
 let lockOwned = false;
 let offlineQueueOperation = Promise.resolve();
 let workerEnvOverrides = {};
+let activeExecution = null;
 let localChecks = {
   codexReady: false,
   figmaMcpReady: false,
@@ -296,6 +297,54 @@ function scheduleSelfRestart() {
   }, 1000);
 }
 
+function setActiveExecution(runId = '') {
+  activeExecution = {
+    runId: String(runId || '').trim(),
+    child: null,
+    cancelRequested: false,
+    cancelReason: '',
+    cancelledAt: ''
+  };
+  return activeExecution;
+}
+
+function activeExecutionMeta(runId = '') {
+  const target = String(runId || '').trim();
+  if (!target || !activeExecution || activeExecution.runId !== target) return null;
+  return activeExecution;
+}
+
+function clearActiveExecution(runId = '') {
+  const target = String(runId || '').trim();
+  if (!target) return;
+  if (activeExecution?.runId === target) activeExecution = null;
+}
+
+async function requestRunCancellation(runId = '', reason = '') {
+  const execution = activeExecutionMeta(runId);
+  if (!execution) return false;
+  if (execution.cancelRequested) return true;
+  execution.cancelRequested = true;
+  execution.cancelReason = String(reason || '执行被用户中断。').trim() || '执行被用户中断。';
+  execution.cancelledAt = new Date().toISOString();
+  console.warn(`[worker] 收到平台中断请求：${execution.runId}，准备停止当前本机执行。`);
+  await appendLocalRunLog(execution.runId, `\n[worker] 收到平台中断请求：${execution.cancelReason}\n`).catch(() => {});
+  if (!execution.child) return true;
+  try {
+    execution.child.kill('SIGTERM');
+  } catch {
+  }
+  setTimeout(() => {
+    if (execution.child?.exitCode === null) {
+      try {
+        execution.child.kill('SIGKILL');
+      } catch {
+      }
+    }
+  }, 5000).unref?.();
+  return true;
+}
+
 async function checkAndExecuteNextRun() {
   if (checkingRuns) return;
   checkingRuns = true;
@@ -305,10 +354,12 @@ async function checkAndExecuteNextRun() {
       const run = await claimLocalRecoverableRun() || await claimNextRun();
       if (!run) break;
       currentRunId = run.id || '';
+      setActiveExecution(run.id);
       try {
         await executeRun(run);
       } finally {
         currentRunId = '';
+        clearActiveExecution(run.id);
       }
       await flushOfflineQueue();
       await syncLocalRunState();
@@ -384,7 +435,16 @@ function handlePlatformEventBlock(block = '') {
   } catch {
     return;
   }
-  if (event?.type === 'runs.changed') void wakeForRunChange(event);
+  if (event?.type !== 'runs.changed' || !shouldWakeForRunEvent(event)) return;
+  const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
+  const payloadRun = payload.run && typeof payload.run === 'object' ? payload.run : null;
+  const runId = String(payload.runId || payloadRun?.id || '').trim();
+  const statusText = `${payloadRun?.status || ''} ${payloadRun?.workerStatus || ''}`.toLowerCase();
+  if (runId && /cancelled|canceled/.test(statusText)) {
+    const reason = String(payloadRun?.resultSummary?.summary || payloadRun?.blocker?.reason || '执行被用户中断。').trim();
+    void requestRunCancellation(runId, reason);
+  }
+  void wakeForRunChange(event);
 }
 
 function shouldWakeForRunEvent(event = null) {
@@ -444,6 +504,11 @@ async function executeRun(run) {
     await failRunBeforeCodex(run, `本机执行资料准备失败：${error.message}`);
     return;
   }
+  const cancelledBeforeCodex = activeExecutionMeta(run.id);
+  if (cancelledBeforeCodex?.cancelRequested) {
+    await cancelRunBeforeCodex(run, cancelledBeforeCodex.cancelReason);
+    return;
+  }
   const prompt = buildPrompt(run, workspace);
   const cwd = workspace.cwd;
   await appendLocalRunLog(run.id, `\n[worker] 执行目录：${cwd}\n[worker] 本机日志：${runLogPath(run.id)}\n`);
@@ -474,6 +539,8 @@ async function executeRun(run) {
       env: workerChildEnv(),
       stdio: ['pipe', 'pipe', 'pipe']
     });
+    const execution = activeExecutionMeta(run.id);
+    if (execution) execution.child = child;
     await appendLocalRunLog(run.id, `[worker] Codex 进程已启动，pid=${child.pid || 'unknown'}\n`);
     await safeUpdateRunStatus(run.id, {
       status: 'running',
@@ -561,12 +628,44 @@ async function executeRun(run) {
   const localLogInfo = await localRunLogInfo(run.id);
   const localLogText = await readLocalRunLogForSync(run.id);
   const combinedText = [finalText, rawStdoutText, localLogText, stderrText].filter(Boolean).join('\n');
-  const figmaWriteResult = extractFigmaWriteEvidence(combinedText, run);
-  const generatedArtifacts = await collectAndUploadGeneratedArtifacts(run, workspace, combinedText);
-  const imageProviderResult = evaluateImageProviderResult(run, combinedText, generatedArtifacts);
-  const effectiveExitCode = killedByWatchdog ? -1 : exitCode;
-  const imageArtifactResult = evaluateImageArtifactResult(run, generatedArtifacts, imageProviderResult);
-  const status = resolveWorkerFinalStatus(effectiveExitCode, figmaWriteResult, imageArtifactResult);
+  const cancellation = activeExecutionMeta(run.id);
+  const wasCancelled = cancellation?.cancelRequested === true;
+  const cancellationReason = String(cancellation?.cancelReason || '执行被用户中断。').trim() || '执行被用户中断。';
+  let figmaWriteResult = {
+    required: requiresFigmaWriteEvidence(run),
+    written: false,
+    createdNodeIds: [],
+    mutatedNodeIds: [],
+    evidence: [],
+    postWriteVerificationRequired: false,
+    verifiedAfterWrite: false,
+    verificationEvidence: [],
+    postWriteBlockers: [],
+    partialWrite: false,
+    blockerReason: ''
+  };
+  let generatedArtifacts = [];
+  let effectiveExitCode = killedByWatchdog ? -1 : exitCode;
+  let imageArtifactResult = {
+    required: false,
+    hasArtifact: true,
+    blocked: false,
+    blockerReason: ''
+  };
+  let status = 'cancelled';
+  let resultSummary = buildCancelledResultSummary(run, cancellationReason, combinedText);
+  if (!wasCancelled) {
+    figmaWriteResult = extractFigmaWriteEvidence(combinedText, run);
+    generatedArtifacts = await collectAndUploadGeneratedArtifacts(run, workspace, combinedText);
+    const imageProviderResult = evaluateImageProviderResult(run, combinedText, generatedArtifacts);
+    imageArtifactResult = evaluateImageArtifactResult(run, generatedArtifacts, imageProviderResult);
+    status = resolveWorkerFinalStatus(effectiveExitCode, figmaWriteResult, imageArtifactResult);
+    resultSummary = buildResultSummary(status, effectiveExitCode, killedByWatchdog ? `${combinedText}\n${killedByWatchdog}` : combinedText, figmaWriteResult, generatedArtifacts, imageArtifactResult);
+  } else {
+    await appendLocalRunLog(run.id, `\n[worker cancelled] ${cancellationReason}\n`).catch(() => {});
+    await safeAppendRunLog(run.id, `\n[worker cancelled] ${cancellationReason}\n`).catch(() => {});
+    effectiveExitCode = Number.isFinite(exitCode) ? exitCode : null;
+  }
   if (localLogText) {
     await safeAppendRunLog(run.id, `\n\n[worker local full log ${finishedAt}]\n${localLogText}\n[/worker local full log]\n`);
   }
@@ -601,7 +700,9 @@ async function executeRun(run) {
         durationMs
       }
     ],
-    resultSummary: buildResultSummary(status, effectiveExitCode, killedByWatchdog ? `${combinedText}\n${killedByWatchdog}` : combinedText, figmaWriteResult, generatedArtifacts, imageArtifactResult),
+    currentStage: status === 'cancelled' ? '已中断' : '本机 Codex 执行',
+    blocker: status === 'cancelled' ? null : undefined,
+    resultSummary,
     workerResult: {
       deviceId,
       hostname: os.hostname(),
@@ -688,6 +789,78 @@ async function failRunBeforeCodex(run, reason) {
       written: false,
       evidence: [],
       blockerReason: reason
+    }
+  });
+}
+
+async function cancelRunBeforeCodex(run, reason) {
+  const message = String(reason || '执行被用户中断。').trim() || '执行被用户中断。';
+  console.warn(`[worker] ${message}`);
+  const runState = await loadOrCreateRunState(run);
+  const startedAt = runState.startedAt || new Date().toISOString();
+  const finishedAt = new Date().toISOString();
+  const durationMs = Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt));
+  const stageName = workerStageName(run);
+  runState.startedAt = startedAt;
+  runState.finishedAt = finishedAt;
+  runState.durationMs = durationMs;
+  runState.status = 'cancelled';
+  runState.localLogPath = runLogPath(run.id);
+  await writeRunState(run.id, runState);
+  await appendLocalRunLog(run.id, `\n[worker cancelled] ${message}\n`);
+  await enqueueRunEvent(run.id, {
+    type: 'stage',
+    phase: 'end',
+    stageName,
+    status: 'cancelled',
+    at: finishedAt,
+    startedAt,
+    finishedAt,
+    durationMs
+  });
+  await safeAppendRunLog(run.id, `\n[worker cancelled] ${message}\n`);
+  await safeUpdateRunStatus(run.id, {
+    status: 'cancelled',
+    workerStatus: 'cancelled',
+    exitCode: null,
+    startedAt,
+    finishedAt,
+    completedAt: finishedAt,
+    durationMs,
+    stages: [
+      {
+        name: stageName,
+        status: 'cancelled',
+        startedAt,
+        finishedAt,
+        durationMs
+      }
+    ],
+    currentStage: '已中断',
+    blocker: null,
+    resultSummary: buildCancelledResultSummary(run, message),
+    workerResult: {
+      deviceId,
+      hostname: os.hostname(),
+      exitCode: null,
+      localLogPath: runLogPath(run.id),
+      finalText: '',
+      stderrText: message,
+      generatedArtifacts: []
+    },
+    workerLocalLogPath: runLogPath(run.id),
+    figmaWriteResult: {
+      required: requiresFigmaWriteEvidence(run),
+      written: false,
+      createdNodeIds: [],
+      mutatedNodeIds: [],
+      evidence: [],
+      postWriteVerificationRequired: false,
+      verifiedAfterWrite: false,
+      verificationEvidence: [],
+      postWriteBlockers: [],
+      partialWrite: false,
+      blockerReason: ''
     }
   });
 }
@@ -1077,7 +1250,7 @@ function buildPrompt(run = {}, workspace = {}) {
   const imageProviderMode = imageGenerationProviderMode(run);
   const fallbackImageProviderRequested = imageProviderMode === 'fallback';
   const imagePlacementRequired = figmaTargetIsImagePlacement(run);
-  const editableFigmaRequested = requestsEditableFigmaOutput(run);
+  const layerPreserveWriteRequired = requiresLayerPreserveFigmaWrite(run);
   return [
     '# Codex 客户端等价执行',
     '',
@@ -1139,14 +1312,14 @@ function buildPrompt(run = {}, workspace = {}) {
     figmaLinks ? '- 如需读取或写入 Figma，必须使用当前操作人本机 Codex 会话里的 Figma MCP 和 Figma 授权。' : '',
     figmaLinks ? '- 不得依赖负责人电脑、本机 figma-write-local 插件、平台服务器 Figma token 或工作台管理者 admin 的 Figma 授权。' : '',
     figmaLinks ? '- 如果当前 Codex 工具列表缺少 Figma 写入工具、Figma OAuth 失效、目标文件无权限或快照缺失，必须停止并说明具体阻塞原因。' : '',
-    imagePlacementRequired ? '- 本次是纯生图并填写了 Figma 链接：生成完成后，必须把成品图作为图片放置或替换到该 Figma 目标；该链接不是默认转可编辑图层的要求。' : '',
-    imagePlacementRequired ? '- 图片落到 Figma 时必须保持成品图比例和视觉效果，不得拉伸变形；默认不拆成可编辑图层。' : '',
-    imagePlacementRequired && !editableFigmaRequested ? '- 除非用户明确要求“转为可编辑 / 可编辑图层 / 矢量重建”，否则保留位图成品展示。' : '',
+    imagePlacementRequired ? '- 本次填写了 Figma 链接：必须按当前 Skill / md 的原始要求，把结果写回、放置、替换或分层处理到该 Figma 目标。' : '',
+    imagePlacementRequired ? '- 如果 Skill / md 要求逐图层生成回写、保留图层结构或输出可编辑结果，必须按该要求执行；如果 Skill / md 只要求成品替换，也只能按成品替换，不得擅自扩展或降级。' : '',
+    imagePlacementRequired && layerPreserveWriteRequired ? '- 当前 Skill / md 明确要求按 replaceable layers 逐图层生成回写并保持原有图层结构；禁止把整个目标 frame 合成单张总图后再新建 bitmap carrier 节点整体覆盖，除非 Skill / md 原文明示允许。' : '',
     figmaWriteRequired ? '- 涉及 Figma 写入、图片放置或图片替换时，必须回传 createdNodeIds / mutatedNodeIds，或可证明图片已放置/替换到目标 Figma 的等价工具证据。' : '',
     !figmaLinks ? '- 本次交付位置是工作台产物区，不要求读取或写入 Figma。' : '',
     !figmaLinks && imageGenerationRun ? '- 本次是纯生图：必须把最终成品图保存到本机执行目录下的“生成图片/”或“outputs/”目录，平台会自动归档到执行台供预览、打开和下载。' : '',
     imagePlacementRequired
-      ? '- 最终报告必须写明生成图片产物路径、Figma 放置/替换目标、使用的 Skill / md 和复核点。'
+      ? '- 最终报告必须写明生成图片产物路径、Figma 写回/放置/替换/分层处理目标、使用的 Skill / md 和复核点。'
       : '- 如果 Skill / md 任务本身是生成图片或本地产物且本次没有要求落到 Figma，不强制要求 Figma 写入完成；最终报告写明产物路径、使用的 Skill / md 和复核点。',
     figmaLinks ? '- 如果已经写入 Figma，最后必须尽量回读目标节点或截图确认；如果回读失败，说明写入证据和回读失败原因。' : '',
     figmaLinks
@@ -2176,6 +2349,29 @@ function buildResultSummary(status, exitCode, finalText, figmaWriteResult = {}, 
   };
 }
 
+function buildCancelledResultSummary(run = {}, reason = '', finalText = '') {
+  const message = String(reason || '执行被用户中断。').trim() || '执行被用户中断。';
+  return {
+    status: 'cancelled',
+    statusText: 'cancelled',
+    summary: '执行已中断。',
+    blockerReason: '',
+    needsHumanReview: false,
+    validationCommands: ['codex exec --json'],
+    artifacts: [],
+    generatedArtifacts: [],
+    figmaWritten: false,
+    figmaVerifiedAfterWrite: false,
+    nextStep: '如需继续，请重新发起执行。',
+    finalText: String(finalText || '').slice(-4000),
+    parsedAt: new Date().toISOString(),
+    meta: {
+      executionKind: String(run?.executionKind || '').trim(),
+      cancelReason: message
+    }
+  };
+}
+
 function evaluateImageProviderResult(run = {}, finalText = '', generatedArtifacts = []) {
   if (!isImageGenerationRun(run)) return { blocked: false, reason: '', disallowGeneratedArtifacts: false };
   if (imageGenerationProviderMode(run) === 'fallback') return { blocked: false, reason: '', disallowGeneratedArtifacts: false };
@@ -2296,6 +2492,20 @@ function normalizeExecutionKind(value = '') {
   return 'default';
 }
 
+function requiresLayerPreserveFigmaWrite(run = {}) {
+  const text = [
+    run.requirement,
+    run.title,
+    run.sourceTitle,
+    run.customWorkflowName,
+    ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
+    ...(Array.isArray(run.selectedMaterialSnapshots)
+      ? run.selectedMaterialSnapshots.flatMap(item => [item?.path, item?.title, item?.name, item?.content])
+      : [])
+  ].filter(Boolean).join('\n');
+  return /preserv(?:e|ing)\s+layer\s+structure|replacement\s+manifest|replaceable\s+image-?fill|写回到现有\s*`?image-?fill`?\s*图层|保持可编辑模板结构|逐层制定\s*manifest|不得\s*flatten|do\s+not\s+flatten|layer\s+structure|component\s+hierarchy/i.test(text);
+}
+
 function requestsNonImage2Provider(run = {}) {
   const text = [
     run.requirement,
@@ -2333,20 +2543,6 @@ function explicitlySkipsFigmaWrite(run = {}) {
     run.figmaWriteMode
   ].filter(Boolean).join('\n');
   return /不写入\s*Figma|无需写入\s*Figma|不需要写入\s*Figma|不要写入\s*Figma|不放(?:入|到)\s*Figma|无需放(?:入|到)\s*Figma|不要替换\s*Figma|仅(?:生成|输出|保存).{0,20}(?:本地|文件|产物)|只(?:生成|输出|保存).{0,20}(?:本地|文件|产物)/i.test(text);
-}
-
-function requestsEditableFigmaOutput(run = {}) {
-  const text = [
-    run.requirement,
-    run.title,
-    run.sourceTitle,
-    run.customWorkflowName,
-    ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
-    ...(Array.isArray(run.selectedMaterialSnapshots)
-      ? run.selectedMaterialSnapshots.flatMap(item => [item?.path, item?.title, item?.name, item?.content])
-      : [])
-  ].filter(Boolean).join('\n');
-  return /转(?:成|为)?可编辑|可编辑图层|可编辑结构|矢量(?:化|重建)?|vector|拆(?:成|为).{0,12}图层|重建.{0,12}(?:Figma|图层|节点)|还原.{0,12}(?:Figma|图层|节点)|分层|逐图层生成|逐层生成|每个图层单独生成|source\s*layers?|replacement\s*manifest|保留原(?:有)?图层结构|保持原(?:有)?图层结构|image-?fill\s*图层/i.test(text);
 }
 
 function resolveWorkerFinalStatus(exitCode, figmaWriteResult = {}, imageArtifactResult = {}) {

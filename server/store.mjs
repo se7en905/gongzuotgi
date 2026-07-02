@@ -1297,7 +1297,7 @@ async function resolveTaskForRun(input = {}) {
 }
 
 export async function listAgentWorkers(filters = {}) {
-  const workers = await readJson(paths.agentWorkers, []);
+  const workers = await reconcileAgentWorkerCurrentRunPointers(await readJson(paths.agentWorkers, []));
   return workers
     .map(normalizeAgentWorker)
     .filter(worker => !filters.userId || worker.userId === String(filters.userId))
@@ -1317,6 +1317,32 @@ export async function upsertAgentWorker(input = {}) {
   else workers.push(worker);
   await writeJson(paths.agentWorkers, workers);
   return index >= 0 ? normalizeAgentWorker(workers[index]) : worker;
+}
+
+async function reconcileAgentWorkerCurrentRunPointers(workers = []) {
+  const rows = Array.isArray(workers) ? workers.map(normalizeAgentWorker) : [];
+  const activeRunIds = new Set(
+    (await readJson(paths.runs, []))
+      .filter(run => {
+        const status = `${run?.status || ''} ${run?.workerStatus || ''}`.toLowerCase();
+        return !isFinishedRun(status);
+      })
+      .map(run => cleanString(run?.id))
+      .filter(Boolean)
+  );
+  let changed = false;
+  const nextWorkers = rows.map(worker => {
+    const currentRunId = cleanString(worker.currentRunId);
+    if (!currentRunId || activeRunIds.has(currentRunId)) return worker;
+    changed = true;
+    return {
+      ...worker,
+      currentRunId: '',
+      updatedAt: new Date().toISOString()
+    };
+  });
+  if (changed) await writeJson(paths.agentWorkers, nextWorkers);
+  return nextWorkers;
 }
 
 export async function updateAgentWorkerAlias(id, userId, alias = '') {
@@ -1438,6 +1464,13 @@ export async function updateAgentRunFromWorker(runId, input = {}) {
   if (index === -1) return null;
   const now = new Date().toISOString();
   const existing = runs[index];
+  if (isCancelledRunStatus(existing.status) || isCancelledRunStatus(existing.workerStatus)) {
+    const hydrated = await hydrateRunStages(existing);
+    return {
+      ...hydrated,
+      _changed: false
+    };
+  }
   if (isFinalWorkerRunStatus(existing.status || existing.workerStatus) && !isFinalWorkerRunStatus(input.status || input.workerStatus)) {
     const hydrated = await hydrateRunStages(existing);
     return {

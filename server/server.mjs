@@ -2766,6 +2766,17 @@ async function handleApi(req, res, url) {
     const run = await requireRun(runCancel[1]);
     requireProjectAccess(currentUser, run.projectId, 'developer', 'run.codex.execute');
     const cancelled = await cancelRun(runCancel[1], currentUser.id);
+    const cancelledRun = await getRun(run.id).catch(() => null);
+    const workers = await listAgentWorkers();
+    const clearedWorkers = [];
+    for (const worker of workers) {
+      if (String(worker.currentRunId || '').trim() !== run.id) continue;
+      const cleared = await upsertAgentWorker({
+        ...worker,
+        currentRunId: ''
+      });
+      clearedWorkers.push(cleared);
+    }
     await writeOperationLog(req, {
       user: currentUser,
       module: 'run',
@@ -2775,10 +2786,31 @@ async function handleApi(req, res, url) {
       targetId: run.id,
       targetName: run.title,
       before: run,
-      after: cancelled,
+      after: cancelledRun || cancelled,
       description: `${currentUser.displayName || currentUser.username} 中断执行「${run.title}」`
     });
-    sendJson(res, 200, cancelled);
+    if (cancelledRun) {
+      broadcastPlatformEvent('runs.changed', {
+        projectId: cancelledRun.projectId,
+        runId: cancelledRun.id,
+        run: cancelledRun,
+        module: 'run-cancel',
+        targetUserId: cancelledRun.queuedForUserId || cancelledRun.assignedToUserId || cancelledRun.ownerUserId || currentUser.id,
+        wakeWorker: true
+      });
+    }
+    for (const worker of clearedWorkers) {
+      broadcastPlatformEvent('agent-workers.changed', {
+        userId: worker.userId,
+        deviceId: worker.deviceId,
+        worker,
+        module: 'agent-worker-cancel-clear'
+      });
+    }
+    sendJson(res, 200, {
+      ...cancelled,
+      run: cancelledRun
+    });
     return;
   }
 

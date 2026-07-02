@@ -21662,20 +21662,6 @@ export default {
       };
     },
 
-    runRequestsEditableFigmaOutput(run = {}) {
-      const text = [
-        run.requirement,
-        run.title,
-        run.sourceTitle,
-        run.customWorkflowName,
-        ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
-        ...(Array.isArray(run.selectedMaterialSnapshots)
-          ? run.selectedMaterialSnapshots.flatMap(item => [item?.path, item?.title, item?.name, item?.content])
-          : [])
-      ].filter(Boolean).join('\n');
-      return /转(?:成|为)?可编辑|可编辑图层|可编辑结构|矢量(?:化|重建)?|vector|拆(?:成|为).{0,12}图层|重建.{0,12}(?:Figma|图层|节点)|还原.{0,12}(?:Figma|图层|节点)|分层|逐图层生成|逐层生成|每个图层单独生成|source\s*layers?|replacement\s*manifest|保留原(?:有)?图层结构|保持原(?:有)?图层结构|image-?fill\s*图层/i.test(text);
-    },
-
     defaultSkillRunRequirement({ materialNames = [], materialPaths = [], figmaLinks = '', writeMode = 'target-node', imageGenerationProviderMode = 'image2', selectedMaterialSnapshots = [] } = {}) {
       const names = this.normalizedRunMaterialHints(materialNames).filter(Boolean);
       const paths = this.normalizedRunMaterialHints(materialPaths).filter(Boolean);
@@ -21693,7 +21679,7 @@ export default {
         figmaLinks: figmaText
       };
       const isImagePlacement = Boolean(figmaText && this.runFigmaTargetIsImagePlacement(runContext));
-      const editableFigmaRequested = this.runRequestsEditableFigmaOutput(runContext);
+      const requiresLayerPreserveWrite = this.runRequiresLayerPreserveFigmaWrite(runContext);
       const providerMode = this.normalizedImageGenerationProviderMode(imageGenerationProviderMode);
       const providerText = this.isImageGenerationRun(runContext)
         ? providerMode === 'fallback'
@@ -21708,13 +21694,28 @@ export default {
           ? `Figma 链接：${figmaText}。`
           : '目标位置：工作台产物区；本次按当前 md / Skill 和执行要求直接产出图片、本地文件、报告或其它结果。',
         figmaText && isImagePlacement
-          ? editableFigmaRequested
-            ? '按该 md / Skill 的原始要求生成并落到该 Figma 目标；如果技能明确要求分层、可编辑结构或矢量重建，以技能原始要求为准。'
-            : '按该 md / Skill 的原始要求生成成品图，并将最终图片按比例放置或替换到该 Figma 目标；默认保留位图成品效果，不拉伸变形，不转为可编辑图层。'
+          ? [
+            '按该 md / Skill 的原始要求把结果写回或落到该 Figma 目标；具体是逐图层生成回写、保持可编辑结构，还是生成成品图替换，均以该 md / Skill 和本次用户要求为准。',
+            requiresLayerPreserveWrite ? '当前 skill/md 明确要求按 replaceable layers 逐图层生成回写并保持原有图层结构；禁止把整个目标 frame 合成单张总图后再新建 bitmap carrier 节点整体覆盖。' : ''
+          ].filter(Boolean).join('\n')
           : figmaText
             ? `按该 md / Skill 的原始要求处理本次 Figma 目标；${writeMode === 'create-page' ? '如技能要求新建内容，则可新建页面或 Frame。' : '如技能要求修改内容，则优先处理 Figma 链接中的目标节点。'}`
             : '如果该 md / Skill 本身要求生成图片、创建本地产物或输出说明，按原始要求完整执行，不强制 Figma 写入。'
       ].join('\n');
+    },
+
+    runRequiresLayerPreserveFigmaWrite(run = {}) {
+      const text = [
+        run.requirement,
+        run.title,
+        run.sourceTitle,
+        run.customWorkflowName,
+        ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
+        ...(Array.isArray(run.selectedMaterialSnapshots)
+          ? run.selectedMaterialSnapshots.flatMap(item => [item?.path, item?.title, item?.name, item?.content])
+          : [])
+      ].filter(Boolean).join('\n');
+      return /preserv(?:e|ing)\s+layer\s+structure|replacement\s+manifest|replaceable\s+image-?fill|写回到现有\s*`?image-?fill`?\s*图层|保持可编辑模板结构|逐层制定\s*manifest|不得\s*flatten|do\s+not\s+flatten|layer\s+structure|component\s+hierarchy/i.test(text);
     },
 
     defaultRunCodexRequest(source = 'run-create') {
@@ -21736,6 +21737,8 @@ export default {
         .replace(/\n*(?:该 Figma 链接表示本次产物的放置或替换目标；如果 skill\/md 明确要求分层、可编辑结构或矢量重建，以 skill\/md 原始要求为准。?)/g, '')
         .replace(/\n*(?:按该 md \/ Skill 的原始要求生成成品图，并将最终图片按比例放置或替换到该 Figma 目标；默认保留位图成品效果，不拉伸变形，不转为可编辑图层。?)/g, '')
         .replace(/\n*(?:按该 md \/ Skill 的原始要求生成并落到该 Figma 目标；如果技能明确要求分层、可编辑结构或矢量重建，以技能原始要求为准。?)/g, '')
+        .replace(/\n*(?:按该 md \/ Skill 的原始要求把结果写回或落到该 Figma 目标；具体是逐图层生成回写、保持可编辑结构，还是生成成品图替换，均以该 md \/ Skill 和本次用户要求为准。?)/g, '')
+        .replace(/\n*(?:该 Figma 链接表示本次产物的写回、放置、替换或分层处理目标；具体是逐图层生成回写、保持可编辑结构，还是生成成品图替换，均以 skill\/md 原始要求和本次用户要求为准。?)/g, '')
         .replace(/\n*(?:使用「[^」]+」处理该 Figma 目标。?)/g, '')
         .trim();
       if (cleaned.includes(instructionText)) return cleaned;
@@ -21760,11 +21763,12 @@ export default {
         selectedMaterialSnapshots,
         figmaLinks: figmaText
       };
-      const editableFigmaRequested = this.runRequestsEditableFigmaOutput(runContext);
+      const requiresLayerPreserveWrite = this.runRequiresLayerPreserveFigmaWrite(runContext);
       const targetInstruction = this.runFigmaTargetIsImagePlacement(runContext)
-        ? editableFigmaRequested
-          ? '该 Figma 链接表示本次产物的放置或替换目标；如果 skill/md 明确要求分层、可编辑结构或矢量重建，以 skill/md 原始要求为准。'
-          : '该 Figma 链接表示生成成品图的放置或替换目标；默认保留位图成品效果，按比例展示，不拉伸变形，不转为可编辑图层。'
+        ? [
+          '该 Figma 链接表示本次产物的写回、放置、替换或分层处理目标；具体是逐图层生成回写、保持可编辑结构，还是生成成品图替换，均以 skill/md 原始要求和本次用户要求为准。',
+          requiresLayerPreserveWrite ? '当前 skill/md 明确要求按 replaceable layers 逐图层生成回写并保持原有图层结构；禁止把整个目标 frame 合成单张总图后再新建 bitmap carrier 节点整体覆盖。' : ''
+        ].filter(Boolean).join('\n')
         : `使用${materialText ? `「${materialText}」` : '当前选择的 md / Skill'}处理该 Figma 目标。`;
       if (this.requirementContainsFigmaLink(text)) {
         return this.normalizedRequirementWithFigmaTargetInstruction(text, targetInstruction, true);
@@ -22440,7 +22444,18 @@ export default {
     },
 
     aiExecutionArchiveRequirementText(run = {}) {
-      const text = String(run.requirement || '').trim();
+      const text = this.ensureFigmaTargetInRunRequirement({
+        requirement: run.requirement || '',
+        materialNames: (Array.isArray(run.selectedMaterialSnapshots) ? run.selectedMaterialSnapshots : [])
+          .map(item => item?.title || this.runMaterialDisplayName(item?.path || item?.sourceValue)),
+        materialPaths: Array.isArray(run.selectedMaterialHints) && run.selectedMaterialHints.length
+          ? run.selectedMaterialHints
+          : [run.primarySkillPath || run.stage].filter(Boolean),
+        figmaLinks: run.figmaLinks || '',
+        writeMode: run.figmaWriteMode || 'target-node',
+        imageGenerationProviderMode: run.imageGenerationProviderMode || 'image2',
+        selectedMaterialSnapshots: run.selectedMaterialSnapshots || []
+      }).trim();
       return text && !this.isPlaceholderResultText(text) ? text : '';
     },
 
