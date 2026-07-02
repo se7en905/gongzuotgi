@@ -400,17 +400,17 @@
         </div>
       </details>
       <div
-        v-if="app.isNoFigmaImageGenerationRun(app.selectedRun) || app.runGeneratedImageArtifacts(app.selectedRun).length"
+        v-if="app.isNoFigmaImageGenerationRun(app.selectedRun) || app.workbenchGeneratedImageArtifacts(app.selectedRun).length"
         class="run-generated-image-panel"
       >
         <div class="run-generated-image-head">
           <strong>{{ app.runGeneratedArtifactSectionTitle(app.selectedRun) }}</strong>
-          <span v-if="app.runGeneratedImageArtifacts(app.selectedRun).length">{{ app.runGeneratedImageArtifacts(app.selectedRun).length }} 张，可预览和下载</span>
+          <span v-if="app.workbenchGeneratedImageArtifacts(app.selectedRun).length">{{ app.workbenchGeneratedImageArtifacts(app.selectedRun).length }} 张，可预览和下载</span>
           <span v-else>未检测到可下载成图</span>
         </div>
-        <div v-if="app.runGeneratedImageArtifacts(app.selectedRun).length" class="run-generated-image-grid">
+        <div v-if="app.workbenchGeneratedImageArtifacts(app.selectedRun).length" class="run-generated-image-grid">
           <article
-            v-for="image in app.runGeneratedImageArtifacts(app.selectedRun)"
+            v-for="image in app.workbenchGeneratedImageArtifacts(app.selectedRun)"
             :key="image.path"
             class="run-generated-image-card"
           >

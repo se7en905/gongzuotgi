@@ -4149,6 +4149,19 @@ export default {
         : '刷新库存：重新读取当前 Git 产物列表、版本和贡献人信息。';
     },
 
+    skillInventoryLastRefreshAt() {
+      const projectById = new Map((this.projects || []).map(project => [String(project.id || ''), project]));
+      return Object.entries(this.scans || {}).reduce((latest, [projectId, rawScan]) => {
+        const scan = rawScan?.scan && typeof rawScan.scan === 'object'
+          ? { ...rawScan.scan, cachedAt: rawScan.cachedAt || rawScan.scan.cachedAt || '' }
+          : rawScan;
+        const project = projectById.get(String(projectId || '')) || this.projectFromCachedScan(projectId, rawScan);
+        if (!this.isGitSkillSourceProject({ ...project, ...(scan || {}) })) return latest;
+        const value = String(scan?.scannedAt || scan?.cachedAt || '').trim();
+        return value && value.localeCompare(String(latest || '')) > 0 ? value : latest;
+      }, '');
+    },
+
     taskProcessingNotePlaceholder() {
       return this.isPlatformAdmin ? '记录沟通、产出路径、待负责人确认的问题' : '记录沟通、产出路径、待确认的问题';
     },
@@ -22259,6 +22272,24 @@ export default {
       return run?.resultSummary?.figmaVerifiedAfterWrite === true;
     },
 
+    shouldHideWorkbenchGeneratedImageArtifacts(run = {}) {
+      return Boolean(this.runFigmaTargetIsImagePlacement(run) && this.hasFigmaWriteEvidence(run));
+    },
+
+    workbenchGeneratedImageArtifacts(run = {}) {
+      if (this.shouldHideWorkbenchGeneratedImageArtifacts(run)) return [];
+      return this.runGeneratedImageArtifacts(run);
+    },
+
+    shouldKeepWorkbenchArtifactEvidence(run = {}, value = '') {
+      if (!this.shouldHideWorkbenchGeneratedImageArtifacts(run)) return true;
+      const text = String(value || '').trim().replaceAll('\\', '/');
+      if (!text) return false;
+      const looksLikeImage = /\.(png|jpg|jpeg|webp|gif)\b/i.test(text);
+      const looksLikeGeneratedPath = /(^|\/)(?:生成图片|outputs|workspace\/outputs|platform-artifacts)\//i.test(text);
+      return !(looksLikeImage && looksLikeGeneratedPath);
+    },
+
     resultStatusTitle(summary = {}, run = {}) {
       const status = this.effectiveResultStatus({ ...run, resultSummary: summary });
       const label = this.resultStatusLabel(status);
@@ -22412,6 +22443,7 @@ export default {
       const artifactRows = (Array.isArray(summary.artifacts) ? summary.artifacts : [])
         .map(value => String(value || '').trim())
         .filter(value => value && !this.isPlaceholderResultText(value))
+        .filter(value => this.shouldKeepWorkbenchArtifactEvidence(run, value))
         .map((value, index) => ({ key: `artifact-${index}`, value: this.readableArchiveValue(value) }));
       const changeRows = this.aiExecutionArchiveChangeRows(run);
       const dataRows = this.aiExecutionArchiveDataRows(run, { stageRows, validationRows, artifactRows, changeRows });
@@ -22560,7 +22592,7 @@ export default {
       const detail = this.aiExecutionArchiveDetailMetrics(run);
       if (!run) return detail;
       const summary = run.resultSummary || {};
-      const generatedImages = this.runGeneratedImageArtifacts(run);
+      const generatedImages = this.workbenchGeneratedImageArtifacts(run);
       const actualStages = (Array.isArray(run.stages) ? run.stages : []).filter(stage => stage?.name);
       const actualStageCounts = actualStages.reduce((acc, stage) => {
         const value = String(stage.status || '').toLowerCase();

@@ -7,6 +7,9 @@
         <h3>{{ app.skillInventoryTab === 'assets' ? 'AI 产物清单' : '产物列表' }}</h3>
       </div>
       <div class="panel-actions art-progress-actions skill-inventory-top-actions">
+        <span class="skill-inventory-refresh-record">
+          {{ app.skillInventoryLastRefreshAt ? `上次刷新 ${app.formatDateTime(app.skillInventoryLastRefreshAt)}` : '暂无库存缓存' }}
+        </span>
         <ElTooltip v-if="app.canRefreshSkillInventoryScan" :content="app.skillInventoryRefreshHint" placement="top" effect="dark">
           <ElButton :loading="app.loading.scan" @click="app.scanAllProjects">刷新库存</ElButton>
         </ElTooltip>
@@ -944,6 +947,12 @@ export default {
 
   .skill-inventory-search {
     width: 240px;
+  }
+
+  .skill-inventory-refresh-record {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.35;
   }
 
   .skill-validation-log-button {

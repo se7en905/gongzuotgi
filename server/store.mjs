@@ -4627,7 +4627,7 @@ function isNegatedFigmaBlockerLine(line = '') {
 function isNonBlockingFigmaNoteLine(line = '') {
   const text = compactEvidenceReason(line);
   if (!text) return false;
-  return /(?:Figma MCP|MCP|截图工具).*(?:截图已生成|截图.*返回|内联截图|可见)|(?:shell|curl|本机).*(?:无法|不能).*(?:下载|解析|保存).*(?:figma\.com|截图|图片|本地)|(?:平台产物目录|产物目录|报告).*(?:不可写|只可读|未能落盘|不能落盘)/i.test(text);
+  return /(?:Figma MCP|MCP|截图工具).*(?:截图已生成|截图.*返回|内联截图|可见)|(?:shell|curl|本机).*(?:无法|不能).*(?:下载|解析|保存).*(?:figma\.com|截图|图片|本地)|(?:平台产物目录|产物目录|报告).*(?:不可写|只可读|未能落盘|不能落盘)|Step\s*13.{0,160}(?:generated|final_|最终写回|最终验证|contact)|只保留最终写回用的\s*`?final_|删除失败 alpha|旧棋盘格中间图|废弃重生成版本/i.test(text);
 }
 
 function isFigmaPostWriteBlockerLine(line = '') {

@@ -305,13 +305,13 @@
       </details>
 
       <section
-        v-if="app.isNoFigmaImageGenerationRun(app.aiExecutionArchiveDetailRun) || app.runGeneratedImageArtifacts(app.aiExecutionArchiveDetailRun).length"
+        v-if="app.isNoFigmaImageGenerationRun(app.aiExecutionArchiveDetailRun) || app.workbenchGeneratedImageArtifacts(app.aiExecutionArchiveDetailRun).length"
         class="ai-archive-detail-section"
       >
         <h4>{{ app.runGeneratedArtifactSectionTitle(app.aiExecutionArchiveDetailRun) }}</h4>
-        <div v-if="app.runGeneratedImageArtifacts(app.aiExecutionArchiveDetailRun).length" class="ai-archive-generated-image-grid">
+        <div v-if="app.workbenchGeneratedImageArtifacts(app.aiExecutionArchiveDetailRun).length" class="ai-archive-generated-image-grid">
           <article
-            v-for="image in app.runGeneratedImageArtifacts(app.aiExecutionArchiveDetailRun)"
+            v-for="image in app.workbenchGeneratedImageArtifacts(app.aiExecutionArchiveDetailRun)"
             :key="image.path"
             class="ai-archive-generated-image-card"
           >
