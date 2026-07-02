@@ -29,6 +29,8 @@
 
 工作台页面上的 `复制手动启动` 和 `复制开机自启` 是双平台命令，复制后会同时包含 Windows PowerShell 段和 macOS 终端段。组员只执行自己电脑系统对应的那一段。
 
+平台如果修改了 Worker 本身，或修改了 Skill/md 的执行口径并要求“立即生效”，默认不用先让大家重复制命令。在线中的 Windows / macOS Worker 会在平台重启后自动连回并拉取最新脚本，而且每次领取新任务前还会再强制检查一次最新版本。只有某台电脑的 Worker 离线、计划任务 / LaunchAgent 异常或长期没有连回平台时，才需要重执行一次对应的 `复制 Windows 开机自启/立即生效` 或 `复制 macOS 开机自启/立即生效` 命令。
+
 ### Windows 手动启动
 
 在执行人 Windows 电脑的 PowerShell 中执行；命令会下载 Worker 到该电脑的用户目录，不需要本机有平台项目代码：
@@ -62,9 +64,9 @@ node "$HOME/ArtDirectWorker/scripts/art-direct-worker.mjs"
 
 ## 开机自启安装
 
-### Windows 开机自启
+### Windows 开机自启 / 立即生效
 
-在执行人 Windows 电脑的 PowerShell 中执行；命令会下载 Worker 和安装脚本到该电脑的用户目录，并写入当前 Windows 用户的启动项，不需要管理员权限：
+在执行人 Windows 电脑的 PowerShell 中执行；命令会下载 Worker 和安装脚本到该电脑的用户目录，并创建或覆盖当前 Windows 用户的计划任务，不需要管理员权限。平台逻辑改动后再次执行这整段，也会立刻停止旧 Worker、启动最新 Worker：
 
 ```powershell
 $root = "$env:USERPROFILE\ArtDirectWorker"
@@ -78,11 +80,11 @@ $env:ART_WORKER_HOME = $root
 powershell -NoProfile -ExecutionPolicy Bypass -File "$root\scripts\install_art_direct_worker_windows.ps1"
 ```
 
-安装后会写入当前 Windows 用户启动项，组员登录 Windows 时自动启动本机 Worker。重复执行同一段开机自启命令会覆盖同一个启动项，不会创建多份启动配置。
+安装后会写入当前 Windows 用户计划任务，组员登录 Windows 时自动启动本机 Worker。重复执行同一段开机自启命令会覆盖同一个计划任务，不会创建多份启动配置，并且会立即重启到最新 Worker 版本。
 
-### macOS 开机自启
+### macOS 开机自启 / 立即生效
 
-在执行人 macOS 电脑执行：
+在执行人 macOS 电脑执行。首次安装用于开机自启；平台逻辑改动后再次执行这整段，也会立刻重装 LaunchAgent 并重启最新 Worker：
 
 ```bash
 mkdir -p "$HOME/ArtDirectWorker/scripts"
@@ -96,6 +98,13 @@ bash "$HOME/ArtDirectWorker/scripts/install_art_direct_worker_launch_agent.sh"
 ```
 
 安装后，组员登录 macOS 时会自动启动本机 Worker。状态会显示在工作台的 `本机执行状态` 页面。
+
+## 平台逻辑更新后的立即生效
+
+- 默认路径：平台重启后，在线 Worker 会自动连回并拉取最新脚本；每次领取新任务前，Worker 还会再强制检查一次最新版，所以正常在线的电脑通常不需要组员重新跑命令。
+- Windows 组员补救：只有 Worker 离线、当前账号计划任务不存在或计划任务异常时，才重新复制并执行一次最新 `复制 Windows 开机自启/立即生效` 命令。它会覆盖当前账号同名计划任务，并立刻重启 Worker。
+- macOS 组员补救：只有 Worker 离线、LaunchAgent 丢失或 LaunchAgent 异常时，才重新复制并执行一次最新 `复制 macOS 开机自启/立即生效` 命令。它会重装 LaunchAgent，并立刻重启 Worker。
+- 已经被旧 Worker 领取并正在执行中的任务不会中途切换到新逻辑；新规则会从下一次领取、继续执行或重新执行开始生效。
 
 ## 环境变量
 

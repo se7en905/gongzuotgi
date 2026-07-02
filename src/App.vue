@@ -19200,6 +19200,24 @@ export default {
 
     async openRunCreateDrawer(overrides = {}) {
       const form = this.newRunForm(overrides);
+      const requirement = String(form.requirement || '').trim();
+      if (requirement && this.requirementContainsFigmaLink(requirement)) {
+        const materialHints = this.normalizedRunMaterialHints(
+          Array.isArray(form.selectedMaterialHints) && form.selectedMaterialHints.length
+            ? form.selectedMaterialHints
+            : [form.primarySkillPath || form.stage].filter(Boolean)
+        );
+        form.requirement = this.ensureFigmaTargetInRunRequirement({
+          requirement,
+          materialNames: (Array.isArray(form.selectedMaterialSnapshots) ? form.selectedMaterialSnapshots : [])
+            .map(item => item?.title || this.runMaterialDisplayName(item?.path || item?.sourceValue)),
+          materialPaths: materialHints,
+          figmaLinks: form.figmaLinks || '',
+          writeMode: form.figmaWriteMode || 'target-node',
+          imageGenerationProviderMode: form.imageGenerationProviderMode || 'image2',
+          selectedMaterialSnapshots: form.selectedMaterialSnapshots || []
+        });
+      }
       this.runForm = form;
       this.refreshCustomWorkflows().catch(() => {});
       if (form.projectId && !this.scans[form.projectId]) {
@@ -21105,16 +21123,18 @@ export default {
       const windowsRoot = '$env:USERPROFILE\\ArtDirectWorker';
       if (os === 'dual') {
         return [
-          '# Windows PowerShell（组员 Windows 电脑使用下面这段）',
+          '# Windows PowerShell（组员 Windows 电脑首次安装和平台更新后的立即生效都用这段）',
           this.directSkillWorkerInstallCommand(user, 'windows'),
           '',
-          '# macOS 终端（组员 macOS 电脑使用下面这段）',
+          '# macOS 终端（组员 macOS 电脑首次安装和平台更新后的立即生效都用这段）',
           this.directSkillWorkerInstallCommand(user, 'mac')
         ].join('\n');
       }
       if (os === 'windows') {
         return [
           '# 请在组员本人常用 Windows 账号的 PowerShell 里运行；不要用其他人的 Administrator 账号代跑。',
+          '# 首次安装和平台修改 Worker / Skill 执行逻辑后的立即生效，都执行这整段。',
+          '# 它会覆盖当前账号同名计划任务，并立刻停止旧 Worker、启动最新 Worker。',
           '$ErrorActionPreference = "Stop"',
           '$ProgressPreference = "SilentlyContinue"',
           `$root = "${windowsRoot}"`,
@@ -21139,6 +21159,8 @@ export default {
         ].join('\n');
       }
       return [
+        '# 首次安装和平台修改 Worker / Skill 执行逻辑后的立即生效，都执行这整段。',
+        '# 它会重装当前账号 LaunchAgent，并立刻重启最新 Worker。',
         'WORKER_HOME="$HOME/ArtDirectWorker"',
         'mkdir -p "$WORKER_HOME/scripts"',
         `curl -fsSL ${this.shellQuote(`${apiBase}/worker/art-direct-worker.mjs`)} -o "$WORKER_HOME/scripts/art-direct-worker.mjs"`,
@@ -21168,7 +21190,7 @@ export default {
       }
       const platform = os === 'windows' ? 'Windows' : os === 'mac' ? 'macOS' : '双平台';
       const command = install ? this.directSkillWorkerInstallCommand(user, os) : this.directSkillWorkerStartCommand(user, os);
-      return this.copyText(command, `${platform} Worker ${install ? '开机自启安装命令' : '手动启动命令'}`);
+      return this.copyText(command, `${platform} Worker ${install ? '开机自启/立即生效命令' : '手动启动命令'}`);
     },
 
     shellQuote(value = '') {
@@ -21741,8 +21763,27 @@ export default {
         .replace(/\n*(?:该 Figma 链接表示本次产物的写回、放置、替换或分层处理目标；具体是逐图层生成回写、保持可编辑结构，还是生成成品图替换，均以 skill\/md 原始要求和本次用户要求为准。?)/g, '')
         .replace(/\n*(?:使用「[^」]+」处理该 Figma 目标。?)/g, '')
         .trim();
-      if (cleaned.includes(instructionText)) return cleaned;
-      return `${cleaned}\n${instructionText}`.trim();
+      const existingLines = cleaned.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+      const seen = new Set(existingLines.map(line => this.normalizedRequirementInstructionLine(line)).filter(Boolean));
+      const missingLines = instructionText
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .filter(line => {
+          const key = this.normalizedRequirementInstructionLine(line);
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      if (!missingLines.length) return cleaned;
+      return `${cleaned}\n${missingLines.join('\n')}`.trim();
+    },
+
+    normalizedRequirementInstructionLine(text = '') {
+      return String(text || '')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .replace(/[。；;]+$/g, '');
     },
 
     ensureFigmaTargetInRunRequirement({ requirement = '', materialNames = [], materialPaths = [], figmaLinks = '', writeMode = 'target-node', imageGenerationProviderMode = 'image2', selectedMaterialSnapshots = [] } = {}) {

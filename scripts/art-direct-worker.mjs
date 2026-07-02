@@ -351,6 +351,8 @@ async function checkAndExecuteNextRun() {
   try {
     await flushOfflineQueue();
     while (true) {
+      const updated = await checkSelfUpdate(true);
+      if (updated || selfRestartScheduled) return;
       const run = await claimLocalRecoverableRun() || await claimNextRun();
       if (!run) break;
       currentRunId = run.id || '';
@@ -411,6 +413,8 @@ async function readPlatformEvents() {
   await heartbeat(true).catch(error => {
     logOfflineNotice(`平台事件连接后心跳恢复失败，稍后重试：${error.message}`);
   });
+  const updated = await checkSelfUpdate(true);
+  if (updated || selfRestartScheduled) return;
   void checkAndExecuteNextRun();
   const decoder = new TextDecoder();
   let buffer = '';

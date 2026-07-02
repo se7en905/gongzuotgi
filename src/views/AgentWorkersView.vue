@@ -67,11 +67,12 @@
         <div>
           <h3>Worker 心跳</h3>
           <p>命令必须在执行人自己的电脑运行。</p>
+          <p class="muted-text">默认不需要让组员重新复制命令。平台重启后，在线中的 Windows/macOS Worker 会自动连回并拉取最新脚本；只有 Worker 离线、计划任务或 LaunchAgent 异常时，才需要重执行开机自启命令。</p>
           <span v-if="!app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" class="muted-text">当前账号没有复制 Worker 启动命令的权限。</span>
         </div>
         <div class="agent-worker-toolbar">
-          <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" type="primary" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, true, 'windows')">复制 Windows 开机自启</ElButton>
-          <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, true, 'mac')">复制 macOS 开机自启</ElButton>
+          <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" type="primary" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, true, 'windows')">复制 Windows 开机自启/立即生效</ElButton>
+          <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, true, 'mac')">复制 macOS 开机自启/立即生效</ElButton>
           <ElButton plain :loading="app.loading.agentWorkers || app.loading.runs" @click="app.refreshAgentWorkerStatusView">刷新状态</ElButton>
         </div>
       </div>
@@ -83,11 +84,11 @@
       </div>
       <div>
         <strong>命令影响</strong>
-        <p>本次已更新 Worker 启动命令和 Windows 开机自启安装命令，新增自动继承执行人本机 `OPENAI_BASE_URL` / `CODEX_HOME/config.toml` 中转入口的逻辑。</p>
+        <p>现在的主路径是 Worker 自更新：平台重启后，在线 Worker 会自动连回并检查最新脚本；每次领取新任务前也会再强制校验一次。Windows / macOS 开机自启命令保留为首次安装和异常补救入口。</p>
       </div>
       <div>
         <strong>需要组员操作</strong>
-        <p>组员需要按自己系统重新复制并执行一次最新 `复制 Windows 开机自启` 或 `复制 macOS 开机自启` 命令。后续若命令再次变化，这里会继续明确提示。</p>
+        <p>默认不需要让组员再跑一遍命令。只有对应电脑的 Worker 长时间离线、计划任务 / LaunchAgent 丢失，或平台状态页持续显示不可执行时，才让该组员重执行一次 `复制 Windows 开机自启/立即生效` 或 `复制 macOS 开机自启/立即生效` 命令。</p>
       </div>
       <div>
         <strong>已运行任务</strong>
@@ -184,13 +185,13 @@
     </template>
     <div class="agent-worker-bind-grid">
       <div class="agent-worker-bind-copy">
-        <strong>{{ app.isWorkbenchAdmin ? '当前账号安装命令' : '我的安装命令' }}</strong>
-        <p>请按执行人电脑系统复制对应的开机自启命令。安装完成后，该电脑登录系统会自动启动 Worker，并持续回传心跳、自检 Codex / Figma MCP、自动领取分配给自己的任务。</p>
+        <strong>{{ app.isWorkbenchAdmin ? '当前账号开机自启/立即生效命令' : '我的开机自启/立即生效命令' }}</strong>
+        <p>请按执行人电脑系统复制对应命令。它主要用于首次安装和异常补救；正常在线的 Worker 在平台重启后会自动拉取最新脚本，并继续回传心跳、自检 Codex / Figma MCP、自动领取分配给自己的任务。</p>
       </div>
       <div class="agent-worker-command-explain">
         <div>
-          <strong>开机自启</strong>
-          <p>适合组员长期接任务。Windows 版会创建当前用户计划任务，macOS 版会安装 LaunchAgent。以后该电脑登录系统时自动启动 Worker。</p>
+          <strong>开机自启 / 立即生效</strong>
+          <p>适合组员长期接任务。Windows 版会创建或覆盖当前用户计划任务，并在执行当下立刻停止旧 Worker、启动最新 Worker；macOS 版会安装或重装 LaunchAgent，并立即重启 Worker。</p>
         </div>
         <div>
           <strong>工作台地址</strong>
