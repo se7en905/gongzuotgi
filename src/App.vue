@@ -19733,7 +19733,8 @@ export default {
         materialPaths: materialHints,
         figmaLinks,
         writeMode: this.runForm.figmaWriteMode || 'target-node',
-        imageGenerationProviderMode
+        imageGenerationProviderMode,
+        selectedMaterialSnapshots
       });
       const payload = {
         ...this.runForm,
@@ -21661,7 +21662,21 @@ export default {
       };
     },
 
-    defaultSkillRunRequirement({ materialNames = [], materialPaths = [], figmaLinks = '', writeMode = 'target-node', imageGenerationProviderMode = 'image2' } = {}) {
+    runRequestsEditableFigmaOutput(run = {}) {
+      const text = [
+        run.requirement,
+        run.title,
+        run.sourceTitle,
+        run.customWorkflowName,
+        ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
+        ...(Array.isArray(run.selectedMaterialSnapshots)
+          ? run.selectedMaterialSnapshots.flatMap(item => [item?.path, item?.title, item?.name, item?.content])
+          : [])
+      ].filter(Boolean).join('\n');
+      return /转(?:成|为)?可编辑|可编辑图层|可编辑结构|矢量(?:化|重建)?|vector|拆(?:成|为).{0,12}图层|重建.{0,12}(?:Figma|图层|节点)|还原.{0,12}(?:Figma|图层|节点)|分层|逐图层生成|逐层生成|每个图层单独生成|source\s*layers?|replacement\s*manifest|保留原(?:有)?图层结构|保持原(?:有)?图层结构|image-?fill\s*图层/i.test(text);
+    },
+
+    defaultSkillRunRequirement({ materialNames = [], materialPaths = [], figmaLinks = '', writeMode = 'target-node', imageGenerationProviderMode = 'image2', selectedMaterialSnapshots = [] } = {}) {
       const names = this.normalizedRunMaterialHints(materialNames).filter(Boolean);
       const paths = this.normalizedRunMaterialHints(materialPaths).filter(Boolean);
       const materialText = names.length
@@ -21669,8 +21684,16 @@ export default {
         : paths.map(item => this.runMaterialDisplayName(item) || item).filter(Boolean).join('、');
       const pathText = paths.length ? paths.join('、') : '当前选择的 md / Skill';
       const figmaText = String(figmaLinks || '').trim();
-      const runContext = { requirement: '', title: materialText, primarySkillPath: paths.join('\n'), selectedMaterialHints: paths, figmaLinks: figmaText };
+      const runContext = {
+        requirement: '',
+        title: materialText,
+        primarySkillPath: paths.join('\n'),
+        selectedMaterialHints: paths,
+        selectedMaterialSnapshots,
+        figmaLinks: figmaText
+      };
       const isImagePlacement = Boolean(figmaText && this.runFigmaTargetIsImagePlacement(runContext));
+      const editableFigmaRequested = this.runRequestsEditableFigmaOutput(runContext);
       const providerMode = this.normalizedImageGenerationProviderMode(imageGenerationProviderMode);
       const providerText = this.isImageGenerationRun(runContext)
         ? providerMode === 'fallback'
@@ -21685,7 +21708,9 @@ export default {
           ? `Figma 链接：${figmaText}。`
           : '目标位置：工作台产物区；本次按当前 md / Skill 和执行要求直接产出图片、本地文件、报告或其它结果。',
         figmaText && isImagePlacement
-          ? '按该 md / Skill 的原始要求生成成品图，并将最终图片按比例放置或替换到该 Figma 目标；默认保留位图成品效果，不拉伸变形，不转为可编辑图层。'
+          ? editableFigmaRequested
+            ? '按该 md / Skill 的原始要求生成并落到该 Figma 目标；如果技能明确要求分层、可编辑结构或矢量重建，以技能原始要求为准。'
+            : '按该 md / Skill 的原始要求生成成品图，并将最终图片按比例放置或替换到该 Figma 目标；默认保留位图成品效果，不拉伸变形，不转为可编辑图层。'
           : figmaText
             ? `按该 md / Skill 的原始要求处理本次 Figma 目标；${writeMode === 'create-page' ? '如技能要求新建内容，则可新建页面或 Frame。' : '如技能要求修改内容，则优先处理 Figma 链接中的目标节点。'}`
             : '如果该 md / Skill 本身要求生成图片、创建本地产物或输出说明，按原始要求完整执行，不强制 Figma 写入。'
@@ -21701,11 +21726,27 @@ export default {
       };
     },
 
-    ensureFigmaTargetInRunRequirement({ requirement = '', materialNames = [], materialPaths = [], figmaLinks = '', writeMode = 'target-node', imageGenerationProviderMode = 'image2' } = {}) {
+    normalizedRequirementWithFigmaTargetInstruction(text = '', targetInstruction = '', hasFigmaLink = false) {
+      const requirementText = String(text || '').trim();
+      const instructionText = String(targetInstruction || '').trim();
+      if (!requirementText || !instructionText) return requirementText;
+      if (!hasFigmaLink) return requirementText;
+      const cleaned = requirementText
+        .replace(/\n*(?:该 Figma 链接表示生成成品图的放置或替换目标；默认保留位图成品效果，按比例展示，不拉伸变形，不转为可编辑图层。?)/g, '')
+        .replace(/\n*(?:该 Figma 链接表示本次产物的放置或替换目标；如果 skill\/md 明确要求分层、可编辑结构或矢量重建，以 skill\/md 原始要求为准。?)/g, '')
+        .replace(/\n*(?:按该 md \/ Skill 的原始要求生成成品图，并将最终图片按比例放置或替换到该 Figma 目标；默认保留位图成品效果，不拉伸变形，不转为可编辑图层。?)/g, '')
+        .replace(/\n*(?:按该 md \/ Skill 的原始要求生成并落到该 Figma 目标；如果技能明确要求分层、可编辑结构或矢量重建，以技能原始要求为准。?)/g, '')
+        .replace(/\n*(?:使用「[^」]+」处理该 Figma 目标。?)/g, '')
+        .trim();
+      if (cleaned.includes(instructionText)) return cleaned;
+      return `${cleaned}\n${instructionText}`.trim();
+    },
+
+    ensureFigmaTargetInRunRequirement({ requirement = '', materialNames = [], materialPaths = [], figmaLinks = '', writeMode = 'target-node', imageGenerationProviderMode = 'image2', selectedMaterialSnapshots = [] } = {}) {
       const text = String(requirement || '').trim();
-      if (!text) return this.defaultSkillRunRequirement({ materialNames, materialPaths, figmaLinks, writeMode, imageGenerationProviderMode });
+      if (!text) return this.defaultSkillRunRequirement({ materialNames, materialPaths, figmaLinks, writeMode, imageGenerationProviderMode, selectedMaterialSnapshots });
       const figmaText = String(figmaLinks || '').trim();
-      if (!figmaText || this.requirementContainsFigmaLink(text)) return text;
+      if (!figmaText) return text;
       const names = this.normalizedRunMaterialHints(materialNames).filter(Boolean);
       const paths = this.normalizedRunMaterialHints(materialPaths).filter(Boolean);
       const materialText = names.length
@@ -21716,11 +21757,18 @@ export default {
         title: materialText,
         primarySkillPath: paths.join('\n'),
         selectedMaterialHints: paths,
+        selectedMaterialSnapshots,
         figmaLinks: figmaText
       };
+      const editableFigmaRequested = this.runRequestsEditableFigmaOutput(runContext);
       const targetInstruction = this.runFigmaTargetIsImagePlacement(runContext)
-        ? '该 Figma 链接表示生成成品图的放置或替换目标；默认保留位图成品效果，按比例展示，不拉伸变形，不转为可编辑图层。'
+        ? editableFigmaRequested
+          ? '该 Figma 链接表示本次产物的放置或替换目标；如果 skill/md 明确要求分层、可编辑结构或矢量重建，以 skill/md 原始要求为准。'
+          : '该 Figma 链接表示生成成品图的放置或替换目标；默认保留位图成品效果，按比例展示，不拉伸变形，不转为可编辑图层。'
         : `使用${materialText ? `「${materialText}」` : '当前选择的 md / Skill'}处理该 Figma 目标。`;
+      if (this.requirementContainsFigmaLink(text)) {
+        return this.normalizedRequirementWithFigmaTargetInstruction(text, targetInstruction, true);
+      }
       return [
         text,
         '',
@@ -24342,11 +24390,20 @@ export default {
         const selectedMaterialSnapshots = materialHints.length
           ? await this.loadRunMaterialSnapshotsWithDependencies(materialHints, sourceRun.projectId || this.selectedProjectId || '')
           : sourceRun.selectedMaterialSnapshots || [];
+        const normalizedRequirement = this.ensureFigmaTargetInRunRequirement({
+          requirement: sourceRun.requirement || '',
+          materialNames: selectedMaterialSnapshots.map(item => item.title || this.runMaterialDisplayName(item.path || item.sourceValue)),
+          materialPaths: materialHints.length ? materialHints : sourceRun.selectedMaterialHints || [],
+          figmaLinks: sourceRun.figmaLinks || '',
+          writeMode: sourceRun.figmaWriteMode || 'target-node',
+          imageGenerationProviderMode: sourceRun.imageGenerationProviderMode || 'image2',
+          selectedMaterialSnapshots
+        });
         const retryRun = await this.api(`/api/runs/${encodeURIComponent(sourceRun.id)}/retry`, {
           method: 'POST',
           body: JSON.stringify({
             title: sourceRun.title,
-            requirement: sourceRun.requirement,
+            requirement: normalizedRequirement,
             figmaLinks: sourceRun.figmaLinks || '',
             executionKind: sourceRun.executionKind || 'default',
             imageGenerationProviderMode: sourceRun.imageGenerationProviderMode || 'image2',

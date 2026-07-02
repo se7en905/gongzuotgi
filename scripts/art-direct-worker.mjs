@@ -2340,9 +2340,13 @@ function requestsEditableFigmaOutput(run = {}) {
     run.requirement,
     run.title,
     run.sourceTitle,
-    run.customWorkflowName
+    run.customWorkflowName,
+    ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
+    ...(Array.isArray(run.selectedMaterialSnapshots)
+      ? run.selectedMaterialSnapshots.flatMap(item => [item?.path, item?.title, item?.name, item?.content])
+      : [])
   ].filter(Boolean).join('\n');
-  return /转(?:成|为)?可编辑|可编辑图层|可编辑结构|矢量(?:化|重建)?|vector|拆(?:成|为).{0,12}图层|重建.{0,12}(?:Figma|图层|节点)|还原.{0,12}(?:Figma|图层|节点)/i.test(text);
+  return /转(?:成|为)?可编辑|可编辑图层|可编辑结构|矢量(?:化|重建)?|vector|拆(?:成|为).{0,12}图层|重建.{0,12}(?:Figma|图层|节点)|还原.{0,12}(?:Figma|图层|节点)|分层|逐图层生成|逐层生成|每个图层单独生成|source\s*layers?|replacement\s*manifest|保留原(?:有)?图层结构|保持原(?:有)?图层结构|image-?fill\s*图层/i.test(text);
 }
 
 function resolveWorkerFinalStatus(exitCode, figmaWriteResult = {}, imageArtifactResult = {}) {
