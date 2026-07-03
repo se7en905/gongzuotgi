@@ -129,6 +129,7 @@ const publicDir = path.resolve(__dirname, '..', process.env.STATIC_DIR || 'dist'
 const port = Number(process.env.API_PORT || process.env.PORT || 4288);
 const host = process.env.API_HOST || process.env.HOST || '0.0.0.0';
 const aiWeekDir = process.env.AI_WEEK_DIR || path.join(paths.dataDir, 'ai-week');
+let aiMembersBoardWatcher = null;
 const aiMembersBoardCachePath = path.join(paths.dataDir, 'ai-members-board-cache.json');
 const artDashboardDataDir = process.env.ART_DASHBOARD_DATA_DIR || path.join(paths.dataDir, 'art-dashboard');
 const zentaoBaseUrl = 'https://cd.baa360.cc:20088/index.php';
@@ -3233,13 +3234,25 @@ function watchAiMembersBoardFiles() {
     }, 800);
   };
   try {
+    if (aiMembersBoardWatcher && typeof aiMembersBoardWatcher.close === 'function') {
+      try {
+        aiMembersBoardWatcher.close();
+      } catch {
+      }
+    }
     const watcher = fsWatch(aiWeekDir, (eventType, fileName) => {
       const name = String(fileName || '');
       if (!boardFiles.includes(name)) return;
       emitChanged(name);
     });
-    if (watcher && typeof watcher.on === 'function') {
-      watcher.on('error', error => {
+    aiMembersBoardWatcher = watcher;
+    const bindWatcherError = watcher && typeof watcher === 'object'
+      ? (typeof watcher.on === 'function'
+        ? watcher.on.bind(watcher)
+        : (typeof watcher.addListener === 'function' ? watcher.addListener.bind(watcher) : null))
+      : null;
+    if (bindWatcherError) {
+      bindWatcherError('error', error => {
         console.warn(`AI部门看板目录监听失败：${error.message}`);
       });
     }

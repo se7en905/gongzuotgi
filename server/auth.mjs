@@ -216,9 +216,11 @@ export async function ensureDefaultRoles() {
         existing.updatedAt = new Date().toISOString();
         changed = true;
       }
-      const mergedPermissions = mergeLegacyPermissions(existing.permissions || [], legacyRolePermissionAdditions(resolveRoleBuiltinKey(existing) || existing.id));
-      if (JSON.stringify(mergedPermissions) !== JSON.stringify(normalizePermissions(existing.permissions || []))) {
-        existing.permissions = mergedPermissions;
+      // Respect role-management edits for builtin roles. We only normalize stored
+      // permissions here, and no longer force-merge legacy additions on every read.
+      const normalizedPermissions = normalizePermissions(existing.permissions || []);
+      if (JSON.stringify(normalizedPermissions) !== JSON.stringify(existing.permissions || [])) {
+        existing.permissions = normalizedPermissions;
         existing.updatedAt = new Date().toISOString();
         changed = true;
       }
@@ -226,23 +228,6 @@ export async function ensureDefaultRoles() {
   }
   if (changed) await writeRolesRaw(sortRoles(roles));
   return roles;
-}
-
-function legacyRolePermissionAdditions(roleId = '') {
-  if (roleId === 'admin') return levelPermissions[4];
-  if (roleId === 'developer') return [
-    'menu.skillList', 'menu.aiMembers', 'menu.agentWorkers',
-    'run.directSkill.create', 'run.directSkill.workerCommand',
-    'workflow.manage.view', 'run.log.view', 'run.artifact.download',
-    'skill.alias.manage', 'skill.usageLogs.view', 'skill.preview.view',
-    'aiMembers.board.view', 'aiMembers.score.view',
-    'archive.detail.view', 'archive.link.view',
-    'api.skillAlias.manage', 'api.aiMembers.read', 'api.aiMembers.score.read', 'api.agentRuns.create', 'api.agentWorkers.read',
-    'api.agentWorkers.heartbeat', 'api.agentWorkers.alias', 'api.agentRuns.claim', 'api.agentRuns.log', 'api.agentRuns.status'
-  ];
-  if (roleId === 'reviewer') return ['menu.skillList', 'menu.aiMembers', 'skill.alias.manage', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.skillAlias.manage', 'api.aiMembers.read', 'api.aiMembers.score.read'];
-  if (roleId === 'viewer') return ['menu.skillList', 'menu.aiMembers', 'skill.usageLogs.view', 'aiMembers.score.view', 'api.aiMembers.read', 'api.aiMembers.score.read'];
-  return [];
 }
 
 export async function authenticateRequest(req, options = {}) {
@@ -764,10 +749,6 @@ async function hydrateUserPermissions(user) {
     roleName: role?.name || user.roleName || '',
     permissions: normalizePermissions(role?.permissions || user.permissions || [])
   };
-}
-
-function mergeLegacyPermissions(previous = [], next = []) {
-  return normalizePermissions([...previous, ...next]);
 }
 
 function isAdminRole(roleId = '') {

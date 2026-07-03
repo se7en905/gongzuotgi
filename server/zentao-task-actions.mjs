@@ -38,7 +38,7 @@ export async function assignZentaoTask(task = {}, assignee = {}, options = {}) {
     throw new Error(`禅道指派提交失败（${attempts.join('；')}）。为避免取消父任务或需求关联，已停止提交编辑任务表单。`);
   }
 
-  const fresh = await waitForAssignedTask(api, taskId, assignedTo, assignee);
+  const fresh = await waitForAssignedTask(api, taskId, assignedTo, assignee, { detail, task });
   if (taskAssigneeMatches(fresh, assignedTo, assignee)) return fresh;
   const currentAssignee = describeTaskAssignee(fresh);
   throw new Error(`禅道指派验证失败，当前负责人仍为 ${currentAssignee || '空'}（已尝试：${attempts.join('；')}）`);
@@ -179,14 +179,33 @@ async function classicAssignTask(api, detail = {}, task = {}, updates = {}) {
   await classicPost(api, path, body, path);
 }
 
-async function waitForAssignedTask(api, taskId, assignedTo, assignee = {}) {
+async function waitForAssignedTask(api, taskId, assignedTo, assignee = {}, context = {}) {
   let fresh = {};
   for (let index = 0; index < 3; index += 1) {
     fresh = unwrapTask(await api.request({ method: 'GET', path: `/api.php/v1/tasks/${taskId}` }));
     if (taskAssigneeMatches(fresh, assignedTo, assignee)) return fresh;
     await new Promise(resolve => setTimeout(resolve, 260 + index * 220));
   }
+  const classicFresh = await readAssignedTaskFromClassicForm(api, taskId, context, assignee).catch(() => null);
+  if (classicFresh && taskAssigneeMatches(classicFresh, assignedTo, assignee)) return { ...fresh, ...classicFresh };
   return fresh;
+}
+
+async function readAssignedTaskFromClassicForm(api, taskId, context = {}, assignee = {}) {
+  const executionId = String(executionIdOf(context.detail || {}, context.task || {}) || '').trim();
+  if (!executionId) return null;
+  const path = `index.php?m=task&f=assignTo&executionID=${encodeURIComponent(executionId)}&taskID=${encodeURIComponent(taskId)}&onlybody=yes`;
+  const html = await classicGet(api, path, `index.php?m=task&f=view&taskID=${encodeURIComponent(taskId)}&onlybody=yes`, {
+    label: '指派结果回读表单'
+  });
+  const selected = selectedChoiceFromForm(html, ['assignedTo[]', 'assignedTo', 'owner', 'assignedToList[]']);
+  if (!selected?.value) return null;
+  return {
+    id: String(taskId || ''),
+    assignedTo: { account: selected.value, realname: selected.label || assignee.realname || selected.value },
+    assignedToName: selected.label || assignee.realname || selected.value,
+    assignedToRealName: selected.label || assignee.realname || selected.value
+  };
 }
 
 function taskAssigneeMatches(task = {}, assignedTo = '', assignee = {}) {
@@ -861,14 +880,7 @@ function parseSelectFields(html = '', body) {
     const name = htmlAttr(tag, 'name');
     if (!name || hasHtmlAttr(tag, 'disabled')) continue;
     const multiple = hasHtmlAttr(tag, 'multiple');
-    const options = [...String(match[2] || '').matchAll(/<option\b([^>]*)>([\s\S]*?)<\/option>/gi)].map(option => {
-      const optionTag = option[0];
-      const attrValue = htmlAttr(optionTag, 'value');
-      return {
-        selected: hasHtmlAttr(optionTag, 'selected'),
-        value: htmlDecode(attrValue !== '' ? attrValue : stripHtml(option[2] || ''))
-      };
-    });
+    const options = parseSelectOptionRows(match[2] || '');
     const selected = options.filter(option => option.selected);
     if (multiple) {
       selected.forEach(option => body.append(name, option.value));
@@ -877,6 +889,32 @@ function parseSelectFields(html = '', body) {
       if (option) body.append(name, option.value);
     }
   }
+}
+
+function selectedChoiceFromForm(html = '', fieldNames = []) {
+  for (const match of String(html || '').matchAll(/<select\b([^>]*)>([\s\S]*?)<\/select>/gi)) {
+    const tag = match[0];
+    const name = htmlAttr(tag, 'name');
+    if (!name || !fieldNames.includes(name) || hasHtmlAttr(tag, 'disabled')) continue;
+    const options = parseSelectOptionRows(match[2] || '');
+    const picked = options.find(option => option.selected) || options[0];
+    if (!picked?.value) continue;
+    return picked;
+  }
+  return null;
+}
+
+function parseSelectOptionRows(html = '') {
+  return [...String(html || '').matchAll(/<option\b([^>]*)>([\s\S]*?)<\/option>/gi)].map(option => {
+    const optionTag = option[0];
+    const attrValue = htmlAttr(optionTag, 'value');
+    const label = stripHtml(option[2] || '');
+    return {
+      selected: hasHtmlAttr(optionTag, 'selected'),
+      value: htmlDecode(attrValue !== '' ? attrValue : label),
+      label: htmlDecode(label)
+    };
+  });
 }
 
 function setFormValue(body, name, value) {
