@@ -8,6 +8,7 @@ const scrypt = promisify(scryptCallback);
 const sessionCookieName = 'awp_session';
 const sessionMaxAgeMs = Number(process.env.AWP_SESSION_MAX_AGE_MS || 12 * 60 * 60 * 1000);
 const sessionIdleMaxAgeMs = Number(process.env.AWP_SESSION_IDLE_MAX_AGE_MS || 2 * 60 * 60 * 1000);
+const sessionTouchThrottleMs = Math.max(60 * 1000, Number(process.env.AWP_SESSION_TOUCH_THROTTLE_MS || 5 * 60 * 1000));
 const roleRank = {
   viewer: 1,
   reviewer: 2,
@@ -248,11 +249,17 @@ export async function authenticateRequest(req, options = {}) {
   const users = await listUsersRaw();
   const user = users.find(item => item.id === session.userId && item.disabled !== true);
   if (!user) return null;
-  sessions[sessionIndex] = {
-    ...session,
-    lastSeenAt: new Date(now).toISOString()
-  };
-  await writeSessionsRaw(sessions);
+  if (!lastSeenAt || now - lastSeenAt >= sessionTouchThrottleMs) {
+    const activeSessions = sessions.filter(item => item.token === token || Date.parse(item.expiresAt || '') > now);
+    const activeSessionIndex = activeSessions.findIndex(item => item.token === token);
+    if (activeSessionIndex >= 0) {
+      activeSessions[activeSessionIndex] = {
+        ...activeSessions[activeSessionIndex],
+        lastSeenAt: new Date(now).toISOString()
+      };
+      await writeSessionsRaw(activeSessions);
+    }
+  }
   return hydrateUserPermissions(publicUser(user));
 }
 

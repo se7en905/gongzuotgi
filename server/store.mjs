@@ -94,6 +94,10 @@ const artDeptAccountNameMap = new Map([
 const retentionEnabled = process.env.AWP_DATA_RETENTION_ENABLED !== '0';
 const runFigmaLogEvidenceCache = new Map();
 const staleLocalWorkerRunMs = Math.max(10 * 60 * 1000, Number(process.env.AWP_STALE_LOCAL_WORKER_RUN_MS || 20 * 60 * 1000));
+const jsonWriteQueues = new Map();
+const operationLogStoredStringMaxLength = Math.max(200, Number(process.env.AWP_OPERATION_LOG_STORED_STRING_MAX_LENGTH || 2000));
+const operationLogStoredArrayMaxItems = Math.max(5, Number(process.env.AWP_OPERATION_LOG_STORED_ARRAY_MAX_ITEMS || 30));
+const operationLogStoredObjectMaxKeys = Math.max(20, Number(process.env.AWP_OPERATION_LOG_STORED_OBJECT_MAX_KEYS || 80));
 const retentionPaths = new Set([
   paths.aiFlowRecords,
   paths.operationLogs,
@@ -736,10 +740,13 @@ export async function getOperationLog(id) {
 export async function createOperationLog(input = {}) {
   const log = normalizeOperationLog(input);
   if (!shouldKeepOperationLog(log)) return { ...log, _skipped: true };
-  const logs = await readJson(paths.operationLogs, []);
+  const storedLog = compactStoredOperationLog(log);
   const maxLogs = Number(process.env.AWP_OPERATION_LOG_MAX_ROWS || 10000);
-  const nextLogs = compactOperationLogList([...logs, log], { maxLogs });
-  await writeJson(paths.operationLogs, nextLogs);
+  await enqueueJsonWrite(paths.operationLogs, async () => {
+    const logs = await readJson(paths.operationLogs, []);
+    const nextLogs = compactOperationLogList([...logs, storedLog], { maxLogs });
+    await writeJsonNow(paths.operationLogs, nextLogs);
+  });
   return log;
 }
 
@@ -5025,6 +5032,88 @@ function compactOperationLogPayload(value, action = '') {
   return compactSyncPayload(value);
 }
 
+function compactStoredOperationLog(log = {}) {
+  return {
+    ...log,
+    before: compactStoredOperationLogPayload(log.before),
+    after: compactStoredOperationLogPayload(log.after),
+    metadata: compactStoredOperationLogPayload(log.metadata)
+  };
+}
+
+function compactStoredOperationLogPayload(value, depth = 0) {
+  if (value === undefined) return null;
+  if (value === null) return null;
+  if (typeof value === 'string') return compactStoredOperationLogString(value);
+  if (typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    const items = value.slice(0, operationLogStoredArrayMaxItems).map(item => compactStoredOperationLogPayload(item, depth + 1));
+    if (value.length > operationLogStoredArrayMaxItems) {
+      items.push({
+        _truncated: true,
+        total: value.length,
+        kept: operationLogStoredArrayMaxItems
+      });
+    }
+    return items;
+  }
+  if (depth >= 8) return compactStoredOperationLogString(operationLogValueToText(value));
+  const output = {};
+  const entries = Object.entries(value);
+  let kept = 0;
+  for (const [key, raw] of entries) {
+    if (kept >= operationLogStoredObjectMaxKeys) break;
+    output[key] = compactStoredOperationLogField(key, raw, depth);
+    kept += 1;
+  }
+  if (entries.length > kept) {
+    output._truncatedKeys = {
+      total: entries.length,
+      kept
+    };
+  }
+  return output;
+}
+
+function compactStoredOperationLogField(key = '', value, depth = 0) {
+  const field = cleanString(key);
+  if (/^(?:primarySkillContent|content|rawContent|prompt|stdout|stderr|log|logs|chunk|raw|html|markdown)$/i.test(field)) {
+    return summarizeStoredOperationLogValue(value);
+  }
+  if (/(?:base64|dataUrl|buffer|binary|blob|screenshot|imageData|thumbnailData)$/i.test(field)) {
+    return summarizeStoredOperationLogValue(value);
+  }
+  return compactStoredOperationLogPayload(value, depth + 1);
+}
+
+function summarizeStoredOperationLogValue(value) {
+  const text = typeof value === 'string'
+    ? value
+    : value === undefined || value === null
+      ? ''
+      : operationLogValueToText(value);
+  if (!text) return '';
+  return {
+    _truncated: true,
+    bytes: Buffer.byteLength(text, 'utf8'),
+    preview: compactStoredOperationLogString(text, Math.min(operationLogStoredStringMaxLength, 800))
+  };
+}
+
+function compactStoredOperationLogString(value = '', limit = operationLogStoredStringMaxLength) {
+  const text = String(value || '');
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}\n[已截断，原始长度 ${text.length} 字符]`;
+}
+
+function operationLogValueToText(value) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value ?? '');
+  }
+}
+
 function shouldCompactOperationPayload(action = '') {
   return new Set(['SYNC_ZENTAO_TASKS', 'SYNC_ZENTAO_BUGS']).has(String(action || '').trim());
 }
@@ -8803,6 +8892,23 @@ async function readJson(file, fallback) {
 }
 
 async function writeJson(file, value, options = {}) {
+  return enqueueJsonWrite(file, () => writeJsonNow(file, value, options));
+}
+
+async function enqueueJsonWrite(file, task) {
+  const previous = jsonWriteQueues.get(file) || Promise.resolve();
+  const next = previous
+    .catch(() => {})
+    .then(task);
+  jsonWriteQueues.set(file, next);
+  try {
+    return await next;
+  } finally {
+    if (jsonWriteQueues.get(file) === next) jsonWriteQueues.delete(file);
+  }
+}
+
+async function writeJsonNow(file, value, options = {}) {
   const payloadValue = options.skipRetention ? value : await applyRetentionToValue(file, value);
   if (useMysqlStore) {
     const configKey = mysqlConfigs.get(file);

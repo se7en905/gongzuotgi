@@ -5784,7 +5784,7 @@ export default {
         this.restoreWorkbenchDisplayCacheKeyIfEmpty('projects');
         this.restoreWorkbenchDisplayCacheKeyIfEmpty('customWorkflows');
         if (!this.projects.length && !this.loading.projects) this.refreshProjects().catch(() => {});
-        if ((!this.customWorkflows.length || dirty) && !this.loading.runs) this.refreshCustomWorkflows().catch(() => {});
+        if ((!this.customWorkflows.length || dirty) && !this.loading.runs) this.refreshCustomWorkflows({ background: !dirty }).catch(() => {});
         if ((!this.runs.length || dirty) && !this.loading.runs) this.refreshRuns({ background: !dirty }).catch(() => {});
         if ((!this.agentWorkers.length || dirty) && !this.loading.agentWorkers) this.refreshAgentWorkers({ background: !dirty }).catch(() => {});
         if ((this.can('api.users.manage') || this.can('api.agentWorkers.read')) && !this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
@@ -5801,7 +5801,7 @@ export default {
       }
       if (view === 'operation-logs') {
         if (!this.users.length && !this.loading.users) this.refreshUsers().catch(() => {});
-        if ((!this.operationLogs.length || dirty) && !this.loading.operationLogs) this.refreshOperationLogs().catch(() => {});
+        if ((!this.operationLogs.length || dirty) && !this.loading.operationLogs) this.refreshOperationLogs({ background: !dirty }).catch(() => {});
       }
       if (view === 'maintenance-center') {
         if (this.isPlatformAdmin && !this.loading.maintenance) this.refreshMaintenanceOverview().catch(() => {});
@@ -6176,7 +6176,7 @@ export default {
           if (!this.runs.length) jobs.push(['执行记录', () => this.refreshRuns()]);
           if (this.activeView === 'ai-archive') jobs.push(['AI档案累计指标', () => this.refreshArchiveMetrics()]);
           if (this.can('menu.runs')) {
-            if (!this.customWorkflows.length) jobs.push(['自定义流程模板', () => this.refreshCustomWorkflows()]);
+            if (!this.customWorkflows.length) jobs.push(['自定义流程模板', () => this.refreshCustomWorkflows({ background: true, minInterval: 0 })]);
           }
           if (['runs', 'agent-workers'].includes(this.activeView) && this.can('api.agentWorkers.read') && !this.agentWorkers.length) {
             jobs.push(['Worker 状态', () => this.refreshAgentWorkers()]);
@@ -6187,7 +6187,7 @@ export default {
         } else if (this.activeView === 'tasks') {
           if (this.can('menu.tasks')) {
             jobs.push(['任务中心', () => this.refreshTasks({ background: this.businessTasks.length > 0, minInterval: 0 })]);
-            jobs.push(['任务处理记录', () => this.refreshTaskProcessingNotes()]);
+            jobs.push(['任务处理记录', () => this.refreshTaskProcessingNotes({ background: true, minInterval: 0 })]);
           }
         } else if (this.isSkillInventoryViewActive && this.can('menu.skillList')) {
           if (!this.skillInventoryRows.length && !this.hasProjectScanProducts(this.scans)) {
@@ -7675,7 +7675,7 @@ export default {
           return;
         }
         this.schedulePlatformRefresh('custom-workflows', async () => {
-          await this.refreshCustomWorkflows();
+          await this.refreshCustomWorkflows({ background: true });
         }, 200);
       }
       if (type === 'tasks.changed' && this.can('menu.tasks')) {
@@ -7687,7 +7687,7 @@ export default {
         this.schedulePlatformRefresh('tasks', async () => {
           await Promise.all([
             this.refreshTasks({ background: true, minInterval: 1500 }),
-            this.refreshTaskProcessingNotes(),
+            this.refreshTaskProcessingNotes({ background: true }),
             this.refreshConfig({ background: true, minInterval: 1500 })
           ]);
         }, 300);
@@ -7731,7 +7731,7 @@ export default {
           return;
         }
         this.schedulePlatformRefresh('operation-logs', async () => {
-          await this.refreshOperationLogs();
+          await this.refreshOperationLogs({ background: true });
         }, 300);
       }
       if (type === 'ai-member-score-snapshot.changed' && this.can('api.aiMembers.score.read')) {
@@ -10673,41 +10673,62 @@ export default {
       }
     },
 
-    async refreshCustomWorkflows() {
+    async refreshCustomWorkflows(options = {}) {
       if (!this.canViewRunTemplateManager) {
         this.customWorkflows = [];
         return;
       }
+      const refresh = this.requestRefreshKey('customWorkflows', { background: options.background === true, minInterval: options.minInterval ?? 8000 });
+      if (refresh.skip) return refresh.promise || this.customWorkflows;
+      const request = (async () => {
       try {
         const workflows = await this.api('/api/custom-workflows');
         this.customWorkflows = Array.isArray(workflows) ? workflows : [];
         this.saveWorkbenchDisplayCache('customWorkflows', this.customWorkflows);
         if (!this.workflowDesigner.name && this.customWorkflows[0]) this.loadCustomWorkflowToDesigner(this.customWorkflows[0]);
+        return this.customWorkflows;
       } catch (error) {
         console.warn('自定义流程模板读取失败，已保留当前模板列表', error);
+        return this.customWorkflows;
       }
+      })();
+      return this.trackRefreshRequest('customWorkflows', request);
     },
 
-    async refreshTaskReviews() {
+    async refreshTaskReviews(options = {}) {
+      const refresh = this.requestRefreshKey('taskReviews', { background: options.background === true, minInterval: options.minInterval ?? 8000 });
+      if (refresh.skip) return refresh.promise || this.taskReviews;
+      const request = (async () => {
       try {
         this.taskReviews = await this.api('/api/task-reviews');
+        return this.taskReviews;
       } catch {
         console.warn('任务验收记录读取失败，已保留当前列表');
+        return this.taskReviews;
       }
+      })();
+      return this.trackRefreshRequest('taskReviews', request);
     },
 
-    async refreshTaskProcessingNotes() {
+    async refreshTaskProcessingNotes(options = {}) {
       if (!this.can('menu.tasks')) {
         this.taskProcessingNotes = {};
         return;
       }
+      const refresh = this.requestRefreshKey('taskProcessingNotes', { background: options.background === true, minInterval: options.minInterval ?? 8000 });
+      if (refresh.skip) return refresh.promise || this.taskProcessingNotes;
+      const request = (async () => {
       try {
         const notes = await this.api('/api/task-processing-notes');
         this.taskProcessingNotes = Object.fromEntries((Array.isArray(notes) ? notes : []).map(note => [note.taskId, note]));
         this.saveWorkbenchDisplayCache('taskProcessingNotes', this.taskProcessingNotes);
+        return this.taskProcessingNotes;
       } catch {
         console.warn('任务处理记录读取失败，已保留当前列表');
+        return this.taskProcessingNotes;
       }
+      })();
+      return this.trackRefreshRequest('taskProcessingNotes', request);
     },
 
     async refreshTasks(options = {}) {
@@ -10851,12 +10872,15 @@ export default {
       }
     },
 
-    async refreshOperationLogs() {
+    async refreshOperationLogs(options = {}) {
       if (!this.can('api.operationLogs.read')) {
         this.operationLogs = [];
         this.operationLogTotal = 0;
         return;
       }
+      const refresh = this.requestRefreshKey('operationLogs', { background: options.background === true, minInterval: options.minInterval ?? 3000 });
+      if (refresh.skip) return refresh.promise || this.operationLogs;
+      const request = (async () => {
       this.loading.operationLogs = true;
       try {
         const params = new URLSearchParams();
@@ -10872,9 +10896,12 @@ export default {
         this.operationLogPage = Number(result.page || this.operationLogPage);
         this.operationLogPageSize = Number(result.pageSize || this.operationLogPageSize);
         this.saveWorkbenchDisplayCache('operationLogs', this.operationLogs);
+        return this.operationLogs;
       } finally {
         this.loading.operationLogs = false;
       }
+      })();
+      return this.trackRefreshRequest('operationLogs', request);
     },
 
     async refreshUsageCounters() {
