@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>平台免 Token 处理方式速查</title>
+  <style>
+    :root {
+      --bg: #f6f3ee;
+      --panel: #fffdf9;
+      --text: #221f1a;
+      --muted: #6f675d;
+      --line: #ded6ca;
+      --green: #2f6b45;
+      --green-bg: #e5f2e9;
+      --blue: #255a8a;
+      --blue-bg: #e4eef8;
+      --yellow: #8b6a12;
+      --yellow-bg: #fbf1cc;
+      --orange: #9a4f17;
+      --orange-bg: #f9e3d3;
+      --red: #8e2b2b;
+      --red-bg: #f7dddd;
+      --shadow: 0 14px 40px rgba(45, 35, 25, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(166, 118, 78, 0.12), transparent 24rem),
+        linear-gradient(180deg, #f7f1e7 0%, var(--bg) 30%, #f3efe8 100%);
+      color: var(--text);
+    }
+
+    a {
+      color: var(--blue);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .page {
+      max-width: 1480px;
+      margin: 0 auto;
+      padding: 32px 24px 56px;
+    }
+
+    .hero,
+    .panel {
+      background: rgba(255, 253, 249, 0.92);
+      border: 1px solid rgba(222, 214, 202, 0.95);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    .hero {
+      padding: 28px;
+      margin-bottom: 24px;
+    }
+
+    .panel {
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      font-weight: 700;
+    }
+
+    h1 {
+      font-size: 32px;
+      letter-spacing: 0.02em;
+    }
+
+    h2 {
+      font-size: 20px;
+      margin-bottom: 16px;
+    }
+
+    p {
+      margin: 0;
+      line-height: 1.65;
+    }
+
+    .hero p {
+      margin-top: 12px;
+      color: var(--muted);
+      max-width: 1020px;
+    }
+
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .hero-details {
+      margin-top: 20px;
+      border: 1px solid rgba(222, 214, 202, 0.95);
+      border-radius: 20px;
+      background: rgba(255, 250, 242, 0.9);
+      overflow: hidden;
+    }
+
+    .hero-details summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 16px 18px;
+      font-weight: 700;
+      font-size: 15px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .hero-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .hero-details summary::after {
+      content: "展开";
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .hero-details[open] summary::after {
+      content: "收起";
+    }
+
+    .hero-details-body {
+      padding: 0 18px 18px;
+      border-top: 1px solid rgba(222, 214, 202, 0.95);
+    }
+
+    .hero-details-grid,
+    .tips {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .hero-note,
+    .tip {
+      padding: 16px;
+      border-radius: 16px;
+      background: #fff;
+      border: 1px solid #e8e0d5;
+    }
+
+    .hero-note h3,
+    .tip h3 {
+      font-size: 15px;
+      margin-bottom: 8px;
+    }
+
+    .hero-note p,
+    .tip p {
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .grid {
+      display: grid;
+      gap: 24px;
+    }
+
+    .status-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin-bottom: 24px;
+    }
+
+    .status-card {
+      padding: 20px;
+      border-radius: 22px;
+      border: 1px solid transparent;
+    }
+
+    .status-card h3 {
+      font-size: 18px;
+      margin-bottom: 10px;
+    }
+
+    .status-card p {
+      color: var(--muted);
+      font-size: 14px;
+      min-height: 68px;
+    }
+
+    .status-card ul {
+      margin: 14px 0 0;
+      padding-left: 18px;
+      line-height: 1.7;
+      font-size: 14px;
+    }
+
+    .status-free {
+      background: var(--green-bg);
+      border-color: rgba(47, 107, 69, 0.18);
+    }
+
+    .status-local {
+      background: var(--blue-bg);
+      border-color: rgba(37, 90, 138, 0.18);
+    }
+
+    .status-token {
+      background: var(--yellow-bg);
+      border-color: rgba(139, 106, 18, 0.18);
+    }
+
+    .status-quota {
+      background: var(--orange-bg);
+      border-color: rgba(154, 79, 23, 0.18);
+    }
+
+    .flow-wrap {
+      overflow-x: auto;
+    }
+
+    .flow {
+      min-width: 1200px;
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .flow-main {
+      padding: 18px;
+      border-radius: 20px;
+      background: linear-gradient(180deg, #fffaf2 0%, #fff 100%);
+      border: 1px solid var(--line);
+      font-weight: 700;
+      text-align: center;
+      font-size: 18px;
+    }
+
+    .flow-lanes {
+      display: grid;
+      gap: 14px;
+    }
+
+    .lane {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .lane-head,
+    .lane-body {
+      border-radius: 20px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .lane-head strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 16px;
+    }
+
+    .lane-head span {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .items {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .item {
+      min-width: 180px;
+      flex: 1 1 220px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: #faf7f1;
+      border: 1px solid #e8e0d5;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .item strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 14px;
+    }
+
+    .matrix-table,
+    .scope-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    .matrix-table th,
+    .matrix-table td,
+    .scope-table th,
+    .scope-table td {
+      border-bottom: 1px solid var(--line);
+      padding: 14px 12px;
+      vertical-align: top;
+      text-align: left;
+      line-height: 1.65;
+    }
+
+    .matrix-table th,
+    .scope-table th {
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      background: #fbf7f1;
+      position: sticky;
+      top: 0;
+    }
+
+    .badge,
+    .flag {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .b-free { background: var(--green-bg); color: var(--green); }
+    .b-local { background: var(--blue-bg); color: var(--blue); }
+    .b-token { background: var(--yellow-bg); color: var(--yellow); }
+    .b-quota { background: var(--orange-bg); color: var(--orange); }
+    .b-risk { background: var(--red-bg); color: var(--red); }
+
+    .flag-free { background: var(--green-bg); color: var(--green); }
+    .flag-local { background: var(--blue-bg); color: var(--blue); }
+    .flag-token { background: var(--yellow-bg); color: var(--yellow); }
+    .flag-quota { background: var(--orange-bg); color: var(--orange); }
+    .flag-mixed { background: #ece9e2; color: #6f675d; }
+
+    code {
+      padding: 1px 6px;
+      border-radius: 8px;
+      background: #f3ece2;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 12px;
+    }
+
+    @media (max-width: 1180px) {
+      .status-grid,
+      .hero-details-grid,
+      .tips {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 760px) {
+      .page {
+        padding: 20px 14px 40px;
+      }
+
+      .status-grid,
+      .hero-details-grid,
+      .tips {
+        grid-template-columns: 1fr;
+      }
+
+      .lane {
+        grid-template-columns: 1fr;
+      }
+
+      .matrix-table,
+      .scope-table {
+        display: block;
+        overflow-x: auto;
+      }
+
+      h1 {
+        font-size: 26px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <h1>平台免 Token 处理方式速查</h1>
+      <p>
+        这份页面用于快速判断工作台里哪些动作可以完全不走 Codex/OpenAI token，哪些只是把消耗转移到执行人本机，
+        哪些仍然会真正消耗文本 token 或图片额度。核心目的不是解释实现细节，而是帮负责人快速看清“这件事到底耗谁的、现在有没有现成路径”。
+      </p>
+      <div class="hero-meta">
+        <span class="chip">项目：美术部工作台</span>
+        <span class="chip">视角：负责人管理口径</span>
+        <span class="chip">重点：免 token / 耗谁的 / 去哪看</span>
+        <span class="chip">文件位置：项目根目录</span>
+      </div>
+
+      <details class="hero-details">
+        <summary>先看结论</summary>
+        <div class="hero-details-body">
+          <div class="hero-details-grid">
+            <article class="hero-note">
+              <h3>已经完全免 token 的主路径</h3>
+              <p>Git 自动备份、禅道同步、库存扫描、评分重算、维护中心、操作日志、研究同步上报，这些都已是本地脚本或平台接口处理。</p>
+            </article>
+            <article class="hero-note">
+              <h3>最容易误判的点</h3>
+              <p>本机 Worker 不是免 token，它只是把消耗从负责人机器转移到执行人自己的 Codex / Figma / OpenAI 凭据上。</p>
+            </article>
+            <article class="hero-note">
+              <h3>生图要单独看</h3>
+              <p>生图不一定走文本 token，但会走图片额度。默认是执行人本机的 <code>image2 / gpt-image-2</code>，不是平台服务器代跑。</p>
+            </article>
+            <article class="hero-note">
+              <h3>名字带 AI 不等于一定耗 token</h3>
+              <p><code>AI评分</code>、<code>AI部门看板缓存</code>、<code>AI产物清单刷新库存</code> 当前实现本质上都是本地数据计算、缓存读取或目录扫描。</p>
+            </article>
+            <article class="hero-note">
+              <h3>最明确的免 token 现成能力</h3>
+              <p><code>Git 自动备份</code> 在项目基线里已明确写死“不经过 Codex 对话、不调用 AI、不消耗 Codex/OpenAI token”。</p>
+            </article>
+            <article class="hero-note">
+              <h3>看这页的顺序</h3>
+              <p>先看下面 4 类卡片，再看“总关系图”，最后到“入口逐项表”里按按钮、页面或脚本直接定位。</p>
+            </article>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="grid status-grid">
+      <article class="status-card status-free">
+        <h3>完全免 Token</h3>
+        <p>不走 Codex/OpenAI 文本 token，也不依赖负责人本机 AI 对话。</p>
+        <ul>
+          <li>Git 自动备份</li>
+          <li>同步任务 / Bug</li>
+          <li>刷新库存 / 扫描文件夹</li>
+          <li>评分重算 / 维护中心</li>
+        </ul>
+      </article>
+
+      <article class="status-card status-local">
+        <h3>不耗负责人 Token</h3>
+        <p>平台不代跑，但执行人自己的电脑仍会消耗自己的凭据或额度。</p>
+        <ul>
+          <li>本机 Worker 普通执行</li>
+          <li>本机 Worker Figma 写入</li>
+          <li>本机 Worker 生图</li>
+        </ul>
+      </article>
+
+      <article class="status-card status-token">
+        <h3>会耗文本 Token</h3>
+        <p>只要真正跑 <code>codex exec</code>，无论在服务器侧还是 Worker 侧，本质都会消耗 Codex/OpenAI 文本 token。</p>
+        <ul>
+          <li>普通 Codex 执行</li>
+          <li>Figma 写入执行</li>
+          <li>需要生成报告或多阶段执行的 AI 任务</li>
+        </ul>
+      </article>
+
+      <article class="status-card status-quota">
+        <h3>会耗图片额度</h3>
+        <p>未必走文本 token，但会走图片模型额度或外部生图方案额度。</p>
+        <ul>
+          <li>image2 / gpt-image-2 生图</li>
+          <li>兜底生图方案</li>
+          <li>同 IP 生图、参考图编辑</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="panel">
+      <h2>总关系图</h2>
+      <div class="flow-wrap">
+        <div class="flow">
+          <div class="flow-main">工作台入口 / 脚本 / 页面</div>
+          <div class="flow-lanes">
+            <div class="lane">
+              <div class="lane-head">
+                <strong>完全免 token</strong>
+                <span>只走 Git、禅道、本地 JSON、目录扫描、快照计算或平台普通接口。</span>
+              </div>
+              <div class="lane-body">
+                <div class="items">
+                  <div class="item"><strong>Git 自动备份</strong>LaunchAgent 定时提交推送，不调 AI</div>
+                  <div class="item"><strong>同步任务 / Bug</strong>走禅道接口、本地缓存、事件广播</div>
+                  <div class="item"><strong>刷新库存</strong>Git 拉取 + 目录扫描 + 读取 <code>SKILL.md</code></div>
+                  <div class="item"><strong>扫描文件夹</strong>共享盘 / 本地目录浅层扫描</div>
+                  <div class="item"><strong>刷新评分</strong>本地数据聚合和公式重算</div>
+                  <div class="item"><strong>维护中心</strong>体量统计、预览清理、执行硬删除</div>
+                  <div class="item"><strong>操作日志</strong>只读审计或范围删除</div>
+                  <div class="item"><strong>研究同步上报</strong>直接 POST 工作台并本地补传</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="lane">
+              <div class="lane-head">
+                <strong>不耗负责人 token</strong>
+                <span>平台只派单和回传，真正执行发生在组员自己的电脑上。</span>
+              </div>
+              <div class="lane-body">
+                <div class="items">
+                  <div class="item"><strong>本机 Worker 普通执行</strong>耗执行人自己的 Codex token</div>
+                  <div class="item"><strong>本机 Worker Figma 写入</strong>耗执行人自己的 Codex + Figma 授权</div>
+                  <div class="item"><strong>本机 Worker 生图</strong>耗执行人自己的图片额度或兜底方案额度</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="lane">
+              <div class="lane-head">
+                <strong>会耗文本 token</strong>
+                <span>关键判断条件只有一个：有没有真正进入 <code>codex exec</code>。</span>
+              </div>
+              <div class="lane-body">
+                <div class="items">
+                  <div class="item"><strong>直接执行 / 继续执行 / 重新执行</strong>只要进入 Codex，就会计 token</div>
+                  <div class="item"><strong>Figma 写入任务</strong>只是换到执行人本机跑，不是变成免费</div>
+                  <div class="item"><strong>多阶段模板执行</strong>步骤再多，本质仍是 Codex 文本 token 消耗</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="lane">
+              <div class="lane-head">
+                <strong>会耗图片额度</strong>
+                <span>默认和文本 token 分开看，重点关注是不是执行人本机代跑。</span>
+              </div>
+              <div class="lane-body">
+                <div class="items">
+                  <div class="item"><strong>使用 image2</strong>严格调用执行人本机 <code>image2 / gpt-image-2</code></div>
+                  <div class="item"><strong>兜底方案</strong>允许本机走非 image2 生图路径</div>
+                  <div class="item"><strong>平台侧不代跑</strong>负责人电脑和 admin 凭据不作为默认生图执行主机</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>入口影响矩阵</h2>
+      <table class="matrix-table">
+        <thead>
+          <tr>
+            <th>入口</th>
+            <th>当前口径</th>
+            <th>是否已落地</th>
+            <th>主要依赖</th>
+            <th>定位</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Git 自动备份</td>
+            <td><span class="badge b-free">完全免 token</span></td>
+            <td>已落地</td>
+            <td>LaunchAgent + Git/GitHub 凭据</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/scripts/git-auto-backup.sh">scripts/git-auto-backup.sh</a></td>
+          </tr>
+          <tr>
+            <td>同步任务</td>
+            <td><span class="badge b-free">完全免 token</span></td>
+            <td>已落地</td>
+            <td>禅道接口 + 本地 JSON + 平台事件</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/server/server.mjs">server/server.mjs</a> / <a href="file:///Users/se7en/ArtProject/platform/scripts/sync-zentao-art-tasks.mjs">scripts/sync-zentao-art-tasks.mjs</a></td>
+          </tr>
+          <tr>
+            <td>同步 Bug</td>
+            <td><span class="badge b-free">完全免 token</span></td>
+            <td>已落地</td>
+            <td>禅道 Bug 接口 + 本地缓存</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/server/server.mjs">server/server.mjs</a> / <a href="file:///Users/se7en/ArtProject/platform/scripts/sync-zentao-art-bugs.mjs">scripts/sync-zentao-art-bugs.mjs</a></td>
+          </tr>
+          <tr>
+            <td>刷新库存</td>
+            <td><span class="badge b-free">完全免 token</span></td>
+            <td>已落地</td>
+            <td>Git 拉取 + 目录扫描 + 读取 Skill 文本</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/server/scanner.mjs">server/scanner.mjs</a> / <a href="file:///Users/se7en/ArtProject/platform/src/App.vue">src/App.vue</a></td>
+          </tr>
+          <tr>
+            <td>扫描文件夹</td>
+            <td><span class="badge b-free">完全免 token</span></td>
+            <td>已落地</td>
+            <td>本地目录 / 共享盘扫描</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/server/scanner.mjs">server/scanner.mjs</a> / <a href="file:///Users/se7en/ArtProject/platform/src/App.vue">src/App.vue</a></td>
+          </tr>
+          <tr>
+            <td>刷新评分</td>
+            <td><span class="badge b-free">完全免 token</span></td>
+            <td>已落地</td>
+            <td>本地产物、使用、验证、执行数据聚合</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/src/App.vue">src/App.vue</a> / <a href="file:///Users/se7en/ArtProject/platform/server/store.mjs">server/store.mjs</a></td>
+          </tr>
+          <tr>
+            <td>AI部门看板缓存读取</td>
+            <td><span class="badge b-free">完全免 token</span></td>
+            <td>已落地</td>
+            <td>本地缓存快照</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/server/server.mjs">server/server.mjs</a></td>
+          </tr>
+          <tr>
+            <td>维护中心概览 / 预览 / 清理</td>
+            <td><span class="badge b-free">完全免 token</span></td>
+            <td>已落地</td>
+            <td>本地 JSON、目录体量、范围清理函数</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/server/store.mjs">server/store.mjs</a></td>
+          </tr>
+          <tr>
+            <td>操作日志读取 / 删除</td>
+            <td><span class="badge b-free">完全免 token</span></td>
+            <td>已落地</td>
+            <td>本地审计日志 JSON</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/server/server.mjs">server/server.mjs</a></td>
+          </tr>
+          <tr>
+            <td>研究同步上报 / 补传</td>
+            <td><span class="badge b-free">完全免 token</span></td>
+            <td>已落地</td>
+            <td>本地脚本 + HTTP POST + 补传队列</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/scripts/report-art-progress-event.mjs">scripts/report-art-progress-event.mjs</a></td>
+          </tr>
+          <tr>
+            <td>本机 Worker 普通执行</td>
+            <td><span class="badge b-local">不耗负责人</span> <span class="badge b-token">耗执行人 token</span></td>
+            <td>已落地</td>
+            <td>执行人本机 Codex CLI</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/docs/本机直接执行Worker说明.md">docs/本机直接执行Worker说明.md</a></td>
+          </tr>
+          <tr>
+            <td>本机 Worker Figma 写入</td>
+            <td><span class="badge b-local">不耗负责人</span> <span class="badge b-token">耗执行人 token</span></td>
+            <td>已落地</td>
+            <td>执行人本机 Codex + Figma MCP + Figma 授权</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/docs/本机直接执行Worker说明.md">docs/本机直接执行Worker说明.md</a></td>
+          </tr>
+          <tr>
+            <td>本机 Worker 生图</td>
+            <td><span class="badge b-local">不耗负责人</span> <span class="badge b-quota">耗执行人图片额度</span></td>
+            <td>已落地</td>
+            <td>执行人本机 image2 / gpt-image-2 或兜底方案</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/src/views/AgentWorkersView.vue">src/views/AgentWorkersView.vue</a></td>
+          </tr>
+          <tr>
+            <td>服务器侧 Codex 执行</td>
+            <td><span class="badge b-token">会耗 token</span></td>
+            <td>已有实现能力</td>
+            <td><code>codex exec</code></td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/server/runner.mjs">server/runner.mjs</a></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>界面 / 按钮逐项说明</h2>
+      <p style="margin-bottom:16px; color: var(--muted);">
+        这一节按“负责人在工作台里看到的入口”来写，重点回答 5 件事：耗不耗 Codex/OpenAI token、如果耗是耗谁的、当前是不是现成路径、是否会耗图片额度、去哪里继续查代码或文档。
+      </p>
+      <table class="scope-table">
+        <thead>
+          <tr>
+            <th>界面 / 按钮</th>
+            <th>当前口径</th>
+            <th>耗谁的</th>
+            <th>当前状态</th>
+            <th>直接定位</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>任务中心</strong><br />同步任务</td>
+            <td>
+              <span class="flag flag-free">完全免 token</span>
+            </td>
+            <td>不耗负责人，不耗组员</td>
+            <td>已走禅道同步、本地落盘和事件刷新；不是 Codex 任务。</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/server/server.mjs">server/server.mjs</a><br /><a href="file:///Users/se7en/ArtProject/platform/scripts/sync-zentao-art-tasks.mjs">scripts/sync-zentao-art-tasks.mjs</a></td>
+          </tr>
+          <tr>
+            <td><strong>任务中心</strong><br />同步 Bug</td>
+            <td>
+              <span class="flag flag-free">完全免 token</span>
+            </td>
+            <td>不耗负责人，不耗组员</td>
+            <td>已走 ZenTao Bug 同步逻辑；属于业务数据刷新，不是 AI 执行。</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/server/server.mjs">server/server.mjs</a><br /><a href="file:///Users/se7en/ArtProject/platform/scripts/sync-zentao-art-bugs.mjs">scripts/sync-zentao-art-bugs.mjs</a></td>
+          </tr>
+          <tr>
+            <td><strong>AI产物清单</strong><br />刷新库存</td>
+            <td>
+              <span class="flag flag-free">完全免 token</span>
+            </td>
+            <td>不耗负责人，不耗组员</td>
+            <td>当前是 Git 拉取、目录扫描、读取说明文件和缓存快照合并，不走模型。</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/src/App.vue">src/App.vue</a><br /><a href="file:///Users/se7en/ArtProject/platform/server/scanner.mjs">server/scanner.mjs</a></td>
+          </tr>
+          <tr>
+            <td><strong>AI产物清单</strong><br />扫描文件夹</td>
+            <td>
+              <span class="flag flag-free">完全免 token</span>
+            </td>
+            <td>不耗负责人，不耗组员</td>
+            <td>当前是本地目录 / 共享盘扫描，不走 Codex。</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/src/App.vue">src/App.vue</a><br /><a href="file:///Users/se7en/ArtProject/platform/server/scanner.mjs">server/scanner.mjs</a></td>
+          </tr>
+          <tr>
+            <td><strong>AI部门看板</strong><br />刷新评分</td>
+            <td>
+              <span class="flag flag-free">完全免 token</span>
+            </td>
+            <td>不耗负责人，不耗组员</td>
+            <td>虽然名字带 AI，但当前实现是本地统计分、使用分、执行分、互验分重算。</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/src/App.vue">src/App.vue</a><br /><a href="file:///Users/se7en/ArtProject/platform/server/store.mjs">server/store.mjs</a></td>
+          </tr>
+          <tr>
+            <td><strong>AI部门看板</strong><br />读取看板缓存 / 评分快照</td>
+            <td>
+              <span class="flag flag-free">完全免 token</span>
+            </td>
+            <td>不耗负责人，不耗组员</td>
+            <td>优先读服务端快照和本地缓存，不会因为打开页面就重新跑模型。</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/server/server.mjs">server/server.mjs</a></td>
+          </tr>
+          <tr>
+            <td><strong>本机执行状态</strong><br />查看 Worker 状态</td>
+            <td>
+              <span class="flag flag-free">完全免 token</span>
+            </td>
+            <td>不耗负责人，不耗组员</td>
+            <td>这是状态读取、自检展示和诊断说明，不是实际执行。</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/src/views/AgentWorkersView.vue">src/views/AgentWorkersView.vue</a></td>
+          </tr>
+          <tr>
+            <td><strong>执行台 / 新建执行</strong><br />普通直接执行</td>
+            <td>
+              <span class="flag flag-local">不耗负责人 token</span>
+              <span class="flag flag-token">耗执行人 token</span>
+            </td>
+            <td>执行人自己的 Codex CLI 登录态</td>
+            <td>已落地；平台派单，执行人本机 Worker 自动领取。</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/docs/本机直接执行Worker说明.md">docs/本机直接执行Worker说明.md</a></td>
+          </tr>
+          <tr>
+            <td><strong>执行台 / 新建执行</strong><br />Figma 写入任务</td>
+            <td>
+              <span class="flag flag-local">不耗负责人 token</span>
+              <span class="flag flag-token">耗执行人 token</span>
+            </td>
+            <td>执行人自己的 Codex + Figma MCP + Figma 权限</td>
+            <td>已落地；平台不会用负责人本机插件或负责人 Figma 授权代跑。</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/docs/本机直接执行Worker说明.md">docs/本机直接执行Worker说明.md</a></td>
+          </tr>
+          <tr>
+            <td><strong>执行台 / 新建执行</strong><br />生图调用方式：使用 image2</td>
+            <td>
+              <span class="flag flag-local">不耗负责人 token</span>
+              <span class="flag flag-quota">耗执行人图片额度</span>
+            </td>
+            <td>执行人自己的 image2 / gpt-image-2</td>
+            <td>已落地；失败会按真实本机阻塞返回，不允许悄悄改成别的方案替代。</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/src/views/AgentWorkersView.vue">src/views/AgentWorkersView.vue</a><br /><a href="file:///Users/se7en/ArtProject/platform/src/App.vue">src/App.vue</a></td>
+          </tr>
+          <tr>
+            <td><strong>执行台 / 新建执行</strong><br />生图调用方式：兜底方案</td>
+            <td>
+              <span class="flag flag-local">不耗负责人 token</span>
+              <span class="flag flag-quota">耗执行人本机额度</span>
+            </td>
+            <td>执行人自己的非 image2 可用生图方案</td>
+            <td>已落地；是否耗哪家额度，取决于执行人本机兜底方案。</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/src/App.vue">src/App.vue</a></td>
+          </tr>
+          <tr>
+            <td><strong>维护中心</strong><br />概览 / 预览 / 执行清理</td>
+            <td>
+              <span class="flag flag-free">完全免 token</span>
+            </td>
+            <td>不耗负责人，不耗组员</td>
+            <td>走本地 JSON、目录体量统计和范围清理函数，不依赖 AI。</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/server/store.mjs">server/store.mjs</a></td>
+          </tr>
+          <tr>
+            <td><strong>操作日志</strong><br />查看 / 删除当前范围</td>
+            <td>
+              <span class="flag flag-free">完全免 token</span>
+            </td>
+            <td>不耗负责人，不耗组员</td>
+            <td>纯审计数据接口，删除后也不会回退 AI 调用累计次数。</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/server/server.mjs">server/server.mjs</a><br /><a href="file:///Users/se7en/ArtProject/platform/server/store.mjs">server/store.mjs</a></td>
+          </tr>
+          <tr>
+            <td><strong>研究同步</strong><br />上报 / 补传</td>
+            <td>
+              <span class="flag flag-free">完全免 token</span>
+            </td>
+            <td>不耗负责人，不耗组员</td>
+            <td>本质是事件上报脚本；网络断了就写补传队列，恢复后继续 POST。</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/scripts/report-art-progress-event.mjs">scripts/report-art-progress-event.mjs</a></td>
+          </tr>
+          <tr>
+            <td><strong>Git 自动备份</strong><br />后台定时执行</td>
+            <td>
+              <span class="flag flag-free">完全免 token</span>
+            </td>
+            <td>不耗负责人，不耗组员</td>
+            <td>已经明确禁用 AI/Codex/OpenAI 相关环境变量，只依赖 Git/GitHub 凭据。</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/AGENTS.md">AGENTS.md</a><br /><a href="file:///Users/se7en/ArtProject/platform/scripts/git-auto-backup.sh">scripts/git-auto-backup.sh</a></td>
+          </tr>
+          <tr>
+            <td><strong>服务器侧 Codex 执行</strong><br />传统 run 启动</td>
+            <td>
+              <span class="flag flag-token">会耗文本 token</span>
+            </td>
+            <td>当前运行该进程所使用的 Codex/OpenAI 凭据</td>
+            <td>实现能力仍在；只要真正进入 <code>codex exec</code> 就不可能是免费。</td>
+            <td><a href="file:///Users/se7en/ArtProject/platform/server/runner.mjs">server/runner.mjs</a></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <h2>负责人判断口诀</h2>
+      <div class="tips">
+        <article class="tip">
+          <h3>先问：有没有进入 codex exec</h3>
+          <p>只要真正进入 <code>codex exec</code>，就不是“免 token”；区别只在于是耗负责人这边，还是耗执行人本机。</p>
+        </article>
+        <article class="tip">
+          <h3>名字带 AI，不代表一定耗 token</h3>
+          <p><code>AI评分</code>、<code>AI部门看板缓存</code>、<code>AI产物清单刷新库存</code> 这些当前实现都属于本地数据处理，不要被名字误导。</p>
+        </article>
+        <article class="tip">
+          <h3>生图和文本 token 分开看</h3>
+          <p>生图失败不代表文本 token 有问题；更多时候是执行人本机的图片额度、代理、DNS 或 image2 配置问题。</p>
+        </article>
+      </div>
+    </section>
+  </div>
+</body>
+</html>
