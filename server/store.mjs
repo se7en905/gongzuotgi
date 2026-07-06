@@ -1376,29 +1376,29 @@ export async function claimNextAgentRun(input = {}) {
   if (!capabilities.includes('codex.exec')) return null;
   const allowedProjectIds = normalizeLineList(input.allowedProjectIds);
   const canAccessAllProjects = input.canAccessAllProjects === true || allowedProjectIds.includes('*');
-  const runs = await readJson(paths.runs, []);
-  const now = new Date().toISOString();
-  const candidateIndex = runs.findIndex(run => (
-    isClaimableAgentRun(run, userId, { allowedProjectIds, canAccessAllProjects })
-    && workerCanExecuteRun(run, capabilities)
-  ));
-  if (candidateIndex === -1) return null;
-  const baseRun = normalizeActiveLocalWorkerRun(runs[candidateIndex], 'claimed');
-  const run = {
-    ...baseRun,
-    status: 'claimed',
-    workerStatus: 'claimed',
-    assignedToUserId: baseRun.assignedToUserId || userId,
-    queuedForUserId: baseRun.queuedForUserId || userId,
-    claimedByDeviceId: deviceId,
-    claimedAt: now,
-    startedBy: userId,
-    workerCapabilities: capabilities,
-    updatedAt: now
-  };
-  runs[candidateIndex] = run;
-  await writeJson(paths.runs, runs);
-  return hydrateRunStages(run);
+  return mutateRunsJson(async runs => {
+    const now = new Date().toISOString();
+    const candidateIndex = runs.findIndex(run => (
+      isClaimableAgentRun(run, userId, { allowedProjectIds, canAccessAllProjects })
+      && workerCanExecuteRun(run, capabilities)
+    ));
+    if (candidateIndex === -1) return { changed: false, value: null };
+    const baseRun = normalizeActiveLocalWorkerRun(runs[candidateIndex], 'claimed');
+    const run = {
+      ...baseRun,
+      status: 'claimed',
+      workerStatus: 'claimed',
+      assignedToUserId: baseRun.assignedToUserId || userId,
+      queuedForUserId: baseRun.queuedForUserId || userId,
+      claimedByDeviceId: deviceId,
+      claimedAt: now,
+      startedBy: userId,
+      workerCapabilities: capabilities,
+      updatedAt: now
+    };
+    runs[candidateIndex] = run;
+    return { changed: true, value: await hydrateRunStages(run) };
+  });
 }
 
 export async function claimRecoverableAgentRun(input = {}) {
@@ -1410,180 +1410,201 @@ export async function claimRecoverableAgentRun(input = {}) {
   if (!capabilities.includes('codex.exec')) return null;
   const allowedProjectIds = normalizeLineList(input.allowedProjectIds);
   const canAccessAllProjects = input.canAccessAllProjects === true || allowedProjectIds.includes('*');
-  const runs = await readJson(paths.runs, []);
-  const now = new Date().toISOString();
-  const candidateIndex = runs.findIndex(run => (
-    (!runId || cleanString(run.id) === runId)
-    && isRecoverableAgentRun(run, userId, deviceId, { allowedProjectIds, canAccessAllProjects })
-    && workerCanExecuteRun(run, capabilities)
-  ));
-  if (candidateIndex === -1) return null;
-  const existing = runs[candidateIndex];
-  const alreadyRunning = isWorkerRunStarted(existing);
-  const nextStatus = alreadyRunning ? 'running' : 'claimed';
-  const nextClaimedByDeviceId = existing.claimedByDeviceId || deviceId;
-  const nextClaimedAt = existing.claimedAt || now;
-  const nextStartedBy = existing.startedBy || userId;
-  const nextQueuedForUserId = existing.queuedForUserId || userId;
-  const normalizedExisting = normalizeActiveLocalWorkerRun(existing, nextStatus);
-  const statusUnchanged = stableWorkerRunValue(existing) === stableWorkerRunValue(normalizedExisting)
-    && existing.status === nextStatus
-    && existing.workerStatus === nextStatus
-    && existing.claimedByDeviceId === nextClaimedByDeviceId
-    && existing.claimedAt === nextClaimedAt
-    && existing.queuedForUserId === nextQueuedForUserId
-    && existing.startedBy === nextStartedBy;
-  if (statusUnchanged) {
-    const hydrated = await hydrateRunStages({
-      ...existing,
-      _changed: false
-    });
-    return {
-      ...hydrated,
-      _changed: false
+  return mutateRunsJson(async runs => {
+    const now = new Date().toISOString();
+    const candidateIndex = runs.findIndex(run => (
+      (!runId || cleanString(run.id) === runId)
+      && isRecoverableAgentRun(run, userId, deviceId, { allowedProjectIds, canAccessAllProjects })
+      && workerCanExecuteRun(run, capabilities)
+    ));
+    if (candidateIndex === -1) return { changed: false, value: null };
+    const existing = runs[candidateIndex];
+    const alreadyRunning = isWorkerRunStarted(existing);
+    const nextStatus = alreadyRunning ? 'running' : 'claimed';
+    const nextClaimedByDeviceId = existing.claimedByDeviceId || deviceId;
+    const nextClaimedAt = existing.claimedAt || now;
+    const nextStartedBy = existing.startedBy || userId;
+    const nextQueuedForUserId = existing.queuedForUserId || userId;
+    const normalizedExisting = normalizeActiveLocalWorkerRun(existing, nextStatus);
+    const statusUnchanged = stableWorkerRunValue(existing) === stableWorkerRunValue(normalizedExisting)
+      && existing.status === nextStatus
+      && existing.workerStatus === nextStatus
+      && existing.claimedByDeviceId === nextClaimedByDeviceId
+      && existing.claimedAt === nextClaimedAt
+      && existing.queuedForUserId === nextQueuedForUserId
+      && existing.startedBy === nextStartedBy;
+    if (statusUnchanged) {
+      const hydrated = await hydrateRunStages({
+        ...existing,
+        _changed: false
+      });
+      return {
+        changed: false,
+        value: {
+          ...hydrated,
+          _changed: false
+        }
+      };
+    }
+    const run = {
+      ...normalizedExisting,
+      status: nextStatus,
+      workerStatus: nextStatus,
+      assignedToUserId: normalizedExisting.assignedToUserId || userId,
+      queuedForUserId: nextQueuedForUserId,
+      claimedByDeviceId: nextClaimedByDeviceId,
+      claimedAt: nextClaimedAt,
+      resumedAt: now,
+      startedBy: nextStartedBy,
+      workerCapabilities: capabilities,
+      updatedAt: now
     };
-  }
-  const run = {
-    ...normalizedExisting,
-    status: nextStatus,
-    workerStatus: nextStatus,
-    assignedToUserId: normalizedExisting.assignedToUserId || userId,
-    queuedForUserId: nextQueuedForUserId,
-    claimedByDeviceId: nextClaimedByDeviceId,
-    claimedAt: nextClaimedAt,
-    resumedAt: now,
-    startedBy: nextStartedBy,
-    workerCapabilities: capabilities,
-    updatedAt: now
-  };
-  runs[candidateIndex] = run;
-  await writeJson(paths.runs, runs);
-  const hydrated = await hydrateRunStages(run);
-  return {
-    ...hydrated,
-    _changed: true
-  };
+    runs[candidateIndex] = run;
+    const hydrated = await hydrateRunStages(run);
+    return {
+      changed: true,
+      value: {
+        ...hydrated,
+        _changed: true
+      }
+    };
+  });
 }
 
 export async function updateAgentRunFromWorker(runId, input = {}) {
-  const runs = await readJson(paths.runs, []);
-  const index = runs.findIndex(item => item.id === runId);
-  if (index === -1) return null;
-  const now = new Date().toISOString();
-  const existing = runs[index];
-  if (isCancelledRunStatus(existing.status) || isCancelledRunStatus(existing.workerStatus)) {
-    const hydrated = await hydrateRunStages(existing);
-    return {
-      ...hydrated,
-      _changed: false
+  return mutateRunsJson(async runs => {
+    const index = runs.findIndex(item => item.id === runId);
+    if (index === -1) return { changed: false, value: null };
+    const now = new Date().toISOString();
+    const existing = runs[index];
+    if (isCancelledRunStatus(existing.status) || isCancelledRunStatus(existing.workerStatus)) {
+      const hydrated = await hydrateRunStages(existing);
+      return {
+        changed: false,
+        value: {
+          ...hydrated,
+          _changed: false
+        }
+      };
+    }
+    if (isFinalWorkerRunStatus(existing.status || existing.workerStatus) && !isFinalWorkerRunStatus(input.status || input.workerStatus)) {
+      const hydrated = await hydrateRunStages(existing);
+      return {
+        changed: false,
+        value: {
+          ...hydrated,
+          _changed: false
+        }
+      };
+    }
+    const incomingStatus = input.status || input.workerStatus || existing.status;
+    const activeExisting = isFinalWorkerRunStatus(incomingStatus)
+      ? existing
+      : normalizeActiveLocalWorkerRun(existing, normalizeWorkerRunStatus(incomingStatus || existing.status || 'running'));
+    const timingPatch = normalizeWorkerTimingPatch(input, activeExisting);
+    const nextStatus = resolveWorkerRunStatusTransition(activeExisting, incomingStatus);
+    const patch = {
+      workerStatus: nextStatus,
+      status: nextStatus,
+      currentStage: input.currentStage ?? activeExisting.currentStage,
+      blocker: input.blocker ?? activeExisting.blocker,
+      resultSummary: input.resultSummary ?? activeExisting.resultSummary,
+      exitCode: input.exitCode ?? activeExisting.exitCode,
+      finishedAt: input.finishedAt || timingPatch.finishedAt || (/completed|blocked|failed|cancelled/.test(String(input.status || input.workerStatus || '')) ? now : activeExisting.finishedAt),
+      workerResult: input.workerResult ?? activeExisting.workerResult,
+      figmaWriteResult: input.figmaWriteResult ?? activeExisting.figmaWriteResult,
+      updatedAt: now,
+      ...timingPatch
     };
-  }
-  if (isFinalWorkerRunStatus(existing.status || existing.workerStatus) && !isFinalWorkerRunStatus(input.status || input.workerStatus)) {
-    const hydrated = await hydrateRunStages(existing);
+    if (isFinalWorkerRunStatus(nextStatus)) {
+      patch.localWorkerStale = false;
+      patch.localWorkerStaleDetectedAt = '';
+    }
+    if (input.pid !== undefined) patch.pid = input.pid;
+    if (input.startedAt) patch.startedAt = input.startedAt;
+    if (patch.currentStage !== undefined) patch.currentStage = normalizeWorkerStageName(patch.currentStage);
+    if (input.logPath) patch.logPath = input.logPath;
+    if (input.promptPath) patch.promptPath = input.promptPath;
+    if (input.artifactRoot) patch.artifactRoot = input.artifactRoot;
+    const workerLocalLogPath = cleanString(input.workerLocalLogPath || input.workerResult?.localLogPath);
+    if (workerLocalLogPath) patch.workerLocalLogPath = workerLocalLogPath;
+    const workerLocalLogSize = Number(input.workerLocalLogSize ?? input.workerResult?.localLogSize);
+    if (Number.isFinite(workerLocalLogSize) && workerLocalLogSize >= 0) patch.workerLocalLogSize = workerLocalLogSize;
+    const nextRun = guardFigmaWriteCompletion({ ...activeExisting, ...patch });
+    if (!hasWorkerRunMaterialChange(existing, nextRun)) {
+      const hydrated = await hydrateRunStages(existing);
+      return {
+        changed: false,
+        value: {
+          ...hydrated,
+          _changed: false
+        }
+      };
+    }
+    runs[index] = nextRun;
+    const hydrated = await hydrateRunStages(runs[index]);
     return {
-      ...hydrated,
-      _changed: false
+      changed: true,
+      value: {
+        ...hydrated,
+        _changed: true
+      }
     };
-  }
-  const incomingStatus = input.status || input.workerStatus || existing.status;
-  const activeExisting = isFinalWorkerRunStatus(incomingStatus)
-    ? existing
-    : normalizeActiveLocalWorkerRun(existing, normalizeWorkerRunStatus(incomingStatus || existing.status || 'running'));
-  const timingPatch = normalizeWorkerTimingPatch(input, activeExisting);
-  const nextStatus = resolveWorkerRunStatusTransition(activeExisting, incomingStatus);
-  const patch = {
-    workerStatus: nextStatus,
-    status: nextStatus,
-    currentStage: input.currentStage ?? activeExisting.currentStage,
-    blocker: input.blocker ?? activeExisting.blocker,
-    resultSummary: input.resultSummary ?? activeExisting.resultSummary,
-    exitCode: input.exitCode ?? activeExisting.exitCode,
-    finishedAt: input.finishedAt || timingPatch.finishedAt || (/completed|blocked|failed|cancelled/.test(String(input.status || input.workerStatus || '')) ? now : activeExisting.finishedAt),
-    workerResult: input.workerResult ?? activeExisting.workerResult,
-    figmaWriteResult: input.figmaWriteResult ?? activeExisting.figmaWriteResult,
-    updatedAt: now,
-    ...timingPatch
-  };
-  if (isFinalWorkerRunStatus(nextStatus)) {
-    patch.localWorkerStale = false;
-    patch.localWorkerStaleDetectedAt = '';
-  }
-  if (input.pid !== undefined) patch.pid = input.pid;
-  if (input.startedAt) patch.startedAt = input.startedAt;
-  if (patch.currentStage !== undefined) patch.currentStage = normalizeWorkerStageName(patch.currentStage);
-  if (input.logPath) patch.logPath = input.logPath;
-  if (input.promptPath) patch.promptPath = input.promptPath;
-  if (input.artifactRoot) patch.artifactRoot = input.artifactRoot;
-  const workerLocalLogPath = cleanString(input.workerLocalLogPath || input.workerResult?.localLogPath);
-  if (workerLocalLogPath) patch.workerLocalLogPath = workerLocalLogPath;
-  const workerLocalLogSize = Number(input.workerLocalLogSize ?? input.workerResult?.localLogSize);
-  if (Number.isFinite(workerLocalLogSize) && workerLocalLogSize >= 0) patch.workerLocalLogSize = workerLocalLogSize;
-  const nextRun = guardFigmaWriteCompletion({ ...activeExisting, ...patch });
-  if (!hasWorkerRunMaterialChange(existing, nextRun)) {
-    const hydrated = await hydrateRunStages(existing);
-    return {
-      ...hydrated,
-      _changed: false
-    };
-  }
-  runs[index] = nextRun;
-  await writeJson(paths.runs, runs);
-  const hydrated = await hydrateRunStages(runs[index]);
-  return {
-    ...hydrated,
-    _changed: true
-  };
+  });
 }
 
 export async function saveAgentRunGeneratedArtifacts(runId, input = []) {
-  const runs = await readJson(paths.runs, []);
-  const index = runs.findIndex(item => item.id === runId);
-  if (index === -1) return null;
-  const run = ensureRunArtifactRootFromExistingFiles(runs[index]);
-  if (!run.artifactRoot) return await hydrateRunStages(run);
-  const saved = await saveGeneratedRunArtifacts(run, input);
-  if (!saved.length) return await hydrateRunStages(run);
-  const now = new Date().toISOString();
-  const existingSummary = run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {};
-  const existingWorkerResult = run.workerResult && typeof run.workerResult === 'object' ? run.workerResult : {};
-  const artifactEvidence = saved.map(item => item.relativePath || item.path).filter(Boolean);
-  const nextSummaryArtifacts = [
-    ...(Array.isArray(existingSummary.artifacts) ? existingSummary.artifacts : []),
-    ...artifactEvidence
-  ].filter(Boolean);
-  const nextGeneratedArtifacts = dedupeRunArtifacts([
-    ...(Array.isArray(existingSummary.generatedArtifacts) ? existingSummary.generatedArtifacts : []),
-    ...saved
-  ]);
-  const nextWorkerGeneratedArtifacts = dedupeRunArtifacts([
-    ...(Array.isArray(existingWorkerResult.generatedArtifacts) ? existingWorkerResult.generatedArtifacts : []),
-    ...saved
-  ]);
-  const nextRun = {
-    ...run,
-    artifactRoot: run.artifactRoot,
-    generatedArtifacts: dedupeRunArtifacts([
-      ...(Array.isArray(run.generatedArtifacts) ? run.generatedArtifacts : []),
+  return mutateRunsJson(async runs => {
+    const index = runs.findIndex(item => item.id === runId);
+    if (index === -1) return { changed: false, value: null };
+    const run = ensureRunArtifactRootFromExistingFiles(runs[index]);
+    if (!run.artifactRoot) return { changed: false, value: await hydrateRunStages(run) };
+    const saved = await saveGeneratedRunArtifacts(run, input);
+    if (!saved.length) return { changed: false, value: await hydrateRunStages(run) };
+    const now = new Date().toISOString();
+    const existingSummary = run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {};
+    const existingWorkerResult = run.workerResult && typeof run.workerResult === 'object' ? run.workerResult : {};
+    const artifactEvidence = saved.map(item => item.relativePath || item.path).filter(Boolean);
+    const nextSummaryArtifacts = [
+      ...(Array.isArray(existingSummary.artifacts) ? existingSummary.artifacts : []),
+      ...artifactEvidence
+    ].filter(Boolean);
+    const nextGeneratedArtifacts = dedupeRunArtifacts([
+      ...(Array.isArray(existingSummary.generatedArtifacts) ? existingSummary.generatedArtifacts : []),
       ...saved
-    ]),
-    resultSummary: {
-      ...existingSummary,
-      artifacts: [...new Set(nextSummaryArtifacts)],
-      generatedArtifacts: nextGeneratedArtifacts
-    },
-    workerResult: {
-      ...existingWorkerResult,
-      generatedArtifacts: nextWorkerGeneratedArtifacts
-    },
-    updatedAt: now
-  };
-  runs[index] = nextRun;
-  await writeJson(paths.runs, runs);
-  const hydrated = await hydrateRunStages(nextRun);
-  return {
-    ...hydrated,
-    savedGeneratedArtifacts: saved
-  };
+    ]);
+    const nextWorkerGeneratedArtifacts = dedupeRunArtifacts([
+      ...(Array.isArray(existingWorkerResult.generatedArtifacts) ? existingWorkerResult.generatedArtifacts : []),
+      ...saved
+    ]);
+    const nextRun = {
+      ...run,
+      artifactRoot: run.artifactRoot,
+      generatedArtifacts: dedupeRunArtifacts([
+        ...(Array.isArray(run.generatedArtifacts) ? run.generatedArtifacts : []),
+        ...saved
+      ]),
+      resultSummary: {
+        ...existingSummary,
+        artifacts: [...new Set(nextSummaryArtifacts)],
+        generatedArtifacts: nextGeneratedArtifacts
+      },
+      workerResult: {
+        ...existingWorkerResult,
+        generatedArtifacts: nextWorkerGeneratedArtifacts
+      },
+      updatedAt: now
+    };
+    runs[index] = nextRun;
+    const hydrated = await hydrateRunStages(nextRun);
+    return {
+      changed: true,
+      value: {
+        ...hydrated,
+        savedGeneratedArtifacts: saved
+      }
+    };
+  });
 }
 
 async function enrichRunGeneratedArtifactEvidence(run = null) {
@@ -2234,59 +2255,66 @@ function inferRunArtifactRootFromPath(filePath = '') {
 }
 
 export async function applyAgentRunEvents(runId, input = {}) {
-  const runs = await readJson(paths.runs, []);
-  const index = runs.findIndex(item => item.id === runId);
-  if (index === -1) return null;
-  const existing = runs[index];
-  const events = Array.isArray(input.events) ? input.events.map(normalizeAgentRunEvent).filter(Boolean) : [];
-  const knownIds = new Set(Array.isArray(existing.workerEventIds) ? existing.workerEventIds.map(cleanString).filter(Boolean) : []);
-  const newEvents = events.filter(event => event.id && !knownIds.has(event.id));
-  if (!newEvents.length) return hydrateRunStages(existing);
+  return mutateRunsJson(async runs => {
+    const index = runs.findIndex(item => item.id === runId);
+    if (index === -1) return { changed: false, value: null };
+    const existing = runs[index];
+    const events = Array.isArray(input.events) ? input.events.map(normalizeAgentRunEvent).filter(Boolean) : [];
+    const knownIds = new Set(Array.isArray(existing.workerEventIds) ? existing.workerEventIds.map(cleanString).filter(Boolean) : []);
+    const newEvents = events.filter(event => event.id && !knownIds.has(event.id));
+    if (!newEvents.length) return { changed: false, value: await hydrateRunStages(existing) };
 
-  let next = { ...existing };
-  let logChunks = [];
-  for (const event of newEvents) {
-    knownIds.add(event.id);
-    if (event.type === 'log') {
-      if (event.chunk) logChunks.push(event.chunk);
-      continue;
+    let next = { ...existing };
+    let logChunks = [];
+    for (const event of newEvents) {
+      knownIds.add(event.id);
+      if (event.type === 'log') {
+        if (event.chunk) logChunks.push(event.chunk);
+        continue;
+      }
+      if (event.type === 'status') {
+        next = mergeAgentRunStatusEvent(next, event);
+        continue;
+      }
+      if (event.type === 'stage') {
+        next = mergeAgentRunStageEvent(next, event);
+        continue;
+      }
     }
-    if (event.type === 'status') {
-      next = mergeAgentRunStatusEvent(next, event);
-      continue;
+    const now = new Date().toISOString();
+    let appendedLogPath = '';
+    for (const chunk of logChunks) appendedLogPath = await appendRunLog(runId, chunk);
+    if (appendedLogPath) next.logPath = appendedLogPath;
+    next = normalizeActiveLocalWorkerRun(next, next.status || next.workerStatus);
+    const hasRunEventMaterial = hasWorkerRunMaterialChange(existing, next);
+    const nextEventIds = hasRunEventMaterial ? [...knownIds].slice(-500) : (Array.isArray(existing.workerEventIds) ? existing.workerEventIds : []);
+    const eventIdsChanged = stableWorkerRunValue(existing.workerEventIds || []) !== stableWorkerRunValue(nextEventIds);
+    if (!hasRunEventMaterial && !eventIdsChanged) {
+      const hydrated = await hydrateRunStages(existing);
+      return {
+        changed: false,
+        value: {
+          ...hydrated,
+          _changed: false
+        }
+      };
     }
-    if (event.type === 'stage') {
-      next = mergeAgentRunStageEvent(next, event);
-      continue;
-    }
-  }
-  const now = new Date().toISOString();
-  for (const chunk of logChunks) await appendRunLog(runId, chunk);
-  if (logChunks.length) await ensureRunLogPath(runId);
-  next = normalizeActiveLocalWorkerRun(next, next.status || next.workerStatus);
-  const hasRunEventMaterial = hasWorkerRunMaterialChange(existing, next);
-  const nextEventIds = hasRunEventMaterial ? [...knownIds].slice(-500) : (Array.isArray(existing.workerEventIds) ? existing.workerEventIds : []);
-  const eventIdsChanged = stableWorkerRunValue(existing.workerEventIds || []) !== stableWorkerRunValue(nextEventIds);
-  if (!hasRunEventMaterial && !eventIdsChanged) {
-    const hydrated = await hydrateRunStages(existing);
-    return {
-      ...hydrated,
-      _changed: false
+    next = {
+      ...next,
+      workerEventIds: nextEventIds,
+      ...(isFinalWorkerRunStatus(next.status || next.workerStatus) ? { localWorkerStale: false, localWorkerStaleDetectedAt: '' } : {}),
+      updatedAt: hasRunEventMaterial ? now : existing.updatedAt
     };
-  }
-  next = {
-    ...next,
-    workerEventIds: nextEventIds,
-    ...(isFinalWorkerRunStatus(next.status || next.workerStatus) ? { localWorkerStale: false, localWorkerStaleDetectedAt: '' } : {}),
-    updatedAt: hasRunEventMaterial ? now : existing.updatedAt
-  };
-  runs[index] = next;
-  await writeJson(paths.runs, runs);
-  const hydrated = await hydrateRunStages(next);
-  return {
-    ...hydrated,
-    _changed: hasRunEventMaterial
-  };
+    runs[index] = next;
+    const hydrated = await hydrateRunStages(next);
+    return {
+      changed: true,
+      value: {
+        ...hydrated,
+        _changed: hasRunEventMaterial
+      }
+    };
+  });
 }
 
 export async function listMissingRunIds(runIds = []) {
@@ -2356,12 +2384,12 @@ function normalizeRetryCustomStages(stages = []) {
 }
 
 export async function updateRun(id, patch) {
-  const runs = await readJson(paths.runs, []);
-  const index = runs.findIndex(item => item.id === id);
-  if (index === -1) return null;
-  runs[index] = { ...runs[index], ...patch, updatedAt: new Date().toISOString() };
-  await writeJson(paths.runs, runs);
-  return runs[index];
+  return mutateRunsJson(async runs => {
+    const index = runs.findIndex(item => item.id === id);
+    if (index === -1) return { changed: false, value: null };
+    runs[index] = { ...runs[index], ...patch, updatedAt: new Date().toISOString() };
+    return { changed: true, value: runs[index] };
+  });
 }
 
 export async function queueRunForLocalWorker(id, input = {}) {
@@ -3302,18 +3330,18 @@ export async function appendRunLog(runId, chunk) {
 }
 
 export async function ensureRunLogPath(runId) {
-  const runs = await readJson(paths.runs, []);
-  const index = runs.findIndex(item => item.id === runId);
-  if (index === -1) return '';
   const file = path.join(getRunWorkspace(runId), 'run.log');
-  if (runs[index].logPath === file) return file;
-  runs[index] = {
-    ...runs[index],
-    logPath: file,
-    updatedAt: new Date().toISOString()
-  };
-  await writeJson(paths.runs, runs);
-  return file;
+  return mutateRunsJson(async runs => {
+    const index = runs.findIndex(item => item.id === runId);
+    if (index === -1) return { changed: false, value: '' };
+    if (runs[index].logPath === file) return { changed: false, value: file };
+    runs[index] = {
+      ...runs[index],
+      logPath: file,
+      updatedAt: new Date().toISOString()
+    };
+    return { changed: true, value: file };
+  });
 }
 
 export function buildStages(workflow, requestedStage = '', workflowLevel = '') {
@@ -3759,30 +3787,49 @@ async function reconcileStaleLocalWorkerRuns() {
   const workerByDevice = new Map(workers.map(worker => [cleanString(worker.deviceId), worker]));
   const now = new Date();
   let changed = false;
+  const replacementsById = new Map();
   const nextRuns = [];
   for (const run of Array.isArray(runs) ? runs : []) {
     const normalizedFinal = normalizeFinalWorkerStatusConflict(run, now);
     if (normalizedFinal !== run) {
       nextRuns.push(normalizedFinal);
+      replacementsById.set(run.id, { before: run, after: normalizedFinal });
       changed = true;
     } else {
       const normalizedActive = normalizeActiveLocalWorkerRun(run, run.status || run.workerStatus);
       if (stableWorkerRunValue(run) !== stableWorkerRunValue(normalizedActive)) {
         nextRuns.push(normalizedActive);
+        replacementsById.set(run.id, { before: run, after: normalizedActive });
         changed = true;
       } else if (await shouldMarkLocalWorkerRunStale(run, workerByDevice, now)) {
-        nextRuns.push(markLocalWorkerRunStale(run, workerByDevice.get(cleanString(run.claimedByDeviceId)), now));
+        const staleRun = markLocalWorkerRunStale(run, workerByDevice.get(cleanString(run.claimedByDeviceId)), now);
+        nextRuns.push(staleRun);
+        replacementsById.set(run.id, { before: run, after: staleRun });
         changed = true;
       } else if (run.localWorkerStale === true && /当前已空闲/.test(cleanString(run.resultSummary?.summary))) {
-        nextRuns.push(normalizeLocalWorkerStaleSummary(run, now));
+        const normalizedSummary = normalizeLocalWorkerStaleSummary(run, now);
+        nextRuns.push(normalizedSummary);
+        replacementsById.set(run.id, { before: run, after: normalizedSummary });
         changed = true;
       } else {
         nextRuns.push(run);
       }
     }
   }
-  if (changed) await writeJson(paths.runs, nextRuns);
-  return nextRuns;
+  if (!changed) return nextRuns;
+  return mutateRunsJson(async latestRuns => {
+    let mergedChanged = false;
+    const mergedRuns = latestRuns.map(current => {
+      const replacement = replacementsById.get(current.id);
+      if (!replacement) return current;
+      if (stableWorkerRunValue(current) !== stableWorkerRunValue(replacement.before)) return current;
+      mergedChanged = true;
+      return replacement.after;
+    });
+    if (!mergedChanged) return { changed: false, value: latestRuns };
+    latestRuns.splice(0, latestRuns.length, ...mergedRuns);
+    return { changed: true, value: mergedRuns };
+  });
 }
 
 function normalizeFinalWorkerStatusConflict(run = {}, now = new Date()) {
@@ -4223,19 +4270,24 @@ async function persistRunReadReconciliations(beforeRuns = [], afterRuns = []) {
     changedById.set(after.id, after);
   }
   if (!changedById.size) return;
-  const runs = await readJson(paths.runs, []);
-  let changed = false;
-  const next = runs.map(run => {
-    const replacement = changedById.get(run.id);
-    if (!replacement) return run;
-    changed = true;
-    return {
-      ...run,
-      ...replacement,
-      updatedAt: replacement.updatedAt || new Date().toISOString()
-    };
+  return mutateRunsJson(async runs => {
+    let changed = false;
+    const next = runs.map(run => {
+      const replacement = changedById.get(run.id);
+      if (!replacement) return run;
+      changed = true;
+      return {
+        ...run,
+        ...replacement,
+        updatedAt: replacement.updatedAt || new Date().toISOString()
+      };
+    });
+    if (changed) {
+      runs.splice(0, runs.length, ...next);
+      return { changed: true, value: undefined };
+    }
+    return { changed: false, value: undefined };
   });
-  if (changed) await writeJson(paths.runs, next);
 }
 
 function hasRunReadReconciliationChange(before = {}, after = {}) {
@@ -8893,6 +8945,16 @@ async function readJson(file, fallback) {
 
 async function writeJson(file, value, options = {}) {
   return enqueueJsonWrite(file, () => writeJsonNow(file, value, options));
+}
+
+async function mutateRunsJson(mutator) {
+  return enqueueJsonWrite(paths.runs, async () => {
+    const runs = await readJson(paths.runs, []);
+    const result = await mutator(runs);
+    const changed = result?.changed === true;
+    if (changed) await writeJsonNow(paths.runs, runs);
+    return result?.value ?? null;
+  });
 }
 
 async function enqueueJsonWrite(file, task) {
