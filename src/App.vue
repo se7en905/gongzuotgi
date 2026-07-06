@@ -210,11 +210,11 @@
 
   <RunCreateDialog :app="appBridge" />
   <RunStartConfirmDialog :app="appBridge" />
-  <RunDiffPreviewDialog :app="appBridge" />
-  <TaskSyncDialog :app="appBridge" />
-  <ProjectFormDialog :app="appBridge" />
-  <DirectoryPickerDialog :app="appBridge" />
-  <SkillPreviewDialog :app="appBridge" />
+  <RunDiffPreviewDialog v-if="runDiffPreview.visible" :app="appBridge" />
+  <TaskSyncDialog v-if="taskSyncDrawer" :app="appBridge" />
+  <ProjectFormDialog v-if="projectDrawer" :app="appBridge" />
+  <DirectoryPickerDialog v-if="directoryPicker.visible" :app="appBridge" />
+  <SkillPreviewDialog v-if="skillPreview.visible" :app="appBridge" />
   <ElDrawer
     v-if="!isSkillInventoryViewActive"
     v-model="skillUsageDialog.visible"
@@ -470,29 +470,31 @@
 </template>
 
 <script>
+import { defineAsyncComponent } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import TaskCenterView from './views/TaskCenterView.vue';
 import SkillInventoryView from './views/SkillInventoryView.vue';
 import AiMembersView from './views/AiMembersView.vue';
-import ProjectDetailView from './views/ProjectDetailView.vue';
 import RunsView from './views/RunsView.vue';
-import AgentWorkersView from './views/AgentWorkersView.vue';
-import AiArchiveView from './views/AiArchiveView.vue';
-import TaskResultView from './views/TaskResultView.vue';
-import ManualReviewView from './views/ManualReviewView.vue';
 import LoginView from './views/LoginView.vue';
-import UserAccessView from './views/UserAccessView.vue';
-import RoleManagementView from './views/RoleManagementView.vue';
-import OperationLogView from './views/OperationLogView.vue';
-import MaintenanceCenterView from './views/MaintenanceCenterView.vue';
 import RunCreateDialog from './components/dialogs/RunCreateDialog.vue';
 import RunStartConfirmDialog from './components/dialogs/RunStartConfirmDialog.vue';
-import RunDiffPreviewDialog from './components/dialogs/RunDiffPreviewDialog.vue';
-import TaskSyncDialog from './components/dialogs/TaskSyncDialog.vue';
-import ProjectFormDialog from './components/dialogs/ProjectFormDialog.vue';
-import DirectoryPickerDialog from './components/dialogs/DirectoryPickerDialog.vue';
-import SkillPreviewDialog from './components/dialogs/SkillPreviewDialog.vue';
 import { Hide, View } from '@element-plus/icons-vue';
+
+const UserAccessView = defineAsyncComponent(() => import('./views/UserAccessView.vue'));
+const RoleManagementView = defineAsyncComponent(() => import('./views/RoleManagementView.vue'));
+const OperationLogView = defineAsyncComponent(() => import('./views/OperationLogView.vue'));
+const MaintenanceCenterView = defineAsyncComponent(() => import('./views/MaintenanceCenterView.vue'));
+const ProjectDetailView = defineAsyncComponent(() => import('./views/ProjectDetailView.vue'));
+const AgentWorkersView = defineAsyncComponent(() => import('./views/AgentWorkersView.vue'));
+const AiArchiveView = defineAsyncComponent(() => import('./views/AiArchiveView.vue'));
+const TaskResultView = defineAsyncComponent(() => import('./views/TaskResultView.vue'));
+const ManualReviewView = defineAsyncComponent(() => import('./views/ManualReviewView.vue'));
+const RunDiffPreviewDialog = defineAsyncComponent(() => import('./components/dialogs/RunDiffPreviewDialog.vue'));
+const TaskSyncDialog = defineAsyncComponent(() => import('./components/dialogs/TaskSyncDialog.vue'));
+const ProjectFormDialog = defineAsyncComponent(() => import('./components/dialogs/ProjectFormDialog.vue'));
+const DirectoryPickerDialog = defineAsyncComponent(() => import('./components/dialogs/DirectoryPickerDialog.vue'));
+const SkillPreviewDialog = defineAsyncComponent(() => import('./components/dialogs/SkillPreviewDialog.vue'));
 
 const DEFAULT_ZENTAO_BUG_PRODUCTS = 'all';
 const DEFAULT_AI_FLOW_SHEET = {
@@ -868,6 +870,7 @@ export default {
       maintenancePreviewPayloadKey: '',
       permissionCatalog: [],
       runs: [],
+      runDetailLoadingIds: {},
       agentWorkers: [],
       codexModelOptions: CODEX_MODEL_OPTIONS,
       codexConfigForm: emptyCodexConfigForm(),
@@ -4822,6 +4825,7 @@ export default {
         this.resetRunChatForm();
         this.runLogDrawerVisible = false;
         this.runLogCollapse = [];
+        this.ensureRunDetailLoaded(value).catch(error => console.warn('执行详情读取失败', error));
         if (this.isRunInProgress(this.selectedRun)) this.loadSelectedRunLog();
         else this.logText = '原始执行日志默认收起，展开后读取尾部摘要。';
       } else {
@@ -10520,13 +10524,14 @@ export default {
       const request = (async () => {
         if (!silent) this.loading.runs = true;
         try {
-          this.runs = await this.api('/api/runs');
+          this.runs = this.mergeRunListDetails(await this.api('/api/runs?summary=1'));
           this.saveWorkbenchDisplayCache('runs', this.runs);
           const listRows = this.runListRows;
           if (this.selectedRunId && !this.runs.some(run => run.id === this.selectedRunId)) {
             this.selectedRunId = listRows[0]?.id || '';
           }
           if (!this.selectedRunId && listRows[0]) this.selectedRunId = listRows[0].id;
+          if (this.selectedRunId) this.ensureRunDetailLoaded(this.selectedRunId).catch(error => console.warn('执行详情读取失败', error));
           if (this.selectedRunId && this.isRunInProgress(this.selectedRun)) {
             window.setTimeout(() => {
               if (this.selectedRunId) this.loadSelectedRunLog().catch(() => {});
@@ -10558,7 +10563,7 @@ export default {
     upsertRunInLocalState(run = null, options = {}) {
       if (!run?.id) return null;
       const index = this.runs.findIndex(item => item.id === run.id);
-      const merged = index >= 0 ? { ...this.runs[index], ...run } : run;
+      const merged = index >= 0 ? this.mergeRunDetailFields(this.runs[index], run) : run;
       if (index >= 0) {
         const nextRuns = this.runs.slice();
         nextRuns.splice(index, 1, merged);
@@ -10571,6 +10576,49 @@ export default {
       if (options.select === true) this.selectedRunId = merged.id;
       this.saveWorkbenchDisplayCache('runs', this.runs);
       return merged;
+    },
+
+    mergeRunListDetails(rows = []) {
+      const existingById = new Map(this.runs.map(run => [run.id, run]));
+      return (Array.isArray(rows) ? rows : []).map(row => this.mergeRunDetailFields(existingById.get(row?.id), row));
+    },
+
+    mergeRunDetailFields(existing = null, incoming = null) {
+      if (!incoming?.id) return incoming || existing || null;
+      if (!existing?.id) return incoming;
+      const merged = { ...existing, ...incoming };
+      const incomingSlim = incoming._detailSlim === true;
+      const existingFull = existing._detailSlim !== true;
+      if (incomingSlim && existingFull) {
+        merged.primarySkillContent = existing.primarySkillContent;
+        merged.selectedMaterialSnapshots = existing.selectedMaterialSnapshots;
+        merged._detailSlim = false;
+      }
+      return merged;
+    },
+
+    runNeedsDetailLoad(run = null) {
+      if (!run?.id) return false;
+      if (run._detailSlim === true) return true;
+      return Array.isArray(run.selectedMaterialSnapshots)
+        && run.selectedMaterialSnapshots.some(item => item?.contentOmitted === true && !item?.content);
+    },
+
+    async ensureRunDetailLoaded(runId = this.selectedRunId) {
+      const id = String(runId || '').trim();
+      if (!id) return null;
+      const current = this.runs.find(run => run.id === id) || null;
+      if (!this.runNeedsDetailLoad(current)) return current;
+      if (this.runDetailLoadingIds[id]) return current;
+      this.runDetailLoadingIds = { ...this.runDetailLoadingIds, [id]: true };
+      try {
+        const detail = await this.api(`/api/runs/${encodeURIComponent(id)}`);
+        return this.upsertRunInLocalState(detail);
+      } finally {
+        const next = { ...this.runDetailLoadingIds };
+        delete next[id];
+        this.runDetailLoadingIds = next;
+      }
     },
 
     async refreshAgentWorkers(options = {}) {
@@ -24562,10 +24610,11 @@ export default {
     },
 
     async createRestartRunFromSelected() {
-      const sourceRun = this.selectedRun;
+      let sourceRun = this.selectedRun;
       if (!sourceRun || this.startConfirm.submitting) return;
       this.startConfirm.submitting = true;
       try {
+        sourceRun = await this.ensureRunDetailLoaded(sourceRun.id) || this.selectedRun;
         const materialHints = this.normalizedRunMaterialHints(sourceRun.selectedMaterialHints?.length
           ? sourceRun.selectedMaterialHints
           : this.runMaterialPathsFromText(sourceRun.showdocHints || sourceRun.primarySkillPath || sourceRun.stage || ''));

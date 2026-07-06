@@ -1206,13 +1206,6 @@ export async function createRun(input) {
   const taskNo = cleanTaskNo(input.zentaoId || input.taskNo || task?.taskNo || '');
   const title = formatRunTitle(taskNo, input.title || task?.title || 'Untitled task');
   const taskFolderName = sanitizeTaskFolderName(title);
-  const runs = await readJson(paths.runs, []);
-  const attemptNo = runs.filter(item => {
-    if (task?.id && item.taskId === task.id) return true;
-    if (taskNo && item.zentaoId === taskNo) return true;
-    if (!task?.id && !taskNo) return item.title === title && !item.taskId && !item.zentaoId;
-    return false;
-  }).length + 1;
   const run = {
     id: randomUUID(),
     taskId: task?.id || '',
@@ -1277,15 +1270,26 @@ export async function createRun(input) {
   if (input.createdByAccount) run.createdByAccount = input.createdByAccount;
   if (input.createdByName) run.createdByName = input.createdByName;
   if (input.ownerUserId) run.ownerUserId = input.ownerUserId;
-  run.attemptNo = attemptNo;
-  run.artifactRoot = project ? buildRunArtifactRoot(project, run) : '';
-  run.materialPath = run.artifactRoot ? path.join(run.artifactRoot, '资料.md') : '';
-  if (run.artifactRoot) await prepareInitialRunArtifacts(project, run, task || {});
-  if (run.artifactRoot) run.attachments = await saveRunAttachments(run, input.attachments);
-  runs.push(run);
-  await writeJson(paths.runs, runs);
-  await fs.mkdir(getRunWorkspace(run.id), { recursive: true });
-  return run;
+  const savedRun = await mutateRunsJson(async runs => {
+    const attemptNo = runs.filter(item => {
+      if (task?.id && item.taskId === task.id) return true;
+      if (taskNo && item.zentaoId === taskNo) return true;
+      if (!task?.id && !taskNo) return item.title === title && !item.taskId && !item.zentaoId;
+      return false;
+    }).length + 1;
+    const nextRun = {
+      ...run,
+      attemptNo
+    };
+    nextRun.artifactRoot = project ? buildRunArtifactRoot(project, nextRun) : '';
+    nextRun.materialPath = nextRun.artifactRoot ? path.join(nextRun.artifactRoot, '资料.md') : '';
+    if (nextRun.artifactRoot) await prepareInitialRunArtifacts(project, nextRun, task || {});
+    if (nextRun.artifactRoot) nextRun.attachments = await saveRunAttachments(nextRun, input.attachments);
+    runs.push(nextRun);
+    return { changed: true, value: nextRun };
+  });
+  await fs.mkdir(getRunWorkspace(savedRun.id), { recursive: true });
+  return savedRun;
 }
 
 async function resolveTaskForRun(input = {}) {
@@ -2393,56 +2397,56 @@ export async function updateRun(id, patch) {
 }
 
 export async function queueRunForLocalWorker(id, input = {}) {
-  const runs = await readJson(paths.runs, []);
-  const index = runs.findIndex(item => item.id === id);
-  if (index === -1) return null;
-  const now = new Date().toISOString();
-  const existing = ensureRunArtifactRootFromExistingFiles(await ensureRunMaterialSnapshotsForQueue(runs[index]));
-  const queuedForUserId = cleanString(input.queuedForUserId || input.userId || existing.queuedForUserId || existing.assignedToUserId || existing.ownerUserId);
-  const queuedForName = cleanString(input.queuedForName || input.userName || existing.queuedForName || existing.assignedToName || existing.developer);
-  const queuedForAccount = cleanString(input.queuedForAccount || input.account || existing.queuedForAccount)
-    || await resolveRunUserAccountByIdOrName([queuedForUserId, queuedForName]);
-  const materialSnapshot = await readRunMaterialSnapshot(existing);
-  runs[index] = {
-    ...existing,
-    status: 'queued',
-    workerStatus: 'queued',
-    executionHost: 'local-worker',
-    workerExecution: true,
-    queuedForUserId,
-    queuedForName,
-    queuedForAccount,
-    queuedAt: now,
-    assignedToUserId: queuedForUserId || existing.assignedToUserId || existing.ownerUserId || '',
-    assignedToName: queuedForName || existing.assignedToName || existing.developer || '',
-    assignedToAccount: queuedForAccount || existing.assignedToAccount || '',
-    claimedByDeviceId: '',
-    claimedAt: '',
-    startedBy: queuedForUserId || existing.startedBy || '',
-    startedByAccount: queuedForAccount || existing.startedByAccount || '',
-    startedAt: '',
-    finishedAt: '',
-    completedAt: '',
-    startMode: input.startMode || existing.startMode || 'start',
-    currentStage: '正在启动本机执行',
-    primarySkillContent: existing.primarySkillContent || materialSnapshot,
-    blocker: null,
-    resultSummary: null,
-    workerResult: null,
-    figmaWriteResult: null,
-    strictCheck: null,
-    exitCode: null,
-    pid: null,
-    workerLocalLogPath: '',
-    workerLocalLogSize: 0,
-    logPath: '',
-    promptPath: '',
-    artifactRoot: existing.artifactRoot || '',
-    stages: [],
-    updatedAt: now
-  };
-  await writeJson(paths.runs, runs);
-  return hydrateRunStages(runs[index]);
+  return mutateRunsJson(async runs => {
+    const index = runs.findIndex(item => item.id === id);
+    if (index === -1) return { changed: false, value: null };
+    const now = new Date().toISOString();
+    const existing = ensureRunArtifactRootFromExistingFiles(await ensureRunMaterialSnapshotsForQueue(runs[index]));
+    const queuedForUserId = cleanString(input.queuedForUserId || input.userId || existing.queuedForUserId || existing.assignedToUserId || existing.ownerUserId);
+    const queuedForName = cleanString(input.queuedForName || input.userName || existing.queuedForName || existing.assignedToName || existing.developer);
+    const queuedForAccount = cleanString(input.queuedForAccount || input.account || existing.queuedForAccount)
+      || await resolveRunUserAccountByIdOrName([queuedForUserId, queuedForName]);
+    const materialSnapshot = await readRunMaterialSnapshot(existing);
+    runs[index] = {
+      ...existing,
+      status: 'queued',
+      workerStatus: 'queued',
+      executionHost: 'local-worker',
+      workerExecution: true,
+      queuedForUserId,
+      queuedForName,
+      queuedForAccount,
+      queuedAt: now,
+      assignedToUserId: queuedForUserId || existing.assignedToUserId || existing.ownerUserId || '',
+      assignedToName: queuedForName || existing.assignedToName || existing.developer || '',
+      assignedToAccount: queuedForAccount || existing.assignedToAccount || '',
+      claimedByDeviceId: '',
+      claimedAt: '',
+      startedBy: queuedForUserId || existing.startedBy || '',
+      startedByAccount: queuedForAccount || existing.startedByAccount || '',
+      startedAt: '',
+      finishedAt: '',
+      completedAt: '',
+      startMode: input.startMode || existing.startMode || 'start',
+      currentStage: '正在启动本机执行',
+      primarySkillContent: existing.primarySkillContent || materialSnapshot,
+      blocker: null,
+      resultSummary: null,
+      workerResult: null,
+      figmaWriteResult: null,
+      strictCheck: null,
+      exitCode: null,
+      pid: null,
+      workerLocalLogPath: '',
+      workerLocalLogSize: 0,
+      logPath: '',
+      promptPath: '',
+      artifactRoot: existing.artifactRoot || '',
+      stages: [],
+      updatedAt: now
+    };
+    return { changed: true, value: await hydrateRunStages(runs[index]) };
+  });
 }
 
 async function ensureRunMaterialSnapshotsForQueue(run = {}) {
@@ -2637,21 +2641,26 @@ export async function deleteArtProgressEvent(id) {
 }
 
 export async function deleteRun(id) {
-  const runs = await readJson(paths.runs, []);
-  const index = runs.findIndex(item => item.id === id);
-  if (index === -1) return null;
-  const [run] = runs.splice(index, 1);
-  await writeJson(paths.runs, runs);
+  const run = await mutateRunsJson(async runs => {
+    const index = runs.findIndex(item => item.id === id);
+    if (index === -1) return { changed: false, value: null };
+    const [deleted] = runs.splice(index, 1);
+    return { changed: true, value: deleted };
+  });
+  if (!run) return null;
   await removeDirectoryIfSafe(getRunWorkspace(id), workspaceDir);
   if (run.artifactRoot) await removeDirectoryIfSafe(run.artifactRoot, paths.artifactDir);
   return run;
 }
 
 export async function deleteRunsByFilters(filters = {}) {
-  const runs = await readJson(paths.runs, []);
-  const { deleted, remaining } = splitRunsByArchiveDeleteFilters(runs, filters);
-  if (!deleted.length) return { deleted: [], remaining: runs };
-  await writeJson(paths.runs, remaining);
+  const result = await mutateRunsJson(async runs => {
+    const { deleted, remaining } = splitRunsByArchiveDeleteFilters(runs, filters);
+    if (!deleted.length) return { changed: false, value: { deleted: [], remaining: runs } };
+    runs.splice(0, runs.length, ...remaining);
+    return { changed: true, value: { deleted, remaining } };
+  });
+  const { deleted = [], remaining = [] } = result || {};
   for (const run of deleted) {
     await removeDirectoryIfSafe(getRunWorkspace(run.id), workspaceDir);
     if (run.artifactRoot) await removeDirectoryIfSafe(run.artifactRoot, paths.artifactDir);
@@ -2737,73 +2746,89 @@ async function previewGeneratedImageArtifactsDeletion(filters = {}) {
 
 export async function deleteGeneratedImageArtifactsByFilters(filters = {}) {
   validateRunMaintenanceFilters(filters);
-  const runs = await readJson(paths.runs, []);
-  const nextRuns = [];
-  const deleted = [];
-  let releasedBytes = 0;
-  for (const rawRun of runs) {
-    const matches = splitRunsByArchiveDeleteFilters([rawRun], filters).deleted.length > 0;
-    if (!matches) {
-      nextRuns.push(rawRun);
-      continue;
+  const result = await mutateRunsJson(async runs => {
+    const nextRuns = [];
+    const deleted = [];
+    const dirsToRemove = [];
+    let releasedBytes = 0;
+    let matchedRuns = 0;
+    for (const rawRun of runs) {
+      const matches = splitRunsByArchiveDeleteFilters([rawRun], filters).deleted.length > 0;
+      if (!matches) {
+        nextRuns.push(rawRun);
+        continue;
+      }
+      matchedRuns += 1;
+      const run = ensureRunArtifactRootFromExistingFiles(rawRun);
+      const images = generatedImageArtifactEntriesForRun(run);
+      const imageDir = runGeneratedImageArtifactDir(run);
+      const imageDirSize = imageDir ? await directorySize(imageDir) : 0;
+      const imagePathSet = new Set(images.map(item => cleanString(item.path)).filter(Boolean));
+      const stripArtifacts = (list = []) => dedupeRunArtifacts((Array.isArray(list) ? list : []).filter(item => {
+        const artifact = item && typeof item === 'object'
+          ? item
+          : { path: String(item || ''), relativePath: String(item || ''), name: String(item || '').split('/').pop() || String(item || '') };
+        const resolved = resolveRunArtifactSourcePath(artifact.relativePath || artifact.path || artifact.name);
+        if (!resolved) return true;
+        return !imagePathSet.has(resolved);
+      }));
+      const nextRun = {
+        ...run,
+        generatedArtifacts: stripArtifacts(run.generatedArtifacts),
+        resultSummary: {
+          ...(run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {}),
+          generatedArtifacts: stripArtifacts(run.resultSummary?.generatedArtifacts),
+          artifacts: (Array.isArray(run.resultSummary?.artifacts) ? run.resultSummary.artifacts : []).filter(value => {
+            const resolved = resolveRunArtifactSourcePath(value);
+            return !resolved || !imagePathSet.has(resolved);
+          })
+        },
+        workerResult: {
+          ...(run.workerResult && typeof run.workerResult === 'object' ? run.workerResult : {}),
+          generatedArtifacts: stripArtifacts(run.workerResult?.generatedArtifacts)
+        },
+        updatedAt: new Date().toISOString()
+      };
+      nextRuns.push(nextRun);
+      if (imageDir) dirsToRemove.push({ imageDir, artifactRoot: run.artifactRoot });
+      const itemBytes = Math.max(imageDirSize, images.reduce((total, item) => total + Number(item.size || 0), 0));
+      releasedBytes += itemBytes;
+      if (images.length || imageDirSize > 0) {
+        deleted.push({
+          id: run.id,
+          title: run.title,
+          status: run.status,
+          createdAt: run.createdAt,
+          updatedAt: run.updatedAt,
+          developer: run.developer,
+          assignedToName: run.assignedToName,
+          targetName: `${run.title || run.id || '执行记录'} / 生成图片`,
+          path: imageDir || images[0]?.path || '',
+          relativePath: imageDir ? path.relative(paths.root, imageDir).replaceAll(path.sep, '/') : images[0]?.relativePath || '',
+          bytes: itemBytes,
+          imageCount: images.length,
+          kind: 'generated-images'
+        });
+      }
     }
-    const run = ensureRunArtifactRootFromExistingFiles(rawRun);
-    const images = generatedImageArtifactEntriesForRun(run);
-    const imageDir = runGeneratedImageArtifactDir(run);
-    const imageDirSize = imageDir ? await directorySize(imageDir) : 0;
-    const imagePathSet = new Set(images.map(item => cleanString(item.path)).filter(Boolean));
-    const stripArtifacts = (list = []) => dedupeRunArtifacts((Array.isArray(list) ? list : []).filter(item => {
-      const artifact = item && typeof item === 'object'
-        ? item
-        : { path: String(item || ''), relativePath: String(item || ''), name: String(item || '').split('/').pop() || String(item || '') };
-      const resolved = resolveRunArtifactSourcePath(artifact.relativePath || artifact.path || artifact.name);
-      if (!resolved) return true;
-      return !imagePathSet.has(resolved);
-    }));
-    const nextRun = {
-      ...run,
-      generatedArtifacts: stripArtifacts(run.generatedArtifacts),
-      resultSummary: {
-        ...(run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {}),
-        generatedArtifacts: stripArtifacts(run.resultSummary?.generatedArtifacts),
-        artifacts: (Array.isArray(run.resultSummary?.artifacts) ? run.resultSummary.artifacts : []).filter(value => {
-          const resolved = resolveRunArtifactSourcePath(value);
-          return !resolved || !imagePathSet.has(resolved);
-        })
-      },
-      workerResult: {
-        ...(run.workerResult && typeof run.workerResult === 'object' ? run.workerResult : {}),
-        generatedArtifacts: stripArtifacts(run.workerResult?.generatedArtifacts)
-      },
-      updatedAt: new Date().toISOString()
+    if (matchedRuns > 0) runs.splice(0, runs.length, ...nextRuns);
+    return {
+      changed: matchedRuns > 0,
+      value: {
+        deletedCount: deleted.length,
+        releasedBytes,
+        deleted,
+        dirsToRemove
+      }
     };
-    nextRuns.push(nextRun);
-    if (imageDir) await removeDirectoryIfSafe(imageDir, run.artifactRoot);
-    const itemBytes = Math.max(imageDirSize, images.reduce((total, item) => total + Number(item.size || 0), 0));
-    releasedBytes += itemBytes;
-    if (images.length || imageDirSize > 0) {
-      deleted.push({
-        id: run.id,
-        title: run.title,
-        status: run.status,
-        createdAt: run.createdAt,
-        updatedAt: run.updatedAt,
-        developer: run.developer,
-        assignedToName: run.assignedToName,
-        targetName: `${run.title || run.id || '执行记录'} / 生成图片`,
-        path: imageDir || images[0]?.path || '',
-        relativePath: imageDir ? path.relative(paths.root, imageDir).replaceAll(path.sep, '/') : images[0]?.relativePath || '',
-        bytes: itemBytes,
-        imageCount: images.length,
-        kind: 'generated-images'
-      });
-    }
+  });
+  for (const item of result?.dirsToRemove || []) {
+    await removeDirectoryIfSafe(item.imageDir, item.artifactRoot);
   }
-  await writeJson(paths.runs, nextRuns);
   return {
-    deletedCount: deleted.length,
-    releasedBytes,
-    deleted
+    deletedCount: result?.deletedCount || 0,
+    releasedBytes: result?.releasedBytes || 0,
+    deleted: result?.deleted || []
   };
 }
 

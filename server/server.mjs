@@ -1863,7 +1863,17 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/runs') {
-    sendJson(res, 200, await listVisibleRunsForUser(currentUser));
+    const summary = url.searchParams.get('summary') === '1';
+    const runs = await listVisibleRunsForUser(currentUser, { summary });
+    sendJson(res, 200, runs);
+    return;
+  }
+
+  const runDetail = url.pathname.match(/^\/api\/runs\/([^/]+)$/);
+  if (req.method === 'GET' && runDetail) {
+    const run = await requireRun(runDetail[1]);
+    await requireRunViewAccess(currentUser, run);
+    sendJson(res, 200, { ...run, _detailSlim: false });
     return;
   }
 
@@ -6562,11 +6572,33 @@ async function listRunsWithExpandedChanges() {
   }));
 }
 
-async function listVisibleRunsForUser(user = {}) {
+async function listVisibleRunsForUser(user = {}, options = {}) {
   const runs = await listRunsWithExpandedChanges();
   const projects = await listProjects();
   const activeProjectIds = new Set(projects.map(project => String(project.id || '').trim()).filter(Boolean));
-  return runs.filter(run => canAccessRunRecord(user, run, activeProjectIds));
+  const visibleRuns = runs.filter(run => canAccessRunRecord(user, run, activeProjectIds));
+  if (options.summary === true) return visibleRuns.map(compactRunForListResponse);
+  return visibleRuns;
+}
+
+function compactRunForListResponse(run = {}) {
+  const selectedMaterialSnapshots = Array.isArray(run.selectedMaterialSnapshots)
+    ? run.selectedMaterialSnapshots.map(item => ({
+      path: item?.path || '',
+      sourceValue: item?.sourceValue || '',
+      title: item?.title || '',
+      kind: item?.kind || '',
+      contentBytes: Buffer.byteLength(String(item?.content || ''), 'utf8'),
+      contentOmitted: Boolean(item?.content)
+    }))
+    : run.selectedMaterialSnapshots;
+  return {
+    ...run,
+    primarySkillContentBytes: Buffer.byteLength(String(run.primarySkillContent || ''), 'utf8'),
+    primarySkillContent: run.primarySkillContent ? '' : run.primarySkillContent,
+    selectedMaterialSnapshots,
+    _detailSlim: true
+  };
 }
 
 function canAccessRunRecord(user = {}, run = {}, activeProjectIds = new Set()) {
