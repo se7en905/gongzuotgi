@@ -22134,11 +22134,25 @@ export default {
       }
       const workflow = normalizeWorkflowId(run.workflow);
       if (workflow === 'bug-fix') return 'Bug 修复';
-      if (workflow === 'art-single-skill') return `单技能 · ${run.stage || '指定阶段'}`;
+      if (workflow === 'art-single-skill') return `单技能 · ${this.singleSkillRunDisplayName(run)}`;
       if (workflow === 'custom-workflow') return `自定义流程 · ${run.stages?.length || 0} 个 md/Skill`;
       const level = run.workflowLevel || levelForWorkflow(workflow);
       const plan = (this.appConfig.workflowLevels || DEFAULT_WORKFLOW_LEVELS).find(item => item.level === level);
       return plan ? `${level} · ${plan.name}` : run.workflow;
+    },
+
+    singleSkillRunDisplayName(run = {}) {
+      const hint = [
+        ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
+        run.primarySkillPath,
+        run.stage,
+        String(run.showdocHints || '').split(/\r?\n/).find(Boolean)
+      ].find(value => String(value || '').trim());
+      const displayName = this.runMaterialDisplayName(hint);
+      if (displayName) return displayName;
+      const titleName = this.cleanDirectSkillRunTitle(run.title);
+      if (titleName && !this.looksLikeFilePath(titleName)) return titleName;
+      return this.meaningfulNameFromPath(hint) || String(hint || '').trim() || '指定阶段';
     },
 
     projectName(projectId) {

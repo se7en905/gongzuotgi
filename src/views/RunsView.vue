@@ -44,8 +44,8 @@
         </p>
         <div class="run-item-meta">
           <span>第 {{ app.runAttemptNumber(run) }} 次执行</span>
-          <small>{{ app.workflowRunLabel(run) }}</small>
-          <small>{{ app.formatDateTime(app.runDisplayTime(run)) }}</small>
+          <small class="run-item-workflow-label">{{ app.workflowRunLabel(run) }}</small>
+          <small class="run-item-time">{{ app.formatDateTime(app.runDisplayTime(run)) }}</small>
         </div>
         <div class="run-item-action-tags">
           <span
@@ -1284,7 +1284,7 @@ export default {
 
   .run-item .run-item-meta {
     display: grid;
-    grid-template-columns: minmax(0, auto) minmax(0, auto) minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
     gap: 8px;
     margin: 0;
@@ -1304,7 +1304,12 @@ export default {
       font-weight: 780;
     }
 
-    small + small {
+    .run-item-workflow-label {
+      text-align: left;
+    }
+
+    .run-item-time {
+      justify-self: end;
       text-align: right;
     }
   }
