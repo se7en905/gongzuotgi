@@ -935,6 +935,7 @@ export default {
       aiAssetSheetMeta: null,
       aiAssetDialog: { visible: false, readonly: false, mode: 'asset', form: emptyAiAssetForm() },
       eventSource: null,
+      eventSourceRunId: '',
       platformEventSource: null,
       platformEventRefreshTimers: {},
       viewDataDirty: {},
@@ -4825,14 +4826,25 @@ export default {
         this.resetRunChatForm();
         this.runLogDrawerVisible = false;
         this.runLogCollapse = [];
-        this.ensureRunDetailLoaded(value).catch(error => console.warn('执行详情读取失败', error));
-        if (this.isRunInProgress(this.selectedRun)) this.loadSelectedRunLog();
-        else this.logText = '原始执行日志默认收起，展开后读取尾部摘要。';
+        this.ensureRunDetailLoaded(value)
+          .then(run => {
+            if (this.selectedRunId !== value) return;
+            if (this.isRunInProgress(run || this.selectedRun)) this.connectEvents(value);
+          })
+          .catch(error => console.warn('执行详情读取失败', error));
+        if (this.isRunInProgress(this.selectedRun)) {
+          this.loadSelectedRunLog();
+          this.connectEvents(value);
+        } else {
+          this.disconnectRunEvents();
+          this.logText = '原始执行日志默认收起，展开后读取尾部摘要。';
+        }
       } else {
         this.runCodexFloatingRunId = '';
         this.runChatPanelOpen = false;
         this.runLogDrawerVisible = false;
         this.runLogCollapse = [];
+        this.disconnectRunEvents();
         this.logText = '选择一个任务后查看执行日志。';
         this.selectedArtifact = null;
         this.artifactPreview = {};
@@ -6146,6 +6158,7 @@ export default {
         this.eventSource.close();
         this.eventSource = null;
       }
+      this.eventSourceRunId = '';
       if (this.platformEventSource) {
         this.platformEventSource.close();
         this.platformEventSource = null;
@@ -24704,6 +24717,7 @@ export default {
       if (!this.logText || /默认收起|选择一个任务后查看执行日志/.test(this.logText)) {
         await this.loadSelectedRunLog().catch(() => {});
       }
+      if (this.isRunInProgress(this.selectedRun)) this.connectEvents(this.selectedRun.id);
     },
 
     async deleteSelectedRun() {
@@ -24773,13 +24787,31 @@ export default {
       return 'info';
     },
 
+    disconnectRunEvents(runId = '') {
+      if (!this.eventSource) {
+        this.eventSourceRunId = '';
+        return;
+      }
+      if (runId && this.eventSourceRunId !== runId) return;
+      this.eventSource.close();
+      this.eventSource = null;
+      this.eventSourceRunId = '';
+    },
+
     connectEvents(runId) {
-      if (this.eventSource) this.eventSource.close();
-      this.logText = '';
+      if (!runId || typeof EventSource === 'undefined') return;
+      if (this.eventSource && this.eventSourceRunId === runId) return;
+      this.disconnectRunEvents();
       const source = new EventSource(`/api/runs/${encodeURIComponent(runId)}/events`);
       this.eventSource = source;
+      this.eventSourceRunId = runId;
       source.onmessage = event => {
-        const payload = JSON.parse(event.data);
+        let payload = {};
+        try {
+          payload = JSON.parse(event.data || '{}');
+        } catch {
+          return;
+        }
         if (payload.text) {
           this.logText = trimRunLogBuffer(this.logText + payload.text);
           this.logPulse += 1;
@@ -24793,10 +24825,20 @@ export default {
         if (payload.changeSummary) this.patchRun(runId, { changeSummary: payload.changeSummary });
         if (payload.resultSummary) this.patchRun(runId, { resultSummary: payload.resultSummary });
         if (payload.type === 'done') {
-          source.close();
+          if (this.eventSource === source) {
+            source.close();
+            this.eventSource = null;
+            this.eventSourceRunId = '';
+          }
           this.runLogCollapse = [];
           this.refreshRuns();
         }
+      };
+      source.onerror = () => {
+        if (this.eventSource !== source) return;
+        source.close();
+        this.eventSource = null;
+        this.eventSourceRunId = '';
       };
     },
 
