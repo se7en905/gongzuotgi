@@ -1329,9 +1329,13 @@ function pickSummary(text, status, blockerReason) {
   return '执行结束，日志未提供明确结论。';
 }
 
-function emit(runId, payload) {
+export function emitRunEvent(runId, payload) {
   const message = `data: ${JSON.stringify({ runId, ...payload })}\n\n`;
   const set = subscribers.get(runId);
   if (!set) return;
   for (const res of set) res.write(message);
+}
+
+function emit(runId, payload) {
+  emitRunEvent(runId, payload);
 }

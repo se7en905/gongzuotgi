@@ -117,7 +117,7 @@ import {
   upsertAiFlowRecords
 } from './store.mjs';
 import { collectRunArtifacts, isSkillAuditTarget, scanProject, skillAuditFields, skillAuditRuleVersion } from './scanner.mjs';
-import { cancelRun, startRun, subscribe } from './runner.mjs';
+import { cancelRun, emitRunEvent, startRun, subscribe } from './runner.mjs';
 import { buildWorkflowPlan, workflowLevels } from './workflow.mjs';
 import { getZentaoApi, getZentaoModules, resetZentaoApi } from './zentao-adapter.mjs';
 import { syncZentaoBugsForProject } from './zentao-bug-sync.mjs';
@@ -1679,6 +1679,7 @@ async function handleApi(req, res, url) {
     if (chunk) {
       await appendRunLog(run.id, chunk);
       await ensureRunLogPath(run.id);
+      emitRunEvent(run.id, { type: 'stdout', text: chunk, source: 'local-worker' });
     }
     broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, module: 'agent-run-log' });
     sendJson(res, 200, { ok: true });
