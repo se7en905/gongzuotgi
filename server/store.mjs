@@ -4215,7 +4215,8 @@ async function enrichRunWithFigmaLogEvidence(run) {
 }
 
 function reconcileFigmaEvidenceRunStatus(run = {}) {
-  if (!run || !hasFigmaWriteEvidence(run)) return run;
+  if (!run) return run;
+  if (!hasFigmaWriteEvidence(run)) return guardFigmaWriteCompletion(run);
   if (isCancelledRunStatus(run.status) || isCancelledRunStatus(run.workerStatus)) return run;
   const hasVerification = hasFigmaPostWriteVerification(run);
   const existingSummary = run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {};
@@ -8482,6 +8483,7 @@ function runRequiresFigmaWriteEvidence(run = {}) {
     run.figmaWriteMode
   ].filter(Boolean).join('\n');
   if (!cleanString(text)) return false;
+  if (/命名修正|改名|重命名|写入|use_figma|upload_assets|createdNodeIds|mutatedNodeIds|界面架构与命名规范|(?:处理|修正|规范化|整理|清理).{0,24}(?:Figma|Frame|节点|图层|页面|目标)|(?:Figma|Frame|节点|图层|页面|目标).{0,24}(?:处理|修正|规范化|整理|清理)/i.test(text)) return true;
   if (/报告|说明|总结|提示词|prompt|参考|分析|复盘/i.test(text)) return false;
   return /写入|修改|改名|重命名|清理|整理|创建|新建|更新|覆盖|替换|应用|落到|同步到|放置|插入|填充|上传|还原|复刻|生成.*(?:Figma|Frame|节点|图层)|Figma.*(?:写入|修改|创建|新建|更新|节点|图层|Frame|页面|放置|替换|填充)|use_figma|upload_assets|createdNodeIds|mutatedNodeIds/i.test(text);
 }
