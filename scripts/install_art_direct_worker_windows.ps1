@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$InstallScriptVersion = '2026-06-24-image2-base-url'
+$InstallScriptVersion = '2026-07-08-windows-worker-startup-stability'
 
 $Root = if ($env:ART_WORKER_HOME) { $env:ART_WORKER_HOME } elseif ($env:ART_WORKER_PROJECT_ROOT) { $env:ART_WORKER_PROJECT_ROOT } else { Join-Path $env:USERPROFILE 'ArtDirectWorker' }
 $Username = $env:ART_PLATFORM_USERNAME
@@ -47,7 +47,6 @@ function Resolve-CodexCliPath([string]$PreferredPath, [string]$WorkerRoot) {
   if ($PreferredPath -and $PreferredPath -ne 'codex') {
     $Candidates.Add($PreferredPath)
   }
-  $Candidates.Add((Join-Path $WorkerRoot 'node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\bin\codex.exe'))
   $Candidates.Add((Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\bin\codex.exe'))
   $Candidates.Add((Join-Path $env:LOCALAPPDATA 'Programs\OpenAI Codex\codex.exe'))
   $Candidates.Add((Join-Path $env:LOCALAPPDATA 'Programs\Codex\codex.exe'))
@@ -62,6 +61,7 @@ function Resolve-CodexCliPath([string]$PreferredPath, [string]$WorkerRoot) {
     if ($Command.Source) { $Candidates.Add($Command.Source) }
     if ($Command.Path) { $Candidates.Add($Command.Path) }
   }
+  $Candidates.Add((Join-Path $WorkerRoot 'node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\bin\codex.exe'))
   foreach ($Candidate in ($Candidates | Select-Object -Unique)) {
     if (Test-UsableCodexCliPath $Candidate) {
       return $Candidate
@@ -168,7 +168,7 @@ while (`$true) {
   & $(ConvertTo-PSLiteral $Node) $(ConvertTo-PSLiteral $Worker) *>> $(ConvertTo-PSLiteral (Join-Path $LogDir "art-direct-worker.$SafeUsername.log"))
   `$runnerExitCode = if (`$null -eq `$LASTEXITCODE) { -1 } else { [int]`$LASTEXITCODE }
   `$runnerExitAt = (Get-Date).ToString("s")
-  `$runnerReason = if (`$runnerExitCode -eq 0) { 'Worker 进程已退出，Runner 将在 5 秒后重启。' } else { "Worker 进程异常退出，Runner 将在 5 秒后重启。exitCode=`$runnerExitCode" }
+  `$runnerReason = if (`$runnerExitCode -eq 0) { 'Worker exited; runner will restart in 5 seconds.' } else { "Worker exited unexpectedly; runner will restart in 5 seconds. exitCode=`$runnerExitCode" }
   @{ lastExitCode = `$runnerExitCode; lastExitAt = `$runnerExitAt; lastExitReason = `$runnerReason } | ConvertTo-Json -Compress | Set-Content -Path $(ConvertTo-PSLiteral $RunnerState) -Encoding UTF8
   Add-Content -Path $(ConvertTo-PSLiteral (Join-Path $LogDir "art-direct-worker.$SafeUsername.log")) -Value ("[" + `$runnerExitAt + "] worker process exited, restarting in 5 seconds. exitCode=" + `$runnerExitCode)
   Start-Sleep -Seconds 5
@@ -215,7 +215,7 @@ if ($existing) {
 $Action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $RunnerArgument"
 $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $Identity.Name
 $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
-$PrincipalConfig = New-ScheduledTaskPrincipal -UserId $Identity.Name -LogonType Interactive -RunLevel LeastPrivilege
+$PrincipalConfig = New-ScheduledTaskPrincipal -UserId $Identity.Name -LogonType Interactive -RunLevel Limited
 try {
   Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Principal $PrincipalConfig -Description 'Art platform direct worker' -Force | Out-Null
 } catch {
