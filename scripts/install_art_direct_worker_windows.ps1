@@ -48,6 +48,15 @@ function Resolve-CodexCliPath([string]$PreferredPath, [string]$WorkerRoot) {
     $Candidates.Add($PreferredPath)
   }
   $Candidates.Add((Join-Path $WorkerRoot 'node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\bin\codex.exe'))
+  $Candidates.Add((Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\bin\codex.exe'))
+  $Candidates.Add((Join-Path $env:LOCALAPPDATA 'Programs\OpenAI Codex\codex.exe'))
+  $Candidates.Add((Join-Path $env:LOCALAPPDATA 'Programs\Codex\codex.exe'))
+  $PackageCodex = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Packages') -Recurse -Filter codex.exe -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -like '*OpenAI*Codex*' } |
+    Select-Object -First 5
+  foreach ($Item in $PackageCodex) {
+    if ($Item.FullName) { $Candidates.Add($Item.FullName) }
+  }
   $Commands = Get-Command codex -All -ErrorAction SilentlyContinue
   foreach ($Command in $Commands) {
     if ($Command.Source) { $Candidates.Add($Command.Source) }
