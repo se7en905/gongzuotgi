@@ -55,9 +55,12 @@ let activeExecution = null;
 let localChecks = {
   codexReady: false,
   figmaMcpReady: false,
+  figmaBridgeReady: false,
+  figmaBridgePluginConnected: false,
   image2Ready: false,
   codexMessage: '',
   figmaMessage: '',
+  figmaBridgeMessage: '',
   image2Message: ''
 };
 
@@ -1395,12 +1398,16 @@ function workerPayload() {
     capabilities: [
       localChecks.codexReady ? 'codex.exec' : '',
       localChecks.figmaMcpReady ? 'figma.mcp.write' : '',
+      localChecks.figmaBridgeReady ? 'figma.bridge.ready' : '',
+      localChecks.figmaBridgePluginConnected ? 'figma.bridge.plugin.connected' : '',
       localChecks.image2Configured ? 'image2.config.detected' : '',
       localChecks.image2NetworkReady ? 'image2.network.ready' : '',
       localChecks.image2Ready ? 'image2.ready' : ''
     ].filter(Boolean),
     codexReady: localChecks.codexReady,
     figmaMcpReady: localChecks.figmaMcpReady,
+    figmaBridgeReady: localChecks.figmaBridgeReady,
+    figmaBridgePluginConnected: localChecks.figmaBridgePluginConnected,
     image2Ready: localChecks.image2Ready,
     image2Configured: localChecks.image2Configured,
     image2NetworkReady: localChecks.image2NetworkReady,
@@ -1443,18 +1450,54 @@ async function runLocalChecks() {
     ? await runCommand(codexPath, ['mcp', 'list'], { timeoutMs: localCheckTimeoutMs })
     : { code: -1, stdout: '', stderr: '', error: 'Codex 不可用，跳过 Figma MCP 自检' };
   const figmaReady = mcp.code === 0 && /figma/i.test(`${mcp.stdout}\n${mcp.stderr}`);
+  const figmaBridge = await checkLocalFigmaBridge();
   const image2 = await checkLocalImage2Config();
   return {
     codexReady: codex.code === 0,
     figmaMcpReady: figmaReady,
+    figmaBridgeReady: figmaBridge.ready,
+    figmaBridgePluginConnected: figmaBridge.pluginConnected,
     image2Ready: image2.ready,
     image2Configured: image2.configured,
     image2NetworkReady: image2.networkReady,
     codexMessage: codex.code === 0 ? '可用' : `不可用：${codex.stderr || codex.error || codex.code}`,
     figmaMessage: figmaReady ? '已发现 figma MCP 配置' : '未发现 figma MCP 配置，请先在本机 Codex 完成 Figma MCP 授权',
+    figmaBridgeMessage: figmaBridge.message,
+    figmaBridgePlugin: figmaBridge.plugin,
     image2Message: image2.message,
     image2Sources: image2.sources
   };
+}
+
+async function checkLocalFigmaBridge() {
+  const port = String(process.env.FIGMA_BRIDGE_PORT || workerEnvOverrides.FIGMA_BRIDGE_PORT || '9530').trim() || '9530';
+  const url = `http://127.0.0.1:${port}/health`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.min(localCheckTimeoutMs, 3000));
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    const data = await response.json().catch(() => ({}));
+    const pluginConnected = data.pluginConnected === true || data.plugin?.connected === true;
+    return {
+      ready: response.ok && pluginConnected,
+      pluginConnected,
+      plugin: data.plugin || null,
+      message: response.ok
+        ? (pluginConnected
+          ? `Figma 本地桥接已连接插件：${data.plugin?.fileName || '当前 Figma 文件'} / ${data.plugin?.pageName || '当前页面'}`
+          : 'Figma 本地桥接服务已启动，但插件窗口未连接。请在 Figma Desktop 打开“美术工作台 Figma 桥接”插件。')
+        : `Figma 本地桥接服务未就绪：HTTP ${response.status}`
+    };
+  } catch (error) {
+    return {
+      ready: false,
+      pluginConnected: false,
+      plugin: null,
+      message: `未发现 Figma 本地桥接服务。需要时先安装并启动桥接服务，再在 Figma Desktop 打开桥接插件。${error.name === 'AbortError' ? '连接超时。' : error.message || ''}`
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function checkLocalImage2Config() {

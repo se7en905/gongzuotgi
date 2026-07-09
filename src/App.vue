@@ -20595,6 +20595,17 @@ export default {
       return '可以接 Figma 任务';
     },
 
+    directSkillWorkerFigmaBridgeLabel(worker = null) {
+      if (!worker) return '未检查';
+      const checks = worker.checks && typeof worker.checks === 'object' ? worker.checks : {};
+      if (worker.figmaBridgeReady === true || checks.figmaBridgeReady === true) return '桥接在线';
+      if (worker.figmaBridgePluginConnected === true || checks.figmaBridgePluginConnected === true) return '插件已连接';
+      const message = String(checks.figmaBridgeMessage || '').trim();
+      if (/服务已启动.*插件窗口未连接|插件窗口未连接/i.test(message)) return '服务已启动，插件未开';
+      if (/未发现|未就绪|连接超时/i.test(message)) return '未启动';
+      return message ? '待确认' : '未检查';
+    },
+
     directSkillWorkerImageTaskLabel(row = {}) {
       const worker = row.worker || null;
       if (!worker) return '暂不能判断生图';
@@ -20843,6 +20854,7 @@ export default {
       return [
         { label: '普通任务', value: this.directSkillWorkerNormalTaskLabel(row) },
         { label: 'Figma 任务', value: this.directSkillWorkerFigmaTaskLabel(row) },
+        { label: 'Figma 桥接', value: this.directSkillWorkerFigmaBridgeLabel(worker) },
         { label: '生图任务', value: this.directSkillWorkerImageTaskLabel(row) },
         { label: '最近心跳', value: this.directSkillWorkerLastSeenText(worker) },
         { label: '最近退出', value: this.directSkillWorkerRunnerExitSummary(worker) },
@@ -21322,6 +21334,34 @@ export default {
       const platform = os === 'windows' ? 'Windows' : os === 'mac' ? 'macOS' : '双平台';
       const command = install ? this.directSkillWorkerInstallCommand(user, os) : this.directSkillWorkerStartCommand(user, os);
       return this.copyText(command, `${platform} Worker ${install ? '开机自启/立即生效命令' : '手动启动命令'}`);
+    },
+
+    figmaBridgeInstallCommand(user = this.currentUser || {}) {
+      const username = String(user.username || '').trim();
+      const password = String(user.passwordDisplay || '').trim();
+      const apiBase = this.directSkillWorkerApiBase();
+      return [
+        '# Windows PowerShell（组员 Windows 电脑安装 Figma 本地桥接服务和插件文件）',
+        '# 这段只新增 Figma 桥接服务，不会覆盖原本 Worker 执行命令。',
+        '$ErrorActionPreference = "Stop"',
+        '$ProgressPreference = "SilentlyContinue"',
+        '$root = "$env:USERPROFILE\\ArtDirectWorker"',
+        'New-Item -ItemType Directory -Force -Path "$root\\scripts" | Out-Null',
+        `Invoke-WebRequest -UseBasicParsing -Uri ${this.powershellQuote(`${apiBase}/worker/install_figma_bridge_windows.ps1`)} -OutFile "$root\\scripts\\install_figma_bridge_windows.ps1" -ErrorAction Stop`,
+        '$env:ART_PLATFORM_API = ' + this.powershellQuote(apiBase),
+        '$env:ART_PLATFORM_USERNAME = ' + this.powershellQuote(username || '组员账号'),
+        '$env:ART_PLATFORM_PASSWORD = ' + this.powershellQuote(password || '在这里填写该组员平台密码'),
+        '$env:ART_WORKER_HOME = $root',
+        'powershell -NoProfile -ExecutionPolicy Bypass -File "$root\\scripts\\install_figma_bridge_windows.ps1"'
+      ].join('\n');
+    },
+
+    copyFigmaBridgeInstallCommand(user = this.currentWorkerBindingUser || this.currentUser || {}) {
+      if (!this.canCopyDirectSkillWorkerCommand(user)) {
+        ElMessage.warning('当前账号没有复制 Figma 桥接安装命令的权限');
+        return Promise.resolve(false);
+      }
+      return this.copyText(this.figmaBridgeInstallCommand(user), 'Windows Figma 桥接安装命令');
     },
 
     shellQuote(value = '') {

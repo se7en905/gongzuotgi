@@ -9918,7 +9918,12 @@ async function serveWorkerDownload(res, pathname) {
   const workerFiles = {
     '/worker/art-direct-worker.mjs': path.resolve(__dirname, '..', 'scripts', 'art-direct-worker.mjs'),
     '/worker/install_art_direct_worker_launch_agent.sh': path.resolve(__dirname, '..', 'scripts', 'install_art_direct_worker_launch_agent.sh'),
-    '/worker/install_art_direct_worker_windows.ps1': path.resolve(__dirname, '..', 'scripts', 'install_art_direct_worker_windows.ps1')
+    '/worker/install_art_direct_worker_windows.ps1': path.resolve(__dirname, '..', 'scripts', 'install_art_direct_worker_windows.ps1'),
+    '/worker/install_figma_bridge_windows.ps1': path.resolve(__dirname, '..', 'scripts', 'install_figma_bridge_windows.ps1'),
+    '/worker/figma-bridge-service.mjs': path.resolve(__dirname, '..', 'scripts', 'figma-bridge-service.mjs'),
+    '/worker/figma-bridge-plugin/manifest.json': path.resolve(__dirname, '..', 'scripts', 'figma-bridge-plugin', 'manifest.json'),
+    '/worker/figma-bridge-plugin/code.js': path.resolve(__dirname, '..', 'scripts', 'figma-bridge-plugin', 'code.js'),
+    '/worker/figma-bridge-plugin/ui.html': path.resolve(__dirname, '..', 'scripts', 'figma-bridge-plugin', 'ui.html')
   };
   const file = workerFiles[pathname];
   if (!file) {

@@ -8270,6 +8270,12 @@ function normalizeAgentWorker(input = {}) {
   const image2Ready = capabilities.includes('image2.ready')
     || (input.image2Ready === true && image2NetworkReady)
     || (checks.image2Ready === true && image2NetworkReady);
+  const figmaBridgeReady = input.figmaBridgeReady === true
+    || capabilities.includes('figma.bridge.ready')
+    || checks.figmaBridgeReady === true;
+  const figmaBridgePluginConnected = input.figmaBridgePluginConnected === true
+    || capabilities.includes('figma.bridge.plugin.connected')
+    || checks.figmaBridgePluginConnected === true;
   return {
     id,
     userId,
@@ -8281,6 +8287,8 @@ function normalizeAgentWorker(input = {}) {
     platform: cleanString(input.platform || os.platform()),
     codexReady: input.codexReady === true || capabilities.includes('codex.exec'),
     figmaMcpReady: input.figmaMcpReady === true || capabilities.includes('figma.mcp.write'),
+    figmaBridgeReady,
+    figmaBridgePluginConnected,
     image2Ready,
     image2Configured,
     image2NetworkReady,

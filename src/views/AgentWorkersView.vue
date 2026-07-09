@@ -72,6 +72,7 @@
         </div>
         <div class="agent-worker-toolbar">
           <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" type="primary" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, true, 'windows')">复制 Windows 开机自启/立即生效</ElButton>
+          <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" plain @click="app.copyFigmaBridgeInstallCommand(app.currentWorkerBindingUser)">复制 Windows Figma 桥接安装</ElButton>
           <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, true, 'mac')">复制 macOS 开机自启/立即生效</ElButton>
           <ElButton plain :loading="app.loading.agentWorkers || app.loading.runs" @click="app.refreshAgentWorkerStatusView">刷新状态</ElButton>
         </div>
@@ -117,6 +118,7 @@
           <div><span>状态</span><strong>{{ app.directSkillMemberReadyLabel(row) }}</strong></div>
           <div><span>Codex</span><strong>{{ row.codexReady ? '已就绪' : '未就绪' }}</strong></div>
           <div><span>Figma MCP</span><strong>{{ row.figmaMcpReady ? '已就绪' : '未就绪' }}</strong></div>
+          <div><span>Figma 桥接</span><strong>{{ app.directSkillWorkerFigmaBridgeLabel(row.worker) }}</strong></div>
           <div><span>最近心跳</span><strong>{{ app.directSkillWorkerLastSeenText(row.worker) }}</strong></div>
           <div><span>最近退出</span><strong>{{ app.directSkillWorkerRunnerExitSummary(row.worker) }}</strong></div>
           <div><span>待领取</span><strong>{{ row.pendingRuns.length }}</strong></div>
