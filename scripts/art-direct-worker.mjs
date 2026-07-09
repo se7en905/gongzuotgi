@@ -44,6 +44,7 @@ let currentUser = null;
 let lastHeartbeatAt = 0;
 let checkingRuns = false;
 let eventSyncStarted = false;
+let platformEventReconnectFailures = 0;
 let lastLocalCheckAt = 0;
 let lastOfflineNoticeAt = 0;
 let lastSelfUpdateAt = 0;
@@ -402,12 +403,25 @@ async function platformEventLoop() {
   while (true) {
     try {
       await readPlatformEvents();
+      platformEventReconnectFailures = 0;
     } catch (error) {
+      platformEventReconnectFailures += 1;
       console.error(`[worker] 平台事件监听断开：${error.message}`);
       if (/401|登录态|认证/.test(error.message)) await relogin();
-      await sleep(30000);
+      await checkAndExecuteNextRun().catch(checkError => {
+        console.error(`[worker] 平台事件断开后立即补领失败：${checkError.message}`);
+      });
+      await sleep(resolvePlatformEventReconnectDelayMs(error));
     }
   }
+}
+
+function resolvePlatformEventReconnectDelayMs(error = null) {
+  const message = String(error?.message || '').toLowerCase();
+  const fastRetry = /terminated|fetch failed|econnreset|socket hang up|other side closed|networkerror/.test(message);
+  const baseMs = fastRetry ? 1500 : 5000;
+  const backoffStep = Math.max(0, Math.min(platformEventReconnectFailures - 1, fastRetry ? 5 : 3));
+  return Math.min(baseMs * (backoffStep + 1), 15000);
 }
 
 async function readPlatformEvents() {
@@ -551,7 +565,9 @@ async function executeRun(run) {
     });
     const execution = activeExecutionMeta(run.id);
     if (execution) execution.child = child;
-    await appendLocalRunLog(run.id, `[worker] Codex 进程已启动，pid=${child.pid || 'unknown'}\n`);
+    const pidLogLine = `[worker] Codex 进程已启动，pid=${child.pid || 'unknown'}\n`;
+    await appendLocalRunLog(run.id, pidLogLine);
+    await safeAppendRunLog(run.id, pidLogLine);
     await safeUpdateRunStatus(run.id, {
       status: 'running',
       workerStatus: 'running',
@@ -3390,6 +3406,7 @@ function waitForChild(child) {
       resolve(Number(code ?? -1));
     };
     child.on('error', () => finish(-1));
+    child.on('exit', code => finish(Number(code ?? -1)));
     child.on('close', code => finish(Number(code || 0)));
   });
 }
