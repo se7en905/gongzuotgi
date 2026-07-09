@@ -21210,6 +21210,7 @@ export default {
       if (os === 'windows') {
         return [
           '# 请在组员本人常用 Windows 账号的 PowerShell 里运行；不要用其他人的 Administrator 账号代跑。',
+          '# 会打开 ArtDirectWorker 前台窗口；执行 Figma 任务时不要关闭这个窗口。',
           '$ErrorActionPreference = "Stop"',
           '$ProgressPreference = "SilentlyContinue"',
           `$root = "${windowsRoot}"`,
@@ -21273,7 +21274,8 @@ export default {
         return [
           '# 请在组员本人常用 Windows 账号的 PowerShell 里运行；不要用其他人的 Administrator 账号代跑。',
           '# 首次安装和平台修改 Worker / Skill 执行逻辑后的立即生效，都执行这整段。',
-          '# 它会覆盖当前账号同名计划任务，并立刻停止旧 Worker、启动最新 Worker。',
+          '# 它会移除旧隐藏计划任务，改用当前账号前台 Worker 窗口，并立刻停止旧 Worker、启动最新 Worker。',
+          '# 执行 Figma 任务时不要关闭 ArtDirectWorker 前台窗口。',
           '$ErrorActionPreference = "Stop"',
           '$ProgressPreference = "SilentlyContinue"',
           `$root = "${windowsRoot}"`,
@@ -21298,7 +21300,7 @@ export default {
           '$env:ART_WORKER_POLL_INTERVAL_MS = ' + this.powershellQuote(pollInterval),
           '$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = ' + this.powershellQuote(heartbeatInterval),
           '$env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS = ' + this.powershellQuote(localCheckInterval),
-          'powershell -NoProfile -ExecutionPolicy Bypass -File "$root\\scripts\\install_art_direct_worker_windows.ps1"'
+          'powershell -NoProfile -ExecutionPolicy Bypass -NoExit -File "$root\\scripts\\install_art_direct_worker_windows.ps1"'
         ].join('\n');
       }
       return [

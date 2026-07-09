@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$InstallScriptVersion = '2026-07-08-windows-worker-startup-stability'
+$InstallScriptVersion = '2026-07-09-windows-foreground-worker'
 
 $Root = if ($env:ART_WORKER_HOME) { $env:ART_WORKER_HOME } elseif ($env:ART_WORKER_PROJECT_ROOT) { $env:ART_WORKER_PROJECT_ROOT } else { Join-Path $env:USERPROFILE 'ArtDirectWorker' }
 $Username = $env:ART_PLATFORM_USERNAME
@@ -77,7 +77,7 @@ if (-not $Password) { throw 'Missing ART_PLATFORM_PASSWORD' }
 $Identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $Principal = New-Object Security.Principal.WindowsPrincipal($Identity)
 if ($Principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-  Write-Warning 'Running as Administrator. Scheduled task will be installed for the current Windows account. Use the member normal Windows account if that is the account used at login.'
+  Write-Warning 'Running as Administrator. The foreground worker will be installed for the current Windows account. Use the member normal Windows account if that is the account used at login.'
 }
 
 try {
@@ -117,6 +117,7 @@ $StartupDir = [Environment]::GetFolderPath('Startup')
 if (-not $StartupDir) {
   $StartupDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup'
 }
+$StartupLauncher = Join-Path $StartupDir "ArtDirectWorker-$SafeUsername.cmd"
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 New-Item -ItemType Directory -Force -Path $StateDir | Out-Null
@@ -212,18 +213,15 @@ if ($existing) {
   Start-Sleep -Seconds 1
 }
 
-$Action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $RunnerArgument"
-$Trigger = New-ScheduledTaskTrigger -AtLogOn -User $Identity.Name
-$Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
-$PrincipalConfig = New-ScheduledTaskPrincipal -UserId $Identity.Name -LogonType Interactive -RunLevel Limited
-try {
-  Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Principal $PrincipalConfig -Description 'Art platform direct worker' -Force | Out-Null
-} catch {
-  Write-Warning "Scheduled task principal registration failed, retrying with current user defaults: $($_.Exception.Message)"
-  Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Description 'Art platform direct worker' -Force | Out-Null
-}
+@"
+@echo off
+cd /d "$Root"
+echo ArtDirectWorker foreground runner is starting.
+echo Keep this window open while running Figma tasks.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File "$Runner"
+"@ | Set-Content -Path $StartupLauncher -Encoding ASCII
 
-Start-ScheduledTask -TaskName $TaskName
+Start-Process -FilePath 'cmd.exe' -ArgumentList @('/k', $StartupLauncher) -WorkingDirectory $Root -WindowStyle Normal
 Start-Sleep -Seconds 5
 $started = @()
 try {
@@ -239,10 +237,11 @@ try {
   $started = @()
 }
 if (-not $started) {
-  Write-Warning "Scheduled task was created, but no running worker process was detected. Check log: $(Join-Path $LogDir "art-direct-worker.$SafeUsername.log")"
+  Write-Warning "Startup launcher was created, but no running worker process was detected. Check log: $(Join-Path $LogDir "art-direct-worker.$SafeUsername.log")"
 }
-Write-Host "started $TaskName"
-Write-Host "installed scheduled task $TaskName"
+Write-Host "started ArtDirectWorker foreground runner"
+Write-Host "installed startup launcher $StartupLauncher"
+Write-Host "keep the ArtDirectWorker PowerShell window open while running Figma tasks"
 Write-Host "runner $Runner"
 Write-Host "codex home $CodexHome"
 Write-Host "install script version $InstallScriptVersion"

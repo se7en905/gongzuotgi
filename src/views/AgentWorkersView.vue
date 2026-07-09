@@ -193,7 +193,7 @@
       <div class="agent-worker-command-explain">
         <div>
           <strong>开机自启 / 立即生效</strong>
-          <p>适合组员长期接任务。Windows 版会创建或覆盖当前用户计划任务，并在执行当下立刻停止旧 Worker、启动最新 Worker；macOS 版会安装或重装 LaunchAgent，并立即重启 Worker。</p>
+          <p>适合组员长期接任务。Windows 版会写入当前用户开机启动目录，并立刻打开前台 Worker 窗口；执行 Figma 任务时不要关闭这个窗口。macOS 版会安装或重装 LaunchAgent，并立即重启 Worker。</p>
         </div>
         <div>
           <strong>工作台地址</strong>
