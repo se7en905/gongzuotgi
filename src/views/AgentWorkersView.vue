@@ -72,6 +72,8 @@
         </div>
         <div class="agent-worker-toolbar">
           <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" type="primary" plain @click="app.downloadFigmaWorkbenchPlugin">下载 Figma 插件包</ElButton>
+          <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" type="primary" plain @click="app.downloadWindowsWorkerLauncher(app.currentWorkerBindingUser)">下载 Windows 启动器</ElButton>
+          <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" type="primary" plain @click="app.copyWindowsWorkerLauncherContent(app.currentWorkerBindingUser)">复制 Windows 启动器内容</ElButton>
           <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" type="primary" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, true, 'windows')">复制 Windows 开机自启/立即生效</ElButton>
           <ElButton v-if="app.canCopyDirectSkillWorkerCommand(app.currentWorkerBindingUser)" plain @click="app.copyDirectSkillWorkerCommand(app.currentWorkerBindingUser, true, 'mac')">复制 macOS 开机自启/立即生效</ElButton>
           <ElButton plain :loading="app.loading.agentWorkers || app.loading.runs" @click="app.refreshAgentWorkerStatusView">刷新状态</ElButton>

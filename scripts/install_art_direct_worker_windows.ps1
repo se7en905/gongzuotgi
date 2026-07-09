@@ -218,10 +218,22 @@ if ($existing) {
 cd /d "$Root"
 echo ArtDirectWorker foreground runner is starting.
 echo Keep this window open while running Figma tasks.
+set ART_WORKER_FOREGROUND_IN_CURRENT_WINDOW=1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File "$Runner"
 "@ | Set-Content -Path $StartupLauncher -Encoding ASCII
 
-Start-Process -FilePath 'cmd.exe' -ArgumentList @('/k', $StartupLauncher) -WorkingDirectory $Root -WindowStyle Normal
+if ($env:ART_WORKER_FOREGROUND_IN_CURRENT_WINDOW -eq '1') {
+  Write-Host "installed startup launcher $StartupLauncher"
+  Write-Host "running ArtDirectWorker in the current foreground window"
+  Write-Host "keep this window open while running Figma tasks"
+  Write-Host "runner $Runner"
+  Write-Host "codex home $CodexHome"
+  Write-Host "install script version $InstallScriptVersion"
+  & $Runner
+  exit $LASTEXITCODE
+}
+
+Start-Process -FilePath 'cmd.exe' -ArgumentList @('/k', 'call', "`"$StartupLauncher`"") -WorkingDirectory $Root -WindowStyle Normal
 Start-Sleep -Seconds 5
 $started = @()
 try {

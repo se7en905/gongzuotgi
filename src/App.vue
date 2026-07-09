@@ -21213,6 +21213,7 @@ export default {
           '# 会打开 ArtDirectWorker 前台窗口；执行 Figma 任务时不要关闭这个窗口。',
           '$ErrorActionPreference = "Stop"',
           '$ProgressPreference = "SilentlyContinue"',
+          'trap { Write-Host ""; Write-Host ("执行出错：" + $_.Exception.Message) -ForegroundColor Red; Read-Host "按回车关闭窗口"; break }',
           `$root = "${windowsRoot}"`,
           'New-Item -ItemType Directory -Force -Path "$root\\scripts" | Out-Null',
           `Invoke-WebRequest -UseBasicParsing -Uri ${this.powershellQuote(`${apiBase}/worker/art-direct-worker.mjs`)} -OutFile "$root\\scripts\\art-direct-worker.mjs" -ErrorAction Stop`,
@@ -21278,6 +21279,7 @@ export default {
           '# 执行 Figma 任务时不要关闭 ArtDirectWorker 前台窗口。',
           '$ErrorActionPreference = "Stop"',
           '$ProgressPreference = "SilentlyContinue"',
+          'trap { Write-Host ""; Write-Host ("执行出错：" + $_.Exception.Message) -ForegroundColor Red; Read-Host "按回车关闭窗口"; break }',
           `$root = "${windowsRoot}"`,
           'New-Item -ItemType Directory -Force -Path "$root\\scripts" | Out-Null',
           `Invoke-WebRequest -UseBasicParsing -Uri ${this.powershellQuote(`${apiBase}/worker/art-direct-worker.mjs`)} -OutFile "$root\\scripts\\art-direct-worker.mjs" -ErrorAction Stop`,
@@ -21300,7 +21302,11 @@ export default {
           '$env:ART_WORKER_POLL_INTERVAL_MS = ' + this.powershellQuote(pollInterval),
           '$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = ' + this.powershellQuote(heartbeatInterval),
           '$env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS = ' + this.powershellQuote(localCheckInterval),
-          'powershell -NoProfile -ExecutionPolicy Bypass -NoExit -File "$root\\scripts\\install_art_direct_worker_windows.ps1"'
+          '$desktop = [Environment]::GetFolderPath("Desktop")',
+          '$launcher = Join-Path $desktop "启动ArtDirectWorker.cmd"',
+          '@("@echo off", "cd /d ""$root""", "echo ArtDirectWorker foreground runner is starting.", "echo Keep this window open while running Figma tasks.", "set ART_WORKER_FOREGROUND_IN_CURRENT_WINDOW=1", "powershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File ""$root\\scripts\\install_art_direct_worker_windows.ps1""") | Set-Content -Path $launcher -Encoding ASCII',
+          'Start-Process -FilePath "cmd.exe" -ArgumentList @("/k", "call", "`"$launcher`"") -WindowStyle Normal',
+          'Write-Host "已打开 ArtDirectWorker 安装窗口。如果没有弹出，请双击桌面的 启动ArtDirectWorker.cmd。"'
         ].join('\n');
       }
       return [
@@ -21338,6 +21344,50 @@ export default {
       return this.copyText(command, `${platform} Worker ${install ? '开机自启/立即生效命令' : '手动启动命令'}`);
     },
 
+    downloadWindowsWorkerLauncher(user = this.currentWorkerBindingUser || this.currentUser || {}) {
+      if (!this.canCopyDirectSkillWorkerCommand(user)) {
+        ElMessage.warning('当前账号没有下载 Worker 启动器的权限');
+        return;
+      }
+      const content = this.windowsWorkerLauncherContent(user);
+      this.downloadTextFile('启动ArtDirectWorker.cmd', content, 'application/x-msdownload;charset=utf-8');
+      ElMessage.success('已下载 Windows 启动器，发给组员双击运行');
+    },
+
+    copyWindowsWorkerLauncherContent(user = this.currentWorkerBindingUser || this.currentUser || {}) {
+      if (!this.canCopyDirectSkillWorkerCommand(user)) {
+        ElMessage.warning('当前账号没有复制 Worker 启动器内容的权限');
+        return Promise.resolve(false);
+      }
+      return this.copyText(this.windowsWorkerLauncherContent(user), 'Windows 启动器内容');
+    },
+
+    windowsWorkerLauncherContent(user = this.currentWorkerBindingUser || this.currentUser || {}) {
+      const username = String(user.username || '').trim() || '组员账号';
+      const password = String(user.passwordDisplay || '').trim() || '在这里填写该组员平台密码';
+      const apiBase = this.directSkillWorkerApiBase();
+      return [
+        '@echo off',
+        'chcp 65001 >nul',
+        'title ArtDirectWorker',
+        'echo ArtDirectWorker foreground runner is starting.',
+        'echo Keep this window open while running Figma tasks.',
+        'echo.',
+        `set "ART_PLATFORM_API=${this.cmdBatchValue(apiBase)}"`,
+        `set "ART_PLATFORM_USERNAME=${this.cmdBatchValue(username)}"`,
+        `set "ART_PLATFORM_PASSWORD=${this.cmdBatchValue(password)}"`,
+        'set "ART_WORKER_HOME=%USERPROFILE%\\ArtDirectWorker"',
+        'set "ART_WORKER_POLL_INTERVAL_MS=300000"',
+        'set "ART_WORKER_HEARTBEAT_INTERVAL_MS=300000"',
+        'set "ART_WORKER_LOCAL_CHECK_INTERVAL_MS=2400000"',
+        'set "ART_WORKER_FOREGROUND_IN_CURRENT_WINDOW=1"',
+        `powershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; $root=$env:ART_WORKER_HOME; New-Item -ItemType Directory -Force -Path (Join-Path $root 'scripts') | Out-Null; Invoke-WebRequest -UseBasicParsing -Uri (($env:ART_PLATFORM_API).TrimEnd('/') + '/worker/art-direct-worker.mjs') -OutFile (Join-Path $root 'scripts\\art-direct-worker.mjs') -ErrorAction Stop; Invoke-WebRequest -UseBasicParsing -Uri (($env:ART_PLATFORM_API).TrimEnd('/') + '/worker/install_art_direct_worker_windows.ps1') -OutFile (Join-Path $root 'scripts\\install_art_direct_worker_windows.ps1') -ErrorAction Stop; & (Join-Path $root 'scripts\\install_art_direct_worker_windows.ps1')"`,
+        'echo.',
+        'echo If the PowerShell window shows an error, keep this window open and send a screenshot.',
+        'pause'
+      ].join('\r\n');
+    },
+
     downloadFigmaWorkbenchPlugin() {
       const base = String(window.location.origin || this.directSkillWorkerApiBase() || '').replace(/\/$/, '');
       const url = `${base}/worker/figma-workbench-plugin.zip`;
@@ -21352,6 +21402,12 @@ export default {
 
     shellQuote(value = '') {
       return `'${String(value).replace(/'/g, `'\\''`)}'`;
+    },
+
+    cmdBatchValue(value = '') {
+      return String(value)
+        .replace(/%/g, '%%')
+        .replace(/"/g, '""');
     },
 
     powershellQuote(value = '') {
