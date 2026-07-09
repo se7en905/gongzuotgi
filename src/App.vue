@@ -21344,16 +21344,6 @@ export default {
       return this.copyText(command, `${platform} Worker ${install ? '开机自启/立即生效命令' : '手动启动命令'}`);
     },
 
-    downloadWindowsWorkerLauncher(user = this.currentWorkerBindingUser || this.currentUser || {}) {
-      if (!this.canCopyDirectSkillWorkerCommand(user)) {
-        ElMessage.warning('当前账号没有下载 Worker 启动器的权限');
-        return;
-      }
-      const content = this.windowsWorkerLauncherContent(user);
-      this.downloadTextFile('启动ArtDirectWorker.cmd', content, 'application/x-msdownload;charset=utf-8');
-      ElMessage.success('已下载 Windows 启动器，发给组员双击运行');
-    },
-
     copyWindowsWorkerLauncherContent(user = this.currentWorkerBindingUser || this.currentUser || {}) {
       if (!this.canCopyDirectSkillWorkerCommand(user)) {
         ElMessage.warning('当前账号没有复制 Worker 启动器内容的权限');
@@ -21371,6 +21361,7 @@ export default {
         'chcp 65001 >nul',
         'title ArtDirectWorker',
         'echo ArtDirectWorker foreground runner is starting.',
+        'echo Launcher version: 2026-07-09-direct-loop-use-figma-approval',
         'echo Keep this window open while running Figma tasks.',
         'echo.',
         `set "ART_PLATFORM_API=${this.cmdBatchValue(apiBase)}"`,
@@ -21381,10 +21372,30 @@ export default {
         'set "ART_WORKER_HEARTBEAT_INTERVAL_MS=300000"',
         'set "ART_WORKER_LOCAL_CHECK_INTERVAL_MS=2400000"',
         'set "ART_WORKER_FOREGROUND_IN_CURRENT_WINDOW=1"',
-        `powershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; $root=$env:ART_WORKER_HOME; New-Item -ItemType Directory -Force -Path (Join-Path $root 'scripts') | Out-Null; Invoke-WebRequest -UseBasicParsing -Uri (($env:ART_PLATFORM_API).TrimEnd('/') + '/worker/art-direct-worker.mjs') -OutFile (Join-Path $root 'scripts\\art-direct-worker.mjs') -ErrorAction Stop; Invoke-WebRequest -UseBasicParsing -Uri (($env:ART_PLATFORM_API).TrimEnd('/') + '/worker/install_art_direct_worker_windows.ps1') -OutFile (Join-Path $root 'scripts\\install_art_direct_worker_windows.ps1') -ErrorAction Stop; & (Join-Path $root 'scripts\\install_art_direct_worker_windows.ps1')"`,
+        'set "ART_WORKER_SUPERVISED=1"',
+        'set "ART_WORKER_PROJECT_ROOT=%ART_WORKER_HOME%"',
+        'set "CODEX_HOME=%USERPROFILE%\\.codex"',
+        'if exist "%LOCALAPPDATA%\\OpenAI\\Codex\\bin\\codex.exe" set "CODEX_CLI_PATH=%LOCALAPPDATA%\\OpenAI\\Codex\\bin\\codex.exe"',
+        'if not defined CODEX_CLI_PATH if exist "%LOCALAPPDATA%\\Programs\\OpenAI Codex\\codex.exe" set "CODEX_CLI_PATH=%LOCALAPPDATA%\\Programs\\OpenAI Codex\\codex.exe"',
+        'if not defined CODEX_CLI_PATH if exist "%LOCALAPPDATA%\\Programs\\Codex\\codex.exe" set "CODEX_CLI_PATH=%LOCALAPPDATA%\\Programs\\Codex\\codex.exe"',
+        'if not defined CODEX_CLI_PATH for /f "delims=" %%I in (\'where codex 2^>nul\') do if not defined CODEX_CLI_PATH set "CODEX_CLI_PATH=%%I"',
+        'if not exist "%ART_WORKER_HOME%\\scripts" mkdir "%ART_WORKER_HOME%\\scripts"',
+        'echo CODEX_HOME=%CODEX_HOME%',
+        'echo CODEX_CLI_PATH=%CODEX_CLI_PATH%',
         'echo.',
-        'echo If the PowerShell window shows an error, keep this window open and send a screenshot.',
-        'pause'
+        ':worker_loop',
+        'echo [%date% %time%] downloading latest worker...',
+        `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; New-Item -ItemType Directory -Force -Path (Join-Path $env:ART_WORKER_HOME 'scripts') | Out-Null; Invoke-WebRequest -UseBasicParsing -Uri (($env:ART_PLATFORM_API).TrimEnd('/') + '/worker/art-direct-worker.mjs') -OutFile (Join-Path $env:ART_WORKER_HOME 'scripts\\art-direct-worker.mjs') -ErrorAction Stop"`,
+        'if errorlevel 1 echo Worker download failed. Check platform URL or network.',
+        'where node >nul 2>nul',
+        'if errorlevel 1 echo Node.js not found. Install Node.js 20 or newer.',
+        'if errorlevel 1 timeout /t 30',
+        'if errorlevel 1 goto worker_loop',
+        'echo [%date% %time%] starting worker...',
+        'node "%ART_WORKER_HOME%\\scripts\\art-direct-worker.mjs"',
+        'echo [%date% %time%] worker exited. Restarting in 5 seconds...',
+        'timeout /t 5',
+        'goto worker_loop'
       ].join('\r\n');
     },
 

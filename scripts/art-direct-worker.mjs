@@ -1370,6 +1370,14 @@ function buildClientEquivalentMaterialInstruction(run = {}, materialPaths = [], 
 function codexRunArgs(run = {}) {
   const request = run.codexRequest && typeof run.codexRequest === 'object' ? run.codexRequest : {};
   const args = [];
+  if (String(process.env.ART_WORKER_FORCE_CODEX_MCP_FEATURES || '1').trim() !== '0') {
+    args.push(
+      '--enable', 'rmcp_client',
+      '--enable', 'plugins',
+      '--enable', 'enable_mcp_apps',
+      '-c', 'mcp_servers.figma.tools.use_figma.approval_mode="approve"'
+    );
+  }
   const model = String(request.model || process.env.ART_WORKER_CODEX_MODEL || '').trim();
   const reasoningEffort = String(request.reasoningEffort || request.modelReasoningEffort || process.env.ART_WORKER_CODEX_REASONING_EFFORT || '').trim();
   if (model) args.push('-m', model);
@@ -1461,28 +1469,163 @@ function workerStageName(run = {}) {
 }
 
 async function runLocalChecks() {
+  const figmaUseApproval = await ensureCodexFigmaUseApprovalConfig();
   const codex = await runCommand(codexPath, ['--help'], { timeoutMs: localCheckTimeoutMs });
   const mcp = codex.code === 0
     ? await runCommand(codexPath, ['mcp', 'list'], { timeoutMs: localCheckTimeoutMs })
     : { code: -1, stdout: '', stderr: '', error: 'Codex 不可用，跳过 Figma MCP 自检' };
-  const figmaReady = mcp.code === 0 && /figma/i.test(`${mcp.stdout}\n${mcp.stderr}`);
+  const figmaListed = mcp.code === 0 && /figma/i.test(`${mcp.stdout}\n${mcp.stderr}`);
+  const figmaReady = figmaListed && figmaUseApproval.ready !== false;
   const figmaBridge = await checkLocalFigmaBridge();
   const image2 = await checkLocalImage2Config();
   return {
     codexReady: codex.code === 0,
     figmaMcpReady: figmaReady,
+    figmaUseApprovalReady: figmaUseApproval.ready,
     figmaBridgeReady: figmaBridge.ready,
     figmaBridgePluginConnected: figmaBridge.pluginConnected,
     image2Ready: image2.ready,
     image2Configured: image2.configured,
     image2NetworkReady: image2.networkReady,
     codexMessage: codex.code === 0 ? '可用' : `不可用：${codex.stderr || codex.error || codex.code}`,
-    figmaMessage: figmaReady ? '已发现 figma MCP 配置' : '未发现 figma MCP 配置，请先在本机 Codex 完成 Figma MCP 授权',
+    figmaMessage: figmaReady
+      ? `已发现 figma MCP 配置，use_figma 写入许可已就绪${figmaUseApproval.changed ? '（已自动补齐）' : ''}`
+      : figmaListed
+        ? `已发现 figma MCP 配置，但 use_figma 写入许可未就绪：${figmaUseApproval.message || '请检查 Codex 配置'}`
+        : '未发现 figma MCP 配置，请先在本机 Codex 完成 Figma MCP 授权',
+    figmaUseApprovalMessage: figmaUseApproval.message,
     figmaBridgeMessage: figmaBridge.message,
     figmaBridgePlugin: figmaBridge.plugin,
     image2Message: image2.message,
     image2Sources: image2.sources
   };
+}
+
+async function ensureCodexFigmaUseApprovalConfig() {
+  if (String(process.env.ART_WORKER_ENSURE_FIGMA_USE_APPROVAL || '1').trim() === '0') {
+    return { ready: true, changed: false, message: '已跳过自动补齐 use_figma 写入许可' };
+  }
+  const codexHome = resolveCodexHome();
+  const configPath = path.join(codexHome, 'config.toml');
+  let text = '';
+  try {
+    text = await readFile(configPath, 'utf8');
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      return { ready: false, changed: false, message: `无法读取 ${configPath}：${error.message || error}` };
+    }
+  }
+
+  let next = String(text || '').replace(/\s+$/g, '');
+  let changed = false;
+  const appendBlock = block => {
+    next = `${next ? `${next}\n\n` : ''}${block.trim()}`;
+    changed = true;
+  };
+
+  if (!hasTomlSection(next, 'features')) {
+    appendBlock('[features]\nrmcp_client = true\nenable_mcp_apps = true');
+  } else {
+    const featureResult = ensureTomlSectionKey(next, 'features', 'rmcp_client', 'true');
+    next = featureResult.text;
+    changed = changed || featureResult.changed;
+    const appResult = ensureTomlSectionKey(next, 'features', 'enable_mcp_apps', 'true');
+    next = appResult.text;
+    changed = changed || appResult.changed;
+  }
+
+  if (!hasTomlSection(next, 'mcp_servers.figma')) {
+    appendBlock('[mcp_servers.figma]\nurl = "https://mcp.figma.com/mcp"');
+  } else {
+    const urlResult = ensureTomlSectionKey(next, 'mcp_servers.figma', 'url', '"https://mcp.figma.com/mcp"', { onlyIfMissing: true });
+    next = urlResult.text;
+    changed = changed || urlResult.changed;
+  }
+
+  if (!hasTomlSection(next, 'mcp_servers.figma.tools.use_figma')) {
+    appendBlock('[mcp_servers.figma.tools.use_figma]\napproval_mode = "approve"');
+  } else {
+    const approvalResult = ensureTomlSectionKey(next, 'mcp_servers.figma.tools.use_figma', 'approval_mode', '"approve"');
+    next = approvalResult.text;
+    changed = changed || approvalResult.changed;
+  }
+
+  for (const projectPath of trustedCodexProjectPaths()) {
+    const section = `projects.${tomlStringLiteral(projectPath)}`;
+    if (!hasTomlSection(next, section)) {
+      appendBlock(`[${section}]\ntrust_level = "trusted"`);
+    } else {
+      const trustResult = ensureTomlSectionKey(next, section, 'trust_level', '"trusted"');
+      next = trustResult.text;
+      changed = changed || trustResult.changed;
+    }
+  }
+
+  if (!changed) {
+    return { ready: true, changed: false, message: `${configPath} 已包含 use_figma 写入许可` };
+  }
+  try {
+    await mkdir(codexHome, { recursive: true });
+    await writeFile(configPath, `${next}\n`, 'utf8');
+    return { ready: true, changed: true, message: `已补齐 ${configPath} 的 use_figma 写入许可` };
+  } catch (error) {
+    return { ready: false, changed: false, message: `无法写入 ${configPath}：${error.message || error}` };
+  }
+}
+
+function hasTomlSection(text = '', section = '') {
+  const expected = `[${section}]`;
+  return String(text || '').split(/\r?\n/).some(line => line.trim() === expected);
+}
+
+function ensureTomlSectionKey(text = '', section = '', key = '', value = '', options = {}) {
+  const lines = String(text || '').split(/\r?\n/);
+  const header = `[${section}]`;
+  const start = lines.findIndex(line => line.trim() === header);
+  if (start < 0) {
+    const suffix = `${header}\n${key} = ${value}`;
+    return {
+      text: `${String(text || '').replace(/\s+$/g, '')}${String(text || '').trim() ? '\n\n' : ''}${suffix}`,
+      changed: true
+    };
+  }
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    if (/^\[[^\]]+]$/.test(trimmed)) {
+      end = index;
+      break;
+    }
+  }
+  const keyPattern = new RegExp(`^\\s*${escapeRegExp(key)}\\s*=`);
+  const keyIndex = lines.findIndex((line, index) => index > start && index < end && keyPattern.test(line));
+  if (keyIndex < 0) {
+    lines.splice(end, 0, `${key} = ${value}`);
+    return { text: lines.join('\n'), changed: true };
+  }
+  if (options.onlyIfMissing) return { text: lines.join('\n'), changed: false };
+  const current = lines[keyIndex].trim();
+  const desired = `${key} = ${value}`;
+  if (current === desired) return { text: lines.join('\n'), changed: false };
+  lines[keyIndex] = desired;
+  return { text: lines.join('\n'), changed: true };
+}
+
+function escapeRegExp(value = '') {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function trustedCodexProjectPaths() {
+  return uniqueStrings([
+    process.cwd(),
+    defaultProjectRoot,
+    workerHome,
+    path.join(workerHome, 'workspace')
+  ].map(value => String(value || '').trim()).filter(Boolean));
+}
+
+function tomlStringLiteral(value = '') {
+  return `"${String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
 async function checkLocalFigmaBridge() {
