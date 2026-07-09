@@ -359,6 +359,8 @@ async function handleApi(req, res, url) {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Private-Network': 'true',
+      'Vary': 'Access-Control-Request-Private-Network',
       'Cache-Control': 'no-store'
     });
     res.end();
@@ -381,7 +383,9 @@ async function handleApi(req, res, url) {
       'Cache-Control': 'no-store',
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type'
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Private-Network': 'true',
+      'Vary': 'Access-Control-Request-Private-Network'
     });
     return;
   }
@@ -9980,7 +9984,6 @@ async function serveFigmaWorkbenchPluginZip(req, res) {
   requireAuth(currentUser);
   const pluginBases = figmaWorkbenchPluginBases(req);
   const pluginBinding = figmaWorkbenchPluginBinding(currentUser);
-  const allowedDomains = figmaWorkbenchPluginAllowedDomains(pluginBases);
   const manifest = {
     name: '美术工作台 Figma 插件',
     id: 'art-platform-figma-workbench-plugin',
@@ -9989,14 +9992,15 @@ async function serveFigmaWorkbenchPluginZip(req, res) {
     ui: 'ui.html',
     editorType: ['figma'],
     networkAccess: {
-      allowedDomains,
-      devAllowedDomains: pluginBases,
+      allowedDomains: ['*'],
       reasoning: '连接美术工作台有线或无线地址，用于回传插件在线状态和接收后续 Figma 写入任务。'
     }
   };
   const codePath = path.resolve(__dirname, '..', 'scripts', 'figma-workbench-plugin', 'code.js');
   const uiPath = path.resolve(__dirname, '..', 'scripts', 'figma-workbench-plugin', 'ui.html');
-  const code = await fs.readFile(codePath);
+  const code = (await fs.readFile(codePath, 'utf8'))
+    .replace(/__ART_PLATFORM_BASES__/g, JSON.stringify(pluginBases))
+    .replace(/__ART_PLUGIN_BINDING__/g, JSON.stringify(pluginBinding));
   const ui = (await fs.readFile(uiPath, 'utf8'))
     .replace(/__ART_PLATFORM_BASES__/g, JSON.stringify(pluginBases))
     .replace(/__ART_PLUGIN_BINDING__/g, JSON.stringify(pluginBinding));
@@ -10016,24 +10020,25 @@ async function serveFigmaWorkbenchPluginZip(req, res) {
 }
 
 function figmaWorkbenchPluginBases(req) {
+  const configuredBases = splitFigmaWorkbenchPluginBases(
+    process.env.AWP_FIGMA_PLUGIN_BASES
+      || process.env.ART_PLATFORM_FIGMA_PLUGIN_BASES
+      || process.env.ART_PLATFORM_PUBLIC_BASE
+      || ''
+  );
   return uniqueStrings([
+    ...configuredBases,
     requestOrigin(req),
     'http://192.168.21.42:4288',
     'http://192.168.25.136:4288'
   ]).filter(value => /^https?:\/\//i.test(value));
 }
 
-function figmaWorkbenchPluginAllowedDomains(bases = []) {
-  const httpsDomains = uniqueStrings(bases.map(value => {
-    try {
-      const url = new URL(value);
-      if (url.protocol !== 'https:') return '';
-      return `${url.protocol}//${url.hostname}`.replace(/\/+$/, '');
-    } catch {
-      return '';
-    }
-  })).filter(value => /^https?:\/\//i.test(value));
-  return httpsDomains.length ? httpsDomains : ['https://www.figma.com'];
+function splitFigmaWorkbenchPluginBases(value = '') {
+  return String(value || '')
+    .split(/[\s,，]+/)
+    .map(item => item.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
 }
 
 function figmaWorkbenchPluginBinding(user = {}) {

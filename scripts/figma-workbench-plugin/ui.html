@@ -74,12 +74,20 @@
       if (!message) return;
       if (message.type === 'plugin-status') {
         pluginStatus = message;
-        await heartbeat();
+        heartbeat();
       }
       if (message.type === 'test-result') {
         pluginStatus = message;
-        await heartbeat(message);
-        renderStatus(message.ok ? '测试文本已创建，工作台连接正常。' : `测试失败：${message.error || '未知错误'}`, message.ok);
+        heartbeat(message);
+        if (!message.ok) renderStatus(`测试失败：${message.error || '未知错误'}`, false);
+      }
+      if (message.type === 'heartbeat-result') {
+        if (message.ok === true) {
+          connectedBase = message.base || connectedBase;
+          renderStatus(message.fallback ? '已连接工作台（兼容模式）。保持插件窗口打开即可接入后续任务。' : '已连接工作台。保持插件窗口打开即可接入后续任务。', true);
+        } else {
+          renderStatus(`连接工作台失败：${message.error || '所有工作台地址都不可访问'}`, false);
+        }
       }
     };
 
@@ -93,7 +101,7 @@
     parent.postMessage({ pluginMessage: { type: 'plugin-status' } }, '*');
     setInterval(() => parent.postMessage({ pluginMessage: { type: 'plugin-status' } }, '*'), 5000);
 
-    async function heartbeat(extra = {}) {
+    function heartbeat(extra = {}) {
       const payload = {
         fileKey: pluginStatus.fileKey || '',
         fileName: pluginStatus.fileName || '',
@@ -108,26 +116,7 @@
         ok: extra.ok === true,
         error: extra.error || ''
       };
-      let lastError = '';
-      for (const base of platformBases) {
-        try {
-          const response = await fetch(`${base}/api/figma-plugin/heartbeat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
-          const data = await response.json();
-          if (data.ok === true) {
-            connectedBase = base;
-            renderStatus('已连接工作台。保持插件窗口打开即可接入后续任务。', true);
-            return;
-          }
-          lastError = data.error || `HTTP ${response.status}`;
-        } catch (error) {
-          lastError = error.message || String(error);
-        }
-      }
-      renderStatus(`连接工作台失败：${lastError || '所有工作台地址都不可访问'}`, false);
+      parent.postMessage({ pluginMessage: { type: 'heartbeat', payload } }, '*');
     }
 
     function renderStatus(text, ok) {
