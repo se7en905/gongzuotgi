@@ -234,7 +234,7 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname.startsWith('/worker/')) {
-      await serveWorkerDownload(res, url.pathname);
+      await serveWorkerDownload(req, res, url);
       return;
     }
     if (url.pathname.startsWith('/api/')) {
@@ -350,6 +350,38 @@ async function handleApi(req, res, url) {
   if (req.method === 'GET' && url.pathname === '/api/config' && url.searchParams.get('versionCheck') === '1') {
     sendJson(res, 200, { frontendVersion: await getFrontendVersion() }, {
       'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
+    });
+    return;
+  }
+
+  if (req.method === 'OPTIONS' && url.pathname === '/api/figma-plugin/heartbeat') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Cache-Control': 'no-store'
+    });
+    res.end();
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/figma-plugin/heartbeat') {
+    const body = await readBody(req).catch(() => ({}));
+    const boundUser = decodeFigmaPluginBinding(body);
+    sendJson(res, 200, {
+      ok: true,
+      service: 'art-platform-figma-plugin',
+      boundUser,
+      fileKey: String(body.fileKey || '').trim(),
+      fileName: String(body.fileName || '').trim(),
+      pageName: String(body.pageName || '').trim(),
+      pluginVersion: String(body.pluginVersion || '').trim(),
+      receivedAt: new Date().toISOString()
+    }, {
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type'
     });
     return;
   }
@@ -9914,7 +9946,12 @@ async function serveStatic(res, pathname) {
   }
 }
 
-async function serveWorkerDownload(res, pathname) {
+async function serveWorkerDownload(req, res, url) {
+  const pathname = typeof url === 'string' ? url : url.pathname;
+  if (pathname === '/worker/figma-workbench-plugin.zip') {
+    await serveFigmaWorkbenchPluginZip(req, res);
+    return;
+  }
   const workerFiles = {
     '/worker/art-direct-worker.mjs': path.resolve(__dirname, '..', 'scripts', 'art-direct-worker.mjs'),
     '/worker/install_art_direct_worker_launch_agent.sh': path.resolve(__dirname, '..', 'scripts', 'install_art_direct_worker_launch_agent.sh'),
@@ -9936,6 +9973,188 @@ async function serveWorkerDownload(res, pathname) {
     'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
   });
   res.end(content);
+}
+
+async function serveFigmaWorkbenchPluginZip(req, res) {
+  const currentUser = await authenticateRequest(req);
+  requireAuth(currentUser);
+  const pluginBases = figmaWorkbenchPluginBases(req);
+  const pluginBinding = figmaWorkbenchPluginBinding(currentUser);
+  const allowedDomains = figmaWorkbenchPluginAllowedDomains(pluginBases);
+  const manifest = {
+    name: '美术工作台 Figma 插件',
+    id: 'art-platform-figma-workbench-plugin',
+    api: '1.0.0',
+    main: 'code.js',
+    ui: 'ui.html',
+    editorType: ['figma'],
+    networkAccess: {
+      allowedDomains,
+      devAllowedDomains: pluginBases,
+      reasoning: '连接美术工作台有线或无线地址，用于回传插件在线状态和接收后续 Figma 写入任务。'
+    }
+  };
+  const codePath = path.resolve(__dirname, '..', 'scripts', 'figma-workbench-plugin', 'code.js');
+  const uiPath = path.resolve(__dirname, '..', 'scripts', 'figma-workbench-plugin', 'ui.html');
+  const code = await fs.readFile(codePath);
+  const ui = (await fs.readFile(uiPath, 'utf8'))
+    .replace(/__ART_PLATFORM_BASES__/g, JSON.stringify(pluginBases))
+    .replace(/__ART_PLUGIN_BINDING__/g, JSON.stringify(pluginBinding));
+  const zip = createStoredZip([
+    { name: 'art-platform-figma-plugin/manifest.json', data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`) },
+    { name: 'art-platform-figma-plugin/code.js', data: code },
+    { name: 'art-platform-figma-plugin/ui.html', data: Buffer.from(ui) },
+    { name: 'art-platform-figma-plugin/README.txt', data: Buffer.from(`美术工作台 Figma 插件\n\n1. 解压这个 zip。\n2. 打开 Figma Desktop。\n3. 菜单 Plugins > Development > Import plugin from manifest。\n4. 选择 art-platform-figma-plugin/manifest.json。\n5. 打开插件后看到“工作台已连接”即可。\n\n绑定账号：${pluginBinding.displayName || pluginBinding.username || pluginBinding.userId}\n工作台地址：\n${pluginBases.map(item => `- ${item}`).join('\n')}\n`) }
+  ]);
+  res.writeHead(200, {
+    'Content-Type': 'application/zip',
+    'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent('art-platform-figma-plugin.zip')}`,
+    'Content-Length': zip.length,
+    'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
+  });
+  res.end(zip);
+}
+
+function figmaWorkbenchPluginBases(req) {
+  return uniqueStrings([
+    requestOrigin(req),
+    'http://192.168.21.42:4288',
+    'http://192.168.25.136:4288'
+  ]).filter(value => /^https?:\/\//i.test(value));
+}
+
+function figmaWorkbenchPluginAllowedDomains(bases = []) {
+  const httpsDomains = uniqueStrings(bases.map(value => {
+    try {
+      const url = new URL(value);
+      if (url.protocol !== 'https:') return '';
+      return `${url.protocol}//${url.hostname}`.replace(/\/+$/, '');
+    } catch {
+      return '';
+    }
+  })).filter(value => /^https?:\/\//i.test(value));
+  return httpsDomains.length ? httpsDomains : ['https://www.figma.com'];
+}
+
+function figmaWorkbenchPluginBinding(user = {}) {
+  const binding = {
+    userId: String(user.id || '').trim(),
+    username: String(user.username || user.account || '').trim(),
+    displayName: String(user.displayName || user.name || user.username || '').trim(),
+    role: String(user.role || user.roleName || '').trim(),
+    downloadedAt: new Date().toISOString()
+  };
+  return {
+    ...binding,
+    token: Buffer.from(JSON.stringify(binding), 'utf8').toString('base64url')
+  };
+}
+
+function decodeFigmaPluginBinding(body = {}) {
+  const direct = {
+    userId: String(body.boundUserId || '').trim(),
+    username: String(body.boundUsername || '').trim(),
+    displayName: String(body.boundDisplayName || '').trim()
+  };
+  if (direct.userId || direct.username || direct.displayName) return direct;
+  const token = String(body.bindingToken || '').trim();
+  if (!token) return direct;
+  try {
+    const parsed = JSON.parse(Buffer.from(token, 'base64url').toString('utf8'));
+    return {
+      userId: String(parsed.userId || '').trim(),
+      username: String(parsed.username || '').trim(),
+      displayName: String(parsed.displayName || '').trim()
+    };
+  } catch {
+    return direct;
+  }
+}
+
+function uniqueStrings(values = []) {
+  return [...new Set(values.map(value => String(value || '').trim()).filter(Boolean))];
+}
+
+function requestOrigin(req) {
+  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() || 'http';
+  const hostHeader = String(req.headers.host || '').trim();
+  const hostValue = hostHeader || `${host}:${port}`;
+  return `${proto}://${hostValue}`.replace(/\/+$/, '');
+}
+
+function createStoredZip(files = []) {
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+  for (const file of files) {
+    const name = Buffer.from(String(file.name || '').replace(/^\/+/, ''), 'utf8');
+    const data = Buffer.isBuffer(file.data) ? file.data : Buffer.from(String(file.data || ''));
+    const crc = crc32(data);
+    const { dosTime, dosDate } = zipDosDateTime(new Date());
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(dosTime, 10);
+    local.writeUInt16LE(dosDate, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(0, 28);
+    localParts.push(local, name, data);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt16LE(dosTime, 12);
+    central.writeUInt16LE(dosDate, 14);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt16LE(0, 30);
+    central.writeUInt16LE(0, 32);
+    central.writeUInt16LE(0, 34);
+    central.writeUInt16LE(0, 36);
+    central.writeUInt32LE(0, 38);
+    central.writeUInt32LE(offset, 42);
+    centralParts.push(central, name);
+    offset += local.length + name.length + data.length;
+  }
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(files.length, 8);
+  end.writeUInt16LE(files.length, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(offset, 16);
+  end.writeUInt16LE(0, 20);
+  return Buffer.concat([...localParts, ...centralParts, end]);
+}
+
+function zipDosDateTime(date) {
+  const year = Math.max(date.getFullYear(), 1980);
+  const dosTime = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+  const dosDate = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+  return { dosTime, dosDate };
+}
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 async function requireProject(id) {

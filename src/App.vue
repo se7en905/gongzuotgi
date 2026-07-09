@@ -21336,32 +21336,16 @@ export default {
       return this.copyText(command, `${platform} Worker ${install ? '开机自启/立即生效命令' : '手动启动命令'}`);
     },
 
-    figmaBridgeInstallCommand(user = this.currentUser || {}) {
-      const username = String(user.username || '').trim();
-      const password = String(user.passwordDisplay || '').trim();
-      const apiBase = this.directSkillWorkerApiBase();
-      return [
-        '# Windows PowerShell（组员 Windows 电脑安装 Figma 本地桥接服务和插件文件）',
-        '# 这段只新增 Figma 桥接服务，不会覆盖原本 Worker 执行命令。',
-        '$ErrorActionPreference = "Stop"',
-        '$ProgressPreference = "SilentlyContinue"',
-        '$root = "$env:USERPROFILE\\ArtDirectWorker"',
-        'New-Item -ItemType Directory -Force -Path "$root\\scripts" | Out-Null',
-        `Invoke-WebRequest -UseBasicParsing -Uri ${this.powershellQuote(`${apiBase}/worker/install_figma_bridge_windows.ps1`)} -OutFile "$root\\scripts\\install_figma_bridge_windows.ps1" -ErrorAction Stop`,
-        '$env:ART_PLATFORM_API = ' + this.powershellQuote(apiBase),
-        '$env:ART_PLATFORM_USERNAME = ' + this.powershellQuote(username || '组员账号'),
-        '$env:ART_PLATFORM_PASSWORD = ' + this.powershellQuote(password || '在这里填写该组员平台密码'),
-        '$env:ART_WORKER_HOME = $root',
-        'powershell -NoProfile -ExecutionPolicy Bypass -File "$root\\scripts\\install_figma_bridge_windows.ps1"'
-      ].join('\n');
-    },
-
-    copyFigmaBridgeInstallCommand(user = this.currentWorkerBindingUser || this.currentUser || {}) {
-      if (!this.canCopyDirectSkillWorkerCommand(user)) {
-        ElMessage.warning('当前账号没有复制 Figma 桥接安装命令的权限');
-        return Promise.resolve(false);
-      }
-      return this.copyText(this.figmaBridgeInstallCommand(user), 'Windows Figma 桥接安装命令');
+    downloadFigmaWorkbenchPlugin() {
+      const base = String(window.location.origin || this.directSkillWorkerApiBase() || '').replace(/\/$/, '');
+      const url = `${base}/worker/figma-workbench-plugin.zip`;
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'art-platform-figma-plugin.zip';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      ElMessage.success('已开始下载 Figma 插件包');
     },
 
     shellQuote(value = '') {
