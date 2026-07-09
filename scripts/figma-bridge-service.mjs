@@ -7,8 +7,23 @@ const host = process.env.FIGMA_BRIDGE_HOST || '127.0.0.1';
 const port = Number(process.env.FIGMA_BRIDGE_PORT || 9530);
 const taskTimeoutMs = Math.max(5000, Number(process.env.FIGMA_BRIDGE_TASK_TIMEOUT_MS || 45000));
 const pluginStaleMs = Math.max(5000, Number(process.env.FIGMA_BRIDGE_PLUGIN_STALE_MS || 15000));
+const platformBases = normalizeBaseList(process.env.ART_PLATFORM_BASES || process.env.ART_PLATFORM_API || process.env.API_BASE || '');
+const platformHeartbeatMinIntervalMs = Math.max(1000, Number(process.env.ART_PLATFORM_HEARTBEAT_MIN_INTERVAL_MS || 5000));
+const pluginBinding = {
+  token: cleanString(process.env.ART_PLUGIN_BINDING_TOKEN || ''),
+  userId: cleanString(process.env.ART_PLUGIN_BOUND_USER_ID || ''),
+  username: cleanString(process.env.ART_PLUGIN_BOUND_USERNAME || ''),
+  displayName: cleanString(process.env.ART_PLUGIN_BOUND_DISPLAY_NAME || '')
+};
 const pendingTasks = [];
 const taskResults = new Map();
+let lastPlatformHeartbeatAt = 0;
+let lastPlatformHeartbeat = {
+  ok: false,
+  base: '',
+  error: '',
+  forwardedAt: ''
+};
 
 let pluginState = {
   connected: false,
@@ -52,6 +67,8 @@ function bridgeHealth() {
     hostname: os.hostname(),
     pendingTaskCount: pendingTasks.length,
     resultCount: taskResults.size,
+    platformBases,
+    platformHeartbeat: lastPlatformHeartbeat,
     pluginConnected,
     plugin: {
       ...pluginState,
@@ -70,6 +87,14 @@ async function handlePluginNext(req, res, url) {
     pageName: cleanString(url.searchParams.get('pageName')),
     pluginVersion: cleanString(url.searchParams.get('version'))
   };
+  forwardPlatformHeartbeat(pluginState).catch(error => {
+    lastPlatformHeartbeat = {
+      ok: false,
+      base: '',
+      error: error.message || String(error),
+      forwardedAt: new Date().toISOString()
+    };
+  });
   const task = pendingTasks.shift() || null;
   sendJson(res, 200, { ok: true, task });
 }
@@ -90,6 +115,19 @@ async function handlePluginResult(req, res) {
     completedAt: new Date().toISOString()
   };
   taskResults.set(taskId, result);
+  await forwardPlatformHeartbeat({
+    ...pluginState,
+    ...result,
+    ok: result.ok,
+    error: result.error || ''
+  }, { force: true }).catch(error => {
+    lastPlatformHeartbeat = {
+      ok: false,
+      base: '',
+      error: error.message || String(error),
+      forwardedAt: new Date().toISOString()
+    };
+  });
   sendJson(res, 200, { ok: true, result });
 }
 
@@ -138,6 +176,71 @@ function normalizeTask(input = {}) {
   };
 }
 
+async function forwardPlatformHeartbeat(status = {}, options = {}) {
+  if (!platformBases.length) {
+    lastPlatformHeartbeat = {
+      ok: false,
+      base: '',
+      error: '未配置工作台地址',
+      forwardedAt: new Date().toISOString()
+    };
+    return lastPlatformHeartbeat;
+  }
+  const now = Date.now();
+  if (!options.force && lastPlatformHeartbeatAt && now - lastPlatformHeartbeatAt < platformHeartbeatMinIntervalMs) {
+    return lastPlatformHeartbeat;
+  }
+  lastPlatformHeartbeatAt = now;
+  const payload = {
+    service: 'art-platform-figma-local-bridge',
+    relayHost: host,
+    relayPort: port,
+    relayHostname: os.hostname(),
+    fileKey: cleanString(status.fileKey),
+    fileName: cleanString(status.fileName),
+    pageName: cleanString(status.pageName),
+    pluginVersion: cleanString(status.pluginVersion),
+    bindingToken: pluginBinding.token,
+    boundUserId: pluginBinding.userId,
+    boundUsername: pluginBinding.username,
+    boundDisplayName: pluginBinding.displayName,
+    createdNodeIds: normalizeStringList(status.createdNodeIds),
+    mutatedNodeIds: normalizeStringList(status.mutatedNodeIds),
+    ok: status.ok === true,
+    error: cleanString(status.error)
+  };
+  let lastError = '';
+  for (const base of platformBases) {
+    try {
+      const response = await fetch(`${base}/api/figma-plugin/heartbeat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.ok && data.ok === true) {
+        lastPlatformHeartbeat = {
+          ok: true,
+          base,
+          error: '',
+          forwardedAt: new Date().toISOString()
+        };
+        return lastPlatformHeartbeat;
+      }
+      lastError = data.error || `HTTP ${response.status}`;
+    } catch (error) {
+      lastError = error.message || String(error);
+    }
+  }
+  lastPlatformHeartbeat = {
+    ok: false,
+    base: '',
+    error: lastError || '所有工作台地址都不可访问',
+    forwardedAt: new Date().toISOString()
+  };
+  return lastPlatformHeartbeat;
+}
+
 async function waitForTaskResult(taskId, waitMs) {
   const started = Date.now();
   while (Date.now() - started < waitMs) {
@@ -162,7 +265,8 @@ function sendJson(res, status, value) {
     'Cache-Control': 'no-store',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type'
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Private-Network': 'true'
   });
   res.end(body);
 }
@@ -171,13 +275,21 @@ function sendEmpty(res, status) {
   res.writeHead(status, {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type'
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Private-Network': 'true'
   });
   res.end();
 }
 
 function cleanString(value = '') {
   return String(value || '').trim();
+}
+
+function normalizeBaseList(value = '') {
+  return String(value || '')
+    .split(/[\s,，]+/)
+    .map(item => item.trim().replace(/\/+$/, ''))
+    .filter(item => /^https?:\/\//i.test(item));
 }
 
 function normalizeStringList(value = []) {

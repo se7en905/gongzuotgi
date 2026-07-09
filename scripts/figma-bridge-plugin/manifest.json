@@ -7,8 +7,7 @@
   "editorType": ["figma"],
   "networkAccess": {
     "allowedDomains": [
-      "http://127.0.0.1:9530",
-      "http://localhost:9530"
+      "*"
     ],
     "reasoning": "连接执行人本机工作台 Figma 桥接服务，用于接收工作台任务并把结果回传到本机。"
   }

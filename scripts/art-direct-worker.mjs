@@ -15,6 +15,9 @@ const heartbeatIntervalMs = Math.max(60000, Number(process.env.ART_WORKER_HEARTB
 const localCheckTimeoutMs = Math.max(5000, Number(process.env.ART_WORKER_CHECK_TIMEOUT_MS || 15000));
 const localCheckIntervalMs = Math.max(60000, Number(process.env.ART_WORKER_LOCAL_CHECK_INTERVAL_MS || 2400000));
 const requestTimeoutMs = Math.max(5000, Number(process.env.ART_WORKER_API_TIMEOUT_MS || 15000));
+const figmaBridgePort = String(process.env.FIGMA_BRIDGE_PORT || '9530').trim() || '9530';
+const figmaBridgeBase = normalizeBaseUrl(process.env.FIGMA_BRIDGE_BASE || `http://127.0.0.1:${figmaBridgePort}`);
+const figmaBridgeFallbackTimeoutMs = Math.max(5000, Number(process.env.ART_WORKER_FIGMA_BRIDGE_TIMEOUT_MS || 45000));
 const codexNoOutputTimeoutMs = Math.max(5 * 60 * 1000, Number(process.env.ART_WORKER_CODEX_NO_OUTPUT_TIMEOUT_MS || 15 * 60 * 1000));
 const codexMaxRunMs = Math.max(codexNoOutputTimeoutMs, Number(process.env.ART_WORKER_CODEX_MAX_RUN_MS || 6 * 60 * 60 * 1000));
 const workerHome = process.env.ART_WORKER_HOME || path.join(os.homedir(), 'ArtDirectWorker');
@@ -663,6 +666,19 @@ async function executeRun(run) {
   let resultSummary = buildCancelledResultSummary(run, cancellationReason, combinedText);
   if (!wasCancelled) {
     figmaWriteResult = extractFigmaWriteEvidence(combinedText, run);
+    const figmaBridgeFallback = await tryFigmaBridgeFallback(run, figmaWriteResult, combinedText);
+    if (figmaBridgeFallback.attempted) {
+      const logText = figmaBridgeFallback.ok
+        ? `\n[worker figma bridge fallback] ${figmaBridgeFallback.evidence.join('；')}\n`
+        : `\n[worker figma bridge fallback blocked] ${figmaBridgeFallback.error}\n`;
+      await appendLocalRunLog(run.id, logText).catch(() => {});
+      await safeAppendRunLog(run.id, logText).catch(() => {});
+      if (figmaBridgeFallback.ok) {
+        figmaWriteResult = mergeFigmaBridgeFallbackEvidence(figmaWriteResult, figmaBridgeFallback);
+      } else if (figmaWriteResult.required && !figmaWriteResult.blockerReason) {
+        figmaWriteResult.blockerReason = figmaBridgeFallback.error;
+      }
+    }
     generatedArtifacts = await collectAndUploadGeneratedArtifacts(run, workspace, combinedText);
     const imageProviderResult = evaluateImageProviderResult(run, combinedText, generatedArtifacts);
     imageArtifactResult = evaluateImageArtifactResult(run, generatedArtifacts, imageProviderResult);

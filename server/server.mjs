@@ -9956,6 +9956,10 @@ async function serveWorkerDownload(req, res, url) {
     await serveFigmaWorkbenchPluginZip(req, res);
     return;
   }
+  if (pathname === '/worker/figma-local-bridge-kit.zip') {
+    await serveFigmaLocalBridgeKitZip(req, res);
+    return;
+  }
   const workerFiles = {
     '/worker/art-direct-worker.mjs': path.resolve(__dirname, '..', 'scripts', 'art-direct-worker.mjs'),
     '/worker/install_art_direct_worker_launch_agent.sh': path.resolve(__dirname, '..', 'scripts', 'install_art_direct_worker_launch_agent.sh'),
@@ -9980,39 +9984,46 @@ async function serveWorkerDownload(req, res, url) {
 }
 
 async function serveFigmaWorkbenchPluginZip(req, res) {
+  await serveFigmaLocalBridgeKitZip(req, res, {
+    filename: 'art-platform-figma-plugin.zip',
+    root: 'art-platform-figma-plugin'
+  });
+}
+
+async function serveFigmaLocalBridgeKitZip(req, res, options = {}) {
   const currentUser = await authenticateRequest(req);
   requireAuth(currentUser);
+  const root = String(options.root || 'art-platform-figma-plugin').replace(/^\/+|\/+$/g, '') || 'art-platform-figma-plugin';
+  const filename = String(options.filename || 'art-platform-figma-plugin.zip').trim() || 'art-platform-figma-plugin.zip';
   const pluginBases = figmaWorkbenchPluginBases(req);
   const pluginBinding = figmaWorkbenchPluginBinding(currentUser);
-  const manifest = {
-    name: '美术工作台 Figma 插件',
-    id: 'art-platform-figma-workbench-plugin',
-    api: '1.0.0',
-    main: 'code.js',
-    ui: 'ui.html',
-    editorType: ['figma'],
-    networkAccess: {
-      allowedDomains: ['*'],
-      reasoning: '连接美术工作台有线或无线地址，用于回传插件在线状态和接收后续 Figma 写入任务。'
-    }
-  };
-  const codePath = path.resolve(__dirname, '..', 'scripts', 'figma-workbench-plugin', 'code.js');
-  const uiPath = path.resolve(__dirname, '..', 'scripts', 'figma-workbench-plugin', 'ui.html');
-  const code = (await fs.readFile(codePath, 'utf8'))
-    .replace(/__ART_PLATFORM_BASES__/g, JSON.stringify(pluginBases))
-    .replace(/__ART_PLUGIN_BINDING__/g, JSON.stringify(pluginBinding));
-  const ui = (await fs.readFile(uiPath, 'utf8'))
-    .replace(/__ART_PLATFORM_BASES__/g, JSON.stringify(pluginBases))
-    .replace(/__ART_PLUGIN_BINDING__/g, JSON.stringify(pluginBinding));
+  const servicePath = path.resolve(__dirname, '..', 'scripts', 'figma-bridge-service.mjs');
+  const pluginDir = path.resolve(__dirname, '..', 'scripts', 'figma-bridge-plugin');
+  const service = await fs.readFile(servicePath);
+  const manifest = await fs.readFile(path.join(pluginDir, 'manifest.json'));
+  const code = await fs.readFile(path.join(pluginDir, 'code.js'));
+  const ui = await fs.readFile(path.join(pluginDir, 'ui.html'));
+  const windowsScript = figmaLocalBridgeWindowsScript(pluginBases, pluginBinding);
+  const macScript = figmaLocalBridgeMacScript(pluginBases, pluginBinding);
+  const readme = `1. Unzip this package.
+2. Windows: double-click start-windows.cmd.
+3. macOS: run start-mac.command.
+4. Figma: import figma-plugin/manifest.json.
+5. Open the Figma plugin and keep this bridge window open.
+`;
   const zip = createStoredZip([
-    { name: 'art-platform-figma-plugin/manifest.json', data: Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`) },
-    { name: 'art-platform-figma-plugin/code.js', data: code },
-    { name: 'art-platform-figma-plugin/ui.html', data: Buffer.from(ui) },
-    { name: 'art-platform-figma-plugin/README.txt', data: Buffer.from(`美术工作台 Figma 插件\n\n1. 解压这个 zip。\n2. 打开 Figma Desktop。\n3. 菜单 Plugins > Development > Import plugin from manifest。\n4. 选择 art-platform-figma-plugin/manifest.json。\n5. 打开插件后看到“工作台已连接”即可。\n\n绑定账号：${pluginBinding.displayName || pluginBinding.username || pluginBinding.userId}\n工作台地址：\n${pluginBases.map(item => `- ${item}`).join('\n')}\n`) }
+    { name: `${root}/README.txt`, data: Buffer.from(readme) },
+    { name: `${root}/start-windows.cmd`, data: Buffer.from('@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0bridge\\start-figma-local-bridge.ps1"\r\npause\r\n') },
+    { name: `${root}/start-mac.command`, data: Buffer.from(macScript) },
+    { name: `${root}/bridge/start-figma-local-bridge.ps1`, data: utf8BomBuffer(windowsScript) },
+    { name: `${root}/bridge/figma-bridge-service.mjs`, data: service },
+    { name: `${root}/figma-plugin/manifest.json`, data: manifest },
+    { name: `${root}/figma-plugin/code.js`, data: code },
+    { name: `${root}/figma-plugin/ui.html`, data: ui }
   ]);
   res.writeHead(200, {
     'Content-Type': 'application/zip',
-    'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent('art-platform-figma-plugin.zip')}`,
+    'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
     'Content-Length': zip.length,
     'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
   });
@@ -10032,6 +10043,64 @@ function figmaWorkbenchPluginBases(req) {
     'http://192.168.21.42:4288',
     'http://192.168.25.136:4288'
   ]).filter(value => /^https?:\/\//i.test(value));
+}
+
+function figmaLocalBridgeWindowsScript(pluginBases = [], binding = {}) {
+  return [
+    '$ErrorActionPreference = "Stop"',
+    '$Root = Split-Path -Parent $PSScriptRoot',
+    '$Service = Join-Path $PSScriptRoot "figma-bridge-service.mjs"',
+    '$env:FIGMA_BRIDGE_PORT = "9530"',
+    `$env:ART_PLATFORM_BASES = ${powershellLiteral(pluginBases.join(','))}`,
+    `$env:ART_PLUGIN_BINDING_TOKEN = ${powershellLiteral(binding.token || '')}`,
+    `$env:ART_PLUGIN_BOUND_USER_ID = ${powershellLiteral(binding.userId || '')}`,
+    `$env:ART_PLUGIN_BOUND_USERNAME = ${powershellLiteral(binding.username || '')}`,
+    `$env:ART_PLUGIN_BOUND_DISPLAY_NAME = ${powershellLiteral(binding.displayName || '')}`,
+    '$Node = (Get-Command node -ErrorAction SilentlyContinue).Source',
+    'if (-not $Node) { throw "Node.js was not found. Install Node.js 20 or newer, then run start-windows.cmd again." }',
+    'Write-Host ""',
+    'Write-Host "Figma local bridge is starting..."',
+    'Write-Host "Keep this window open, then open the Figma plugin."',
+    'Write-Host "Health check: http://127.0.0.1:9530/health"',
+    '& $Node $Service'
+  ].join('\r\n');
+}
+
+function figmaLocalBridgeMacScript(pluginBases = [], binding = {}) {
+  return [
+    '#!/bin/zsh',
+    'set -e',
+    'DIR="$(cd "$(dirname "$0")" && pwd)"',
+    'SERVICE="$DIR/bridge/figma-bridge-service.mjs"',
+    'export FIGMA_BRIDGE_PORT="9530"',
+    `export ART_PLATFORM_BASES=${shellLiteral(pluginBases.join(','))}`,
+    `export ART_PLUGIN_BINDING_TOKEN=${shellLiteral(binding.token || '')}`,
+    `export ART_PLUGIN_BOUND_USER_ID=${shellLiteral(binding.userId || '')}`,
+    `export ART_PLUGIN_BOUND_USERNAME=${shellLiteral(binding.username || '')}`,
+    `export ART_PLUGIN_BOUND_DISPLAY_NAME=${shellLiteral(binding.displayName || '')}`,
+    'if ! command -v node >/dev/null 2>&1; then',
+    '  echo "Node.js was not found. Install Node.js 20 or newer, then run start-mac.command again."',
+    '  read "?按回车退出"',
+    '  exit 1',
+    'fi',
+    'echo ""',
+    'echo "Figma local bridge is starting..."',
+    'echo "Keep this window open, then open the Figma plugin."',
+    'echo "Health check: http://127.0.0.1:9530/health"',
+    'node "$SERVICE"'
+  ].join('\n');
+}
+
+function utf8BomBuffer(value = '') {
+  return Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(String(value), 'utf8')]);
+}
+
+function shellLiteral(value = '') {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function powershellLiteral(value = '') {
+  return `'${String(value).replace(/'/g, "''")}'`;
 }
 
 function splitFigmaWorkbenchPluginBases(value = '') {
