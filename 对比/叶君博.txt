@@ -1,0 +1,1091 @@
+Windows PowerShell
+版权所有（C） Microsoft Corporation。保留所有权利。
+
+安装最新的 PowerShell，了解新功能和改进！https://aka.ms/PSWindows
+
+PS C:\WINDOWS\system32> Write-Host "===== Windows 用户 ====="
+===== Windows 用户 =====
+PS C:\WINDOWS\system32> whoami
+bf-202409181752\administrator
+PS C:\WINDOWS\system32>
+PS C:\WINDOWS\system32> Write-Host "`n===== Codex 版本 ====="
+
+===== Codex 版本 =====
+PS C:\WINDOWS\system32> codex --version
+codex : 无法将“codex”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正
+确，然后再试一次。
+所在位置 行:1 字符: 1
++ codex --version
++ ~~~~~
+    + CategoryInfo          : ObjectNotFound: (codex:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\WINDOWS\system32>
+PS C:\WINDOWS\system32> Write-Host "`n===== Codex 路径 ====="
+
+===== Codex 路径 =====
+PS C:\WINDOWS\system32> where.exe codex
+信息: 用提供的模式无法找到文件。
+PS C:\WINDOWS\system32>
+PS C:\WINDOWS\system32> Write-Host "`n===== CODEX_HOME 环境变量 ====="
+
+===== CODEX_HOME 环境变量 =====
+PS C:\WINDOWS\system32> Write-Host "CODEX_HOME=$env:CODEX_HOME"
+CODEX_HOME=
+PS C:\WINDOWS\system32>
+PS C:\WINDOWS\system32> Write-Host "`n===== 默认 Codex 配置路径 ====="
+
+===== 默认 Codex 配置路径 =====
+PS C:\WINDOWS\system32> Write-Host "$env:USERPROFILE\.codex\config.toml"
+C:\Users\Administrator\.codex\config.toml
+PS C:\WINDOWS\system32> Test-Path "$env:USERPROFILE\.codex\config.toml"
+True
+PS C:\WINDOWS\system32>
+PS C:\WINDOWS\system32> Write-Host "`n===== config 关键内容 ====="
+
+===== config 关键内容 =====
+PS C:\WINDOWS\system32> Select-String -Path "$env:USERPROFILE\.codex\config.toml" -Pattern "rmcp_client|enable_mcp_apps|plugins|mcp_servers\.figma|use_figma|approval_mode|trust_level|ArtDirectWorker" -Context 1,1
+
+  C:\Users\Administrator\.codex\config.toml:12:
+> C:\Users\Administrator\.codex\config.toml:13:[mcp_servers.figma]
+  C:\Users\Administrator\.codex\config.toml:14:url = "https://mcp.figma.com/mcp"
+  C:\Users\Administrator\.codex\config.toml:39:[projects.'c:\users\administrator\documents\codex\2026-05-27\skill-creat
+or-c-users-administrator-codex']
+> C:\Users\Administrator\.codex\config.toml:40:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:41:
+  C:\Users\Administrator\.codex\config.toml:42:[projects.'c:\users\administrator\documents\codex\2026-05-29\files-menti
+oned-by-the-user-svg']
+> C:\Users\Administrator\.codex\config.toml:43:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:44:
+  C:\Users\Administrator\.codex\config.toml:45:[projects.'c:\users\administrator\documents\codex\2026-05-29\files-menti
+oned-by-the-user-codex']
+> C:\Users\Administrator\.codex\config.toml:46:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:47:
+  C:\Users\Administrator\.codex\config.toml:48:[projects.'c:\users\administrator\documents\codex\2026-06-01\windows-pow
+ershell']
+> C:\Users\Administrator\.codex\config.toml:49:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:50:
+  C:\Users\Administrator\.codex\config.toml:51:[projects.'c:\users\administrator\documents\codex\2026-06-02\c-users-adm
+inistrator-desktop-art-art']
+> C:\Users\Administrator\.codex\config.toml:52:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:53:
+  C:\Users\Administrator\.codex\config.toml:54:[projects.'c:\users\administrator\documents\codex\2026-06-03\voltagent-a
+wesome-design-md-https-github']
+> C:\Users\Administrator\.codex\config.toml:55:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:56:
+  C:\Users\Administrator\.codex\config.toml:57:[projects.'c:\users\administrator\documents\codex\2026-06-03\kaopu-xiaop
+u-web-design-https-github']
+> C:\Users\Administrator\.codex\config.toml:58:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:59:
+  C:\Users\Administrator\.codex\config.toml:60:[projects.'c:\users\administrator\uidesign']
+> C:\Users\Administrator\.codex\config.toml:61:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:62:
+  C:\Users\Administrator\.codex\config.toml:63:[projects.'c:\users\administrator\documents\codex\2026-06-03\use-figma']
+> C:\Users\Administrator\.codex\config.toml:64:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:65:
+  C:\Users\Administrator\.codex\config.toml:66:[projects.'c:\users\administrator\documents\codex\2026-06-03\files-menti
+oned-by-the-user-skill']
+> C:\Users\Administrator\.codex\config.toml:67:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:68:
+  C:\Users\Administrator\.codex\config.toml:69:[projects.'c:\users\administrator\documents\codex\2026-06-03\image-2']
+> C:\Users\Administrator\.codex\config.toml:70:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:71:
+  C:\Users\Administrator\.codex\config.toml:72:[projects.'c:\users\administrator\documents\codex\2026-06-03\codex-model
+-provider-custom']
+> C:\Users\Administrator\.codex\config.toml:73:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:74:
+  C:\Users\Administrator\.codex\config.toml:75:[projects.'c:\users\administrator\documents\codex\2026-06-05\skill-ui-1-
+1']
+> C:\Users\Administrator\.codex\config.toml:76:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:77:
+  C:\Users\Administrator\.codex\config.toml:78:[projects.'c:\users\administrator\documents\codex\2026-06-05\c-users-adm
+inistrator-downloads-skill-auditor']
+> C:\Users\Administrator\.codex\config.toml:79:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:80:
+  C:\Users\Administrator\.codex\config.toml:81:[projects.'c:\users\administrator\documents\codex\2026-06-05\files-menti
+oned-by-the-user-skill']
+> C:\Users\Administrator\.codex\config.toml:82:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:83:
+  C:\Users\Administrator\.codex\config.toml:84:[projects.'c:\users\administrator\documents\codex\2026-06-05\files-menti
+oned-by-the-user-skill-2']
+> C:\Users\Administrator\.codex\config.toml:85:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:86:
+  C:\Users\Administrator\.codex\config.toml:87:[projects.'c:\users\administrator\documents\codex\2026-06-06\ui-1-html-h
+ttps-www-figma']
+> C:\Users\Administrator\.codex\config.toml:88:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:89:
+  C:\Users\Administrator\.codex\config.toml:90:[projects.'c:\users\administrator\documents\codex\2026-06-06\figma-ui-ht
+tps-www-figma-com']
+> C:\Users\Administrator\.codex\config.toml:91:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:92:
+  C:\Users\Administrator\.codex\config.toml:93:[projects.'c:\users\administrator\documents\codex\2026-06-06\c-users-adm
+inistrator-uidesign-skills-same']
+> C:\Users\Administrator\.codex\config.toml:94:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:95:
+  C:\Users\Administrator\.codex\config.toml:96:[projects.'c:\users\administrator\documents\codex\2026-06-06\image-2-2s'
+]
+> C:\Users\Administrator\.codex\config.toml:97:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:98:
+  C:\Users\Administrator\.codex\config.toml:99:[projects.'c:\users\administrator\documents\codex\2026-06-08\git-clone-h
+ttps-github-com-hyperframes']
+> C:\Users\Administrator\.codex\config.toml:100:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:101:
+  C:\Users\Administrator\.codex\config.toml:102:[projects.'c:\users\administrator\documents\codex\2026-06-08\git-clone-
+https-github-com-red']
+> C:\Users\Administrator\.codex\config.toml:103:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:104:
+  C:\Users\Administrator\.codex\config.toml:105:[projects.'c:\users\administrator\documents\codex\2026-06-08\2-3s-skill
+-github-skill-red']
+> C:\Users\Administrator\.codex\config.toml:106:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:107:
+  C:\Users\Administrator\.codex\config.toml:108:[projects.'c:\users\administrator\documents\codex\2026-06-08\web5-cocos
+10-https-www-figma-com']
+> C:\Users\Administrator\.codex\config.toml:109:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:110:
+> C:\Users\Administrator\.codex\config.toml:111:[projects.'c:\users\administrator\documents\codex\2026-06-08\root-env-u
+serprofile-artdirectworker-new-item']
+> C:\Users\Administrator\.codex\config.toml:112:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:113:
+  C:\Users\Administrator\.codex\config.toml:114:[projects.'c:\users\administrator\documents\codex\2026-06-08\c-users-ad
+ministrator-desktop-art-art']
+> C:\Users\Administrator\.codex\config.toml:115:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:116:
+  C:\Users\Administrator\.codex\config.toml:117:[projects.'c:\users\administrator\documents\codex\2026-06-08\https-jime
+ng-jianying-com-ai-tool']
+> C:\Users\Administrator\.codex\config.toml:118:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:119:
+  C:\Users\Administrator\.codex\config.toml:120:[projects.'c:\users\administrator\documents\codex\2026-06-08\erroractio
+npreference-stop-progresspreference-silentlycontinue-root-env']
+> C:\Users\Administrator\.codex\config.toml:121:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:122:
+  C:\Users\Administrator\.codex\config.toml:123:[projects.'c:\users\administrator\documents\codex\2026-06-09\sg-copy-ht
+tps-www-figma-com']
+> C:\Users\Administrator\.codex\config.toml:124:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:125:
+  C:\Users\Administrator\.codex\config.toml:126:[projects.'c:\users\administrator\documents\codex\2026-06-10\image2-1-1
+-s-g']
+> C:\Users\Administrator\.codex\config.toml:127:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:128:
+  C:\Users\Administrator\.codex\config.toml:129:[projects.'c:\users\administrator\documents\codex\2026-06-11\files-ment
+ioned-by-the-user-skill']
+> C:\Users\Administrator\.codex\config.toml:130:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:131:
+  C:\Users\Administrator\.codex\config.toml:132:[projects.'c:\users\administrator\documents\codex\2026-06-11\files-ment
+ioned-by-the-user-design']
+> C:\Users\Administrator\.codex\config.toml:133:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:134:
+  C:\Users\Administrator\.codex\config.toml:135:[projects.'c:\users\administrator\documents\codex\2026-06-12\ui-image-2
+-skill-skill']
+> C:\Users\Administrator\.codex\config.toml:136:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:137:
+  C:\Users\Administrator\.codex\config.toml:138:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-ment
+ioned-by-the-user-skill']
+> C:\Users\Administrator\.codex\config.toml:139:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:140:
+  C:\Users\Administrator\.codex\config.toml:141:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-ment
+ioned-by-the-user-skill-2']
+> C:\Users\Administrator\.codex\config.toml:142:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:143:
+  C:\Users\Administrator\.codex\config.toml:144:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-ment
+ioned-by-the-user-skill-3']
+> C:\Users\Administrator\.codex\config.toml:145:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:146:
+  C:\Users\Administrator\.codex\config.toml:147:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-ment
+ioned-by-the-user-skill-4']
+> C:\Users\Administrator\.codex\config.toml:148:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:149:
+  C:\Users\Administrator\.codex\config.toml:150:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-ment
+ioned-by-the-user-skill-5']
+> C:\Users\Administrator\.codex\config.toml:151:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:152:
+  C:\Users\Administrator\.codex\config.toml:153:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-ment
+ioned-by-the-user-skill-6']
+> C:\Users\Administrator\.codex\config.toml:154:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:155:
+  C:\Users\Administrator\.codex\config.toml:156:[projects.'c:\users\administrator\documents\codex\2026-06-12\firecrawl-
+skill']
+> C:\Users\Administrator\.codex\config.toml:157:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:158:
+  C:\Users\Administrator\.codex\config.toml:159:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-ment
+ioned-by-the-user-jimeng']
+> C:\Users\Administrator\.codex\config.toml:160:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:161:
+  C:\Users\Administrator\.codex\config.toml:162:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-ment
+ioned-by-the-user-11']
+> C:\Users\Administrator\.codex\config.toml:163:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:164:
+  C:\Users\Administrator\.codex\config.toml:165:[projects.'c:\users\administrator\documents\codex\2026-06-13\c-users-ad
+ministrator-codex-skills-reverse']
+> C:\Users\Administrator\.codex\config.toml:166:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:167:
+  C:\Users\Administrator\.codex\config.toml:168:[projects.'c:\users\administrator\documents\codex\2026-06-13\files-ment
+ioned-by-the-user-codex']
+> C:\Users\Administrator\.codex\config.toml:169:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:170:
+  C:\Users\Administrator\.codex\config.toml:171:[projects.'c:\users\administrator\documents\codex\2026-06-13\files-ment
+ioned-by-the-user-skill']
+> C:\Users\Administrator\.codex\config.toml:172:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:173:
+  C:\Users\Administrator\.codex\config.toml:174:[projects.'c:\users\administrator\documents\codex\2026-06-15\files-ment
+ioned-by-the-user-skill']
+> C:\Users\Administrator\.codex\config.toml:175:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:176:
+  C:\Users\Administrator\.codex\config.toml:177:[projects.'c:\users\administrator\documents\codex\2026-06-15\c-users-ad
+ministrator-uidesign-skills-skill']
+> C:\Users\Administrator\.codex\config.toml:178:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:179:
+  C:\Users\Administrator\.codex\config.toml:180:[projects.'c:\users\administrator\documents\codex\2026-06-15\c-users-ad
+ministrator-uidesign-skills-ui']
+> C:\Users\Administrator\.codex\config.toml:181:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:182:
+  C:\Users\Administrator\.codex\config.toml:183:[projects.'c:\users\administrator\documents\codex\2026-06-15\files-ment
+ioned-by-the-user-skill-2']
+> C:\Users\Administrator\.codex\config.toml:184:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:185:
+  C:\Users\Administrator\.codex\config.toml:186:[projects.'c:\users\administrator\documents\codex\2026-06-15\windows-po
+wershell-windows-windows-powershell-administrator']
+> C:\Users\Administrator\.codex\config.toml:187:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:188:
+> C:\Users\Administrator\.codex\config.toml:189:[projects.'c:\users\administrator\artdirectworker']
+> C:\Users\Administrator\.codex\config.toml:190:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:191:
+  C:\Users\Administrator\.codex\config.toml:192:[projects.'c:\users\administrator\documents\new project']
+> C:\Users\Administrator\.codex\config.toml:193:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:194:
+  C:\Users\Administrator\.codex\config.toml:195:[projects.'c:\users\administrator\documents\codex\2026-06-15\web5-cocos
+10-https-www-figma-com']
+> C:\Users\Administrator\.codex\config.toml:196:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:197:
+  C:\Users\Administrator\.codex\config.toml:198:[projects.'c:\users\administrator\documents\codex\2026-06-15\files-ment
+ioned-by-the-user-skill-3']
+> C:\Users\Administrator\.codex\config.toml:199:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:200:
+  C:\Users\Administrator\.codex\config.toml:201:[projects.'c:\users\administrator\documents\codex\2026-06-15\c-users-ad
+ministrator-desktop-art-art']
+> C:\Users\Administrator\.codex\config.toml:202:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:203:
+  C:\Users\Administrator\.codex\config.toml:204:[projects.'c:\users\administrator\documents\codex\2026-06-15\skill-c-us
+ers-administrator-desktop-art']
+> C:\Users\Administrator\.codex\config.toml:205:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:206:
+  C:\Users\Administrator\.codex\config.toml:207:[projects.'c:\users\administrator\documents\codex\2026-06-15\c-users-ad
+ministrator-desktop-art-art-2']
+> C:\Users\Administrator\.codex\config.toml:208:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:209:
+  C:\Users\Administrator\.codex\config.toml:210:[projects.'c:\users\administrator\documents\codex\2026-06-15\c-users-ad
+ministrator-desktop-art-art-3']
+> C:\Users\Administrator\.codex\config.toml:211:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:212:
+  C:\Users\Administrator\.codex\config.toml:213:[projects.'c:\users\administrator\documents\codex\2026-06-15\skill-c-us
+ers-administrator-desktop-art-2']
+> C:\Users\Administrator\.codex\config.toml:214:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:215:
+  C:\Users\Administrator\.codex\config.toml:216:[projects.'c:\users\administrator\documents\codex\2026-06-15\skill-c-us
+ers-administrator-desktop-art-3']
+> C:\Users\Administrator\.codex\config.toml:217:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:218:
+  C:\Users\Administrator\.codex\config.toml:219:[projects.'c:\users\administrator\documents\codex\2026-06-15\skill-c-us
+ers-administrator-desktop-art-4']
+> C:\Users\Administrator\.codex\config.toml:220:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:221:
+  C:\Users\Administrator\.codex\config.toml:222:[projects.'c:\users\administrator\documents\codex\2026-06-15\skill-c-us
+ers-administrator-desktop-art-5']
+> C:\Users\Administrator\.codex\config.toml:223:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:224:
+  C:\Users\Administrator\.codex\config.toml:225:[projects.'c:\users\administrator\documents\codex\2026-06-15\skill-c-us
+ers-administrator-desktop-art-6']
+> C:\Users\Administrator\.codex\config.toml:226:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:227:
+  C:\Users\Administrator\.codex\config.toml:228:[projects.'c:\users\administrator\documents\codex\2026-06-15\files-ment
+ioned-by-the-user-skill-4']
+> C:\Users\Administrator\.codex\config.toml:229:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:230:
+  C:\Users\Administrator\.codex\config.toml:231:[projects.'c:\users\administrator\documents\codex\2026-06-16\web5-https
+-www-figma-com-design']
+> C:\Users\Administrator\.codex\config.toml:232:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:233:
+  C:\Users\Administrator\.codex\config.toml:234:[projects.'c:\users\administrator\documents\codex\2026-06-16\sc-11-6-ht
+tps-www-figma']
+> C:\Users\Administrator\.codex\config.toml:235:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:236:
+  C:\Users\Administrator\.codex\config.toml:237:[projects.'c:\users\administrator\documents\codex\2026-06-16\files-ment
+ioned-by-the-user-frame']
+> C:\Users\Administrator\.codex\config.toml:238:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:239:
+> C:\Users\Administrator\.codex\config.toml:240:[projects.'c:\users\administrator\artdirectworker\state\runs\5926dd2a-2
+970-4ce0-a81b-a4884749a9bc\workspace']
+> C:\Users\Administrator\.codex\config.toml:241:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:242:
+> C:\Users\Administrator\.codex\config.toml:243:[projects.'c:\users\administrator\artdirectworker\state\runs\5d151263-6
+a41-42b3-a309-84320ecef638\workspace']
+> C:\Users\Administrator\.codex\config.toml:244:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:245:
+  C:\Users\Administrator\.codex\config.toml:246:[projects.'c:\users\administrator\documents\codex\2026-06-17\files-ment
+ioned-by-the-user-skill']
+> C:\Users\Administrator\.codex\config.toml:247:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:248:
+  C:\Users\Administrator\.codex\config.toml:249:[projects.'c:\users\administrator\documents\codex\2026-06-17\web5-cocos
+10-https-www-figma-com']
+> C:\Users\Administrator\.codex\config.toml:250:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:251:
+> C:\Users\Administrator\.codex\config.toml:252:[projects.'c:\users\administrator\artdirectworker\state\runs\68a500d5-8
+98e-4514-af01-75a9628359ff\workspace']
+> C:\Users\Administrator\.codex\config.toml:253:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:254:
+> C:\Users\Administrator\.codex\config.toml:255:[projects.'c:\users\administrator\artdirectworker\state\runs\1298c2f8-3
+3c8-4e5b-99c4-9ed76348428e\workspace']
+> C:\Users\Administrator\.codex\config.toml:256:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:257:
+> C:\Users\Administrator\.codex\config.toml:258:[projects.'c:\users\administrator\artdirectworker\state\runs\071bdc4f-6
+ad6-41fb-8520-ca2e9245cc3f\workspace']
+> C:\Users\Administrator\.codex\config.toml:259:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:260:
+> C:\Users\Administrator\.codex\config.toml:261:[projects.'c:\users\administrator\artdirectworker\state\runs\2198ac94-9
+4d7-4353-b0b9-02f725d63786\workspace']
+> C:\Users\Administrator\.codex\config.toml:262:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:263:
+> C:\Users\Administrator\.codex\config.toml:264:[projects.'c:\users\administrator\artdirectworker\state\runs\18d19499-f
+01a-4889-b5e6-85b40f7c698a\workspace']
+> C:\Users\Administrator\.codex\config.toml:265:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:266:
+  C:\Users\Administrator\.codex\config.toml:267:[projects.'c:\users\administrator\documents\codex\2026-06-17\files-ment
+ioned-by-the-user-51277']
+> C:\Users\Administrator\.codex\config.toml:268:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:269:
+  C:\Users\Administrator\.codex\config.toml:270:[projects.'c:\users\administrator\documents\codex\2026-06-17\files-ment
+ioned-by-the-user-51277-2']
+> C:\Users\Administrator\.codex\config.toml:271:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:272:
+  C:\Users\Administrator\.codex\config.toml:273:[projects.'c:\users\administrator\documents\codex\2026-06-17\files-ment
+ioned-by-the-user-codex']
+> C:\Users\Administrator\.codex\config.toml:274:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:275:
+  C:\Users\Administrator\.codex\config.toml:276:[projects.'c:\users\administrator\documents\codex\2026-06-17\files-ment
+ioned-by-the-user-51218']
+> C:\Users\Administrator\.codex\config.toml:277:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:278:
+  C:\Users\Administrator\.codex\config.toml:279:[projects.'c:\users\administrator\documents\codex\2026-06-17\https-www-
+pulsz-com-search']
+> C:\Users\Administrator\.codex\config.toml:280:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:281:
+> C:\Users\Administrator\.codex\config.toml:282:[projects.'c:\users\administrator\artdirectworker\state\runs\12b63aa9-d
+a60-4bc3-885b-3acd08212b04\workspace']
+> C:\Users\Administrator\.codex\config.toml:283:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:284:
+> C:\Users\Administrator\.codex\config.toml:285:[projects.'c:\users\administrator\artdirectworker\state\runs\90854746-1
+c20-45ee-9dd5-51f650a16a04\workspace']
+> C:\Users\Administrator\.codex\config.toml:286:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:287:
+  C:\Users\Administrator\.codex\config.toml:288:[projects.'c:\users\administrator\documents\codex\2026-06-18\c-users-ad
+ministrator-desktop-art-art']
+> C:\Users\Administrator\.codex\config.toml:289:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:290:
+  C:\Users\Administrator\.codex\config.toml:291:[projects.'c:\users\administrator\documents\codex\2026-06-18\c-users-ad
+ministrator-codex-skills-brief']
+> C:\Users\Administrator\.codex\config.toml:292:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:293:
+  C:\Users\Administrator\.codex\config.toml:294:[projects.'c:\users\administrator\documents\codex\2026-06-18\files-ment
+ioned-by-the-user-codex']
+> C:\Users\Administrator\.codex\config.toml:295:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:296:
+  C:\Users\Administrator\.codex\config.toml:297:[projects.'c:\users\administrator\documents\codex\2026-06-18\reverse-ui
+-prompt-c-users-administrator']
+> C:\Users\Administrator\.codex\config.toml:298:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:299:
+  C:\Users\Administrator\.codex\config.toml:300:[projects.'c:\users\administrator\documents\codex\2026-06-18\reverse-ui
+-prompt-c-users-administrator-2']
+> C:\Users\Administrator\.codex\config.toml:301:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:302:
+  C:\Users\Administrator\.codex\config.toml:303:[projects.'c:\users\administrator\documents\codex\2026-06-18\c-users-ad
+ministrator-codex-skills-reverse']
+> C:\Users\Administrator\.codex\config.toml:304:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:305:
+  C:\Users\Administrator\.codex\config.toml:306:[projects.'c:\users\administrator\documents\codex\2026-06-18\c-users-ad
+ministrator-codex-skills-reverse-2']
+> C:\Users\Administrator\.codex\config.toml:307:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:308:
+  C:\Users\Administrator\.codex\config.toml:309:[projects.'c:\users\administrator\documents\codex\2026-06-18\c-users-ad
+ministrator-codex-skills-reverse-3']
+> C:\Users\Administrator\.codex\config.toml:310:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:311:
+  C:\Users\Administrator\.codex\config.toml:312:[projects.'c:\users\administrator\documents\codex\2026-06-18\c-users-ad
+ministrator-codex-skills-reverse-4']
+> C:\Users\Administrator\.codex\config.toml:313:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:314:
+  C:\Users\Administrator\.codex\config.toml:315:[projects.'c:\users\administrator\documents\codex\2026-06-22\files-ment
+ioned-by-the-user-skill']
+> C:\Users\Administrator\.codex\config.toml:316:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:317:
+  C:\Users\Administrator\.codex\config.toml:318:[projects.'c:\users\administrator\documents\codex\2026-06-24\https-gk-e
+eafj-cn-81-index']
+> C:\Users\Administrator\.codex\config.toml:319:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:320:
+  C:\Users\Administrator\.codex\config.toml:321:[projects.'c:\users\administrator\documents\codex\2026-06-24\yi-g']
+> C:\Users\Administrator\.codex\config.toml:322:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:323:
+  C:\Users\Administrator\.codex\config.toml:324:[projects.'c:\users\administrator\documents\codex\2026-06-24\sg-0622-ht
+tps-www-figma-com']
+> C:\Users\Administrator\.codex\config.toml:325:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:326:
+  C:\Users\Administrator\.codex\config.toml:327:[projects.'c:\users\administrator\documents\codex\2026-06-25\fan']
+> C:\Users\Administrator\.codex\config.toml:328:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:329:
+> C:\Users\Administrator\.codex\config.toml:330:[projects.'c:\users\administrator\artdirectworker\state\runs\dbde3dcd-5
+d25-4f39-a50a-79ae709f23a6\workspace']
+> C:\Users\Administrator\.codex\config.toml:331:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:332:
+> C:\Users\Administrator\.codex\config.toml:333:[projects.'c:\users\administrator\artdirectworker\state\runs\5f31325a-b
+538-4ce8-8c14-2b75bd0b74af\workspace']
+> C:\Users\Administrator\.codex\config.toml:334:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:335:
+> C:\Users\Administrator\.codex\config.toml:336:[projects.'c:\users\administrator\artdirectworker\state\runs\fe259134-f
+a98-4d6b-89e3-1cb66ae792dc\workspace']
+> C:\Users\Administrator\.codex\config.toml:337:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:338:
+  C:\Users\Administrator\.codex\config.toml:339:[projects.'c:\users\administrator\documents\codex\2026-06-30\sh']
+> C:\Users\Administrator\.codex\config.toml:340:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:341:
+> C:\Users\Administrator\.codex\config.toml:342:[projects.'c:\users\administrator\artdirectworker\state\runs\1929adce-f
+038-481b-880e-793419e50393\workspace']
+> C:\Users\Administrator\.codex\config.toml:343:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:344:
+> C:\Users\Administrator\.codex\config.toml:345:[projects.'c:\users\administrator\artdirectworker\state\runs\b95e2345-f
+455-4dea-9418-102479393411\workspace']
+> C:\Users\Administrator\.codex\config.toml:346:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:347:
+> C:\Users\Administrator\.codex\config.toml:348:[projects.'c:\users\administrator\artdirectworker\state\runs\dc88326d-f
+d40-4381-851d-231e76318ddf\workspace']
+> C:\Users\Administrator\.codex\config.toml:349:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:350:
+> C:\Users\Administrator\.codex\config.toml:351:[projects.'c:\users\administrator\artdirectworker\state\runs\d900254a-f
+d0a-4b54-a795-6260831a9cc8\workspace']
+> C:\Users\Administrator\.codex\config.toml:352:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:353:
+> C:\Users\Administrator\.codex\config.toml:354:[projects.'c:\users\administrator\artdirectworker\state\runs\0c6d6186-6
+c07-4cd2-ac83-002b8b331d81\workspace']
+> C:\Users\Administrator\.codex\config.toml:355:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:356:
+> C:\Users\Administrator\.codex\config.toml:357:[projects.'c:\users\administrator\artdirectworker\state\runs\7eaac1e5-b
+860-4f16-89dd-5747c6e71ac3\workspace']
+> C:\Users\Administrator\.codex\config.toml:358:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:359:
+  C:\Users\Administrator\.codex\config.toml:360:[projects.'c:\users\administrator\documents\codex\2026-07-01\cha']
+> C:\Users\Administrator\.codex\config.toml:361:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:362:
+> C:\Users\Administrator\.codex\config.toml:363:[projects.'c:\users\administrator\artdirectworker\state\runs\ba9e030f-8
+68a-40c3-b9c8-a97d0d555de3\workspace']
+> C:\Users\Administrator\.codex\config.toml:364:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:365:
+> C:\Users\Administrator\.codex\config.toml:366:[projects.'c:\users\administrator\artdirectworker\state\runs\c5e5294d-f
+ef5-4d27-842d-7788b37f76db\workspace']
+> C:\Users\Administrator\.codex\config.toml:367:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:368:
+  C:\Users\Administrator\.codex\config.toml:369:[projects.'c:\users\administrator\documents\codex\2026-07-01\zhe']
+> C:\Users\Administrator\.codex\config.toml:370:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:371:
+  C:\Users\Administrator\.codex\config.toml:372:[projects.'c:\users\administrator\documents\codex\2026-07-02\zhe']
+> C:\Users\Administrator\.codex\config.toml:373:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:374:
+  C:\Users\Administrator\.codex\config.toml:375:[projects.'c:\users\administrator\documents\codex\2026-07-02\yao']
+> C:\Users\Administrator\.codex\config.toml:376:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:377:
+  C:\Users\Administrator\.codex\config.toml:378:[projects.'c:\users\administrator\documents\codex\2026-07-02\sg-0622-ht
+tps-www-figma-com']
+> C:\Users\Administrator\.codex\config.toml:379:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:380:
+  C:\Users\Administrator\.codex\config.toml:381:[projects.'c:\users\administrator\documents\codex\2026-07-02\sg-0622-ht
+tps-www-figma-com-2']
+> C:\Users\Administrator\.codex\config.toml:382:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:383:
+  C:\Users\Administrator\.codex\config.toml:384:[projects.'c:\users\administrator\documents\codex\2026-07-03\https-cd-b
+aa360-cc-20088-index']
+> C:\Users\Administrator\.codex\config.toml:385:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:386:
+  C:\Users\Administrator\.codex\config.toml:387:[projects.'c:\users\administrator\documents\codex\2026-07-03\https-cd-b
+aa360-cc-20088-index-2']
+> C:\Users\Administrator\.codex\config.toml:388:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:389:
+  C:\Users\Administrator\.codex\config.toml:390:[projects.'c:\users\administrator\documents\codex\2026-07-04\ben']
+> C:\Users\Administrator\.codex\config.toml:391:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:392:
+  C:\Users\Administrator\.codex\config.toml:393:[projects.'c:\users\administrator\documents\codex\2026-07-07\shi-y']
+> C:\Users\Administrator\.codex\config.toml:394:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:395:
+  C:\Users\Administrator\.codex\config.toml:396:[projects.'c:\users\administrator\documents\codex\2026-07-07\shi']
+> C:\Users\Administrator\.codex\config.toml:397:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:398:
+  C:\Users\Administrator\.codex\config.toml:399:[projects.'c:\users\administrator\documents\codex\2026-07-07\skill-ip']
+> C:\Users\Administrator\.codex\config.toml:400:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:401:
+  C:\Users\Administrator\.codex\config.toml:402:[projects.'c:\users\administrator\documents\codex\2026-07-07\skill-ip-2
+']
+> C:\Users\Administrator\.codex\config.toml:403:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:404:
+  C:\Users\Administrator\.codex\config.toml:405:[projects.'c:\users\administrator\documents\codex\2026-07-07\skill-ip-3
+']
+> C:\Users\Administrator\.codex\config.toml:406:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:407:
+  C:\Users\Administrator\.codex\config.toml:408:[projects.'c:\users\administrator\documents\codex\2026-07-09\jia']
+> C:\Users\Administrator\.codex\config.toml:409:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:410:
+  C:\Users\Administrator\.codex\config.toml:418:source_type = "local"
+> C:\Users\Administrator\.codex\config.toml:419:source = '\\?\C:\Users\Administrator\.cache\codex-runtimes\codex-primar
+y-runtime\plugins\openai-primary-runtime'
+  C:\Users\Administrator\.codex\config.toml:420:
+  C:\Users\Administrator\.codex\config.toml:423:source_type = "local"
+> C:\Users\Administrator\.codex\config.toml:424:source = 'C:\Users\Administrator\.codex\.tmp\plugins'
+  C:\Users\Administrator\.codex\config.toml:425:
+  C:\Users\Administrator\.codex\config.toml:431:
+> C:\Users\Administrator\.codex\config.toml:432:[plugins."documents@openai-primary-runtime"]
+  C:\Users\Administrator\.codex\config.toml:433:enabled = true
+  C:\Users\Administrator\.codex\config.toml:434:
+> C:\Users\Administrator\.codex\config.toml:435:[plugins."spreadsheets@openai-primary-runtime"]
+  C:\Users\Administrator\.codex\config.toml:436:enabled = true
+  C:\Users\Administrator\.codex\config.toml:437:
+> C:\Users\Administrator\.codex\config.toml:438:[plugins."presentations@openai-primary-runtime"]
+  C:\Users\Administrator\.codex\config.toml:439:enabled = true
+  C:\Users\Administrator\.codex\config.toml:440:
+> C:\Users\Administrator\.codex\config.toml:441:[plugins."figma@openai-curated"]
+  C:\Users\Administrator\.codex\config.toml:442:enabled = true
+  C:\Users\Administrator\.codex\config.toml:443:
+> C:\Users\Administrator\.codex\config.toml:444:[plugins."pdf@openai-primary-runtime"]
+  C:\Users\Administrator\.codex\config.toml:445:enabled = true
+  C:\Users\Administrator\.codex\config.toml:446:
+> C:\Users\Administrator\.codex\config.toml:447:[plugins."browser@openai-bundled"]
+  C:\Users\Administrator\.codex\config.toml:448:enabled = true
+  C:\Users\Administrator\.codex\config.toml:449:
+> C:\Users\Administrator\.codex\config.toml:450:[plugins."template-creator@openai-primary-runtime"]
+  C:\Users\Administrator\.codex\config.toml:451:enabled = true
+
+
+PS C:\WINDOWS\system32>
+PS C:\WINDOWS\system32> Write-Host "`n===== MCP 列表 ====="
+
+===== MCP 列表 =====
+PS C:\WINDOWS\system32> codex mcp list
+codex : 无法将“codex”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正
+确，然后再试一次。
+所在位置 行:1 字符: 1
++ codex mcp list
++ ~~~~~
+    + CategoryInfo          : ObjectNotFound: (codex:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\WINDOWS\system32>
+PS C:\WINDOWS\system32> Write-Host "`n===== figma 配置 ====="
+
+===== figma 配置 =====
+PS C:\WINDOWS\system32> codex mcp get figma
+codex : 无法将“codex”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正
+确，然后再试一次。
+所在位置 行:1 字符: 1
++ codex mcp get figma
++ ~~~~~
+    + CategoryInfo          : ObjectNotFound: (codex:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\WINDOWS\system32>
+PS C:\WINDOWS\system32> Write-Host "`n===== Worker 目录是否被信任 ====="
+
+===== Worker 目录是否被信任 =====
+PS C:\WINDOWS\system32> Select-String -Path "$env:USERPROFILE\.codex\config.toml" -Pattern "ArtDirectWorker|trust_level" -Context 1,1
+
+  C:\Users\Administrator\.codex\config.toml:39:[projects.'c:\users\administrator\documents\codex\2026-05-27\skill-creat
+or-c-users-administrator-codex']
+> C:\Users\Administrator\.codex\config.toml:40:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:41:
+  C:\Users\Administrator\.codex\config.toml:42:[projects.'c:\users\administrator\documents\codex\2026-05-29\files-menti
+oned-by-the-user-svg']
+> C:\Users\Administrator\.codex\config.toml:43:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:44:
+  C:\Users\Administrator\.codex\config.toml:45:[projects.'c:\users\administrator\documents\codex\2026-05-29\files-menti
+oned-by-the-user-codex']
+> C:\Users\Administrator\.codex\config.toml:46:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:47:
+  C:\Users\Administrator\.codex\config.toml:48:[projects.'c:\users\administrator\documents\codex\2026-06-01\windows-pow
+ershell']
+> C:\Users\Administrator\.codex\config.toml:49:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:50:
+  C:\Users\Administrator\.codex\config.toml:51:[projects.'c:\users\administrator\documents\codex\2026-06-02\c-users-adm
+inistrator-desktop-art-art']
+> C:\Users\Administrator\.codex\config.toml:52:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:53:
+  C:\Users\Administrator\.codex\config.toml:54:[projects.'c:\users\administrator\documents\codex\2026-06-03\voltagent-a
+wesome-design-md-https-github']
+> C:\Users\Administrator\.codex\config.toml:55:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:56:
+  C:\Users\Administrator\.codex\config.toml:57:[projects.'c:\users\administrator\documents\codex\2026-06-03\kaopu-xiaop
+u-web-design-https-github']
+> C:\Users\Administrator\.codex\config.toml:58:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:59:
+  C:\Users\Administrator\.codex\config.toml:60:[projects.'c:\users\administrator\uidesign']
+> C:\Users\Administrator\.codex\config.toml:61:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:62:
+  C:\Users\Administrator\.codex\config.toml:63:[projects.'c:\users\administrator\documents\codex\2026-06-03\use-figma']
+> C:\Users\Administrator\.codex\config.toml:64:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:65:
+  C:\Users\Administrator\.codex\config.toml:66:[projects.'c:\users\administrator\documents\codex\2026-06-03\files-menti
+oned-by-the-user-skill']
+> C:\Users\Administrator\.codex\config.toml:67:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:68:
+  C:\Users\Administrator\.codex\config.toml:69:[projects.'c:\users\administrator\documents\codex\2026-06-03\image-2']
+> C:\Users\Administrator\.codex\config.toml:70:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:71:
+  C:\Users\Administrator\.codex\config.toml:72:[projects.'c:\users\administrator\documents\codex\2026-06-03\codex-model
+-provider-custom']
+> C:\Users\Administrator\.codex\config.toml:73:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:74:
+  C:\Users\Administrator\.codex\config.toml:75:[projects.'c:\users\administrator\documents\codex\2026-06-05\skill-ui-1-
+1']
+> C:\Users\Administrator\.codex\config.toml:76:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:77:
+  C:\Users\Administrator\.codex\config.toml:78:[projects.'c:\users\administrator\documents\codex\2026-06-05\c-users-adm
+inistrator-downloads-skill-auditor']
+> C:\Users\Administrator\.codex\config.toml:79:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:80:
+  C:\Users\Administrator\.codex\config.toml:81:[projects.'c:\users\administrator\documents\codex\2026-06-05\files-menti
+oned-by-the-user-skill']
+> C:\Users\Administrator\.codex\config.toml:82:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:83:
+  C:\Users\Administrator\.codex\config.toml:84:[projects.'c:\users\administrator\documents\codex\2026-06-05\files-menti
+oned-by-the-user-skill-2']
+> C:\Users\Administrator\.codex\config.toml:85:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:86:
+  C:\Users\Administrator\.codex\config.toml:87:[projects.'c:\users\administrator\documents\codex\2026-06-06\ui-1-html-h
+ttps-www-figma']
+> C:\Users\Administrator\.codex\config.toml:88:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:89:
+  C:\Users\Administrator\.codex\config.toml:90:[projects.'c:\users\administrator\documents\codex\2026-06-06\figma-ui-ht
+tps-www-figma-com']
+> C:\Users\Administrator\.codex\config.toml:91:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:92:
+  C:\Users\Administrator\.codex\config.toml:93:[projects.'c:\users\administrator\documents\codex\2026-06-06\c-users-adm
+inistrator-uidesign-skills-same']
+> C:\Users\Administrator\.codex\config.toml:94:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:95:
+  C:\Users\Administrator\.codex\config.toml:96:[projects.'c:\users\administrator\documents\codex\2026-06-06\image-2-2s'
+]
+> C:\Users\Administrator\.codex\config.toml:97:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:98:
+  C:\Users\Administrator\.codex\config.toml:99:[projects.'c:\users\administrator\documents\codex\2026-06-08\git-clone-h
+ttps-github-com-hyperframes']
+> C:\Users\Administrator\.codex\config.toml:100:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:101:
+  C:\Users\Administrator\.codex\config.toml:102:[projects.'c:\users\administrator\documents\codex\2026-06-08\git-clone-
+https-github-com-red']
+> C:\Users\Administrator\.codex\config.toml:103:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:104:
+  C:\Users\Administrator\.codex\config.toml:105:[projects.'c:\users\administrator\documents\codex\2026-06-08\2-3s-skill
+-github-skill-red']
+> C:\Users\Administrator\.codex\config.toml:106:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:107:
+  C:\Users\Administrator\.codex\config.toml:108:[projects.'c:\users\administrator\documents\codex\2026-06-08\web5-cocos
+10-https-www-figma-com']
+> C:\Users\Administrator\.codex\config.toml:109:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:110:
+> C:\Users\Administrator\.codex\config.toml:111:[projects.'c:\users\administrator\documents\codex\2026-06-08\root-env-u
+serprofile-artdirectworker-new-item']
+> C:\Users\Administrator\.codex\config.toml:112:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:113:
+  C:\Users\Administrator\.codex\config.toml:114:[projects.'c:\users\administrator\documents\codex\2026-06-08\c-users-ad
+ministrator-desktop-art-art']
+> C:\Users\Administrator\.codex\config.toml:115:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:116:
+  C:\Users\Administrator\.codex\config.toml:117:[projects.'c:\users\administrator\documents\codex\2026-06-08\https-jime
+ng-jianying-com-ai-tool']
+> C:\Users\Administrator\.codex\config.toml:118:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:119:
+  C:\Users\Administrator\.codex\config.toml:120:[projects.'c:\users\administrator\documents\codex\2026-06-08\erroractio
+npreference-stop-progresspreference-silentlycontinue-root-env']
+> C:\Users\Administrator\.codex\config.toml:121:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:122:
+  C:\Users\Administrator\.codex\config.toml:123:[projects.'c:\users\administrator\documents\codex\2026-06-09\sg-copy-ht
+tps-www-figma-com']
+> C:\Users\Administrator\.codex\config.toml:124:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:125:
+  C:\Users\Administrator\.codex\config.toml:126:[projects.'c:\users\administrator\documents\codex\2026-06-10\image2-1-1
+-s-g']
+> C:\Users\Administrator\.codex\config.toml:127:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:128:
+  C:\Users\Administrator\.codex\config.toml:129:[projects.'c:\users\administrator\documents\codex\2026-06-11\files-ment
+ioned-by-the-user-skill']
+> C:\Users\Administrator\.codex\config.toml:130:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:131:
+  C:\Users\Administrator\.codex\config.toml:132:[projects.'c:\users\administrator\documents\codex\2026-06-11\files-ment
+ioned-by-the-user-design']
+> C:\Users\Administrator\.codex\config.toml:133:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:134:
+  C:\Users\Administrator\.codex\config.toml:135:[projects.'c:\users\administrator\documents\codex\2026-06-12\ui-image-2
+-skill-skill']
+> C:\Users\Administrator\.codex\config.toml:136:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:137:
+  C:\Users\Administrator\.codex\config.toml:138:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-ment
+ioned-by-the-user-skill']
+> C:\Users\Administrator\.codex\config.toml:139:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:140:
+  C:\Users\Administrator\.codex\config.toml:141:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-ment
+ioned-by-the-user-skill-2']
+> C:\Users\Administrator\.codex\config.toml:142:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:143:
+  C:\Users\Administrator\.codex\config.toml:144:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-ment
+ioned-by-the-user-skill-3']
+> C:\Users\Administrator\.codex\config.toml:145:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:146:
+  C:\Users\Administrator\.codex\config.toml:147:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-ment
+ioned-by-the-user-skill-4']
+> C:\Users\Administrator\.codex\config.toml:148:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:149:
+  C:\Users\Administrator\.codex\config.toml:150:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-ment
+ioned-by-the-user-skill-5']
+> C:\Users\Administrator\.codex\config.toml:151:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:152:
+  C:\Users\Administrator\.codex\config.toml:153:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-ment
+ioned-by-the-user-skill-6']
+> C:\Users\Administrator\.codex\config.toml:154:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:155:
+  C:\Users\Administrator\.codex\config.toml:156:[projects.'c:\users\administrator\documents\codex\2026-06-12\firecrawl-
+skill']
+> C:\Users\Administrator\.codex\config.toml:157:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:158:
+  C:\Users\Administrator\.codex\config.toml:159:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-ment
+ioned-by-the-user-jimeng']
+> C:\Users\Administrator\.codex\config.toml:160:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:161:
+  C:\Users\Administrator\.codex\config.toml:162:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-ment
+ioned-by-the-user-11']
+> C:\Users\Administrator\.codex\config.toml:163:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:164:
+  C:\Users\Administrator\.codex\config.toml:165:[projects.'c:\users\administrator\documents\codex\2026-06-13\c-users-ad
+ministrator-codex-skills-reverse']
+> C:\Users\Administrator\.codex\config.toml:166:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:167:
+  C:\Users\Administrator\.codex\config.toml:168:[projects.'c:\users\administrator\documents\codex\2026-06-13\files-ment
+ioned-by-the-user-codex']
+> C:\Users\Administrator\.codex\config.toml:169:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:170:
+  C:\Users\Administrator\.codex\config.toml:171:[projects.'c:\users\administrator\documents\codex\2026-06-13\files-ment
+ioned-by-the-user-skill']
+> C:\Users\Administrator\.codex\config.toml:172:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:173:
+  C:\Users\Administrator\.codex\config.toml:174:[projects.'c:\users\administrator\documents\codex\2026-06-15\files-ment
+ioned-by-the-user-skill']
+> C:\Users\Administrator\.codex\config.toml:175:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:176:
+  C:\Users\Administrator\.codex\config.toml:177:[projects.'c:\users\administrator\documents\codex\2026-06-15\c-users-ad
+ministrator-uidesign-skills-skill']
+> C:\Users\Administrator\.codex\config.toml:178:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:179:
+  C:\Users\Administrator\.codex\config.toml:180:[projects.'c:\users\administrator\documents\codex\2026-06-15\c-users-ad
+ministrator-uidesign-skills-ui']
+> C:\Users\Administrator\.codex\config.toml:181:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:182:
+  C:\Users\Administrator\.codex\config.toml:183:[projects.'c:\users\administrator\documents\codex\2026-06-15\files-ment
+ioned-by-the-user-skill-2']
+> C:\Users\Administrator\.codex\config.toml:184:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:185:
+  C:\Users\Administrator\.codex\config.toml:186:[projects.'c:\users\administrator\documents\codex\2026-06-15\windows-po
+wershell-windows-windows-powershell-administrator']
+> C:\Users\Administrator\.codex\config.toml:187:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:188:
+> C:\Users\Administrator\.codex\config.toml:189:[projects.'c:\users\administrator\artdirectworker']
+> C:\Users\Administrator\.codex\config.toml:190:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:191:
+  C:\Users\Administrator\.codex\config.toml:192:[projects.'c:\users\administrator\documents\new project']
+> C:\Users\Administrator\.codex\config.toml:193:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:194:
+  C:\Users\Administrator\.codex\config.toml:195:[projects.'c:\users\administrator\documents\codex\2026-06-15\web5-cocos
+10-https-www-figma-com']
+> C:\Users\Administrator\.codex\config.toml:196:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:197:
+  C:\Users\Administrator\.codex\config.toml:198:[projects.'c:\users\administrator\documents\codex\2026-06-15\files-ment
+ioned-by-the-user-skill-3']
+> C:\Users\Administrator\.codex\config.toml:199:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:200:
+  C:\Users\Administrator\.codex\config.toml:201:[projects.'c:\users\administrator\documents\codex\2026-06-15\c-users-ad
+ministrator-desktop-art-art']
+> C:\Users\Administrator\.codex\config.toml:202:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:203:
+  C:\Users\Administrator\.codex\config.toml:204:[projects.'c:\users\administrator\documents\codex\2026-06-15\skill-c-us
+ers-administrator-desktop-art']
+> C:\Users\Administrator\.codex\config.toml:205:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:206:
+  C:\Users\Administrator\.codex\config.toml:207:[projects.'c:\users\administrator\documents\codex\2026-06-15\c-users-ad
+ministrator-desktop-art-art-2']
+> C:\Users\Administrator\.codex\config.toml:208:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:209:
+  C:\Users\Administrator\.codex\config.toml:210:[projects.'c:\users\administrator\documents\codex\2026-06-15\c-users-ad
+ministrator-desktop-art-art-3']
+> C:\Users\Administrator\.codex\config.toml:211:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:212:
+  C:\Users\Administrator\.codex\config.toml:213:[projects.'c:\users\administrator\documents\codex\2026-06-15\skill-c-us
+ers-administrator-desktop-art-2']
+> C:\Users\Administrator\.codex\config.toml:214:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:215:
+  C:\Users\Administrator\.codex\config.toml:216:[projects.'c:\users\administrator\documents\codex\2026-06-15\skill-c-us
+ers-administrator-desktop-art-3']
+> C:\Users\Administrator\.codex\config.toml:217:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:218:
+  C:\Users\Administrator\.codex\config.toml:219:[projects.'c:\users\administrator\documents\codex\2026-06-15\skill-c-us
+ers-administrator-desktop-art-4']
+> C:\Users\Administrator\.codex\config.toml:220:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:221:
+  C:\Users\Administrator\.codex\config.toml:222:[projects.'c:\users\administrator\documents\codex\2026-06-15\skill-c-us
+ers-administrator-desktop-art-5']
+> C:\Users\Administrator\.codex\config.toml:223:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:224:
+  C:\Users\Administrator\.codex\config.toml:225:[projects.'c:\users\administrator\documents\codex\2026-06-15\skill-c-us
+ers-administrator-desktop-art-6']
+> C:\Users\Administrator\.codex\config.toml:226:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:227:
+  C:\Users\Administrator\.codex\config.toml:228:[projects.'c:\users\administrator\documents\codex\2026-06-15\files-ment
+ioned-by-the-user-skill-4']
+> C:\Users\Administrator\.codex\config.toml:229:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:230:
+  C:\Users\Administrator\.codex\config.toml:231:[projects.'c:\users\administrator\documents\codex\2026-06-16\web5-https
+-www-figma-com-design']
+> C:\Users\Administrator\.codex\config.toml:232:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:233:
+  C:\Users\Administrator\.codex\config.toml:234:[projects.'c:\users\administrator\documents\codex\2026-06-16\sc-11-6-ht
+tps-www-figma']
+> C:\Users\Administrator\.codex\config.toml:235:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:236:
+  C:\Users\Administrator\.codex\config.toml:237:[projects.'c:\users\administrator\documents\codex\2026-06-16\files-ment
+ioned-by-the-user-frame']
+> C:\Users\Administrator\.codex\config.toml:238:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:239:
+> C:\Users\Administrator\.codex\config.toml:240:[projects.'c:\users\administrator\artdirectworker\state\runs\5926dd2a-2
+970-4ce0-a81b-a4884749a9bc\workspace']
+> C:\Users\Administrator\.codex\config.toml:241:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:242:
+> C:\Users\Administrator\.codex\config.toml:243:[projects.'c:\users\administrator\artdirectworker\state\runs\5d151263-6
+a41-42b3-a309-84320ecef638\workspace']
+> C:\Users\Administrator\.codex\config.toml:244:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:245:
+  C:\Users\Administrator\.codex\config.toml:246:[projects.'c:\users\administrator\documents\codex\2026-06-17\files-ment
+ioned-by-the-user-skill']
+> C:\Users\Administrator\.codex\config.toml:247:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:248:
+  C:\Users\Administrator\.codex\config.toml:249:[projects.'c:\users\administrator\documents\codex\2026-06-17\web5-cocos
+10-https-www-figma-com']
+> C:\Users\Administrator\.codex\config.toml:250:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:251:
+> C:\Users\Administrator\.codex\config.toml:252:[projects.'c:\users\administrator\artdirectworker\state\runs\68a500d5-8
+98e-4514-af01-75a9628359ff\workspace']
+> C:\Users\Administrator\.codex\config.toml:253:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:254:
+> C:\Users\Administrator\.codex\config.toml:255:[projects.'c:\users\administrator\artdirectworker\state\runs\1298c2f8-3
+3c8-4e5b-99c4-9ed76348428e\workspace']
+> C:\Users\Administrator\.codex\config.toml:256:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:257:
+> C:\Users\Administrator\.codex\config.toml:258:[projects.'c:\users\administrator\artdirectworker\state\runs\071bdc4f-6
+ad6-41fb-8520-ca2e9245cc3f\workspace']
+> C:\Users\Administrator\.codex\config.toml:259:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:260:
+> C:\Users\Administrator\.codex\config.toml:261:[projects.'c:\users\administrator\artdirectworker\state\runs\2198ac94-9
+4d7-4353-b0b9-02f725d63786\workspace']
+> C:\Users\Administrator\.codex\config.toml:262:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:263:
+> C:\Users\Administrator\.codex\config.toml:264:[projects.'c:\users\administrator\artdirectworker\state\runs\18d19499-f
+01a-4889-b5e6-85b40f7c698a\workspace']
+> C:\Users\Administrator\.codex\config.toml:265:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:266:
+  C:\Users\Administrator\.codex\config.toml:267:[projects.'c:\users\administrator\documents\codex\2026-06-17\files-ment
+ioned-by-the-user-51277']
+> C:\Users\Administrator\.codex\config.toml:268:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:269:
+  C:\Users\Administrator\.codex\config.toml:270:[projects.'c:\users\administrator\documents\codex\2026-06-17\files-ment
+ioned-by-the-user-51277-2']
+> C:\Users\Administrator\.codex\config.toml:271:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:272:
+  C:\Users\Administrator\.codex\config.toml:273:[projects.'c:\users\administrator\documents\codex\2026-06-17\files-ment
+ioned-by-the-user-codex']
+> C:\Users\Administrator\.codex\config.toml:274:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:275:
+  C:\Users\Administrator\.codex\config.toml:276:[projects.'c:\users\administrator\documents\codex\2026-06-17\files-ment
+ioned-by-the-user-51218']
+> C:\Users\Administrator\.codex\config.toml:277:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:278:
+  C:\Users\Administrator\.codex\config.toml:279:[projects.'c:\users\administrator\documents\codex\2026-06-17\https-www-
+pulsz-com-search']
+> C:\Users\Administrator\.codex\config.toml:280:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:281:
+> C:\Users\Administrator\.codex\config.toml:282:[projects.'c:\users\administrator\artdirectworker\state\runs\12b63aa9-d
+a60-4bc3-885b-3acd08212b04\workspace']
+> C:\Users\Administrator\.codex\config.toml:283:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:284:
+> C:\Users\Administrator\.codex\config.toml:285:[projects.'c:\users\administrator\artdirectworker\state\runs\90854746-1
+c20-45ee-9dd5-51f650a16a04\workspace']
+> C:\Users\Administrator\.codex\config.toml:286:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:287:
+  C:\Users\Administrator\.codex\config.toml:288:[projects.'c:\users\administrator\documents\codex\2026-06-18\c-users-ad
+ministrator-desktop-art-art']
+> C:\Users\Administrator\.codex\config.toml:289:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:290:
+  C:\Users\Administrator\.codex\config.toml:291:[projects.'c:\users\administrator\documents\codex\2026-06-18\c-users-ad
+ministrator-codex-skills-brief']
+> C:\Users\Administrator\.codex\config.toml:292:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:293:
+  C:\Users\Administrator\.codex\config.toml:294:[projects.'c:\users\administrator\documents\codex\2026-06-18\files-ment
+ioned-by-the-user-codex']
+> C:\Users\Administrator\.codex\config.toml:295:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:296:
+  C:\Users\Administrator\.codex\config.toml:297:[projects.'c:\users\administrator\documents\codex\2026-06-18\reverse-ui
+-prompt-c-users-administrator']
+> C:\Users\Administrator\.codex\config.toml:298:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:299:
+  C:\Users\Administrator\.codex\config.toml:300:[projects.'c:\users\administrator\documents\codex\2026-06-18\reverse-ui
+-prompt-c-users-administrator-2']
+> C:\Users\Administrator\.codex\config.toml:301:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:302:
+  C:\Users\Administrator\.codex\config.toml:303:[projects.'c:\users\administrator\documents\codex\2026-06-18\c-users-ad
+ministrator-codex-skills-reverse']
+> C:\Users\Administrator\.codex\config.toml:304:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:305:
+  C:\Users\Administrator\.codex\config.toml:306:[projects.'c:\users\administrator\documents\codex\2026-06-18\c-users-ad
+ministrator-codex-skills-reverse-2']
+> C:\Users\Administrator\.codex\config.toml:307:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:308:
+  C:\Users\Administrator\.codex\config.toml:309:[projects.'c:\users\administrator\documents\codex\2026-06-18\c-users-ad
+ministrator-codex-skills-reverse-3']
+> C:\Users\Administrator\.codex\config.toml:310:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:311:
+  C:\Users\Administrator\.codex\config.toml:312:[projects.'c:\users\administrator\documents\codex\2026-06-18\c-users-ad
+ministrator-codex-skills-reverse-4']
+> C:\Users\Administrator\.codex\config.toml:313:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:314:
+  C:\Users\Administrator\.codex\config.toml:315:[projects.'c:\users\administrator\documents\codex\2026-06-22\files-ment
+ioned-by-the-user-skill']
+> C:\Users\Administrator\.codex\config.toml:316:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:317:
+  C:\Users\Administrator\.codex\config.toml:318:[projects.'c:\users\administrator\documents\codex\2026-06-24\https-gk-e
+eafj-cn-81-index']
+> C:\Users\Administrator\.codex\config.toml:319:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:320:
+  C:\Users\Administrator\.codex\config.toml:321:[projects.'c:\users\administrator\documents\codex\2026-06-24\yi-g']
+> C:\Users\Administrator\.codex\config.toml:322:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:323:
+  C:\Users\Administrator\.codex\config.toml:324:[projects.'c:\users\administrator\documents\codex\2026-06-24\sg-0622-ht
+tps-www-figma-com']
+> C:\Users\Administrator\.codex\config.toml:325:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:326:
+  C:\Users\Administrator\.codex\config.toml:327:[projects.'c:\users\administrator\documents\codex\2026-06-25\fan']
+> C:\Users\Administrator\.codex\config.toml:328:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:329:
+> C:\Users\Administrator\.codex\config.toml:330:[projects.'c:\users\administrator\artdirectworker\state\runs\dbde3dcd-5
+d25-4f39-a50a-79ae709f23a6\workspace']
+> C:\Users\Administrator\.codex\config.toml:331:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:332:
+> C:\Users\Administrator\.codex\config.toml:333:[projects.'c:\users\administrator\artdirectworker\state\runs\5f31325a-b
+538-4ce8-8c14-2b75bd0b74af\workspace']
+> C:\Users\Administrator\.codex\config.toml:334:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:335:
+> C:\Users\Administrator\.codex\config.toml:336:[projects.'c:\users\administrator\artdirectworker\state\runs\fe259134-f
+a98-4d6b-89e3-1cb66ae792dc\workspace']
+> C:\Users\Administrator\.codex\config.toml:337:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:338:
+  C:\Users\Administrator\.codex\config.toml:339:[projects.'c:\users\administrator\documents\codex\2026-06-30\sh']
+> C:\Users\Administrator\.codex\config.toml:340:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:341:
+> C:\Users\Administrator\.codex\config.toml:342:[projects.'c:\users\administrator\artdirectworker\state\runs\1929adce-f
+038-481b-880e-793419e50393\workspace']
+> C:\Users\Administrator\.codex\config.toml:343:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:344:
+> C:\Users\Administrator\.codex\config.toml:345:[projects.'c:\users\administrator\artdirectworker\state\runs\b95e2345-f
+455-4dea-9418-102479393411\workspace']
+> C:\Users\Administrator\.codex\config.toml:346:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:347:
+> C:\Users\Administrator\.codex\config.toml:348:[projects.'c:\users\administrator\artdirectworker\state\runs\dc88326d-f
+d40-4381-851d-231e76318ddf\workspace']
+> C:\Users\Administrator\.codex\config.toml:349:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:350:
+> C:\Users\Administrator\.codex\config.toml:351:[projects.'c:\users\administrator\artdirectworker\state\runs\d900254a-f
+d0a-4b54-a795-6260831a9cc8\workspace']
+> C:\Users\Administrator\.codex\config.toml:352:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:353:
+> C:\Users\Administrator\.codex\config.toml:354:[projects.'c:\users\administrator\artdirectworker\state\runs\0c6d6186-6
+c07-4cd2-ac83-002b8b331d81\workspace']
+> C:\Users\Administrator\.codex\config.toml:355:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:356:
+> C:\Users\Administrator\.codex\config.toml:357:[projects.'c:\users\administrator\artdirectworker\state\runs\7eaac1e5-b
+860-4f16-89dd-5747c6e71ac3\workspace']
+> C:\Users\Administrator\.codex\config.toml:358:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:359:
+  C:\Users\Administrator\.codex\config.toml:360:[projects.'c:\users\administrator\documents\codex\2026-07-01\cha']
+> C:\Users\Administrator\.codex\config.toml:361:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:362:
+> C:\Users\Administrator\.codex\config.toml:363:[projects.'c:\users\administrator\artdirectworker\state\runs\ba9e030f-8
+68a-40c3-b9c8-a97d0d555de3\workspace']
+> C:\Users\Administrator\.codex\config.toml:364:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:365:
+> C:\Users\Administrator\.codex\config.toml:366:[projects.'c:\users\administrator\artdirectworker\state\runs\c5e5294d-f
+ef5-4d27-842d-7788b37f76db\workspace']
+> C:\Users\Administrator\.codex\config.toml:367:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:368:
+  C:\Users\Administrator\.codex\config.toml:369:[projects.'c:\users\administrator\documents\codex\2026-07-01\zhe']
+> C:\Users\Administrator\.codex\config.toml:370:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:371:
+  C:\Users\Administrator\.codex\config.toml:372:[projects.'c:\users\administrator\documents\codex\2026-07-02\zhe']
+> C:\Users\Administrator\.codex\config.toml:373:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:374:
+  C:\Users\Administrator\.codex\config.toml:375:[projects.'c:\users\administrator\documents\codex\2026-07-02\yao']
+> C:\Users\Administrator\.codex\config.toml:376:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:377:
+  C:\Users\Administrator\.codex\config.toml:378:[projects.'c:\users\administrator\documents\codex\2026-07-02\sg-0622-ht
+tps-www-figma-com']
+> C:\Users\Administrator\.codex\config.toml:379:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:380:
+  C:\Users\Administrator\.codex\config.toml:381:[projects.'c:\users\administrator\documents\codex\2026-07-02\sg-0622-ht
+tps-www-figma-com-2']
+> C:\Users\Administrator\.codex\config.toml:382:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:383:
+  C:\Users\Administrator\.codex\config.toml:384:[projects.'c:\users\administrator\documents\codex\2026-07-03\https-cd-b
+aa360-cc-20088-index']
+> C:\Users\Administrator\.codex\config.toml:385:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:386:
+  C:\Users\Administrator\.codex\config.toml:387:[projects.'c:\users\administrator\documents\codex\2026-07-03\https-cd-b
+aa360-cc-20088-index-2']
+> C:\Users\Administrator\.codex\config.toml:388:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:389:
+  C:\Users\Administrator\.codex\config.toml:390:[projects.'c:\users\administrator\documents\codex\2026-07-04\ben']
+> C:\Users\Administrator\.codex\config.toml:391:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:392:
+  C:\Users\Administrator\.codex\config.toml:393:[projects.'c:\users\administrator\documents\codex\2026-07-07\shi-y']
+> C:\Users\Administrator\.codex\config.toml:394:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:395:
+  C:\Users\Administrator\.codex\config.toml:396:[projects.'c:\users\administrator\documents\codex\2026-07-07\shi']
+> C:\Users\Administrator\.codex\config.toml:397:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:398:
+  C:\Users\Administrator\.codex\config.toml:399:[projects.'c:\users\administrator\documents\codex\2026-07-07\skill-ip']
+> C:\Users\Administrator\.codex\config.toml:400:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:401:
+  C:\Users\Administrator\.codex\config.toml:402:[projects.'c:\users\administrator\documents\codex\2026-07-07\skill-ip-2
+']
+> C:\Users\Administrator\.codex\config.toml:403:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:404:
+  C:\Users\Administrator\.codex\config.toml:405:[projects.'c:\users\administrator\documents\codex\2026-07-07\skill-ip-3
+']
+> C:\Users\Administrator\.codex\config.toml:406:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:407:
+  C:\Users\Administrator\.codex\config.toml:408:[projects.'c:\users\administrator\documents\codex\2026-07-09\jia']
+> C:\Users\Administrator\.codex\config.toml:409:trust_level = "trusted"
+  C:\Users\Administrator\.codex\config.toml:410:
+
+
+PS C:\WINDOWS\system32>
+PS C:\WINDOWS\system32> Write-Host "`n===== Worker 目录 ====="
+
+===== Worker 目录 =====
+PS C:\WINDOWS\system32> Test-Path "$env:USERPROFILE\ArtDirectWorker"
+True
+PS C:\WINDOWS\system32> Test-Path "$env:USERPROFILE\ArtDirectWorker\scripts\art-direct-worker.mjs"
+True
+PS C:\WINDOWS\system32>
+PS C:\WINDOWS\system32> Write-Host "`n===== Worker 脚本版本关键字 ====="
+
+===== Worker 脚本版本关键字 =====
+PS C:\WINDOWS\system32> Select-String -Path "$env:USERPROFILE\ArtDirectWorker\scripts\art-direct-worker.mjs" -Pattern "ART_WORKER_FORCE_CODEX_MCP_FEATURES|trustedCodexProjectPaths|approval_mode|enable_mcp_apps" -Context 0,0
+PS C:\WINDOWS\system32>
+PS C:\WINDOWS\system32> Write-Host "`n===== 完成，截图发负责人 ====="
+
+===== 完成，截图发负责人 =====
+PS C:\WINDOWS\system32> pause

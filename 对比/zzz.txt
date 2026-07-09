@@ -1,0 +1,404 @@
+Windows PowerShell
+版权所有（C） Microsoft Corporation。保留所有权利。
+
+安装最新的 PowerShell，了解新功能和改进！https://aka.ms/PSWindows
+
+PS C:\Users\bin> Write-Host "===== Windows 用户 ====="
+===== Windows 用户 =====
+PS C:\Users\bin> whoami
+desktop-j8t50ae\bin
+PS C:\Users\bin>
+PS C:\Users\bin> Write-Host "`n===== Codex 版本 ====="
+
+===== Codex 版本 =====
+PS C:\Users\bin> codex --version
+codex : 无法将“codex”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正
+确，然后再试一次。
+所在位置 行:1 字符: 1
++ codex --version
++ ~~~~~
+    + CategoryInfo          : ObjectNotFound: (codex:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\bin>
+PS C:\Users\bin> Write-Host "`n===== Codex 路径 ====="
+
+===== Codex 路径 =====
+PS C:\Users\bin> where.exe codex
+信息: 用提供的模式无法找到文件。
+PS C:\Users\bin>
+PS C:\Users\bin> Write-Host "`n===== CODEX_HOME 环境变量 ====="
+
+===== CODEX_HOME 环境变量 =====
+PS C:\Users\bin> Write-Host "CODEX_HOME=$env:CODEX_HOME"
+CODEX_HOME=
+PS C:\Users\bin>
+PS C:\Users\bin> Write-Host "`n===== 默认 Codex 配置路径 ====="
+
+===== 默认 Codex 配置路径 =====
+PS C:\Users\bin> Write-Host "$env:USERPROFILE\.codex\config.toml"
+C:\Users\bin\.codex\config.toml
+PS C:\Users\bin> Test-Path "$env:USERPROFILE\.codex\config.toml"
+True
+PS C:\Users\bin>
+PS C:\Users\bin> Write-Host "`n===== config 关键内容 ====="
+
+===== config 关键内容 =====
+PS C:\Users\bin> Select-String -Path "$env:USERPROFILE\.codex\config.toml" -Pattern "rmcp_client|enable_mcp_apps|plugins|mcp_servers\.figma|use_figma|approval_mode|trust_level|ArtDirectWorker" -Context 1,1
+
+  .codex\config.toml:16:
+> .codex\config.toml:17:[mcp_servers.figma]
+  .codex\config.toml:18:url = "https://mcp.figma.com/mcp"
+  .codex\config.toml:19:
+> .codex\config.toml:20:[mcp_servers.figma_desktop]
+  .codex\config.toml:21:url = "http://127.0.0.1:3845/mcp"
+  .codex\config.toml:51:source_type = "local"
+> .codex\config.toml:52:source = '\\?\C:\Users\bin\.cache\codex-runtimes\codex-primary-runtime\plugins\openai-primary-r
+untime'
+  .codex\config.toml:53:
+> .codex\config.toml:54:[marketplaces.role-specific-plugins]
+  .codex\config.toml:55:last_updated = "2026-07-09T02:23:07Z"
+  .codex\config.toml:57:source_type = "git"
+> .codex\config.toml:58:source = "https://github.com/openai/role-specific-plugins.git"
+  .codex\config.toml:59:ref = "main"
+> .codex\config.toml:60:sparse_paths = [".agents/plugins", "plugins/product-design"]
+  .codex\config.toml:61:
+  .codex\config.toml:65:[projects.'g:\平台ai']
+> .codex\config.toml:66:trust_level = "trusted"
+  .codex\config.toml:67:
+  .codex\config.toml:68:[projects.'c:\users\bin\documents\codex\2026-05-19\zentao-mcp-1-npx-skills-add']
+> .codex\config.toml:69:trust_level = "trusted"
+  .codex\config.toml:70:
+  .codex\config.toml:71:[projects.'c:\users\bin\documents\codex\2026-06-08\new-chat']
+> .codex\config.toml:72:trust_level = "trusted"
+  .codex\config.toml:73:
+  .codex\config.toml:74:[projects.'c:\users\bin\documents\codex\2026-06-08\erroractionpreference-stop-progresspreferenc
+e-silentlycontinue-root-env']
+> .codex\config.toml:75:trust_level = "trusted"
+  .codex\config.toml:76:
+  .codex\config.toml:77:[projects.'g:\sg']
+> .codex\config.toml:78:trust_level = "trusted"
+  .codex\config.toml:79:
+> .codex\config.toml:80:[projects.'c:\users\bin\artdirectworker\state\runs\2dd7e4fa-0dd7-4234-91c9-097fecd4fdc3\workspa
+ce']
+> .codex\config.toml:81:trust_level = "trusted"
+  .codex\config.toml:82:
+  .codex\config.toml:83:[projects.'c:\users\bin\documents\codex\2026-06-17\use-figma-use-and-follow-its']
+> .codex\config.toml:84:trust_level = "trusted"
+  .codex\config.toml:85:
+> .codex\config.toml:86:[projects.'c:\users\bin\artdirectworker\state\runs\a3995e2b-8554-4aff-a31a-a4f277c15572\workspa
+ce']
+> .codex\config.toml:87:trust_level = "trusted"
+  .codex\config.toml:88:
+> .codex\config.toml:89:[projects.'c:\users\bin\artdirectworker\state\runs\7f7ba8d5-c4e0-46a5-ad7d-673e7511fbd1\workspa
+ce']
+> .codex\config.toml:90:trust_level = "trusted"
+  .codex\config.toml:91:
+> .codex\config.toml:92:[projects.'c:\users\bin\artdirectworker\state\runs\9b69caa1-4c1f-4e5e-9ca3-740286a3aa8c\workspa
+ce']
+> .codex\config.toml:93:trust_level = "trusted"
+  .codex\config.toml:94:
+  .codex\config.toml:95:[projects.'c:\users\bin\documents\codex\2026-06-22\zhe']
+> .codex\config.toml:96:trust_level = "trusted"
+  .codex\config.toml:97:
+  .codex\config.toml:98:[projects.'c:\users\bin\documents\codex\2026-06-22\use-figma-to-inspect-the-target']
+> .codex\config.toml:99:trust_level = "trusted"
+  .codex\config.toml:100:
+  .codex\config.toml:101:[projects.'c:\users\bin\documents\codex\2026-06-24\https-github-com-zhongerxin-cowart-git']
+> .codex\config.toml:102:trust_level = "trusted"
+  .codex\config.toml:103:
+> .codex\config.toml:104:[projects.'c:\users\bin\artdirectworker\state\runs\d55d623f-c64e-4735-9c80-60d38090fbe5\worksp
+ace']
+> .codex\config.toml:105:trust_level = "trusted"
+  .codex\config.toml:106:
+> .codex\config.toml:107:[projects.'c:\users\bin\artdirectworker\state\runs\e344357f-3159-4c7c-a346-c91c3629c4a2\worksp
+ace']
+> .codex\config.toml:108:trust_level = "trusted"
+  .codex\config.toml:109:
+  .codex\config.toml:110:[projects.'c:\users\bin\documents\codex\2026-06-25\windows-powershell-windows-windows-powershe
+ll-administrator']
+> .codex\config.toml:111:trust_level = "trusted"
+  .codex\config.toml:112:
+> .codex\config.toml:113:[projects.'c:\users\bin\artdirectworker\state\runs\d29702ed-c88f-465a-b541-b7b7241d8872\worksp
+ace']
+> .codex\config.toml:114:trust_level = "trusted"
+  .codex\config.toml:115:
+> .codex\config.toml:116:[projects.'c:\users\bin\artdirectworker\state\runs\0baa8e0b-4059-4479-af90-3661aab37564\worksp
+ace']
+> .codex\config.toml:117:trust_level = "trusted"
+  .codex\config.toml:118:
+> .codex\config.toml:119:[projects.'c:\users\bin\artdirectworker\state\runs\b3670252-3ace-4abf-9254-26bac36f99e8\worksp
+ace']
+> .codex\config.toml:120:trust_level = "trusted"
+  .codex\config.toml:121:
+  .codex\config.toml:122:[projects.'c:\users\bin\documents\codex\2026-06-29\new-chat']
+> .codex\config.toml:123:trust_level = "trusted"
+  .codex\config.toml:124:
+> .codex\config.toml:125:[projects.'c:\users\bin\artdirectworker\state\runs\6583f2f7-ff1c-4fcf-9c4f-2e1e86b93039\worksp
+ace']
+> .codex\config.toml:126:trust_level = "trusted"
+  .codex\config.toml:127:
+  .codex\config.toml:128:[projects.'c:\users\bin\documents\codex\2026-07-01\44368-12']
+> .codex\config.toml:129:trust_level = "trusted"
+  .codex\config.toml:130:
+  .codex\config.toml:131:[projects.'g:\skill']
+> .codex\config.toml:132:trust_level = "trusted"
+  .codex\config.toml:133:
+> .codex\config.toml:134:[projects.'c:\users\bin\artdirectworker\state\runs\10f1fcc6-49ba-411f-88a2-a68ce914c7b1\worksp
+ace']
+> .codex\config.toml:135:trust_level = "trusted"
+  .codex\config.toml:136:
+> .codex\config.toml:137:[projects.'c:\users\bin\artdirectworker\state\runs\e94cfef8-aadd-4408-98d0-86349e7fdb81\worksp
+ace']
+> .codex\config.toml:138:trust_level = "trusted"
+  .codex\config.toml:139:
+> .codex\config.toml:140:[projects.'c:\users\bin\artdirectworker\state\runs\6defafa1-b0d3-49d7-8dda-6644392c51dd\worksp
+ace']
+> .codex\config.toml:141:trust_level = "trusted"
+  .codex\config.toml:142:
+  .codex\config.toml:143:[projects.'c:\users\bin\documents\codex\2026-07-06\new-chat']
+> .codex\config.toml:144:trust_level = "trusted"
+  .codex\config.toml:145:
+> .codex\config.toml:146:[projects.'c:\users\bin\artdirectworker\state\runs\958452fa-ab04-4087-8b55-1a84fde69892\worksp
+ace']
+> .codex\config.toml:147:trust_level = "trusted"
+  .codex\config.toml:148:
+> .codex\config.toml:149:[projects.'c:\users\bin\artdirectworker\state\runs\f41883b6-5d43-4679-b1e2-9cff2c009c42\worksp
+ace']
+> .codex\config.toml:150:trust_level = "trusted"
+  .codex\config.toml:151:
+  .codex\config.toml:152:[projects.'c:\users\bin\documents\codex\2026-07-08\new-chat']
+> .codex\config.toml:153:trust_level = "trusted"
+  .codex\config.toml:154:
+> .codex\config.toml:155:[projects.'c:\users\bin\artdirectworker\figma-cli-test']
+> .codex\config.toml:156:trust_level = "trusted"
+  .codex\config.toml:157:
+  .codex\config.toml:158:[projects.'c:\users\bin\documents\codex\2026-07-08\new-chat-2']
+> .codex\config.toml:159:trust_level = "trusted"
+  .codex\config.toml:160:
+  .codex\config.toml:161:[projects.'c:\users\bin\documents\codex\2026-07-08\product-design']
+> .codex\config.toml:162:trust_level = "trusted"
+  .codex\config.toml:163:
+  .codex\config.toml:164:[projects.'c:\users\bin\documents\codex\2026-07-08\files-mentioned-by-the-user-codex']
+> .codex\config.toml:165:trust_level = "trusted"
+  .codex\config.toml:166:
+  .codex\config.toml:167:[projects.'c:\users\bin\documents\gameplay']
+> .codex\config.toml:168:trust_level = "trusted"
+  .codex\config.toml:169:
+  .codex\config.toml:170:[projects.'c:\users\bin\documents\灵感源泉']
+> .codex\config.toml:171:trust_level = "trusted"
+  .codex\config.toml:172:
+> .codex\config.toml:173:[plugins."documents@openai-primary-runtime"]
+  .codex\config.toml:174:enabled = false
+  .codex\config.toml:175:
+> .codex\config.toml:176:[plugins."spreadsheets@openai-primary-runtime"]
+  .codex\config.toml:177:enabled = false
+  .codex\config.toml:178:
+> .codex\config.toml:179:[plugins."presentations@openai-primary-runtime"]
+  .codex\config.toml:180:enabled = false
+  .codex\config.toml:181:
+> .codex\config.toml:182:[plugins."chrome@openai-bundled"]
+  .codex\config.toml:183:enabled = true
+  .codex\config.toml:184:
+> .codex\config.toml:185:[plugins."computer-use@openai-bundled"]
+  .codex\config.toml:186:enabled = true
+  .codex\config.toml:187:
+> .codex\config.toml:188:[plugins."pdf@openai-primary-runtime"]
+  .codex\config.toml:189:enabled = false
+  .codex\config.toml:190:
+> .codex\config.toml:191:[plugins."latex@openai-bundled"]
+  .codex\config.toml:192:enabled = false
+  .codex\config.toml:193:
+> .codex\config.toml:194:[plugins."browser@openai-bundled"]
+  .codex\config.toml:195:enabled = false
+  .codex\config.toml:196:
+> .codex\config.toml:197:[plugins."remotion@openai-api-curated"]
+  .codex\config.toml:198:enabled = true
+  .codex\config.toml:199:
+> .codex\config.toml:200:[plugins."template-creator@openai-primary-runtime"]
+  .codex\config.toml:201:enabled = true
+  .codex\config.toml:202:
+> .codex\config.toml:203:[plugins."product-design@role-specific-plugins"]
+  .codex\config.toml:204:enabled = true
+  .codex\config.toml:205:
+> .codex\config.toml:206:[plugins."hyperframes@openai-api-curated"]
+  .codex\config.toml:207:enabled = true
+
+
+PS C:\Users\bin>
+PS C:\Users\bin> Write-Host "`n===== MCP 列表 ====="
+
+===== MCP 列表 =====
+PS C:\Users\bin> codex mcp list
+codex : 无法将“codex”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正
+确，然后再试一次。
+所在位置 行:1 字符: 1
++ codex mcp list
++ ~~~~~
+    + CategoryInfo          : ObjectNotFound: (codex:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\bin>
+PS C:\Users\bin> Write-Host "`n===== figma 配置 ====="
+
+===== figma 配置 =====
+PS C:\Users\bin> codex mcp get figma
+codex : 无法将“codex”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正
+确，然后再试一次。
+所在位置 行:1 字符: 1
++ codex mcp get figma
++ ~~~~~
+    + CategoryInfo          : ObjectNotFound: (codex:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\bin>
+PS C:\Users\bin> Write-Host "`n===== Worker 目录是否被信任 ====="
+
+===== Worker 目录是否被信任 =====
+PS C:\Users\bin> Select-String -Path "$env:USERPROFILE\.codex\config.toml" -Pattern "ArtDirectWorker|trust_level" -Context 1,1
+
+  .codex\config.toml:65:[projects.'g:\平台ai']
+> .codex\config.toml:66:trust_level = "trusted"
+  .codex\config.toml:67:
+  .codex\config.toml:68:[projects.'c:\users\bin\documents\codex\2026-05-19\zentao-mcp-1-npx-skills-add']
+> .codex\config.toml:69:trust_level = "trusted"
+  .codex\config.toml:70:
+  .codex\config.toml:71:[projects.'c:\users\bin\documents\codex\2026-06-08\new-chat']
+> .codex\config.toml:72:trust_level = "trusted"
+  .codex\config.toml:73:
+  .codex\config.toml:74:[projects.'c:\users\bin\documents\codex\2026-06-08\erroractionpreference-stop-progresspreferenc
+e-silentlycontinue-root-env']
+> .codex\config.toml:75:trust_level = "trusted"
+  .codex\config.toml:76:
+  .codex\config.toml:77:[projects.'g:\sg']
+> .codex\config.toml:78:trust_level = "trusted"
+  .codex\config.toml:79:
+> .codex\config.toml:80:[projects.'c:\users\bin\artdirectworker\state\runs\2dd7e4fa-0dd7-4234-91c9-097fecd4fdc3\workspa
+ce']
+> .codex\config.toml:81:trust_level = "trusted"
+  .codex\config.toml:82:
+  .codex\config.toml:83:[projects.'c:\users\bin\documents\codex\2026-06-17\use-figma-use-and-follow-its']
+> .codex\config.toml:84:trust_level = "trusted"
+  .codex\config.toml:85:
+> .codex\config.toml:86:[projects.'c:\users\bin\artdirectworker\state\runs\a3995e2b-8554-4aff-a31a-a4f277c15572\workspa
+ce']
+> .codex\config.toml:87:trust_level = "trusted"
+  .codex\config.toml:88:
+> .codex\config.toml:89:[projects.'c:\users\bin\artdirectworker\state\runs\7f7ba8d5-c4e0-46a5-ad7d-673e7511fbd1\workspa
+ce']
+> .codex\config.toml:90:trust_level = "trusted"
+  .codex\config.toml:91:
+> .codex\config.toml:92:[projects.'c:\users\bin\artdirectworker\state\runs\9b69caa1-4c1f-4e5e-9ca3-740286a3aa8c\workspa
+ce']
+> .codex\config.toml:93:trust_level = "trusted"
+  .codex\config.toml:94:
+  .codex\config.toml:95:[projects.'c:\users\bin\documents\codex\2026-06-22\zhe']
+> .codex\config.toml:96:trust_level = "trusted"
+  .codex\config.toml:97:
+  .codex\config.toml:98:[projects.'c:\users\bin\documents\codex\2026-06-22\use-figma-to-inspect-the-target']
+> .codex\config.toml:99:trust_level = "trusted"
+  .codex\config.toml:100:
+  .codex\config.toml:101:[projects.'c:\users\bin\documents\codex\2026-06-24\https-github-com-zhongerxin-cowart-git']
+> .codex\config.toml:102:trust_level = "trusted"
+  .codex\config.toml:103:
+> .codex\config.toml:104:[projects.'c:\users\bin\artdirectworker\state\runs\d55d623f-c64e-4735-9c80-60d38090fbe5\worksp
+ace']
+> .codex\config.toml:105:trust_level = "trusted"
+  .codex\config.toml:106:
+> .codex\config.toml:107:[projects.'c:\users\bin\artdirectworker\state\runs\e344357f-3159-4c7c-a346-c91c3629c4a2\worksp
+ace']
+> .codex\config.toml:108:trust_level = "trusted"
+  .codex\config.toml:109:
+  .codex\config.toml:110:[projects.'c:\users\bin\documents\codex\2026-06-25\windows-powershell-windows-windows-powershe
+ll-administrator']
+> .codex\config.toml:111:trust_level = "trusted"
+  .codex\config.toml:112:
+> .codex\config.toml:113:[projects.'c:\users\bin\artdirectworker\state\runs\d29702ed-c88f-465a-b541-b7b7241d8872\worksp
+ace']
+> .codex\config.toml:114:trust_level = "trusted"
+  .codex\config.toml:115:
+> .codex\config.toml:116:[projects.'c:\users\bin\artdirectworker\state\runs\0baa8e0b-4059-4479-af90-3661aab37564\worksp
+ace']
+> .codex\config.toml:117:trust_level = "trusted"
+  .codex\config.toml:118:
+> .codex\config.toml:119:[projects.'c:\users\bin\artdirectworker\state\runs\b3670252-3ace-4abf-9254-26bac36f99e8\worksp
+ace']
+> .codex\config.toml:120:trust_level = "trusted"
+  .codex\config.toml:121:
+  .codex\config.toml:122:[projects.'c:\users\bin\documents\codex\2026-06-29\new-chat']
+> .codex\config.toml:123:trust_level = "trusted"
+  .codex\config.toml:124:
+> .codex\config.toml:125:[projects.'c:\users\bin\artdirectworker\state\runs\6583f2f7-ff1c-4fcf-9c4f-2e1e86b93039\worksp
+ace']
+> .codex\config.toml:126:trust_level = "trusted"
+  .codex\config.toml:127:
+  .codex\config.toml:128:[projects.'c:\users\bin\documents\codex\2026-07-01\44368-12']
+> .codex\config.toml:129:trust_level = "trusted"
+  .codex\config.toml:130:
+  .codex\config.toml:131:[projects.'g:\skill']
+> .codex\config.toml:132:trust_level = "trusted"
+  .codex\config.toml:133:
+> .codex\config.toml:134:[projects.'c:\users\bin\artdirectworker\state\runs\10f1fcc6-49ba-411f-88a2-a68ce914c7b1\worksp
+ace']
+> .codex\config.toml:135:trust_level = "trusted"
+  .codex\config.toml:136:
+> .codex\config.toml:137:[projects.'c:\users\bin\artdirectworker\state\runs\e94cfef8-aadd-4408-98d0-86349e7fdb81\worksp
+ace']
+> .codex\config.toml:138:trust_level = "trusted"
+  .codex\config.toml:139:
+> .codex\config.toml:140:[projects.'c:\users\bin\artdirectworker\state\runs\6defafa1-b0d3-49d7-8dda-6644392c51dd\worksp
+ace']
+> .codex\config.toml:141:trust_level = "trusted"
+  .codex\config.toml:142:
+  .codex\config.toml:143:[projects.'c:\users\bin\documents\codex\2026-07-06\new-chat']
+> .codex\config.toml:144:trust_level = "trusted"
+  .codex\config.toml:145:
+> .codex\config.toml:146:[projects.'c:\users\bin\artdirectworker\state\runs\958452fa-ab04-4087-8b55-1a84fde69892\worksp
+ace']
+> .codex\config.toml:147:trust_level = "trusted"
+  .codex\config.toml:148:
+> .codex\config.toml:149:[projects.'c:\users\bin\artdirectworker\state\runs\f41883b6-5d43-4679-b1e2-9cff2c009c42\worksp
+ace']
+> .codex\config.toml:150:trust_level = "trusted"
+  .codex\config.toml:151:
+  .codex\config.toml:152:[projects.'c:\users\bin\documents\codex\2026-07-08\new-chat']
+> .codex\config.toml:153:trust_level = "trusted"
+  .codex\config.toml:154:
+> .codex\config.toml:155:[projects.'c:\users\bin\artdirectworker\figma-cli-test']
+> .codex\config.toml:156:trust_level = "trusted"
+  .codex\config.toml:157:
+  .codex\config.toml:158:[projects.'c:\users\bin\documents\codex\2026-07-08\new-chat-2']
+> .codex\config.toml:159:trust_level = "trusted"
+  .codex\config.toml:160:
+  .codex\config.toml:161:[projects.'c:\users\bin\documents\codex\2026-07-08\product-design']
+> .codex\config.toml:162:trust_level = "trusted"
+  .codex\config.toml:163:
+  .codex\config.toml:164:[projects.'c:\users\bin\documents\codex\2026-07-08\files-mentioned-by-the-user-codex']
+> .codex\config.toml:165:trust_level = "trusted"
+  .codex\config.toml:166:
+  .codex\config.toml:167:[projects.'c:\users\bin\documents\gameplay']
+> .codex\config.toml:168:trust_level = "trusted"
+  .codex\config.toml:169:
+  .codex\config.toml:170:[projects.'c:\users\bin\documents\灵感源泉']
+> .codex\config.toml:171:trust_level = "trusted"
+  .codex\config.toml:172:
+
+
+PS C:\Users\bin>
+PS C:\Users\bin> Write-Host "`n===== Worker 目录 ====="
+
+===== Worker 目录 =====
+PS C:\Users\bin> Test-Path "$env:USERPROFILE\ArtDirectWorker"
+True
+PS C:\Users\bin> Test-Path "$env:USERPROFILE\ArtDirectWorker\scripts\art-direct-worker.mjs"
+True
+PS C:\Users\bin>
+PS C:\Users\bin> Write-Host "`n===== Worker 脚本版本关键字 ====="
+
+===== Worker 脚本版本关键字 =====
+PS C:\Users\bin> Select-String -Path "$env:USERPROFILE\ArtDirectWorker\scripts\art-direct-worker.mjs" -Pattern "ART_WORKER_FORCE_CODEX_MCP_FEATURES|trustedCodexProjectPaths|approval_mode|enable_mcp_apps" -Context 0,0
+PS C:\Users\bin>
+PS C:\Users\bin> Write-Host "`n===== 完成，截图发负责人 ====="
+
+===== 完成，截图发负责人 =====
+PS C:\Users\bin> pause

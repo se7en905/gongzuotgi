@@ -1,0 +1,496 @@
+Windows PowerShell
+版权所有（C） Microsoft Corporation。保留所有权利。
+
+安装最新的 PowerShell，了解新功能和改进！https://aka.ms/PSWindows
+
+PS C:\Users\Administrator> Write-Host "===== Windows 用户 ====="
+>>
+>> whoami
+>>
+>> Write-Host "`n===== Codex 版本 ====="
+>>
+>> codex --version
+>>
+>> Write-Host "`n===== Codex 路径 ====="
+>>
+>> where.exe codex
+>>
+>> Write-Host "`n===== CODEX_HOME 环境变量 ====="
+>>
+>> Write-Host "CODEX_HOME=$env:CODEX_HOME"
+>>
+>> Write-Host "`n===== 默认 Codex 配置路径 ====="
+>>
+>> Write-Host "$env:USERPROFILE\.codex\config.toml"
+>>
+>> Test-Path "$env:USERPROFILE\.codex\config.toml"
+>>
+>> Write-Host "`n===== config 关键内容 ====="
+>>
+>> Select-String -Path "$env:USERPROFILE\.codex\config.toml" -Pattern "rmcp_client|enable_mcp_apps|plugins|mcp_servers\.figma|use_figma|approval_mode|trust_level|ArtDirectWorker" -Context 1,1
+>>
+>> Write-Host "`n===== MCP 列表 ====="
+>>
+>> codex mcp list
+>>
+>> Write-Host "`n===== figma 配置 ====="
+>>
+>> codex mcp get figma
+>>
+>> Write-Host "`n===== Worker 目录是否被信任 ====="
+>>
+>> Select-String -Path "$env:USERPROFILE\.codex\config.toml" -Pattern "ArtDirectWorker|trust_level" -Context 1,1
+>>
+>> Write-Host "`n===== Worker 目录 ====="
+>>
+>> Test-Path "$env:USERPROFILE\ArtDirectWorker"
+>>
+>> Test-Path "$env:USERPROFILE\ArtDirectWorker\scripts\art-direct-worker.mjs"
+>>
+>> Write-Host "`n===== Worker 脚本版本关键字 ====="
+>>
+>> Select-String -Path "$env:USERPROFILE\ArtDirectWorker\scripts\art-direct-worker.mjs" -Pattern "ART_WORKER_FORCE_CODEX_MCP_FEATURES|trustedCodexProjectPaths|approval_mode|enable_mcp_apps" -Context 0,0
+>>
+>> Write-Host "`n===== 完成，截图发负责人 ====="
+>>
+>> pause
+>>
+===== Windows 用户 =====
+pc-20250223gepm\administrator
+
+===== Codex 版本 =====
+codex : 无法加载文件 C:\Users\Administrator\AppData\Roaming\npm\codex.ps1，因为在此系统上禁止运行脚本。有关详细信息，请
+参阅 https:/go.microsoft.com/fwlink/?LinkID=135170 中的 about_Execution_Policies。
+所在位置 行:7 字符: 1
++ codex --version
++ ~~~~~
+    + CategoryInfo          : SecurityError: (:) []，PSSecurityException
+    + FullyQualifiedErrorId : UnauthorizedAccess
+
+===== Codex 路径 =====
+C:\Users\Administrator\AppData\Roaming\npm\codex
+C:\Users\Administrator\AppData\Roaming\npm\codex.cmd
+
+===== CODEX_HOME 环境变量 =====
+CODEX_HOME=
+
+===== 默认 Codex 配置路径 =====
+C:\Users\Administrator\.codex\config.toml
+True
+
+===== config 关键内容 =====
+
+  .codex\config.toml:7:[features]
+> .codex\config.toml:8:rmcp_client = true
+> .codex\config.toml:9:enable_mcp_apps = true
+  .codex\config.toml:10:
+  .codex\config.toml:24:source_type = "local"
+> .codex\config.toml:25:source = '\\?\C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\plugins\openai
+-primary-runtime'
+  .codex\config.toml:26:
+  .codex\config.toml:30:[projects.'c:\users\administrator\documents\codex\2026-05-11\hi']
+> .codex\config.toml:31:trust_level = "trusted"
+  .codex\config.toml:32:
+  .codex\config.toml:33:[projects.'c:\users\administrator\documents\codex\2026-05-13\marketplaces-openai-bundled-last-u
+pdated-2026']
+> .codex\config.toml:34:trust_level = "trusted"
+  .codex\config.toml:35:
+  .codex\config.toml:36:[projects.'d:\documents\new project']
+> .codex\config.toml:37:trust_level = "trusted"
+  .codex\config.toml:38:
+  .codex\config.toml:39:[projects.'c:\users\administrator\documents\codex\2026-05-18\new-chat']
+> .codex\config.toml:40:trust_level = "trusted"
+  .codex\config.toml:41:
+  .codex\config.toml:42:[projects.'c:\users\administrator\documents\codex\2026-05-18\figma-mcp']
+> .codex\config.toml:43:trust_level = "trusted"
+  .codex\config.toml:44:
+  .codex\config.toml:45:[projects.'c:\users\administrator\documents\codex\2026-05-28\files-mentioned-by-the-user-design
+']
+> .codex\config.toml:46:trust_level = "trusted"
+  .codex\config.toml:47:
+  .codex\config.toml:48:[projects.'c:\users\administrator\documents\codex\2026-06-01\files-mentioned-by-the-user-svg']
+> .codex\config.toml:49:trust_level = "trusted"
+  .codex\config.toml:50:
+  .codex\config.toml:51:[projects.'c:\users\administrator\documents\codex\2026-06-04\files-mentioned-by-the-user-md']
+> .codex\config.toml:52:trust_level = "trusted"
+  .codex\config.toml:53:
+  .codex\config.toml:54:[projects.'c:\users\administrator\documents\codex\2026-06-04\files-mentioned-by-the-user-md-2']
+> .codex\config.toml:55:trust_level = "trusted"
+  .codex\config.toml:56:
+  .codex\config.toml:57:[projects.'c:\users\administrator\documents\codex\2026-06-05\files-mentioned-by-the-user-design
+']
+> .codex\config.toml:58:trust_level = "trusted"
+  .codex\config.toml:59:
+  .codex\config.toml:60:[projects.'c:\users\administrator\documents\codex\2026-06-05\files-mentioned-by-the-user-2']
+> .codex\config.toml:61:trust_level = "trusted"
+  .codex\config.toml:62:
+  .codex\config.toml:63:[projects.'c:\users\administrator\documents\codex\2026-06-05\files-mentioned-by-the-user-skill'
+]
+> .codex\config.toml:64:trust_level = "trusted"
+  .codex\config.toml:65:
+  .codex\config.toml:66:[projects.'c:\users\administrator\documents\codex\2026-06-06\files-mentioned-by-the-user-figma'
+]
+> .codex\config.toml:67:trust_level = "trusted"
+  .codex\config.toml:68:
+  .codex\config.toml:69:[projects.'c:\users\administrator\documents\codex\2026-06-08\erroractionpreference-stop-progres
+spreference-silentlycontinue-root-env']
+> .codex\config.toml:70:trust_level = "trusted"
+  .codex\config.toml:71:
+  .codex\config.toml:72:[projects.'c:\users\administrator\documents\codex\2026-06-08\md-1-icon-a-icon-2']
+> .codex\config.toml:73:trust_level = "trusted"
+  .codex\config.toml:74:
+  .codex\config.toml:75:[projects.'c:\users\administrator\documents\codex\2026-06-08\md-1-icon-a-icon-2-2']
+> .codex\config.toml:76:trust_level = "trusted"
+  .codex\config.toml:77:
+  .codex\config.toml:78:[projects.'c:\users\administrator\documents\codex\2026-06-09\new-chat']
+> .codex\config.toml:79:trust_level = "trusted"
+  .codex\config.toml:80:
+  .codex\config.toml:81:[projects.'c:\users\administrator\documents\codex\2026-06-09\ui-ui-skills']
+> .codex\config.toml:82:trust_level = "trusted"
+  .codex\config.toml:83:
+  .codex\config.toml:84:[projects.'c:\users\administrator\documents\codex\2026-06-10\files-mentioned-by-the-user-design
+']
+> .codex\config.toml:85:trust_level = "trusted"
+  .codex\config.toml:86:
+  .codex\config.toml:87:[projects.'c:\users\administrator\documents\codex\2026-06-10\files-mentioned-by-the-user-design
+-2']
+> .codex\config.toml:88:trust_level = "trusted"
+  .codex\config.toml:89:
+  .codex\config.toml:90:[projects.'c:\users\administrator\documents\codex\2026-06-10\files-mentioned-by-the-user-design
+-3']
+> .codex\config.toml:91:trust_level = "trusted"
+  .codex\config.toml:92:
+  .codex\config.toml:93:[projects.'c:\users\administrator\documents\codex\2026-06-10\figma-figma-figma-1-1-figma']
+> .codex\config.toml:94:trust_level = "trusted"
+  .codex\config.toml:95:
+  .codex\config.toml:96:[projects.'c:\users\administrator\documents\codex\2026-06-10\files-mentioned-by-the-user-figma'
+]
+> .codex\config.toml:97:trust_level = "trusted"
+  .codex\config.toml:98:
+  .codex\config.toml:99:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-mentioned-by-the-user-design
+']
+> .codex\config.toml:100:trust_level = "trusted"
+  .codex\config.toml:101:
+  .codex\config.toml:102:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-mentioned-by-the-user-md']
+> .codex\config.toml:103:trust_level = "trusted"
+  .codex\config.toml:104:
+  .codex\config.toml:105:[projects.'c:\users\administrator\documents\codex\2026-06-15\windows']
+> .codex\config.toml:106:trust_level = "trusted"
+  .codex\config.toml:107:
+  .codex\config.toml:108:[projects.'c:\users\administrator\documents\codex\2026-06-15\erroractionpreference-stop-progre
+sspreference-silentlycontinue-root-env']
+> .codex\config.toml:109:trust_level = "trusted"
+  .codex\config.toml:110:
+  .codex\config.toml:111:[projects.'c:\users\administrator\documents\codex\2026-06-22\files-mentioned-by-the-user-desig
+n']
+> .codex\config.toml:112:trust_level = "trusted"
+  .codex\config.toml:113:
+  .codex\config.toml:114:[projects.'c:\users\administrator\documents\codex\2026-06-23\files-mentioned-by-the-user-desig
+n']
+> .codex\config.toml:115:trust_level = "trusted"
+  .codex\config.toml:116:
+  .codex\config.toml:117:[projects.'c:\users\administrator\documents\codex\2026-06-25\files-mentioned-by-the-user-2']
+> .codex\config.toml:118:trust_level = "trusted"
+  .codex\config.toml:119:
+  .codex\config.toml:120:[projects.'c:\users\administrator\documents\codex\2026-06-25\files-mentioned-by-the-user-md']
+> .codex\config.toml:121:trust_level = "trusted"
+  .codex\config.toml:122:
+  .codex\config.toml:123:[projects.'c:\users\administrator\documents\codex\2026-06-27\windows-powershell-windows-window
+s-powershell-administrator']
+> .codex\config.toml:124:trust_level = "trusted"
+  .codex\config.toml:125:
+> .codex\config.toml:126:[projects.'c:\users\administrator\artdirectworker\state\runs\634ee00c-4465-463f-b105-9b5224ab5
+5bf\workspace']
+> .codex\config.toml:127:trust_level = "trusted"
+  .codex\config.toml:128:
+> .codex\config.toml:129:[projects.'c:\users\administrator\artdirectworker\state\runs\9c98a4a1-6b37-4569-9542-22d41cf2c
+c19\workspace']
+> .codex\config.toml:130:trust_level = "trusted"
+  .codex\config.toml:131:
+> .codex\config.toml:132:[projects.'c:\users\administrator\artdirectworker\state\runs\f0f1931a-f2a7-46b0-abaa-1cecd9893
+953\workspace']
+> .codex\config.toml:133:trust_level = "trusted"
+  .codex\config.toml:134:
+> .codex\config.toml:135:[projects.'c:\users\administrator\artdirectworker\state\runs\2118b94c-b67a-480c-8c38-b4da7213a
+d15\workspace']
+> .codex\config.toml:136:trust_level = "trusted"
+  .codex\config.toml:137:
+  .codex\config.toml:138:[projects.'c:\users\administrator\documents\codex\2026-07-06\files-mentioned-by-the-user-desig
+n']
+> .codex\config.toml:139:trust_level = "trusted"
+  .codex\config.toml:140:
+> .codex\config.toml:141:[projects.'c:\users\administrator\artdirectworker\state\runs\5df2dad4-e9a5-441d-8190-87b860d55
+8c6\workspace']
+> .codex\config.toml:142:trust_level = "trusted"
+  .codex\config.toml:143:
+> .codex\config.toml:144:[projects.'c:\users\administrator\artdirectworker\state\runs\0558c614-c1ec-4102-994a-6c2c7010e
+d6d\workspace']
+> .codex\config.toml:145:trust_level = "trusted"
+  .codex\config.toml:146:
+> .codex\config.toml:147:[projects.'c:\users\administrator\artdirectworker\state\runs\1109e249-ee04-4208-be6c-f76f0f31d
+622\workspace']
+> .codex\config.toml:148:trust_level = "trusted"
+  .codex\config.toml:149:
+> .codex\config.toml:150:[projects.'c:\users\administrator\artdirectworker\state\runs\db8ebc3f-774a-4d0a-98c7-aa4c7993e
+274\workspace']
+> .codex\config.toml:151:trust_level = "trusted"
+  .codex\config.toml:152:
+> .codex\config.toml:153:[projects.'c:\users\administrator\artdirectworker\state\runs\e8592f9c-4808-4cca-882d-90507df72
+2d7\workspace']
+> .codex\config.toml:154:trust_level = "trusted"
+  .codex\config.toml:155:
+> .codex\config.toml:156:[projects.'c:\users\administrator\artdirectworker\state\runs\a37e6a47-b176-420b-8acd-9b80cdd7f
+756\workspace']
+> .codex\config.toml:157:trust_level = "trusted"
+  .codex\config.toml:158:
+  .codex\config.toml:159:[projects.'c:\users\administrator\documents\codex\2026-07-08\role-ui-ux-design-system-context'
+]
+> .codex\config.toml:160:trust_level = "trusted"
+  .codex\config.toml:161:
+  .codex\config.toml:162:[projects.'c:\users\administrator\documents\codex\2026-07-08\role-ui-ux-design-system-figma']
+> .codex\config.toml:163:trust_level = "trusted"
+  .codex\config.toml:164:
+  .codex\config.toml:165:[projects.'c:\users\administrator\documents\codex\2026-07-09\linear-plugin-linear-openai-curat
+ed']
+> .codex\config.toml:166:trust_level = "trusted"
+  .codex\config.toml:167:
+> .codex\config.toml:168:[projects.'c:\users\administrator\artdirectworker\state\runs\09fab3ea-26af-47f9-a68f-387599890
+b84\workspace']
+> .codex\config.toml:169:trust_level = "trusted"
+  .codex\config.toml:170:
+> .codex\config.toml:171:[projects.'c:\users\administrator\artdirectworker\state\runs\55a90b35-b507-4f33-ad85-799739d34
+48c\workspace']
+> .codex\config.toml:172:trust_level = "trusted"
+  .codex\config.toml:173:
+> .codex\config.toml:174:[plugins."documents@openai-primary-runtime"]
+  .codex\config.toml:175:enabled = true
+  .codex\config.toml:176:
+> .codex\config.toml:177:[plugins."spreadsheets@openai-primary-runtime"]
+  .codex\config.toml:178:enabled = true
+  .codex\config.toml:179:
+> .codex\config.toml:180:[plugins."presentations@openai-primary-runtime"]
+  .codex\config.toml:181:enabled = true
+  .codex\config.toml:182:
+> .codex\config.toml:183:[mcp_servers.figma]
+  .codex\config.toml:184:enabled = true
+  .codex\config.toml:187:
+> .codex\config.toml:188:[mcp_servers.figma.tools.use_figma]
+> .codex\config.toml:189:approval_mode = "approve"
+  .codex\config.toml:190:[marketplaces.openai-curated]
+  .codex\config.toml:192:source_type = "local"
+> .codex\config.toml:193:source = '\\?\C:\Users\Administrator\.codex\.tmp\plugins'
+  .codex\config.toml:194:
+> .codex\config.toml:195:[plugins."figma@openai-curated"]
+  .codex\config.toml:196:enabled = true
+  .codex\config.toml:197:
+> .codex\config.toml:198:[plugins."pdf@openai-primary-runtime"]
+  .codex\config.toml:199:enabled = true
+  .codex\config.toml:200:
+> .codex\config.toml:201:[plugins."template-creator@openai-primary-runtime"]
+  .codex\config.toml:202:enabled = true
+  .codex\config.toml:203:
+> .codex\config.toml:204:[plugins."browser-use@openai-bundled"]
+  .codex\config.toml:205:enabled = true
+
+===== MCP 列表 =====
+codex : 无法加载文件 C:\Users\Administrator\AppData\Roaming\npm\codex.ps1，因为在此系统上禁止运行脚本。有关详细信息，请
+参阅 https:/go.microsoft.com/fwlink/?LinkID=135170 中的 about_Execution_Policies。
+所在位置 行:29 字符: 1
++ codex mcp list
++ ~~~~~
+    + CategoryInfo          : SecurityError: (:) []，PSSecurityException
+    + FullyQualifiedErrorId : UnauthorizedAccess
+
+===== figma 配置 =====
+codex : 无法加载文件 C:\Users\Administrator\AppData\Roaming\npm\codex.ps1，因为在此系统上禁止运行脚本。有关详细信息，请
+参阅 https:/go.microsoft.com/fwlink/?LinkID=135170 中的 about_Execution_Policies。
+所在位置 行:33 字符: 1
++ codex mcp get figma
++ ~~~~~
+    + CategoryInfo          : SecurityError: (:) []，PSSecurityException
+    + FullyQualifiedErrorId : UnauthorizedAccess
+
+===== Worker 目录是否被信任 =====
+  .codex\config.toml:30:[projects.'c:\users\administrator\documents\codex\2026-05-11\hi']
+> .codex\config.toml:31:trust_level = "trusted"
+  .codex\config.toml:32:
+  .codex\config.toml:33:[projects.'c:\users\administrator\documents\codex\2026-05-13\marketplaces-openai-bundled-last-u
+pdated-2026']
+> .codex\config.toml:34:trust_level = "trusted"
+  .codex\config.toml:35:
+  .codex\config.toml:36:[projects.'d:\documents\new project']
+> .codex\config.toml:37:trust_level = "trusted"
+  .codex\config.toml:38:
+  .codex\config.toml:39:[projects.'c:\users\administrator\documents\codex\2026-05-18\new-chat']
+> .codex\config.toml:40:trust_level = "trusted"
+  .codex\config.toml:41:
+  .codex\config.toml:42:[projects.'c:\users\administrator\documents\codex\2026-05-18\figma-mcp']
+> .codex\config.toml:43:trust_level = "trusted"
+  .codex\config.toml:44:
+  .codex\config.toml:45:[projects.'c:\users\administrator\documents\codex\2026-05-28\files-mentioned-by-the-user-design
+']
+> .codex\config.toml:46:trust_level = "trusted"
+  .codex\config.toml:47:
+  .codex\config.toml:48:[projects.'c:\users\administrator\documents\codex\2026-06-01\files-mentioned-by-the-user-svg']
+> .codex\config.toml:49:trust_level = "trusted"
+  .codex\config.toml:50:
+  .codex\config.toml:51:[projects.'c:\users\administrator\documents\codex\2026-06-04\files-mentioned-by-the-user-md']
+> .codex\config.toml:52:trust_level = "trusted"
+  .codex\config.toml:53:
+  .codex\config.toml:54:[projects.'c:\users\administrator\documents\codex\2026-06-04\files-mentioned-by-the-user-md-2']
+> .codex\config.toml:55:trust_level = "trusted"
+  .codex\config.toml:56:
+  .codex\config.toml:57:[projects.'c:\users\administrator\documents\codex\2026-06-05\files-mentioned-by-the-user-design
+']
+> .codex\config.toml:58:trust_level = "trusted"
+  .codex\config.toml:59:
+  .codex\config.toml:60:[projects.'c:\users\administrator\documents\codex\2026-06-05\files-mentioned-by-the-user-2']
+> .codex\config.toml:61:trust_level = "trusted"
+  .codex\config.toml:62:
+  .codex\config.toml:63:[projects.'c:\users\administrator\documents\codex\2026-06-05\files-mentioned-by-the-user-skill'
+]
+> .codex\config.toml:64:trust_level = "trusted"
+  .codex\config.toml:65:
+  .codex\config.toml:66:[projects.'c:\users\administrator\documents\codex\2026-06-06\files-mentioned-by-the-user-figma'
+]
+> .codex\config.toml:67:trust_level = "trusted"
+  .codex\config.toml:68:
+  .codex\config.toml:69:[projects.'c:\users\administrator\documents\codex\2026-06-08\erroractionpreference-stop-progres
+spreference-silentlycontinue-root-env']
+> .codex\config.toml:70:trust_level = "trusted"
+  .codex\config.toml:71:
+  .codex\config.toml:72:[projects.'c:\users\administrator\documents\codex\2026-06-08\md-1-icon-a-icon-2']
+> .codex\config.toml:73:trust_level = "trusted"
+  .codex\config.toml:74:
+  .codex\config.toml:75:[projects.'c:\users\administrator\documents\codex\2026-06-08\md-1-icon-a-icon-2-2']
+> .codex\config.toml:76:trust_level = "trusted"
+  .codex\config.toml:77:
+  .codex\config.toml:78:[projects.'c:\users\administrator\documents\codex\2026-06-09\new-chat']
+> .codex\config.toml:79:trust_level = "trusted"
+  .codex\config.toml:80:
+  .codex\config.toml:81:[projects.'c:\users\administrator\documents\codex\2026-06-09\ui-ui-skills']
+> .codex\config.toml:82:trust_level = "trusted"
+  .codex\config.toml:83:
+  .codex\config.toml:84:[projects.'c:\users\administrator\documents\codex\2026-06-10\files-mentioned-by-the-user-design
+']
+> .codex\config.toml:85:trust_level = "trusted"
+  .codex\config.toml:86:
+  .codex\config.toml:87:[projects.'c:\users\administrator\documents\codex\2026-06-10\files-mentioned-by-the-user-design
+-2']
+> .codex\config.toml:88:trust_level = "trusted"
+  .codex\config.toml:89:
+  .codex\config.toml:90:[projects.'c:\users\administrator\documents\codex\2026-06-10\files-mentioned-by-the-user-design
+-3']
+> .codex\config.toml:91:trust_level = "trusted"
+  .codex\config.toml:92:
+  .codex\config.toml:93:[projects.'c:\users\administrator\documents\codex\2026-06-10\figma-figma-figma-1-1-figma']
+> .codex\config.toml:94:trust_level = "trusted"
+  .codex\config.toml:95:
+  .codex\config.toml:96:[projects.'c:\users\administrator\documents\codex\2026-06-10\files-mentioned-by-the-user-figma'
+]
+> .codex\config.toml:97:trust_level = "trusted"
+  .codex\config.toml:98:
+  .codex\config.toml:99:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-mentioned-by-the-user-design
+']
+> .codex\config.toml:100:trust_level = "trusted"
+  .codex\config.toml:101:
+  .codex\config.toml:102:[projects.'c:\users\administrator\documents\codex\2026-06-12\files-mentioned-by-the-user-md']
+> .codex\config.toml:103:trust_level = "trusted"
+  .codex\config.toml:104:
+  .codex\config.toml:105:[projects.'c:\users\administrator\documents\codex\2026-06-15\windows']
+> .codex\config.toml:106:trust_level = "trusted"
+  .codex\config.toml:107:
+  .codex\config.toml:108:[projects.'c:\users\administrator\documents\codex\2026-06-15\erroractionpreference-stop-progre
+sspreference-silentlycontinue-root-env']
+> .codex\config.toml:109:trust_level = "trusted"
+  .codex\config.toml:110:
+  .codex\config.toml:111:[projects.'c:\users\administrator\documents\codex\2026-06-22\files-mentioned-by-the-user-desig
+n']
+> .codex\config.toml:112:trust_level = "trusted"
+  .codex\config.toml:113:
+  .codex\config.toml:114:[projects.'c:\users\administrator\documents\codex\2026-06-23\files-mentioned-by-the-user-desig
+n']
+> .codex\config.toml:115:trust_level = "trusted"
+  .codex\config.toml:116:
+  .codex\config.toml:117:[projects.'c:\users\administrator\documents\codex\2026-06-25\files-mentioned-by-the-user-2']
+> .codex\config.toml:118:trust_level = "trusted"
+  .codex\config.toml:119:
+  .codex\config.toml:120:[projects.'c:\users\administrator\documents\codex\2026-06-25\files-mentioned-by-the-user-md']
+> .codex\config.toml:121:trust_level = "trusted"
+  .codex\config.toml:122:
+  .codex\config.toml:123:[projects.'c:\users\administrator\documents\codex\2026-06-27\windows-powershell-windows-window
+s-powershell-administrator']
+> .codex\config.toml:124:trust_level = "trusted"
+  .codex\config.toml:125:
+> .codex\config.toml:126:[projects.'c:\users\administrator\artdirectworker\state\runs\634ee00c-4465-463f-b105-9b5224ab5
+5bf\workspace']
+> .codex\config.toml:127:trust_level = "trusted"
+  .codex\config.toml:128:
+> .codex\config.toml:129:[projects.'c:\users\administrator\artdirectworker\state\runs\9c98a4a1-6b37-4569-9542-22d41cf2c
+c19\workspace']
+> .codex\config.toml:130:trust_level = "trusted"
+  .codex\config.toml:131:
+> .codex\config.toml:132:[projects.'c:\users\administrator\artdirectworker\state\runs\f0f1931a-f2a7-46b0-abaa-1cecd9893
+953\workspace']
+> .codex\config.toml:133:trust_level = "trusted"
+  .codex\config.toml:134:
+> .codex\config.toml:135:[projects.'c:\users\administrator\artdirectworker\state\runs\2118b94c-b67a-480c-8c38-b4da7213a
+d15\workspace']
+> .codex\config.toml:136:trust_level = "trusted"
+  .codex\config.toml:137:
+  .codex\config.toml:138:[projects.'c:\users\administrator\documents\codex\2026-07-06\files-mentioned-by-the-user-desig
+n']
+> .codex\config.toml:139:trust_level = "trusted"
+  .codex\config.toml:140:
+> .codex\config.toml:141:[projects.'c:\users\administrator\artdirectworker\state\runs\5df2dad4-e9a5-441d-8190-87b860d55
+8c6\workspace']
+> .codex\config.toml:142:trust_level = "trusted"
+  .codex\config.toml:143:
+> .codex\config.toml:144:[projects.'c:\users\administrator\artdirectworker\state\runs\0558c614-c1ec-4102-994a-6c2c7010e
+d6d\workspace']
+> .codex\config.toml:145:trust_level = "trusted"
+  .codex\config.toml:146:
+> .codex\config.toml:147:[projects.'c:\users\administrator\artdirectworker\state\runs\1109e249-ee04-4208-be6c-f76f0f31d
+622\workspace']
+> .codex\config.toml:148:trust_level = "trusted"
+  .codex\config.toml:149:
+> .codex\config.toml:150:[projects.'c:\users\administrator\artdirectworker\state\runs\db8ebc3f-774a-4d0a-98c7-aa4c7993e
+274\workspace']
+> .codex\config.toml:151:trust_level = "trusted"
+  .codex\config.toml:152:
+> .codex\config.toml:153:[projects.'c:\users\administrator\artdirectworker\state\runs\e8592f9c-4808-4cca-882d-90507df72
+2d7\workspace']
+> .codex\config.toml:154:trust_level = "trusted"
+  .codex\config.toml:155:
+> .codex\config.toml:156:[projects.'c:\users\administrator\artdirectworker\state\runs\a37e6a47-b176-420b-8acd-9b80cdd7f
+756\workspace']
+> .codex\config.toml:157:trust_level = "trusted"
+  .codex\config.toml:158:
+  .codex\config.toml:159:[projects.'c:\users\administrator\documents\codex\2026-07-08\role-ui-ux-design-system-context'
+]
+> .codex\config.toml:160:trust_level = "trusted"
+  .codex\config.toml:161:
+  .codex\config.toml:162:[projects.'c:\users\administrator\documents\codex\2026-07-08\role-ui-ux-design-system-figma']
+> .codex\config.toml:163:trust_level = "trusted"
+  .codex\config.toml:164:
+  .codex\config.toml:165:[projects.'c:\users\administrator\documents\codex\2026-07-09\linear-plugin-linear-openai-curat
+ed']
+> .codex\config.toml:166:trust_level = "trusted"
+  .codex\config.toml:167:
+> .codex\config.toml:168:[projects.'c:\users\administrator\artdirectworker\state\runs\09fab3ea-26af-47f9-a68f-387599890
+b84\workspace']
+> .codex\config.toml:169:trust_level = "trusted"
+  .codex\config.toml:170:
+> .codex\config.toml:171:[projects.'c:\users\administrator\artdirectworker\state\runs\55a90b35-b507-4f33-ad85-799739d34
+48c\workspace']
+> .codex\config.toml:172:trust_level = "trusted"
+  .codex\config.toml:173:
+
+===== Worker 目录 =====
+True
+True
+
+===== Worker 脚本版本关键字 =====
+
+===== 完成，截图发负责人 =====
+按 Enter 键继续...:

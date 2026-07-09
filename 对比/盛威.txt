@@ -1,0 +1,94 @@
+Windows PowerShell
+版权所有（C） Microsoft Corporation。保留所有权利。
+
+安装最新的 PowerShell，了解新功能和改进！https://aka.ms/PSWindows
+
+PS C:\Users\Administrator> Write-Host "===== Windows 用户 ====="
+===== Windows 用户 =====
+PS C:\Users\Administrator> whoami
+pc-20230405jyxu\administrator
+PS C:\Users\Administrator>
+PS C:\Users\Administrator> Write-Host "`n===== Codex 版本 ====="
+
+===== Codex 版本 =====
+PS C:\Users\Administrator> codex --version
+codex : 无法加载文件 C:\Users\Administrator\AppData\Roaming\npm\codex.ps1，因为在此系统上禁止运行脚本。有关详细信息，请
+参阅 https:/go.microsoft.com/fwlink/?LinkID=135170 中的 about_Execution_Policies。
+所在位置 行:1 字符: 1
++ codex --version
++ ~~~~~
+    + CategoryInfo          : SecurityError: (:) []，PSSecurityException
+    + FullyQualifiedErrorId : UnauthorizedAccess
+PS C:\Users\Administrator>
+PS C:\Users\Administrator> Write-Host "`n===== Codex 路径 ====="
+
+===== Codex 路径 =====
+PS C:\Users\Administrator> where.exe codex
+C:\Users\Administrator\AppData\Roaming\npm\codex
+C:\Users\Administrator\AppData\Roaming\npm\codex.cmd
+PS C:\Users\Administrator>
+PS C:\Users\Administrator> Write-Host "`n===== CODEX_HOME 环境变量 ====="
+
+===== CODEX_HOME 环境变量 =====
+PS C:\Users\Administrator> Write-Host "CODEX_HOME=$env:CODEX_HOME"
+CODEX_HOME=
+PS C:\Users\Administrator>
+PS C:\Users\Administrator> Write-Host "`n===== 默认 Codex 配置路径 ====="
+
+===== 默认 Codex 配置路径 =====
+PS C:\Users\Administrator> Write-Host "$env:USERPROFILE\.codex\config.toml"
+C:\Users\Administrator\.codex\config.toml
+PS C:\Users\Administrator> Test-Path "$env:USERPROFILE\.codex\config.toml"
+True
+PS C:\Users\Administrator>
+PS C:\Users\Administrator> Write-Host "`n===== config 关键内容 ====="
+
+===== config 关键内容 =====
+PS C:\Users\Administrator> Select-String -Path "$env:USERPROFILE\.codex\config.toml" -Pattern "rmcp_client|enable_mcp_apps|plugins|mcp_servers\.figma|use_figma|approval_mode|trust_level|ArtDirectWorker" -Context 1,1
+PS C:\Users\Administrator>
+PS C:\Users\Administrator> Write-Host "`n===== MCP 列表 ====="
+
+===== MCP 列表 =====
+PS C:\Users\Administrator> codex mcp list
+codex : 无法加载文件 C:\Users\Administrator\AppData\Roaming\npm\codex.ps1，因为在此系统上禁止运行脚本。有关详细信息，请
+参阅 https:/go.microsoft.com/fwlink/?LinkID=135170 中的 about_Execution_Policies。
+所在位置 行:1 字符: 1
++ codex mcp list
++ ~~~~~
+    + CategoryInfo          : SecurityError: (:) []，PSSecurityException
+    + FullyQualifiedErrorId : UnauthorizedAccess
+PS C:\Users\Administrator>
+PS C:\Users\Administrator> Write-Host "`n===== figma 配置 ====="
+
+===== figma 配置 =====
+PS C:\Users\Administrator> codex mcp get figma
+codex : 无法加载文件 C:\Users\Administrator\AppData\Roaming\npm\codex.ps1，因为在此系统上禁止运行脚本。有关详细信息，请
+参阅 https:/go.microsoft.com/fwlink/?LinkID=135170 中的 about_Execution_Policies。
+所在位置 行:1 字符: 1
++ codex mcp get figma
++ ~~~~~
+    + CategoryInfo          : SecurityError: (:) []，PSSecurityException
+    + FullyQualifiedErrorId : UnauthorizedAccess
+PS C:\Users\Administrator>
+PS C:\Users\Administrator> Write-Host "`n===== Worker 目录是否被信任 ====="
+
+===== Worker 目录是否被信任 =====
+PS C:\Users\Administrator> Select-String -Path "$env:USERPROFILE\.codex\config.toml" -Pattern "ArtDirectWorker|trust_level" -Context 1,1
+PS C:\Users\Administrator>
+PS C:\Users\Administrator> Write-Host "`n===== Worker 目录 ====="
+
+===== Worker 目录 =====
+PS C:\Users\Administrator> Test-Path "$env:USERPROFILE\ArtDirectWorker"
+True
+PS C:\Users\Administrator> Test-Path "$env:USERPROFILE\ArtDirectWorker\scripts\art-direct-worker.mjs"
+True
+PS C:\Users\Administrator>
+PS C:\Users\Administrator> Write-Host "`n===== Worker 脚本版本关键字 ====="
+
+===== Worker 脚本版本关键字 =====
+PS C:\Users\Administrator> Select-String -Path "$env:USERPROFILE\ArtDirectWorker\scripts\art-direct-worker.mjs" -Pattern "ART_WORKER_FORCE_CODEX_MCP_FEATURES|trustedCodexProjectPaths|approval_mode|enable_mcp_apps" -Context 0,0
+PS C:\Users\Administrator>
+PS C:\Users\Administrator> Write-Host "`n===== 完成，截图发负责人 ====="
+
+===== 完成，截图发负责人 =====
+PS C:\Users\Administrator> pause
