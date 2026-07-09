@@ -4829,10 +4829,10 @@ export default {
         this.ensureRunDetailLoaded(value)
           .then(run => {
             if (this.selectedRunId !== value) return;
-            if (this.isRunInProgress(run || this.selectedRun)) this.connectEvents(value);
+            if (this.shouldConnectRunEvents(run || this.selectedRun)) this.connectEvents(value);
           })
           .catch(error => console.warn('执行详情读取失败', error));
-        if (this.isRunInProgress(this.selectedRun)) {
+        if (this.shouldConnectRunEvents(this.selectedRun)) {
           this.loadSelectedRunLog();
           this.connectEvents(value);
         } else {
@@ -7653,9 +7653,12 @@ export default {
       if (type === 'runs.changed' && this.can('menu.runs')) {
         if (event.payload?.run) {
           this.upsertRunInLocalState(event.payload.run, { select: false, prepend: false });
-          if (this.activeView === 'runs' && this.selectedRunId === event.payload.run.id && this.isRunInProgress(this.selectedRun)) {
+          if (this.activeView === 'runs' && this.selectedRunId === event.payload.run.id && this.shouldConnectRunEvents(this.selectedRun)) {
             window.setTimeout(() => {
-              if (this.selectedRunId === event.payload.run.id) this.loadSelectedRunLog().catch(() => {});
+              if (this.selectedRunId === event.payload.run.id) {
+                this.connectEvents(event.payload.run.id);
+                this.loadSelectedRunLog().catch(() => {});
+              }
             }, 0);
           }
         }
@@ -10545,9 +10548,12 @@ export default {
           }
           if (!this.selectedRunId && listRows[0]) this.selectedRunId = listRows[0].id;
           if (this.selectedRunId) this.ensureRunDetailLoaded(this.selectedRunId).catch(error => console.warn('执行详情读取失败', error));
-          if (this.selectedRunId && this.isRunInProgress(this.selectedRun)) {
+          if (this.selectedRunId && this.shouldConnectRunEvents(this.selectedRun)) {
             window.setTimeout(() => {
-              if (this.selectedRunId) this.loadSelectedRunLog().catch(() => {});
+              if (this.selectedRunId) {
+                this.connectEvents(this.selectedRunId);
+                this.loadSelectedRunLog().catch(() => {});
+              }
             }, 0);
           }
           return this.runs;
@@ -20144,6 +20150,10 @@ export default {
       return Boolean(this.isLocalWorkerRun(run) && /queued/i.test(String(run?.status || '')) && !this.hasLocalWorkerRunEvidence(run));
     },
 
+    shouldConnectRunEvents(run = null) {
+      return Boolean(run && (this.isRunInProgress(run) || this.isRunWaitingForLocalWorker(run)));
+    },
+
     isDirectSkillRun(run = null) {
       return run?.sourceType === 'direct-skill' || run?.executionMode === 'direct-skill';
     },
@@ -20810,10 +20820,11 @@ export default {
       const worker = this.directSkillWorkerForRun(run);
       const queuedAtMs = Date.parse(run?.queuedAt || run?.updatedAt || run?.createdAt || '') || 0;
       const queuedTooLong = queuedAtMs && Date.now() - queuedAtMs >= 2 * 60 * 1000;
-      if (this.isDirectSkillWorkerReady(worker, run)) return '正在启动本机执行';
+      if (queuedTooLong && this.isDirectSkillWorkerReady(worker, run)) return '等待本机领取超时';
       if (worker && this.directSkillWorkerOnline(worker)) return '待本机自检';
       if (queuedTooLong && worker?.lastHeartbeatAt) return '等待本机领取超时';
       if (queuedTooLong) return '等待本机上线超时';
+      if (this.isDirectSkillWorkerReady(worker, run)) return '待本机领取';
       if (worker?.lastHeartbeatAt) return '待本机恢复在线';
       return '待本机上线';
     },
@@ -20823,8 +20834,11 @@ export default {
       const needsFigma = this.localWorkerRunNeedsFigma(run);
       const queuedAtMs = Date.parse(run?.queuedAt || run?.updatedAt || run?.createdAt || '') || 0;
       const queuedTooLong = queuedAtMs && Date.now() - queuedAtMs >= 2 * 60 * 1000;
+      if (queuedTooLong && this.isDirectSkillWorkerReady(worker, run)) {
+        return 'Worker 已在线且具备执行条件，但任务超过 2 分钟仍未被领取。优先检查平台事件唤醒是否命中，再检查本机 Worker runner 是否卡在旧进程、事件流断线或刚完成重启。';
+      }
       if (this.isDirectSkillWorkerReady(worker, run)) {
-        return '已向执行人本机 Worker 发送定向唤醒，Worker 会立即心跳并领取；5 分钟轮询只作为事件断线兜底。';
+        return '已向执行人本机 Worker 发送定向唤醒；在真正领取前，这条记录仍属于待领取状态。若事件通道断线，最多等待下一次 15 秒轮询兜底。';
       }
       if (worker && this.directSkillWorkerOnline(worker)) {
         if (queuedTooLong) {
@@ -20985,23 +20999,18 @@ export default {
       const worker = this.directSkillWorkerForRun(run);
       const online = this.directSkillWorkerOnline(worker);
       if (/pending|queued|created/.test(status)) {
-        if (this.isDirectSkillWorkerReady(worker, run)) {
+        const label = this.directSkillQueuedRunLabel(run);
+        const detail = this.directSkillQueuedRunDetail(run);
+        if (label === '等待本机领取超时' || label === '等待本机上线超时' || label === '待本机自检') {
           return {
-            label: '正在启动本机执行',
-            detail: this.directSkillQueuedRunDetail(run),
-            tone: 'running'
-          };
-        }
-        if (online && !this.isDirectSkillWorkerReady(worker, run)) {
-          return {
-            label: '待本机自检',
-            detail: this.directSkillQueuedRunDetail(run),
+            label,
+            detail,
             tone: 'warning'
           };
         }
         return {
-          label: '待本机上线',
-          detail: this.directSkillQueuedRunDetail(run),
+          label,
+          detail,
           tone: 'muted'
         };
       }
@@ -23404,7 +23413,7 @@ export default {
       if (/conditional/.test(value)) return '有条件通过';
       if (/claimed/.test(value)) return '已领取';
       if (/running|in_progress/.test(value)) return '执行中';
-      if (/queued/.test(value)) return '正在启动本机执行';
+      if (/queued/.test(value)) return '待领取';
       if (/pending|created/.test(value)) return '待启动';
       if (/done|success|passed|completed/.test(value)) return '已完成';
       if (/failed|error/.test(value)) return '执行失败';
@@ -24819,7 +24828,7 @@ export default {
       if (!this.logText || /默认收起|选择一个任务后查看执行日志/.test(this.logText)) {
         await this.loadSelectedRunLog().catch(() => {});
       }
-      if (this.isRunInProgress(this.selectedRun)) this.connectEvents(this.selectedRun.id);
+      if (this.shouldConnectRunEvents(this.selectedRun)) this.connectEvents(this.selectedRun.id);
     },
 
     async deleteSelectedRun() {
@@ -24922,8 +24931,10 @@ export default {
           this.logText = trimRunLogBuffer(`${this.logText}\n[${payload.type}] ${payload.message}\n`);
           this.logPulse += 1;
         }
-        if (payload.status) this.patchRun(runId, { status: payload.status, exitCode: payload.exitCode });
-        if (payload.type === 'stage') this.patchRun(runId, { stages: payload.stages, currentStage: payload.currentStage });
+        if (payload.status) this.patchRun(runId, { status: payload.status, workerStatus: payload.status, exitCode: payload.exitCode });
+        if (payload.stages || payload.currentStage) {
+          this.patchRun(runId, { stages: payload.stages, currentStage: payload.currentStage });
+        }
         if (payload.changeSummary) this.patchRun(runId, { changeSummary: payload.changeSummary });
         if (payload.resultSummary) this.patchRun(runId, { resultSummary: payload.resultSummary });
         if (payload.type === 'done') {

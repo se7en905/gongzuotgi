@@ -2451,7 +2451,7 @@ export async function queueRunForLocalWorker(id, input = {}) {
       finishedAt: '',
       completedAt: '',
       startMode,
-      currentStage: preserveRecoverableContext ? '等待本机恢复执行' : '正在启动本机执行',
+      currentStage: preserveRecoverableContext ? '等待本机恢复执行' : '等待本机 Worker 领取',
       primarySkillContent: existing.primarySkillContent || materialSnapshot,
       blocker: null,
       resultSummary: null,

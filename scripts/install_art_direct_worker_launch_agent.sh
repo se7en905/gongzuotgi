@@ -87,9 +87,9 @@ cat > "${PLIST}" <<PLIST
     <key>ART_WORKER_PROJECT_ROOT</key>
     <string>${ART_WORKER_PROJECT_ROOT:-${ROOT}}</string>
     <key>ART_WORKER_POLL_INTERVAL_MS</key>
-    <string>${ART_WORKER_POLL_INTERVAL_MS:-300000}</string>
+    <string>${ART_WORKER_POLL_INTERVAL_MS:-15000}</string>
     <key>ART_WORKER_HEARTBEAT_INTERVAL_MS</key>
-    <string>${ART_WORKER_HEARTBEAT_INTERVAL_MS:-300000}</string>
+    <string>${ART_WORKER_HEARTBEAT_INTERVAL_MS:-30000}</string>
     <key>ART_WORKER_LOCAL_CHECK_INTERVAL_MS</key>
     <string>${ART_WORKER_LOCAL_CHECK_INTERVAL_MS:-2400000}</string>
     <key>ART_WORKER_HOME</key>

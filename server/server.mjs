@@ -1651,6 +1651,13 @@ async function handleApi(req, res, url) {
       metadata: { deviceId: worker.deviceId, capabilities: worker.capabilities },
       description: `${currentUser.displayName || currentUser.username} 的本机 Worker 领取${run.sourceType === 'direct-skill' || run.executionMode === 'direct-skill' ? '直接执行' : '美术执行'}「${run.title}」`
     });
+    emitRunEvent(run.id, {
+      type: 'status',
+      status: run.status || run.workerStatus || 'claimed',
+      currentStage: run.currentStage || '执行人本机已领取',
+      stages: run.stages || [],
+      message: '本机 Worker 已领取任务。'
+    });
     broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, run, module: 'agent-run' });
     sendJson(res, 200, { run, worker });
     return;
@@ -1699,6 +1706,13 @@ async function handleApi(req, res, url) {
       after: stableRun,
       metadata: { deviceId: worker.deviceId, capabilities: worker.capabilities },
       description: `${currentUser.displayName || currentUser.username} 的本机 Worker 恢复${stableRun.sourceType === 'direct-skill' || stableRun.executionMode === 'direct-skill' ? '直接执行' : '美术执行'}「${stableRun.title}」`
+    });
+    emitRunEvent(stableRun.id, {
+      type: 'status',
+      status: stableRun.status || stableRun.workerStatus || 'claimed',
+      currentStage: stableRun.currentStage || '执行人本机已恢复领取',
+      stages: stableRun.stages || [],
+      message: '本机 Worker 已恢复并继续任务。'
     });
     broadcastPlatformEvent('runs.changed', { projectId: stableRun.projectId, runId: stableRun.id, run: stableRun, module: 'agent-run-recover' });
     sendJson(res, 200, { run: stableRun, worker });
@@ -1763,6 +1777,16 @@ async function handleApi(req, res, url) {
       runId: stableUpdated.id,
       projectId: stableUpdated.projectId
     });
+    emitRunEvent(run.id, {
+      type: 'status',
+      status: stableUpdated.status || stableUpdated.workerStatus || body.status || body.workerStatus || '',
+      exitCode: stableUpdated.exitCode ?? body.exitCode ?? null,
+      currentStage: stableUpdated.currentStage || body.currentStage || '',
+      stages: stableUpdated.stages || [],
+      resultSummary: stableUpdated.resultSummary || null,
+      changeSummary: stableUpdated.changeSummary || null,
+      message: body.message || body.currentStage || ''
+    });
     broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, run: stableUpdated, module: 'agent-run-status' });
     sendJson(res, 200, stableUpdated);
     return;
@@ -1809,6 +1833,16 @@ async function handleApi(req, res, url) {
       sendJson(res, 200, stableUpdated || run);
       return;
     }
+    emitRunEvent(run.id, {
+      type: 'status',
+      status: stableUpdated?.status || stableUpdated?.workerStatus || body.status || body.workerStatus || run.status || run.workerStatus || '',
+      exitCode: stableUpdated?.exitCode ?? body.exitCode ?? null,
+      currentStage: stableUpdated?.currentStage || body.currentStage || '',
+      stages: stableUpdated?.stages || [],
+      resultSummary: stableUpdated?.resultSummary || null,
+      changeSummary: stableUpdated?.changeSummary || null,
+      message: body.message || body.currentStage || '本机 Worker 已同步离线执行进度。'
+    });
     broadcastPlatformEvent('runs.changed', { projectId: run.projectId, runId: run.id, run: stableUpdated || run, module: 'agent-run-offline-sync' });
     sendJson(res, 200, stableUpdated || run);
     return;
@@ -2583,7 +2617,7 @@ async function handleApi(req, res, url) {
       executionHost: body.executionHost || 'local-worker',
       workerExecution: true,
       workerStatus: body.workerStatus || 'queued',
-      currentStage: body.currentStage || '正在启动本机执行'
+      currentStage: body.currentStage || '等待本机 Worker 领取'
     });
     await writeOperationLog(req, {
       user: currentUser,
@@ -2728,6 +2762,13 @@ async function handleApi(req, res, url) {
       after: queued,
       metadata: { executionHost: 'local-worker', queuedForUserId: targetUserId, startMode },
       description: `${currentUser.displayName || currentUser.username} 将执行「${run.title}」排队到${targetUserName || '执行人'}本机 Worker`
+    });
+    emitRunEvent(run.id, {
+      type: 'status',
+      status: queued.status || queued.workerStatus || 'queued',
+      currentStage: queued.currentStage || '等待本机 Worker 领取',
+      stages: queued.stages || [],
+      message: '已排队到本机 Worker，等待领取。'
     });
     broadcastPlatformEvent('runs.changed', {
       projectId: project.id,
