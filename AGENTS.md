@@ -392,6 +392,12 @@
   - 美术执行台里的普通执行记录，负责人或组员点击 `发起执行`、`我来继续执行`、`继续执行` 或 `重新执行` 时，必须排队给当前点击账号的本机 Worker 领取执行；不得再由工作台服务器或负责人 Mac 直接启动 Codex 跑普通执行。
   - 美术执行台启动普通执行的核心目的，是避免组员操作时消耗负责人 Mac 上的 Codex key、token、Figma OAuth 或 Figma MCP 授权；平台不得回退到负责人 Mac、本机服务器或平台侧 Codex/Figma 凭据执行。
   - 谁点击启动，就必须使用谁自己电脑上的 Codex CLI 登录态、Codex key/token、Figma MCP、Figma OAuth 和 Figma 文件权限；执行失败也只能提示该操作人补齐本机授权，不得自动改用负责人 Mac 的授权兜底。
+  - 工作台本机 Worker 执行 Codex 的主链路是执行人电脑上的 `codex exec --json`；已经能通过该链路完成 `figma.use_figma completed` 的组员，默认不得强制改用新启动器、Figma 插件、本地桥接或其它兜底方式，也不得要求其重装、重新复制命令或更换操作习惯。
+  - 个别 Windows 组员出现 `use_figma` 调用被取消、工具列表缺少 `use_figma`、或 Figma 写入失败时，默认先按执行人本机环境问题处理：核对 Codex 桌面端是否可用、Figma Desktop 是否打开目标文件、Worker 实际调用的 `CODEX_HOME` 是否为当前 Windows 用户 `.codex`、`CODEX_CLI_PATH` 是否为真实 `codex.exe`、`codex exec --json` 是否能注入 `figma.use_figma`。不得在证据不足时判定为工作台整体逻辑错误。
+  - `codex mcp list` 能看到 `figma enabled OAuth` 只代表 Figma MCP 配置存在，不等于本次 `codex exec --json` 会话一定注入了可调用的 `figma.use_figma` 写入工具；任务完成必须以实际日志里的 `figma.use_figma completed`、`createdNodeIds` 或 `mutatedNodeIds` 等写入证据为准。
+  - Figma 写入失败排查时，不得反复要求所有组员统一重跑命令或切换插件。只有失败人员本机 Worker 黑窗口、Codex/Figma 授权、`CODEX_CLI_PATH`、`CODEX_HOME`、`codex --version`、`codex mcp list` 或任务日志证明其本机环境异常时，才要求该执行人单独处理本机环境。
+  - Figma 插件、本地桥接服务、前台启动器、自动补齐 `approval_mode` 或 trusted project 等只属于兜底或诊断增强；负责人未明确确认前，不得把它们替换成全员默认执行链路，也不得影响原本可用成员继续按原命令方式执行。
+  - Windows 前台启动器只能作为单独排障入口保留，不得擅自混入 `复制 Windows 开机自启/立即生效` 原本命令，也不得让安装脚本默认改走前台启动器路径；默认 Windows Worker 开机自启路径必须继续使用当前账号计划任务。
   - 普通执行点击启动时只负责把当前执行记录排队给当前点击账号；不得因为该账号 Worker 当场未在线、Codex 未就绪或 Figma MCP 未就绪而拒绝排队，也不得要求已经按最新命令启动过 Worker 的组员重复执行命令。
   - 平台服务重启、前端发布或 Worker 脚本更新后，已在线的 Windows 计划任务 Worker 和 macOS LaunchAgent Worker 必须自动连回并拉取最新脚本或配置；默认不得把“让所有组员重新复制命令”当成发布后立即生效的主路径。
   - Worker 每次领取新任务前必须再次强制校验所需脚本、版本和任务资料是否为最新；只有 Worker 离线、Windows 计划任务异常、macOS LaunchAgent 异常或本机自检损坏时，才提示组员重新执行手动启动或开机自启命令。
@@ -997,6 +1003,8 @@
   - 禁止平台保存、转发或复用任何人的 Figma OAuth token。
   - 禁止让工作台管理者 admin 的本机 Figma 授权代替组员授权。
   - 禁止把 Figma 写入依赖负责人电脑、本机插件或服务器 Figma 环境。
+  - 禁止因为少数组员机器 `use_figma` 被取消、`codex exec --json` 未注入写入工具或本机 Codex/Figma 环境异常，就擅自修改工作台默认执行链路、强制全员换启动器、改走插件桥接或影响已经能正常 `figma.use_figma completed` 的成员。
+  - 禁止把单独排障用的 Windows 前台启动器塞回默认开机自启命令或默认安装脚本。
   - 禁止只生成本地脚本或提示词就声称 Figma 写入完成。
   - 禁止直接执行 Worker 领取或回传不属于当前执行人的任务。
   - 禁止直接执行 Worker 在执行人本机下载目录里调用 `codex exec` 时漏掉 `--skip-git-repo-check`。
