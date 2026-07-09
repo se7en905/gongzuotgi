@@ -1481,6 +1481,16 @@ export async function updateAgentRunFromWorker(runId, input = {}) {
     if (index === -1) return { changed: false, value: null };
     const now = new Date().toISOString();
     const existing = runs[index];
+    if (isResumeGenerationStale(existing, input)) {
+      const hydrated = await hydrateRunStages(existing);
+      return {
+        changed: false,
+        value: {
+          ...hydrated,
+          _changed: false
+        }
+      };
+    }
     if (isCancelledRunStatus(existing.status) || isCancelledRunStatus(existing.workerStatus)) {
       const hydrated = await hydrateRunStages(existing);
       return {
@@ -2277,10 +2287,12 @@ export async function applyAgentRunEvents(runId, input = {}) {
         continue;
       }
       if (event.type === 'status') {
+        if (isResumeGenerationStale(next, event)) continue;
         next = mergeAgentRunStatusEvent(next, event);
         continue;
       }
       if (event.type === 'stage') {
+        if (isResumeGenerationStale(next, event)) continue;
         next = mergeAgentRunStageEvent(next, event);
         continue;
       }
@@ -2402,15 +2414,26 @@ export async function queueRunForLocalWorker(id, input = {}) {
     if (index === -1) return { changed: false, value: null };
     const now = new Date().toISOString();
     const existing = ensureRunArtifactRootFromExistingFiles(await ensureRunMaterialSnapshotsForQueue(runs[index]));
+    const startMode = input.startMode || existing.startMode || 'start';
     const queuedForUserId = cleanString(input.queuedForUserId || input.userId || existing.queuedForUserId || existing.assignedToUserId || existing.ownerUserId);
     const queuedForName = cleanString(input.queuedForName || input.userName || existing.queuedForName || existing.assignedToName || existing.developer);
     const queuedForAccount = cleanString(input.queuedForAccount || input.account || existing.queuedForAccount)
       || await resolveRunUserAccountByIdOrName([queuedForUserId, queuedForName]);
     const materialSnapshot = await readRunMaterialSnapshot(existing);
+    const preserveRecoverableContext = startMode === 'resume'
+      && isWorkerExecutableRun(existing)
+      && Boolean(
+        cleanString(existing.claimedByDeviceId)
+        || cleanString(existing.claimedAt)
+        || cleanString(existing.startedAt)
+        || cleanString(existing.workerLocalLogPath)
+        || cleanString(existing.logPath)
+      );
+    const nextStatus = preserveRecoverableContext ? 'claimed' : 'queued';
     runs[index] = {
       ...existing,
-      status: 'queued',
-      workerStatus: 'queued',
+      status: nextStatus,
+      workerStatus: nextStatus,
       executionHost: 'local-worker',
       workerExecution: true,
       queuedForUserId,
@@ -2420,29 +2443,30 @@ export async function queueRunForLocalWorker(id, input = {}) {
       assignedToUserId: queuedForUserId || existing.assignedToUserId || existing.ownerUserId || '',
       assignedToName: queuedForName || existing.assignedToName || existing.developer || '',
       assignedToAccount: queuedForAccount || existing.assignedToAccount || '',
-      claimedByDeviceId: '',
-      claimedAt: '',
+      claimedByDeviceId: preserveRecoverableContext ? cleanString(existing.claimedByDeviceId) : '',
+      claimedAt: preserveRecoverableContext ? cleanString(existing.claimedAt || now) : '',
       startedBy: queuedForUserId || existing.startedBy || '',
       startedByAccount: queuedForAccount || existing.startedByAccount || '',
-      startedAt: '',
+      startedAt: preserveRecoverableContext ? cleanString(existing.startedAt) : '',
       finishedAt: '',
       completedAt: '',
-      startMode: input.startMode || existing.startMode || 'start',
-      currentStage: '正在启动本机执行',
+      startMode,
+      currentStage: preserveRecoverableContext ? '等待本机恢复执行' : '正在启动本机执行',
       primarySkillContent: existing.primarySkillContent || materialSnapshot,
       blocker: null,
       resultSummary: null,
-      workerResult: null,
+      workerResult: preserveRecoverableContext ? existing.workerResult || null : null,
       figmaWriteResult: null,
       strictCheck: null,
       exitCode: null,
-      pid: null,
-      workerLocalLogPath: '',
-      workerLocalLogSize: 0,
-      logPath: '',
-      promptPath: '',
+      pid: preserveRecoverableContext ? existing.pid ?? null : null,
+      workerLocalLogPath: preserveRecoverableContext ? cleanString(existing.workerLocalLogPath) : '',
+      workerLocalLogSize: preserveRecoverableContext ? Number(existing.workerLocalLogSize || 0) || 0 : 0,
+      logPath: preserveRecoverableContext ? cleanString(existing.logPath) : '',
+      promptPath: preserveRecoverableContext ? cleanString(existing.promptPath) : '',
       artifactRoot: existing.artifactRoot || '',
-      stages: [],
+      stages: preserveRecoverableContext ? normalizeRunStages(existing.stages) : [],
+      workerEventIds: preserveRecoverableContext ? normalizeLineList(existing.workerEventIds) : [],
       updatedAt: now
     };
     return { changed: true, value: await hydrateRunStages(runs[index]) };
@@ -8345,6 +8369,48 @@ function isWorkerExecutableRun(run = {}) {
     || run.executionMode === 'direct-skill'
     || run.executionHost === 'local-worker'
     || run.workerExecution === true;
+}
+
+function isResumeGenerationStale(run = {}, payload = {}) {
+  if (!isWorkerExecutableRun(run)) return false;
+  if (cleanString(run.startMode) !== 'resume') return false;
+  const queuedAtMs = Date.parse(run.queuedAt || '') || 0;
+  if (!queuedAtMs) return false;
+  const incomingStartedAt = cleanString(payload.startedAt || payload?.workerResult?.startedAt || '');
+  const incomingDeviceId = cleanString(
+    payload.claimedByDeviceId
+    || payload.deviceId
+    || payload?.workerResult?.deviceId
+    || payload?.worker?.deviceId
+  );
+  const incomingLocalLogPath = cleanString(
+    payload.workerLocalLogPath
+    || payload.localLogPath
+    || payload?.workerResult?.localLogPath
+  );
+  const existingStartedAt = cleanString(run.startedAt);
+  const existingDeviceId = cleanString(run.claimedByDeviceId);
+  const existingLocalLogPath = cleanString(run.workerLocalLogPath || run?.workerResult?.localLogPath || '');
+  const hasRecoverableContext = Boolean(
+    existingStartedAt
+    || existingDeviceId
+    || existingLocalLogPath
+    || cleanString(run.claimedAt)
+    || cleanString(run.logPath)
+  );
+  const matchesRecoveredExecution = Boolean(
+    (incomingStartedAt && existingStartedAt && incomingStartedAt === existingStartedAt)
+    || (incomingDeviceId && existingDeviceId && incomingDeviceId === existingDeviceId)
+    || (incomingLocalLogPath && existingLocalLogPath && incomingLocalLogPath === existingLocalLogPath)
+  );
+  if (hasRecoverableContext && matchesRecoveredExecution) return false;
+  const startedAtMs = Date.parse(incomingStartedAt) || 0;
+  if (startedAtMs) return startedAtMs < queuedAtMs;
+  const currentStatus = normalizeWorkerRunStatus(run.status || run.workerStatus || '');
+  const incomingStatus = normalizeWorkerRunStatus(payload.status || payload.workerStatus || '');
+  return !hasRecoverableContext
+    && /queued|pending|claimed/.test(currentStatus)
+    && /running|claimed/.test(incomingStatus);
 }
 
 function workerCanExecuteRun(run = {}, capabilities = []) {

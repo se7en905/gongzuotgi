@@ -90,7 +90,7 @@
       </div>
       <div>
         <strong>需要组员操作</strong>
-        <p>默认不需要让组员再跑一遍命令。只有对应电脑的 Worker 长时间离线、计划任务 / LaunchAgent 丢失，或平台状态页持续显示不可执行时，才让该组员重执行一次 `复制 Windows 开机自启/立即生效` 或 `复制 macOS 开机自启/立即生效` 命令。</p>
+        <p>默认不需要让组员再跑一遍命令。只有对应电脑的 Worker 长时间离线、计划任务 / LaunchAgent 丢失，或平台状态页持续显示离线 / Codex 未就绪时，才让该组员重执行一次 `复制 Windows 开机自启/立即生效` 或 `复制 macOS 开机自启/立即生效` 命令。</p>
       </div>
       <div>
         <strong>已运行任务</strong>
@@ -112,7 +112,7 @@
               <path class="agent-heartbeat-trail" d="M2 22 C14 22, 18 14, 29 15 C39 16, 43 22, 52 22 C61 22, 63 7, 71 7 C80 7, 82 22, 91 22 C101 22, 104 17, 110 17" />
               <path class="agent-heartbeat-draw" d="M2 22 C14 22, 18 14, 29 15 C39 16, 43 22, 52 22 C61 22, 63 7, 71 7 C80 7, 82 22, 91 22 C101 22, 104 17, 110 17" />
             </svg>
-            <span v-else>{{ row.runningWhileDisconnected ? '待补传' : row.online ? '不可执行' : row.installed ? '离线' : '未安装' }}</span>
+            <span v-else>{{ app.directSkillWorkerHeadlineStatus(row) }}</span>
           </div>
         </div>
         <div class="agent-worker-state-grid">

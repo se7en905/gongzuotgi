@@ -20543,13 +20543,22 @@ export default {
     },
 
     directSkillMemberReadyLabel(row = {}) {
-      if (row.ready) return '可自动领取';
+      if (row.ready) return '可接 Figma / 普通任务';
       if (row.runningWhileDisconnected) return '本机执行中，等待补传';
       if (!row.worker) return '未安装 Worker';
       if (!row.online) return 'Worker 离线';
       if (!row.codexReady) return 'Codex 未就绪';
-      if (!row.figmaMcpReady) return 'Figma MCP 未就绪';
+      if (!row.figmaMcpReady) return '可接普通任务，Figma 未就绪';
       return '待检查';
+    },
+
+    directSkillWorkerHeadlineStatus(row = {}) {
+      if (row.runningWhileDisconnected) return '待补传';
+      if (!row.worker) return '未安装';
+      if (!row.online) return row.installed ? '离线' : '未安装';
+      if (!row.codexReady) return 'Codex 未就绪';
+      if (!row.figmaMcpReady) return '可接普通任务';
+      return '可接 Figma';
     },
 
     directSkillMemberReadyTagType(row = {}) {
@@ -27181,7 +27190,7 @@ function shouldKeepRunLogLine(line = '') {
   if (/^(OpenAI Codex|workdir:|model:|provider:|approval:|sandbox:|reasoning effort:|reasoning summaries:|session id:|user$)/i.test(trimmed)) return false;
   if (/^(tokens used|thinking|cached|--------|={3,})/i.test(trimmed)) return false;
   if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) return false;
-  if (/^\[stdout\]|\[stderr\]|\[error\]|\[done\]/i.test(trimmed)) return true;
+  if (/^\[(stdout|stderr|error|done|worker)\]/i.test(trimmed)) return true;
   if (/^(#{1,6}\s*)?(任务开始|开始执行|执行任务|阶段|当前阶段|步骤|命令|运行命令|验证命令|结果|执行结果|最终状态|状态|报错|错误|失败|阻塞|runner error|Codex exited|修改或生成的关键文件|运行过的验证命令|报告\/截图\/日志产物路径|影响范围|下一步|阻塞原因)/i.test(trimmed)) return true;
   if (/^(#{1,6}\s*)?(需求解析|资料整理|接口|设计确认|页面实现|联调|多语言|运行验证|兼容检查|代码审查|质检报告|交付报告|冒烟验证|自动修复)/i.test(trimmed)) return true;
   if (/^\s*[-*]\s+/.test(text) && /(命令|文件|路径|状态|结果|失败|错误|阻塞|报告|截图|日志|pnpm|npm|yarn|git|node|codex)/i.test(trimmed)) return true;

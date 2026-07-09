@@ -1615,6 +1615,10 @@ function escapeRegExp(value = '') {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function uniqueStrings(values = []) {
+  return [...new Set((Array.isArray(values) ? values : []).map(value => String(value || '').trim()).filter(Boolean))];
+}
+
 function trustedCodexProjectPaths() {
   return uniqueStrings([
     process.cwd(),
