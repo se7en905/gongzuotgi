@@ -593,6 +593,9 @@ async function executeRun(run) {
   let rawStdoutText = '';
   let stderrText = '';
   let child = null;
+  let lastOutputAt = Date.now();
+  let sawCodexOutput = false;
+  let killedByWatchdog = '';
   try {
     child = spawn(codexPath, args, {
       cwd,
@@ -601,6 +604,29 @@ async function executeRun(run) {
     });
     const execution = activeExecutionMeta(run.id);
     if (execution) execution.child = child;
+    child.on('error', error => {
+      stderrText += `\nCodex 启动失败：${error.message}\n`;
+    });
+    child.stdout.on('data', chunk => {
+      lastOutputAt = Date.now();
+      sawCodexOutput = true;
+      const text = chunk.toString();
+      rawStdoutText += text;
+      if (rawStdoutText.length > 200000) rawStdoutText = rawStdoutText.slice(-200000);
+      finalText += collectReadableJsonl(text);
+      void appendLocalRunLog(run.id, text);
+      void safeAppendRunLog(run.id, text);
+      process.stdout.write(text);
+    });
+    child.stderr.on('data', chunk => {
+      lastOutputAt = Date.now();
+      sawCodexOutput = true;
+      const text = chunk.toString();
+      stderrText += text;
+      void appendLocalRunLog(run.id, text);
+      void safeAppendRunLog(run.id, text);
+      process.stderr.write(text);
+    });
     const pidLogLine = `[worker] Codex 进程已启动，pid=${child.pid || 'unknown'}\n`;
     await appendLocalRunLog(run.id, pidLogLine);
     await safeAppendRunLog(run.id, pidLogLine);
@@ -623,32 +649,6 @@ async function executeRun(run) {
     await failRunBeforeCodex(run, `Codex 启动失败：${error.message}`);
     return;
   }
-  let lastOutputAt = Date.now();
-  let sawCodexOutput = false;
-  let killedByWatchdog = '';
-  child.on('error', error => {
-    stderrText += `\nCodex 启动失败：${error.message}\n`;
-  });
-  child.stdout.on('data', chunk => {
-    lastOutputAt = Date.now();
-    sawCodexOutput = true;
-    const text = chunk.toString();
-    rawStdoutText += text;
-    if (rawStdoutText.length > 200000) rawStdoutText = rawStdoutText.slice(-200000);
-    finalText += collectReadableJsonl(text);
-    void appendLocalRunLog(run.id, text);
-    void safeAppendRunLog(run.id, text);
-    process.stdout.write(text);
-  });
-  child.stderr.on('data', chunk => {
-    lastOutputAt = Date.now();
-    sawCodexOutput = true;
-    const text = chunk.toString();
-    stderrText += text;
-    void appendLocalRunLog(run.id, text);
-    void safeAppendRunLog(run.id, text);
-    process.stderr.write(text);
-  });
   try {
     child.stdin.end(prompt);
   } catch (error) {
@@ -1441,12 +1441,12 @@ function codexRunArgs(run = {}) {
   const request = run.codexRequest && typeof run.codexRequest === 'object' ? run.codexRequest : {};
   const args = [];
   if (String(process.env.ART_WORKER_FORCE_CODEX_MCP_FEATURES || '1').trim() !== '0') {
-    args.push(
-      '--enable', 'rmcp_client',
-      '--enable', 'plugins',
-      '--enable', 'enable_mcp_apps',
-      '-c', 'mcp_servers.figma.tools.use_figma.approval_mode="approve"'
-    );
+    const features = String(process.env.ART_WORKER_CODEX_FEATURES || 'plugins,enable_mcp_apps')
+      .split(/[,，\s]+/)
+      .map(item => item.trim())
+      .filter(Boolean);
+    for (const feature of features) args.push('--enable', feature);
+    args.push('-c', 'mcp_servers.figma.tools.use_figma.approval_mode="approve"');
   }
   const model = String(request.model || process.env.ART_WORKER_CODEX_MODEL || '').trim();
   const reasoningEffort = String(request.reasoningEffort || request.modelReasoningEffort || process.env.ART_WORKER_CODEX_REASONING_EFFORT || '').trim();
@@ -1594,11 +1594,8 @@ async function ensureCodexFigmaUseApprovalConfig() {
   };
 
   if (!hasTomlSection(next, 'features')) {
-    appendBlock('[features]\nrmcp_client = true\nenable_mcp_apps = true');
+    appendBlock('[features]\nenable_mcp_apps = true');
   } else {
-    const featureResult = ensureTomlSectionKey(next, 'features', 'rmcp_client', 'true');
-    next = featureResult.text;
-    changed = changed || featureResult.changed;
     const appResult = ensureTomlSectionKey(next, 'features', 'enable_mcp_apps', 'true');
     next = appResult.text;
     changed = changed || appResult.changed;
