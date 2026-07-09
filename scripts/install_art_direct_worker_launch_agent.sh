@@ -7,8 +7,18 @@ PLIST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
 NODE_BIN="$(command -v node)"
 DEFAULT_CODEX_CLI="/Applications/Codex.app/Contents/Resources/codex"
 WORKER_PATH="${ART_WORKER_PATH:-/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
+POLL_INTERVAL_MS="${ART_WORKER_POLL_INTERVAL_MS:-15000}"
+HEARTBEAT_INTERVAL_MS="${ART_WORKER_HEARTBEAT_INTERVAL_MS:-30000}"
 LOG_DIR="${ROOT}/logs"
 RUNNER="${ROOT}/scripts/run-art-direct-worker.sh"
+
+if [[ "${POLL_INTERVAL_MS}" == "300000" ]]; then
+  POLL_INTERVAL_MS="15000"
+fi
+
+if [[ "${HEARTBEAT_INTERVAL_MS}" == "300000" ]]; then
+  HEARTBEAT_INTERVAL_MS="30000"
+fi
 
 if [[ -z "${ART_PLATFORM_API:-}" ]]; then
   echo "缺少 ART_PLATFORM_API，例如：http://127.0.0.1:4288" >&2
@@ -87,9 +97,9 @@ cat > "${PLIST}" <<PLIST
     <key>ART_WORKER_PROJECT_ROOT</key>
     <string>${ART_WORKER_PROJECT_ROOT:-${ROOT}}</string>
     <key>ART_WORKER_POLL_INTERVAL_MS</key>
-    <string>${ART_WORKER_POLL_INTERVAL_MS:-15000}</string>
+    <string>${POLL_INTERVAL_MS}</string>
     <key>ART_WORKER_HEARTBEAT_INTERVAL_MS</key>
-    <string>${ART_WORKER_HEARTBEAT_INTERVAL_MS:-30000}</string>
+    <string>${HEARTBEAT_INTERVAL_MS}</string>
     <key>ART_WORKER_LOCAL_CHECK_INTERVAL_MS</key>
     <string>${ART_WORKER_LOCAL_CHECK_INTERVAL_MS:-2400000}</string>
     <key>ART_WORKER_HOME</key>

@@ -56,6 +56,7 @@ let lockOwned = false;
 let offlineQueueOperation = Promise.resolve();
 let workerEnvOverrides = {};
 let activeExecution = null;
+let shutdownInProgress = false;
 let localChecks = {
   codexReady: false,
   figmaMcpReady: false,
@@ -97,6 +98,41 @@ main().catch(error => {
   console.error(`[worker] 启动失败：${error.message}`);
   process.exitCode = 1;
 });
+
+process.once('SIGTERM', () => {
+  void shutdownWorker('SIGTERM');
+});
+
+process.once('SIGINT', () => {
+  void shutdownWorker('SIGINT');
+});
+
+async function shutdownWorker(signal = 'SIGTERM') {
+  if (shutdownInProgress) return;
+  shutdownInProgress = true;
+  const execution = activeExecution;
+  if (execution?.runId) {
+    const message = `[worker] 本机 Worker 收到 ${signal}，当前执行被本机重启或停止中断。请继续执行或重新执行。`;
+    try {
+      if (execution.child && execution.child.exitCode === null) execution.child.kill('SIGTERM');
+    } catch {
+    }
+    await appendLocalRunLog(execution.runId, `\n${message}\n`).catch(() => {});
+    await safeAppendRunLog(execution.runId, `\n${message}\n`).catch(() => {});
+    await safeUpdateRunStatus(execution.runId, {
+      status: 'blocked',
+      workerStatus: 'blocked',
+      currentStage: '本机 Worker 已重启',
+      blocker: { reason: message },
+      resultSummary: {
+        status: 'blocked',
+        summary: message,
+        nextStep: '请在工作台点击继续执行或重新执行，重新获取实际 Codex 操作日志。'
+      }
+    }).catch(() => {});
+  }
+  process.exit(signal === 'SIGINT' ? 130 : 143);
+}
 
 async function main() {
   workerEnvOverrides = await loadWorkerEnvOverrides();
@@ -620,6 +656,23 @@ async function executeRun(run) {
   }
 
   const heartbeatTimer = startExecutionHeartbeat(run.id);
+  let lastNoOutputNoticeAt = 0;
+  const noOutputNoticeTimer = setInterval(() => {
+    if (sawCodexOutput || killedByWatchdog) return;
+    const now = Date.now();
+    const silentForMs = now - lastOutputAt;
+    if (silentForMs < 60000 || now - lastNoOutputNoticeAt < 60000) return;
+    lastNoOutputNoticeAt = now;
+    const notice = `[worker] Codex 进程已启动 ${Math.round(silentForMs / 1000)} 秒，暂未收到 stdout/stderr 输出。`;
+    void appendLocalRunLog(run.id, `\n${notice}\n`);
+    void safeAppendRunLog(run.id, `\n${notice}\n`);
+    void safeUpdateRunStatus(run.id, {
+      status: 'running',
+      workerStatus: 'running',
+      currentStage: '本机 Codex 已启动，等待输出',
+      workerLocalLogPath: runLogPath(run.id)
+    }).catch(() => {});
+  }, 15000);
   const watchdogTimer = setInterval(() => {
     if (killedByWatchdog) return;
     const now = Date.now();
@@ -648,6 +701,7 @@ async function executeRun(run) {
   }, Math.max(30000, Math.min(60000, codexNoOutputTimeoutMs)));
   const exitCode = await waitForChild(child);
   if (heartbeatTimer) clearInterval(heartbeatTimer);
+  if (noOutputNoticeTimer) clearInterval(noOutputNoticeTimer);
   if (watchdogTimer) clearInterval(watchdogTimer);
   const finishedAt = new Date().toISOString();
   const durationMs = Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt));
@@ -3400,14 +3454,21 @@ function collectReadableJsonl(text = '') {
 function waitForChild(child) {
   return new Promise(resolve => {
     let settled = false;
+    let exitCode = -1;
+    let exitFallback = null;
     const finish = code => {
       if (settled) return;
       settled = true;
+      if (exitFallback) clearTimeout(exitFallback);
       resolve(Number(code ?? -1));
     };
     child.on('error', () => finish(-1));
-    child.on('exit', code => finish(Number(code ?? -1)));
-    child.on('close', code => finish(Number(code || 0)));
+    child.on('exit', code => {
+      exitCode = Number(code ?? -1);
+      exitFallback = setTimeout(() => finish(exitCode), 5000);
+      exitFallback.unref?.();
+    });
+    child.on('close', code => finish(Number(code ?? exitCode ?? 0)));
   });
 }
 
