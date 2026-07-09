@@ -1486,8 +1486,8 @@ async function runLocalChecks() {
 }
 
 async function checkLocalFigmaBridge() {
-  const port = String(process.env.FIGMA_BRIDGE_PORT || workerEnvOverrides.FIGMA_BRIDGE_PORT || '9530').trim() || '9530';
-  const url = `http://127.0.0.1:${port}/health`;
+  const port = String(process.env.FIGMA_BRIDGE_PORT || workerEnvOverrides.FIGMA_BRIDGE_PORT || figmaBridgePort).trim() || '9530';
+  const url = `${normalizeBaseUrl(process.env.FIGMA_BRIDGE_BASE || `http://127.0.0.1:${port}`)}/health`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.min(localCheckTimeoutMs, 3000));
   try {
@@ -1514,6 +1514,153 @@ async function checkLocalFigmaBridge() {
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function tryFigmaBridgeFallback(run = {}, figmaWriteResult = {}, combinedText = '') {
+  if (!figmaWriteResult.required || figmaWriteResult.written === true) {
+    return { attempted: false, ok: false, error: '' };
+  }
+  const blocker = figmaWriteResult.blockerReason || extractFigmaToolBlockerReason(combinedText);
+  const shouldFallback = !figmaWriteResult.written
+    && (/use_figma|Figma MCP|MCP|cancelled|canceled|failed|error|未检测到|调用被取消|授权|OAuth|permission|denied/i.test(`${combinedText}\n${blocker}`)
+      || localChecks.figmaBridgePluginConnected === true
+      || localChecks.figmaBridgeReady === true);
+  if (!shouldFallback) return { attempted: false, ok: false, error: '' };
+
+  const health = await fetchFigmaBridgeHealth().catch(error => ({
+    ok: false,
+    ready: false,
+    error: error.message || String(error)
+  }));
+  if (!health.ready) {
+    return {
+      attempted: true,
+      ok: false,
+      error: `Figma 本机中转不可用：${health.error || health.message || '插件未连接'}`
+    };
+  }
+
+  const taskText = buildFigmaBridgeFallbackText(run, blocker || figmaWriteResult.blockerReason || '');
+  const payload = {
+    type: 'create-text',
+    text: taskText,
+    x: 120,
+    y: 120,
+    payload: {
+      runId: run.id || '',
+      title: run.title || '',
+      figmaLinks: run.figmaLinks || '',
+      reason: blocker || figmaWriteResult.blockerReason || ''
+    }
+  };
+  try {
+    const result = await postFigmaBridgeTask(payload, figmaBridgeFallbackTimeoutMs);
+    const bridgeResult = result.result || result;
+    const createdNodeIds = normalizeStringList(bridgeResult.createdNodeIds);
+    const mutatedNodeIds = normalizeStringList(bridgeResult.mutatedNodeIds);
+    if (!createdNodeIds.length && !mutatedNodeIds.length) {
+      return {
+        attempted: true,
+        ok: false,
+        error: 'Figma 本机中转已响应，但没有返回 createdNodeIds / mutatedNodeIds。'
+      };
+    }
+    return {
+      attempted: true,
+      ok: true,
+      createdNodeIds,
+      mutatedNodeIds,
+      evidence: [
+        `Figma 本机中转兜底写入成功：createdNodeIds=[${createdNodeIds.join(',')}] mutatedNodeIds=[${mutatedNodeIds.join(',')}]`
+      ],
+      blockerReason: blocker || figmaWriteResult.blockerReason || ''
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      ok: false,
+      error: `Figma 本机中转写入失败：${error.message || String(error)}`
+    };
+  }
+}
+
+async function fetchFigmaBridgeHealth() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.min(localCheckTimeoutMs, 5000));
+  try {
+    const response = await fetch(`${figmaBridgeBase}/health`, { signal: controller.signal });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const pluginConnected = data.pluginConnected === true || data.plugin?.connected === true;
+    return {
+      ...data,
+      ready: pluginConnected === true,
+      error: pluginConnected ? '' : '本机中转服务已启动，但 Figma 插件窗口未连接。'
+    };
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error(`连接超时：${figmaBridgeBase}/health`);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function postFigmaBridgeTask(task = {}, waitMs = figmaBridgeFallbackTimeoutMs) {
+  const controller = new AbortController();
+  const timeoutMs = Math.max(5000, Number(waitMs || figmaBridgeFallbackTimeoutMs));
+  const timer = setTimeout(() => controller.abort(), timeoutMs + 5000);
+  try {
+    const response = await fetch(`${figmaBridgeBase}/tasks?waitMs=${encodeURIComponent(String(timeoutMs))}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(task),
+      signal: controller.signal
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.ok !== true) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+    if (data.pending) throw new Error('中转任务已发送，但等待插件回传超时。请确认 Figma 插件窗口保持打开。');
+    return data;
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error(`连接超时：${figmaBridgeBase}/tasks`);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function buildFigmaBridgeFallbackText(run = {}, reason = '') {
+  return [
+    'ArtPlatform Figma bridge fallback',
+    `Run: ${String(run.title || run.id || '').slice(0, 80)}`,
+    run.figmaLinks ? `Target: ${String(run.figmaLinks).slice(0, 120)}` : '',
+    reason ? `Reason: ${String(reason).slice(0, 160)}` : '',
+    `At: ${new Date().toISOString()}`
+  ].filter(Boolean).join('\n');
+}
+
+function mergeFigmaBridgeFallbackEvidence(figmaWriteResult = {}, fallback = {}) {
+  const createdNodeIds = [
+    ...normalizeStringList(figmaWriteResult.createdNodeIds),
+    ...normalizeStringList(fallback.createdNodeIds)
+  ];
+  const mutatedNodeIds = [
+    ...normalizeStringList(figmaWriteResult.mutatedNodeIds),
+    ...normalizeStringList(fallback.mutatedNodeIds)
+  ];
+  return {
+    ...figmaWriteResult,
+    written: true,
+    createdNodeIds: [...new Set(createdNodeIds)].slice(0, 80),
+    mutatedNodeIds: [...new Set(mutatedNodeIds)].slice(0, 120),
+    evidence: [
+      ...(Array.isArray(figmaWriteResult.evidence) ? figmaWriteResult.evidence : []),
+      ...(Array.isArray(fallback.evidence) ? fallback.evidence : [])
+    ],
+    partialWrite: true,
+    blockerReason: '原生 use_figma 未完成；已通过 Figma 本机中转创建兜底写入标记，但需要人工确认业务内容是否完整落到目标。'
+  };
 }
 
 async function checkLocalImage2Config() {
