@@ -2,6 +2,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import dns from 'node:dns/promises';
+import { accessSync, constants as fsConstants } from 'node:fs';
 import { access, appendFile, mkdir, readFile, writeFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -1525,13 +1526,45 @@ function runnerExitStatePayload() {
 
 function resolveCodexPath() {
   const configured = String(process.env.CODEX_CLI_PATH || '').trim();
-  if (configured && !/\\WindowsApps\\/i.test(configured)) return configured;
+  if (configured && !/\\WindowsApps\\/i.test(configured) && isExecutableFile(configured)) return configured;
   if (configured && /\\WindowsApps\\/i.test(configured)) {
     console.error('[worker] 已忽略 WindowsApps Codex 应用别名路径，改用真实 Codex CLI 候选路径。');
+  } else if (configured) {
+    console.error(`[worker] 已忽略不可用的 CODEX_CLI_PATH：${configured}`);
   }
   const windowsBundled = path.join(workerHome, 'node_modules', '@openai', 'codex-win32-x64', 'vendor', 'x86_64-pc-windows-msvc', 'bin', 'codex.exe');
   if (os.platform() === 'win32') return windowsBundled;
+  for (const candidate of [
+    resolveExecutableFromPath('codex'),
+    '/Applications/ChatGPT.app/Contents/Resources/codex',
+    '/Applications/Codex.app/Contents/Resources/codex',
+    '/opt/homebrew/bin/codex',
+    '/usr/local/bin/codex'
+  ]) {
+    if (candidate && isExecutableFile(candidate)) return candidate;
+  }
   return 'codex';
+}
+
+function resolveExecutableFromPath(binaryName) {
+  const pathValue = String(process.env.PATH || '').trim();
+  if (!pathValue) return '';
+  for (const dir of pathValue.split(path.delimiter)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, binaryName);
+    if (isExecutableFile(candidate)) return candidate;
+  }
+  return '';
+}
+
+function isExecutableFile(filePath) {
+  if (!filePath || !path.isAbsolute(filePath)) return false;
+  try {
+    accessSync(filePath, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function workerStageName(run = {}) {

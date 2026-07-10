@@ -5,12 +5,32 @@ ROOT="${ART_WORKER_HOME:-${HOME}/ArtDirectWorker}"
 LABEL="com.artproject.art-direct-worker.${ART_PLATFORM_USERNAME:-user}"
 PLIST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
 NODE_BIN="$(command -v node)"
-DEFAULT_CODEX_CLI="/Applications/Codex.app/Contents/Resources/codex"
 WORKER_PATH="${ART_WORKER_PATH:-/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}"
 POLL_INTERVAL_MS="${ART_WORKER_POLL_INTERVAL_MS:-15000}"
 HEARTBEAT_INTERVAL_MS="${ART_WORKER_HEARTBEAT_INTERVAL_MS:-30000}"
 LOG_DIR="${ROOT}/logs"
 RUNNER="${ROOT}/scripts/run-art-direct-worker.sh"
+
+resolve_codex_cli() {
+  local configured="${CODEX_CLI_PATH:-}"
+  local from_path=""
+  from_path="$(PATH="${WORKER_PATH}:${PATH:-}" command -v codex 2>/dev/null || true)"
+  for candidate in \
+    "${configured}" \
+    "${from_path}" \
+    "/Applications/ChatGPT.app/Contents/Resources/codex" \
+    "/Applications/Codex.app/Contents/Resources/codex" \
+    "/opt/homebrew/bin/codex" \
+    "/usr/local/bin/codex"; do
+    if [[ -n "${candidate}" && -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+  printf '%s\n' "${from_path:-codex}"
+}
+
+DEFAULT_CODEX_CLI="$(resolve_codex_cli)"
 
 if [[ "${POLL_INTERVAL_MS}" == "300000" ]]; then
   POLL_INTERVAL_MS="15000"
@@ -111,7 +131,7 @@ cat > "${PLIST}" <<PLIST
     <key>NODE_BIN</key>
     <string>${NODE_BIN}</string>
     <key>CODEX_CLI_PATH</key>
-    <string>${CODEX_CLI_PATH:-${DEFAULT_CODEX_CLI}}</string>
+    <string>${DEFAULT_CODEX_CLI}</string>
     <key>OPENAI_BASE_URL</key>
     <string>${OPENAI_BASE_URL:-}</string>
     <key>OPENAI_API_BASE_URL</key>
