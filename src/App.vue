@@ -19348,6 +19348,7 @@ export default {
           figmaLinks: form.figmaLinks || '',
           writeMode: form.figmaWriteMode || 'target-node',
           imageGenerationProviderMode: form.imageGenerationProviderMode || 'image2',
+          executionKind: form.executionKind || 'default',
           selectedMaterialSnapshots: form.selectedMaterialSnapshots || []
         });
       }
@@ -19401,13 +19402,17 @@ export default {
           // openRunCreateDrawer will keep the existing error handling path.
         }
       }
-      const imageGenerationProviderMode = this.inferDefaultImageGenerationProviderMode(skillPath, row.preview || row.skill?.preview || '');
+      const executionKind = this.skillExecutionKind(row);
+      const imageGenerationProviderMode = executionKind === 'image-generation'
+        ? this.inferDefaultImageGenerationProviderMode(skillPath, row.preview || row.skill?.preview || '')
+        : 'image2';
       const requirement = this.defaultSkillRunRequirement({
         materialNames: [productName],
         materialPaths: [skillPath],
         figmaLinks: '',
         writeMode: 'target-node',
-        imageGenerationProviderMode
+        imageGenerationProviderMode,
+        executionKind
       });
       await this.openRunCreateDrawer({
         projectId,
@@ -19424,7 +19429,7 @@ export default {
         developer: this.defaultRunDeveloperName,
         targetPage: skillPath || productName,
         showdocHints: skillPath,
-        executionKind: this.skillExecutionKind(row),
+        executionKind,
         imageGenerationProviderMode,
         selectedMaterialHints: skillPath ? [skillPath] : [],
         requirement,
@@ -19885,6 +19890,7 @@ export default {
         figmaLinks,
         writeMode: this.runForm.figmaWriteMode || 'target-node',
         imageGenerationProviderMode,
+        executionKind,
         selectedMaterialSnapshots
       });
       const payload = {
@@ -21931,7 +21937,7 @@ export default {
       };
     },
 
-    defaultSkillRunRequirement({ materialNames = [], materialPaths = [], figmaLinks = '', writeMode = 'target-node', imageGenerationProviderMode = 'image2', selectedMaterialSnapshots = [] } = {}) {
+    defaultSkillRunRequirement({ materialNames = [], materialPaths = [], figmaLinks = '', writeMode = 'target-node', imageGenerationProviderMode = 'image2', executionKind = 'default', selectedMaterialSnapshots = [] } = {}) {
       const names = this.normalizedRunMaterialHints(materialNames).filter(Boolean);
       const paths = this.normalizedRunMaterialHints(materialPaths).filter(Boolean);
       const materialText = names.length
@@ -21945,6 +21951,7 @@ export default {
         primarySkillPath: paths.join('\n'),
         selectedMaterialHints: paths,
         selectedMaterialSnapshots,
+        executionKind,
         figmaLinks: figmaText
       };
       const isImagePlacement = Boolean(figmaText && this.runFigmaTargetIsImagePlacement(runContext));
@@ -22033,9 +22040,9 @@ export default {
         .replace(/[。；;]+$/g, '');
     },
 
-    ensureFigmaTargetInRunRequirement({ requirement = '', materialNames = [], materialPaths = [], figmaLinks = '', writeMode = 'target-node', imageGenerationProviderMode = 'image2', selectedMaterialSnapshots = [] } = {}) {
+    ensureFigmaTargetInRunRequirement({ requirement = '', materialNames = [], materialPaths = [], figmaLinks = '', writeMode = 'target-node', imageGenerationProviderMode = 'image2', executionKind = 'default', selectedMaterialSnapshots = [] } = {}) {
       const text = String(requirement || '').trim();
-      if (!text) return this.defaultSkillRunRequirement({ materialNames, materialPaths, figmaLinks, writeMode, imageGenerationProviderMode, selectedMaterialSnapshots });
+      if (!text) return this.defaultSkillRunRequirement({ materialNames, materialPaths, figmaLinks, writeMode, imageGenerationProviderMode, executionKind, selectedMaterialSnapshots });
       const figmaText = String(figmaLinks || '').trim();
       if (!figmaText) return text;
       const names = this.normalizedRunMaterialHints(materialNames).filter(Boolean);
@@ -22049,6 +22056,7 @@ export default {
         primarySkillPath: paths.join('\n'),
         selectedMaterialHints: paths,
         selectedMaterialSnapshots,
+        executionKind,
         figmaLinks: figmaText
       };
       const requiresLayerPreserveWrite = this.runRequiresLayerPreserveFigmaWrite(runContext);
@@ -22362,6 +22370,7 @@ export default {
 
     isImageGenerationRun(run = {}) {
       if (this.normalizeSkillExecutionKind(run?.executionKind) === 'image-generation') return true;
+      if (Object.prototype.hasOwnProperty.call(run || {}, 'executionKind') && this.normalizeSkillExecutionKind(run?.executionKind) === 'default') return false;
       const text = [
         run.requirement,
         run.title,
@@ -22382,6 +22391,7 @@ export default {
 
     isExplicitImageGenerationRun(run = {}) {
       if (this.normalizeSkillExecutionKind(run?.executionKind) === 'image-generation') return true;
+      if (Object.prototype.hasOwnProperty.call(run || {}, 'executionKind') && this.normalizeSkillExecutionKind(run?.executionKind) === 'default') return false;
       const text = [
         run.requirement,
         run.title,

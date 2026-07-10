@@ -8580,6 +8580,7 @@ function isPureImageGenerationRun(run = {}) {
 
 function isImageGenerationRun(run = {}) {
   if (normalizeExecutionKind(run.executionKind) === 'image-generation') return true;
+  if (Object.prototype.hasOwnProperty.call(run || {}, 'executionKind') && normalizeExecutionKind(run.executionKind) === 'default') return false;
   const text = [
     run.requirement,
     run.title,
@@ -8600,6 +8601,7 @@ function isImageGenerationRun(run = {}) {
 
 function isExplicitImageGenerationRun(run = {}) {
   if (normalizeExecutionKind(run.executionKind) === 'image-generation') return true;
+  if (Object.prototype.hasOwnProperty.call(run || {}, 'executionKind') && normalizeExecutionKind(run.executionKind) === 'default') return false;
   const text = [
     run.requirement,
     run.title,

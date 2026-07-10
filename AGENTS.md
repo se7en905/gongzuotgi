@@ -352,6 +352,8 @@
   - Git 来源的真实 `skill/md` 内容预览里允许维护 `执行方式` 分类，当前只允许 `默认` 和 `纯生图` 两类；本地路径和共享盘扫描产物的展示管理不得承担这项分类。
   - `执行方式` 分类入口只能放在真实 Git `skill/md` 的内容预览侧，例如 `SkillPreviewDialog`；没有真实 Git 相对路径的本地文件夹、共享盘目录和纯展示项不得暴露该分类。
   - Git `skill/md` 在内容预览里被负责人标记为 `纯生图` 后，后续从工作台发起执行时必须自动继承该分类；未标记时默认按原本非纯生图方式处理，不得要求负责人在创建执行时额外手动选择标签。
+  - `执行方式=默认` 表示该产物按普通 md / Skill 执行，不得因为标题、路径、正文或补充要求里出现“生成图片 / 生图 / 图片 / image2”等关键词，就自动展示 `生图调用方式`、写入 image2 口径或按纯生图状态判定。
+  - 只有 `执行方式=纯生图` 的产物，才允许在新建美术执行弹窗展示 `生图调用方式`，并把 `imageGenerationProviderMode` 作为本次执行状态判定字段；默认类即使内部会输出截图、本地产物或报告，也不得混入纯生图归档和 image2 失败即阻塞规则。
   - `执行方式` 保存成功后，关闭并重新打开产物预览时必须保持上次保存值；客户端必须像别名一样把该覆盖值写入缓存、随 `/api/skill-version-overrides` 回灌，并在当前已打开预览里实时回显，不得出现“提示成功但重开后又重置为默认”。
   - 别名输入框允许多个别名，使用顿号、逗号或换行分隔。
   - 保存后当前电脑和其他组员都必须能看到同一份新别名。
@@ -399,8 +401,8 @@
   - Figma 插件、本地桥接服务、前台启动器、自动补齐 `approval_mode` 或 trusted project 等只属于兜底或诊断增强；负责人未明确确认前，不得把它们替换成全员默认执行链路，也不得影响原本可用成员继续按原命令方式执行。
   - Windows 前台启动器只能作为单独排障入口保留，不得擅自混入 `复制 Windows 开机自启/立即生效` 原本命令，也不得让安装脚本默认改走前台启动器路径；默认 Windows Worker 开机自启路径必须继续使用当前账号计划任务。
   - 普通执行点击启动时只负责把当前执行记录排队给当前点击账号；不得因为该账号 Worker 当场未在线、Codex 未就绪或 Figma MCP 未就绪而拒绝排队，也不得要求已经按最新命令启动过 Worker 的组员重复执行命令。
-  - 平台服务重启、前端发布或 Worker 脚本更新后，已在线的 Windows 计划任务 Worker 和 macOS LaunchAgent Worker 必须自动连回并拉取最新脚本或配置；默认不得把“让所有组员重新复制命令”当成发布后立即生效的主路径。
-  - Worker 每次领取新任务前必须再次强制校验所需脚本、版本和任务资料是否为最新；只有 Worker 离线、Windows 计划任务异常、macOS LaunchAgent 异常或本机自检损坏时，才提示组员重新执行手动启动或开机自启命令。
+  - Worker 脚本和安装命令更新采用负责人受控发布策略：默认不得让已安装的 Windows 计划任务 Worker 或 macOS LaunchAgent Worker 在后台自动覆盖本地脚本；需要让组员拿到新版 Worker 逻辑时，必须明确通知对应组员重新复制并执行工作台里的 Worker 安装/立即生效命令。
+  - 平台服务重启或前端发布后，已在线的 Worker 只需要自动连回平台并继续领取任务；不得因为服务重启、页面刷新或普通平台事件而强制覆盖组员本机 `art-direct-worker.mjs` 或 runner。只有 Worker 离线、Windows 计划任务异常、macOS LaunchAgent 异常、本机自检损坏，或负责人明确发布新版 Worker 时，才提示组员重新执行手动启动或开机自启命令。
   - `/api/runs/:id/start` 启动普通执行时只能把当前 `run` 置为待领取/排队状态，并写入 `queuedForUserId` 为当前点击账号；不得由平台服务器、负责人 Mac 或工作台管理者 admin 的本机环境启动 Codex。
   - 当前账号 Worker 未在线或本机能力未就绪时，前端必须明确显示等待当前账号 Worker 上线或等待 Codex/Figma MCP 自检通过；不得提示改用负责人 Mac 代跑，不得让负责人误判为已经在服务器执行。
   - 任务排队后，对应账号的本机 Worker 必须带 `codex.exec` 能力调用 `/api/agent-runs/next` 才允许真正领取；只有执行记录明确需要 Figma 放置、替换或写入证据时才额外要求 `figma.mcp.write`。领取时必须再次校验当前账号、本机能力、项目权限和执行记录分配关系。
@@ -466,6 +468,9 @@
   - Image2 自检不得依赖组员 Windows 电脑必装 `python3`；如果 `python3`、`python` 或 `py` 不可用，必须使用 Node 内置网络能力做同等无效参数预检，避免 Codex 客户端能生图但 Worker 状态因缺 Python 误报未通过。
   - 纯生图 Skill/md 填写了 Figma 链接时，必须视为需要在 Figma 目标处放置或替换生成成品图；证据可以是 `use_figma` 返回的 `createdNodeIds` / `mutatedNodeIds`，也可以是图片上传、放置或替换工具返回的等价成功记录，但必须能证明成品图已落到该 Figma 目标。
   - 纯生图 Skill/md 未填写 Figma 链接时，本机 Worker 必须要求 Codex 把生成图片保存到本机执行目录，并在执行结束后扫描新增图片产物，上传归档到本次执行 `artifactRoot/生成图片/`；执行记录只保存路径、名称、类型、大小等元信息，不得把图片 base64 长期写入 `runs.json`。
+  - 纯生图执行里，执行人本机 `.codex/generated_images/`、gpt-image 临时输出目录或其它临时候选目录只算候选池，不算工作台最终产物；只有复制或保存到当前执行工作区 `生成图片/` 或 `outputs/`，并成功归档到本次 `artifactRoot/生成图片/` 的图片，才允许展示为工作台 `生成图片产物`。
+  - 纯生图候选图数量多于最终交付数量时，执行人本机 Codex 必须先打开或生成缩略图目检全部候选，再按本次 Skill/md 的风格、套系、状态、主体完整度和负责人要求选择最符合的图片；不得只按文件名、生成时间、目录排序、复制顺序或模型默认映射决定入选。
+  - 纯生图从候选池筛选图片时，最终报告必须写明原始候选数量、最终入选映射、未入选原因和工作台归档路径；如果临时候选里存在明显更符合风格但未归档的图片，必须视为执行复核问题，不得把已归档但不符合的一张当作最终通过。
   - 只有纯生图 Skill/md 才允许把图片归档到本次执行 `artifactRoot/生成图片/` 并展示为 `generatedArtifacts`；Figma 收尾、图层清理、命名、缩放、结构整理、回读验收等非纯生图任务里产生的验证截图、回读截图、`final-figma-verification.png` 或其它 `outputs/*.png` 只能作为验证材料，不得当成生成成品图。
   - 生图状态判定必须先扫描并归档本机执行目录里的真实生成图片产物，再根据 `imageGenerationProviderMode`、Image2 调用结果和替代图证据判定最终状态；不得因为同一日志前段出现 Image2 连接失败、后段已经由 Image2 成功落盘成品图，就跳过归档或继续显示 `本机阻塞`。
   - 生图执行记录只要已归档至少一个真实生成图片产物，或填写了 Figma 链接且检测到图片放置、替换、填充、创建或修改节点等真实写入证据，执行清单、执行明细、AI档案和统计不得继续显示红色 `本机阻塞`；缺少最终回读/截图验收时只能显示 `部分写入` 或 `有条件通过`，并保留原失败原因供追查。
@@ -554,6 +559,7 @@
   - Worker 的 Codex/Figma MCP 自检必须在执行人自己的电脑上执行，例如检查本机 `codex --help` 和 `codex mcp list`；这些检查只决定该 Worker 是否具备领取执行的能力，不得把自检失败扩大成账号离线或工作台不可用。
   - Worker 空闲状态必须低打扰运行：不得弹窗、不得调用会抢焦点的 GUI、不得打开浏览器或 Figma 窗口、不得造成 Dock 闪烁；轮询只能做后台 Node 请求和必要本机命令检查。
   - Worker 默认任务轮询和心跳兜底间隔为 5 分钟；Codex/Figma MCP 本机自检默认间隔为 40 分钟，即 `ART_WORKER_LOCAL_CHECK_INTERVAL_MS=2400000`。除非负责人明确要求，复制命令、开机自启脚本和 Worker 默认值都必须保持该低打扰配置。
+  - Worker 自更新默认关闭：`ART_WORKER_SELF_UPDATE` 和 `ART_WORKER_STARTUP_UPDATE` 默认必须为 `0`，只有负责人明确要求受控更新时才允许显式设为 `1` / `true` / `yes`。`scripts/art-direct-worker.mjs`、`scripts/install_art_direct_worker_windows.ps1`、`scripts/install_art_direct_worker_launch_agent.sh` 和 `src/App.vue` 复制命令必须保持同一默认口径；不得恢复“每次启动前无条件下载 `/worker/art-direct-worker.mjs` 并覆盖本地脚本”的逻辑。
   - Worker 必须在真正领取任务、恢复本机未完成任务或执行结束时才启动较重的 Codex 子进程；空轮询不得每轮重复启动 Codex/Figma 检查进程。
   - Worker 设备花名保存为独立展示字段；后续心跳不得因未携带花名而清空已保存花名。
   - Worker 设备花名只能由设备所属账号本人修改，不允许组员修改他人设备花名。
@@ -576,6 +582,7 @@
   - 本机执行状态页的待领取/执行中/已完成统计必须覆盖所有本机 Worker 执行单，包含 `direct-skill`、`executionHost=local-worker`、`workerExecution=true` 和美术执行台 `single-skill/custom-workflow` 创建的本机执行记录；不得只统计直接执行记录导致负责人误判。
   - 如果某条执行单的排队时间晚于该执行人 Worker 最近心跳时间，但该 Worker 仍处于 40 分钟在线窗口且 Codex/Figma MCP 已就绪，前端必须按实时事件唤醒口径显示 `正在启动本机执行`；不得把正常在线就绪的任务显示为 `等待下一次心跳/轮询`。只有实时事件连接断开、Worker 离线或自检未就绪时，才把 5 分钟任务轮询作为兜底原因展示。
   - 平台创建或更新本机 Worker 执行单时，必须通过带 `targetUserId` 和 `wakeWorker=true` 的实时事件只唤醒对应执行人的 Worker 立即检查任务；`targetUserId` 只能是当前点击账号，不得使用原执行人或负责人账号兜底；不得广播唤醒所有组员 Worker。
+  - Worker 端处理 `runs.changed` 事件时必须精确过滤：只有 `wakeWorker=true` 且事件载荷里的 `targetUserId` / `queuedForUserId` / `assignedToUserId` / `ownerUserId` 命中当前登录账号，或 `targetDeviceId` / `workerDeviceId` / `claimedByDeviceId` / `deviceId` 命中当前设备时，才允许立即心跳和领取检查。无目标的日志、状态、归档、删除、评分或刷新类 `runs.changed` 事件不得唤醒所有 Worker，也不得触发 Codex/Figma 自检。
   - 同一条本机 Worker 执行记录被 `继续执行` 或 `我来继续执行` 重新排队时，平台必须清空上一轮运行证据字段，包括 `claimedByDeviceId`、`claimedAt`、`startedAt`、`finishedAt`、`completedAt`、`workerResult`、`workerLocalLogPath`、`workerLocalLogSize`、`logPath`、`promptPath`、`stages`、`blocker`、`resultSummary`、`figmaWriteResult`、`exitCode`、`pid`、`localWorkerStale`、`workerEventIds` 等；不得让 `queued/claimed/running` 因旧证据被误判为本机回传异常。
   - 同一条本机 Worker 执行记录被 `继续执行`、`我来继续执行` 或换人继续时，必须保留创建时输入资料和可追溯上下文，包括 `artifactRoot`、`materialPath`、`attachments`、`figmaLinks`、`requirement`、`selectedMaterialHints`、`selectedMaterialSnapshots`、`primarySkillPath`、`primarySkillTitle`、`primarySkillContent`、`showdocHints`、模板/自定义流程信息和 `codexRequest`；不得把粘贴图、Skill/md 快照、Figma 链接或执行要求丢给新执行人。
   - 本机 Worker 执行记录处于 `queued/claimed/running` 这类非最终状态时，服务端读取、领取、状态回传和离线事件补传都必须做活跃状态归一化：非最终状态不得继承上一轮 `finishedAt`、`workerResult`、已结束阶段、旧 Figma 写入结果或旧阻塞信息；只有 `completed/failed/blocked/cancelled` 才允许保存最终证据。

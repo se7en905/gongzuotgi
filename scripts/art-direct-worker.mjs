@@ -511,9 +511,31 @@ function handlePlatformEventBlock(block = '') {
 function shouldWakeForRunEvent(event = null) {
   if (!event || event.type !== 'runs.changed') return false;
   const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
-  const targetUserId = String(payload.targetUserId || payload.queuedForUserId || payload.assignedToUserId || '').trim();
-  if (targetUserId && targetUserId !== String(currentUser?.id || '').trim()) return false;
-  return payload.wakeWorker === true || !targetUserId;
+  const payloadRun = payload.run && typeof payload.run === 'object' ? payload.run : null;
+  const currentUserId = String(currentUser?.id || '').trim();
+  const targetUserId = String(
+    payload.targetUserId
+    || payload.queuedForUserId
+    || payload.assignedToUserId
+    || payload.ownerUserId
+    || payloadRun?.queuedForUserId
+    || payloadRun?.assignedToUserId
+    || payloadRun?.ownerUserId
+    || ''
+  ).trim();
+  const targetDeviceId = String(
+    payload.targetDeviceId
+    || payload.workerDeviceId
+    || payload.claimedByDeviceId
+    || payload.deviceId
+    || payloadRun?.claimedByDeviceId
+    || payloadRun?.workerResult?.deviceId
+    || payload.worker?.deviceId
+    || ''
+  ).trim();
+  if (targetUserId && currentUserId && targetUserId !== currentUserId) return false;
+  if (targetDeviceId && targetDeviceId !== deviceId) return false;
+  return payload.wakeWorker === true && Boolean(targetUserId || targetDeviceId);
 }
 
 async function executeRun(run) {
@@ -1412,6 +1434,8 @@ function buildPrompt(run = {}, workspace = {}) {
     figmaWriteRequired ? '- 涉及 Figma 写入、图片放置或图片替换时，必须回传 createdNodeIds / mutatedNodeIds，或可证明图片已放置/替换到目标 Figma 的等价工具证据。' : '',
     !figmaLinks ? '- 本次交付位置是工作台产物区，不要求读取或写入 Figma。' : '',
     !figmaLinks && imageGenerationRun ? '- 本次是纯生图：必须把最终成品图保存到本机执行目录下的“生成图片/”或“outputs/”目录，平台会自动归档到执行台供预览、打开和下载。' : '',
+    !figmaLinks && imageGenerationRun ? '- 如果 image2 / Codex 临时生成目录里候选图数量多于最终交付数量，必须先打开或生成缩略图目检所有候选，再按本次 Skill / md 的风格、套系、状态和主体完整度选择最符合的一张；不得只按文件名、生成时间或复制顺序决定入选。' : '',
+    !figmaLinks && imageGenerationRun ? '- 从临时生成目录筛选图片时，最终报告必须写明原始候选数量、入选映射和未入选原因；只有复制到“生成图片/”或“outputs/”的文件才会进入工作台产物区。' : '',
     imagePlacementRequired
       ? '- 最终报告必须写明生成图片产物路径、Figma 写回/放置/替换/分层处理目标、使用的 Skill / md 和复核点。'
       : '- 如果 Skill / md 任务本身是生成图片或本地产物且本次没有要求落到 Figma，不强制要求 Figma 写入完成；最终报告写明产物路径、使用的 Skill / md 和复核点。',
@@ -2918,6 +2942,7 @@ function figmaTargetIsImagePlacement(run = {}) {
 
 function isImageGenerationRun(run = {}) {
   if (normalizeExecutionKind(run.executionKind) === 'image-generation') return true;
+  if (Object.prototype.hasOwnProperty.call(run || {}, 'executionKind') && normalizeExecutionKind(run.executionKind) === 'default') return false;
   const text = [
     run.requirement,
     run.title,
@@ -2938,6 +2963,7 @@ function isImageGenerationRun(run = {}) {
 
 function isExplicitImageGenerationRun(run = {}) {
   if (normalizeExecutionKind(run.executionKind) === 'image-generation') return true;
+  if (Object.prototype.hasOwnProperty.call(run || {}, 'executionKind') && normalizeExecutionKind(run.executionKind) === 'default') return false;
   const text = [
     run.requirement,
     run.title,
