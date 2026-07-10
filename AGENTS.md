@@ -94,6 +94,8 @@
   - 权限只能控制操作能力，例如 `run.create` 控制是否显示 `新建美术执行`，`workflow.manage` / `api.workflow.manage` 控制是否能新增、编辑、删除模板；不得用权限分支改变已确认的执行台信息架构、模板展示样式或弹窗基础结构。
   - 修改执行台、`RunCreateDialog.vue`、模板管理或全局执行方式后，必须同时按负责人账号和美术执行人账号核对界面；至少确认成员端能看到同一版执行方式卡片、已保存模板、模板说明、主要 md/Skill 胶囊和新建弹窗结构。
   - 生产服务使用 `dist/` 静态包时，前端 UI 改动必须执行 `npm run build` 并重启平台 LaunchAgent / 服务进程后才算对成员生效；只改 `src/` 或只在开发服务看到新版，不代表成员端已经更新。
+  - 后续 Codex 完成任何会影响成员端可见效果的前端、服务端、执行台、权限、Worker 状态、AI产物清单、AI档案、任务中心或看板改动，并且必要验证通过后，必须主动执行发布动作：前端改动先 `npm run build`，再重启平台 LaunchAgent / 服务进程，并校验版本接口和首页资产哈希；不得等负责人再次发“重启”才让成员看到新版。
+  - 如果本次改动只影响文档、基线、注释、离线脚本、未被生产服务读取的临时材料，或验证失败需要回退/继续修复，则不得为了“发布”盲目重启生产服务；最终回复必须明确说明是否已发布到成员端。
   - 平台 LaunchAgent / `scripts/start-api.mjs` 重启服务时，必须先停止上一轮子进程 `server/server.mjs`，并等待 `4288` 端口释放后再启动新进程；不得留下孤儿 Node 进程导致 `EADDRINUSE`、启动循环或成员端仍访问旧服务。
   - `scripts/start-api.mjs` 清理旧进程时必须优先停止实际监听 `4288` 的 `server/server.mjs` 子进程，再停止同属本项目的 `scripts/start-api.mjs` 父进程；不得先退出父级 wrapper 导致 LaunchAgent 抢先拉起新实例、旧子进程仍占端口。
   - `/api/config?versionCheck=1` 是前端版本自检专用轻量接口，必须允许未登录访问，只返回 `frontendVersion`，并设置 `Cache-Control: no-store, no-cache, must-revalidate, max-age=0`；完整 `/api/config` 仍必须保持登录后访问。
