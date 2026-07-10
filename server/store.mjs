@@ -4283,6 +4283,10 @@ function reconcileFigmaEvidenceRunStatus(run = {}) {
       written: true,
       partialWrite: !hasVerification,
       blockerReason,
+      verifiedAfterWrite: hasVerification,
+      postWriteBlockers: hasVerification
+        ? []
+        : actionableFigmaPostWriteBlockers(existingResult.postWriteBlockers),
       riskNotes
     },
     resultSummary: {
@@ -4766,7 +4770,7 @@ function isNegatedFigmaBlockerLine(line = '') {
 function isNonBlockingFigmaNoteLine(line = '') {
   const text = compactEvidenceReason(line);
   if (!text) return false;
-  return /(?:Figma MCP|MCP|截图工具).*(?:截图已生成|截图.*返回|内联截图|可见)|(?:shell|curl|本机).*(?:无法|不能).*(?:下载|解析|保存).*(?:figma\.com|截图|图片|本地)|(?:平台产物目录|产物目录|报告).*(?:不可写|只可读|未能落盘|不能落盘)|(?:接下来|随后|现在我会|我会|准备|尽量|下一步).{0,120}(?:回读|截图|验证|验收|复核)|如果.{0,120}(?:截图|接口|工具).{0,80}(?:不可用|失败).{0,120}(?:元数据|metadata|回读|证明|继续)|Step\s*13.{0,160}(?:generated|final_|最终写回|最终验证|contact)|只保留最终写回用的\s*`?final_|删除失败 alpha|旧棋盘格中间图|废弃重生成版本/i.test(text);
+  return /(?:Figma MCP|MCP|截图工具).*(?:截图已生成|截图.*返回|内联截图|可见)|(?:shell|curl|本机).*(?:无法|不能).*(?:下载|解析|保存).*(?:figma\.com|截图|图片|本地)|(?:平台产物目录|产物目录|报告).*(?:不可写|只可读|未能落盘|不能落盘)|(?:接下来|随后|现在我会|我会|准备|尽量|下一步).{0,120}(?:回读|截图|验证|验收|复核)|(?:当前|暂时).{0,100}(?:只看到|未看到|没有).{0,80}(?:写入工具|use_figma).{0,160}(?:我会|再做一次|如果仍然)|如果.{0,120}(?:截图|接口|工具).{0,80}(?:不可用|失败).{0,120}(?:元数据|metadata|回读|证明|继续)|Step\s*13.{0,160}(?:generated|final_|最终写回|最终验证|contact)|只保留最终写回用的\s*`?final_|删除失败 alpha|旧棋盘格中间图|废弃重生成版本/i.test(text);
 }
 
 function isFigmaPostWriteBlockerLine(line = '') {
@@ -8643,15 +8647,23 @@ function isFigmaWriteEvidenceText(value = '') {
   return /createdNodeIds|mutatedNodeIds|figmaWriteResult.*written["']?\s*[:=]\s*true|use_figma\s+写入成功|日志识别到\s*(?:createdNodeIds|mutatedNodeIds)|(?:图片|成品图|位图).{0,80}(?:放置|替换|填充|插入).{0,80}(?:成功|完成|已)|(?:放置|替换|填充|插入).{0,80}(?:Figma|目标|节点).{0,80}(?:成功|完成|已)/i.test(text);
 }
 
+function actionableFigmaPostWriteBlockers(blockers = []) {
+  return [...new Set((Array.isArray(blockers) ? blockers : [])
+    .map(item => cleanString(item))
+    .filter(Boolean)
+    .filter(isFigmaPostWriteBlockerLine))];
+}
+
 function hasFigmaPostWriteVerification(run = {}) {
   const result = run.figmaWriteResult && typeof run.figmaWriteResult === 'object' ? run.figmaWriteResult : {};
   if (!result.written && !hasFigmaWriteEvidence(run)) return false;
-  if (result.partialWrite === true) return false;
-  if (Array.isArray(result.postWriteBlockers) && result.postWriteBlockers.length) return false;
-  if (cleanString(result.blockerReason)) return false;
+  if (actionableFigmaPostWriteBlockers(result.postWriteBlockers).length) return false;
+  const blockerReason = cleanString(result.blockerReason);
+  if (blockerReason && isFigmaPostWriteBlockerLine(blockerReason)) return false;
   if (result.verifiedAfterWrite === true) return true;
   if (Array.isArray(result.verificationEvidence) && result.verificationEvidence.some(Boolean)) return true;
   if (run.resultSummary?.figmaVerifiedAfterWrite === true) return true;
+  if (result.partialWrite === true) return false;
   return false;
 }
 
