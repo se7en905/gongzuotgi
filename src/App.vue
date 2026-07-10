@@ -21253,6 +21253,8 @@ export default {
           '$env:ART_WORKER_POLL_INTERVAL_MS = ' + this.powershellQuote(pollInterval),
           '$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = ' + this.powershellQuote(heartbeatInterval),
           '$env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS = ' + this.powershellQuote(localCheckInterval),
+          '$env:ART_WORKER_SELF_UPDATE = "0"',
+          '$env:ART_WORKER_STARTUP_UPDATE = "0"',
           '& $node.Source "$root\\scripts\\art-direct-worker.mjs"'
         ].join('\n');
       }
@@ -21267,6 +21269,8 @@ export default {
         `ART_WORKER_POLL_INTERVAL_MS=${pollInterval} \\`,
         `ART_WORKER_HEARTBEAT_INTERVAL_MS=${heartbeatInterval} \\`,
         `ART_WORKER_LOCAL_CHECK_INTERVAL_MS=${localCheckInterval} \\`,
+        'ART_WORKER_SELF_UPDATE=0 \\',
+        'ART_WORKER_STARTUP_UPDATE=0 \\',
         'node "$WORKER_HOME/scripts/art-direct-worker.mjs"'
       ].join('\n');
     },
@@ -21319,6 +21323,8 @@ export default {
           '$env:ART_WORKER_POLL_INTERVAL_MS = ' + this.powershellQuote(pollInterval),
           '$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = ' + this.powershellQuote(heartbeatInterval),
           '$env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS = ' + this.powershellQuote(localCheckInterval),
+          '$env:ART_WORKER_SELF_UPDATE = "0"',
+          '$env:ART_WORKER_STARTUP_UPDATE = "0"',
           'powershell -NoProfile -ExecutionPolicy Bypass -File "$root\\scripts\\install_art_direct_worker_windows.ps1"'
         ].join('\n');
       }
@@ -21336,6 +21342,8 @@ export default {
         `ART_WORKER_POLL_INTERVAL_MS=${pollInterval} \\`,
         `ART_WORKER_HEARTBEAT_INTERVAL_MS=${heartbeatInterval} \\`,
         `ART_WORKER_LOCAL_CHECK_INTERVAL_MS=${localCheckInterval} \\`,
+        'ART_WORKER_SELF_UPDATE=0 \\',
+        'ART_WORKER_STARTUP_UPDATE=0 \\',
         'bash "$WORKER_HOME/scripts/install_art_direct_worker_launch_agent.sh"'
       ].join('\n');
     },
@@ -21374,7 +21382,7 @@ export default {
         'chcp 65001 >nul',
         'title ArtDirectWorker',
         'echo ArtDirectWorker foreground runner is starting.',
-        'echo Launcher version: 2026-07-09-direct-loop-use-figma-approval',
+        'echo Launcher version: 2026-07-10-worker-controlled-update',
         'echo Keep this window open while running Figma tasks.',
         'echo.',
         `set "ART_PLATFORM_API=${this.cmdBatchValue(apiBase)}"`,
@@ -21384,6 +21392,8 @@ export default {
         'set "ART_WORKER_POLL_INTERVAL_MS=300000"',
         'set "ART_WORKER_HEARTBEAT_INTERVAL_MS=300000"',
         'set "ART_WORKER_LOCAL_CHECK_INTERVAL_MS=2400000"',
+        'set "ART_WORKER_SELF_UPDATE=0"',
+        'set "ART_WORKER_STARTUP_UPDATE=0"',
         'set "ART_WORKER_FOREGROUND_IN_CURRENT_WINDOW=1"',
         'set "ART_WORKER_SUPERVISED=1"',
         'set "ART_WORKER_PROJECT_ROOT=%ART_WORKER_HOME%"',
@@ -21397,9 +21407,9 @@ export default {
         'echo CODEX_CLI_PATH=%CODEX_CLI_PATH%',
         'echo.',
         ':worker_loop',
-        'echo [%date% %time%] downloading latest worker...',
-        `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; New-Item -ItemType Directory -Force -Path (Join-Path $env:ART_WORKER_HOME 'scripts') | Out-Null; Invoke-WebRequest -UseBasicParsing -Uri (($env:ART_PLATFORM_API).TrimEnd('/') + '/worker/art-direct-worker.mjs') -OutFile (Join-Path $env:ART_WORKER_HOME 'scripts\\art-direct-worker.mjs') -ErrorAction Stop"`,
-        'if errorlevel 1 echo Worker download failed. Check platform URL or network.',
+        'if "%ART_WORKER_STARTUP_UPDATE%"=="1" echo [%date% %time%] downloading latest worker...',
+        `if "%ART_WORKER_STARTUP_UPDATE%"=="1" powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; New-Item -ItemType Directory -Force -Path (Join-Path $env:ART_WORKER_HOME 'scripts') | Out-Null; Invoke-WebRequest -UseBasicParsing -Uri (($env:ART_PLATFORM_API).TrimEnd('/') + '/worker/art-direct-worker.mjs') -OutFile (Join-Path $env:ART_WORKER_HOME 'scripts\\art-direct-worker.mjs') -ErrorAction Stop"`,
+        'if "%ART_WORKER_STARTUP_UPDATE%"=="1" if errorlevel 1 echo Worker download failed. Check platform URL or network.',
         'where node >nul 2>nul',
         'if errorlevel 1 echo Node.js not found. Install Node.js 20 or newer.',
         'if errorlevel 1 timeout /t 30',

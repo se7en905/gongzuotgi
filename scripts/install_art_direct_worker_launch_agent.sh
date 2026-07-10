@@ -10,6 +10,8 @@ POLL_INTERVAL_MS="${ART_WORKER_POLL_INTERVAL_MS:-15000}"
 HEARTBEAT_INTERVAL_MS="${ART_WORKER_HEARTBEAT_INTERVAL_MS:-30000}"
 LOG_DIR="${ROOT}/logs"
 RUNNER="${ROOT}/scripts/run-art-direct-worker.sh"
+SELF_UPDATE="${ART_WORKER_SELF_UPDATE:-0}"
+STARTUP_UPDATE="${ART_WORKER_STARTUP_UPDATE:-0}"
 
 resolve_codex_cli() {
   local configured="${CODEX_CLI_PATH:-}"
@@ -86,10 +88,12 @@ mkdir -p "${ART_WORKER_HOME}/scripts" "${LOG_DIR}"
 
 export ART_WORKER_PROJECT_ROOT="${ART_WORKER_PROJECT_ROOT:-${ART_WORKER_HOME}}"
 export ART_WORKER_SUPERVISED=1
+export ART_WORKER_SELF_UPDATE="${ART_WORKER_SELF_UPDATE:-0}"
+export ART_WORKER_STARTUP_UPDATE="${ART_WORKER_STARTUP_UPDATE:-0}"
 export PATH="${ART_WORKER_PATH:-/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin}:${PATH:-}"
 
 while true; do
-  if command -v curl >/dev/null 2>&1; then
+  if [[ "${ART_WORKER_STARTUP_UPDATE}" =~ ^(1|true|yes)$ ]] && command -v curl >/dev/null 2>&1; then
     curl -fsSL "${ART_PLATFORM_API%/}/worker/art-direct-worker.mjs" -o "${WORKER}" \
       || echo "[$(date -Iseconds)] worker update download failed" >> "${LOG_DIR}/art-direct-worker.${ART_PLATFORM_USERNAME}.err.log"
   fi
@@ -130,6 +134,10 @@ cat > "${PLIST}" <<PLIST
     <string>${HEARTBEAT_INTERVAL_MS}</string>
     <key>ART_WORKER_LOCAL_CHECK_INTERVAL_MS</key>
     <string>${ART_WORKER_LOCAL_CHECK_INTERVAL_MS:-2400000}</string>
+    <key>ART_WORKER_SELF_UPDATE</key>
+    <string>${SELF_UPDATE}</string>
+    <key>ART_WORKER_STARTUP_UPDATE</key>
+    <string>${STARTUP_UPDATE}</string>
     <key>ART_WORKER_HOME</key>
     <string>${ROOT}</string>
     <key>ART_WORKER_PATH</key>

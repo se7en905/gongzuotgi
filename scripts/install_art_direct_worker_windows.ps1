@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$InstallScriptVersion = '2026-07-08-windows-worker-startup-stability'
+$InstallScriptVersion = '2026-07-10-worker-controlled-update'
 
 $Root = if ($env:ART_WORKER_HOME) { $env:ART_WORKER_HOME } elseif ($env:ART_WORKER_PROJECT_ROOT) { $env:ART_WORKER_PROJECT_ROOT } else { Join-Path $env:USERPROFILE 'ArtDirectWorker' }
 $Username = $env:ART_PLATFORM_USERNAME
@@ -8,6 +8,8 @@ $Api = $env:ART_PLATFORM_API
 $PollInterval = if ($env:ART_WORKER_POLL_INTERVAL_MS) { $env:ART_WORKER_POLL_INTERVAL_MS } else { '300000' }
 $HeartbeatInterval = if ($env:ART_WORKER_HEARTBEAT_INTERVAL_MS) { $env:ART_WORKER_HEARTBEAT_INTERVAL_MS } else { '300000' }
 $LocalCheckInterval = if ($env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS) { $env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS } else { '2400000' }
+$SelfUpdate = if ($env:ART_WORKER_SELF_UPDATE) { $env:ART_WORKER_SELF_UPDATE } else { '0' }
+$StartupUpdate = if ($env:ART_WORKER_STARTUP_UPDATE) { $env:ART_WORKER_STARTUP_UPDATE } else { '0' }
 $OpenAiBaseUrl = if ($env:OPENAI_BASE_URL) { $env:OPENAI_BASE_URL } else { '' }
 $OpenAiApiBaseUrl = if ($env:OPENAI_API_BASE_URL) { $env:OPENAI_API_BASE_URL } else { '' }
 $OpenAiApiBase = if ($env:OPENAI_API_BASE) { $env:OPENAI_API_BASE } else { '' }
@@ -146,6 +148,8 @@ Set-Location $(ConvertTo-PSLiteral $Root)
 `$env:ART_WORKER_POLL_INTERVAL_MS = $(ConvertTo-PSLiteral $PollInterval)
 `$env:ART_WORKER_HEARTBEAT_INTERVAL_MS = $(ConvertTo-PSLiteral $HeartbeatInterval)
 `$env:ART_WORKER_LOCAL_CHECK_INTERVAL_MS = $(ConvertTo-PSLiteral $LocalCheckInterval)
+`$env:ART_WORKER_SELF_UPDATE = $(ConvertTo-PSLiteral $SelfUpdate)
+`$env:ART_WORKER_STARTUP_UPDATE = $(ConvertTo-PSLiteral $StartupUpdate)
 `$env:ART_WORKER_HOME = $(ConvertTo-PSLiteral $Root)
 `$env:ART_WORKER_SUPERVISED = '1'
 `$env:ART_WORKER_RUNNER_STATE_PATH = $(ConvertTo-PSLiteral $RunnerState)
@@ -159,10 +163,12 @@ if ($(ConvertTo-PSLiteral $HttpsProxy)) { `$env:HTTPS_PROXY = $(ConvertTo-PSLite
 if ($(ConvertTo-PSLiteral $AllProxy)) { `$env:ALL_PROXY = $(ConvertTo-PSLiteral $AllProxy) }
 if ($(ConvertTo-PSLiteral $NoProxy)) { `$env:NO_PROXY = $(ConvertTo-PSLiteral $NoProxy) }
 while (`$true) {
-  try {
-    Invoke-WebRequest -UseBasicParsing -Uri ((`$env:ART_PLATFORM_API).TrimEnd('/') + '/worker/art-direct-worker.mjs') -OutFile $(ConvertTo-PSLiteral $Worker) -ErrorAction Stop
-  } catch {
-    Add-Content -Path $(ConvertTo-PSLiteral (Join-Path $LogDir "art-direct-worker.$SafeUsername.log")) -Value ("[" + (Get-Date).ToString("s") + "] worker update download failed: " + `$_.Exception.Message)
+  if (`$env:ART_WORKER_STARTUP_UPDATE -in @('1', 'true', 'yes')) {
+    try {
+      Invoke-WebRequest -UseBasicParsing -Uri ((`$env:ART_PLATFORM_API).TrimEnd('/') + '/worker/art-direct-worker.mjs') -OutFile $(ConvertTo-PSLiteral $Worker) -ErrorAction Stop
+    } catch {
+      Add-Content -Path $(ConvertTo-PSLiteral (Join-Path $LogDir "art-direct-worker.$SafeUsername.log")) -Value ("[" + (Get-Date).ToString("s") + "] worker update download failed: " + `$_.Exception.Message)
+    }
   }
   & $(ConvertTo-PSLiteral $Node) $(ConvertTo-PSLiteral $Worker) *>> $(ConvertTo-PSLiteral (Join-Path $LogDir "art-direct-worker.$SafeUsername.log"))
   `$runnerExitCode = if (`$null -eq `$LASTEXITCODE) { -1 } else { [int]`$LASTEXITCODE }
