@@ -31,6 +31,14 @@ resolve_codex_cli() {
 }
 
 DEFAULT_CODEX_CLI="$(resolve_codex_cli)"
+if [[ "${DEFAULT_CODEX_CLI}" = /* ]]; then
+  CODEX_CLI_DIR="$(dirname "${DEFAULT_CODEX_CLI}")"
+else
+  CODEX_CLI_DIR=""
+fi
+if [[ -n "${CODEX_CLI_DIR}" && ":${WORKER_PATH}:" != *":${CODEX_CLI_DIR}:"* ]]; then
+  WORKER_PATH="${CODEX_CLI_DIR}:${WORKER_PATH}"
+fi
 
 if [[ "${POLL_INTERVAL_MS}" == "300000" ]]; then
   POLL_INTERVAL_MS="15000"

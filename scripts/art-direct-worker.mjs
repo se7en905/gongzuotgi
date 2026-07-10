@@ -2328,10 +2328,18 @@ function cleanEnvValue(value = '') {
 }
 
 function workerChildEnv(extra = {}) {
-  return {
+  const baseEnv = {
     ...process.env,
     ...workerEnvOverrides,
     ...extra
+  };
+  const codexDir = path.isAbsolute(codexPath) ? path.dirname(codexPath) : '';
+  const pathValue = String(baseEnv.PATH || '').trim();
+  const pathParts = pathValue ? pathValue.split(path.delimiter) : [];
+  if (codexDir && !pathParts.includes(codexDir)) pathParts.unshift(codexDir);
+  return {
+    ...baseEnv,
+    PATH: pathParts.filter(Boolean).join(path.delimiter)
   };
 }
 
