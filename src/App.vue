@@ -22370,7 +22370,6 @@ export default {
 
     isImageGenerationRun(run = {}) {
       if (this.normalizeSkillExecutionKind(run?.executionKind) === 'image-generation') return true;
-      if (Object.prototype.hasOwnProperty.call(run || {}, 'executionKind') && this.normalizeSkillExecutionKind(run?.executionKind) === 'default') return false;
       const text = [
         run.requirement,
         run.title,
@@ -22386,12 +22385,13 @@ export default {
           ? run.selectedMaterialSnapshots.flatMap(item => [item?.path, item?.title, item?.name, item?.content])
           : [])
       ].filter(Boolean).join('\n');
+      if (/(?:素材|资源|图标|icon|道具|奖励物).{0,16}生成(?:规范|规则|skill|md)?|生成(?:规范|规则|skill|md).{0,16}(?:素材|资源|图标|icon|道具|奖励物)|多套系素材资源生成规范/i.test(text)) return true;
+      if (Object.prototype.hasOwnProperty.call(run || {}, 'executionKind') && this.normalizeSkillExecutionKind(run?.executionKind) === 'default') return false;
       return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|same[-_\s]*ip[-_\s]*image|sameipimage|gpt[-_\s]?image|imagegen|image[-_\s]*gen|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)|(?:main|key)[-_\s]*visual|concept[-_\s]*art|character[-_\s]*(?:design|art)|image[-_\s]*(?:generation|creation|editing)|text[-_\s]*to[-_\s]*image|img2img|image[-_\s]*to[-_\s]*image|visual[-_\s]*asset|game[-_\s]*asset|poster[-_\s]*(?:design|generation)|banner[-_\s]*(?:design|generation)|(?:generate|create|make|design).{0,40}(?:image|poster|banner|illustration|character|avatar|asset|texture|visual)/i.test(text);
     },
 
     isExplicitImageGenerationRun(run = {}) {
       if (this.normalizeSkillExecutionKind(run?.executionKind) === 'image-generation') return true;
-      if (Object.prototype.hasOwnProperty.call(run || {}, 'executionKind') && this.normalizeSkillExecutionKind(run?.executionKind) === 'default') return false;
       const text = [
         run.requirement,
         run.title,
@@ -22403,6 +22403,8 @@ export default {
         run.stage,
         ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : [])
       ].filter(Boolean).join('\n');
+      if (/(?:素材|资源|图标|icon|道具|奖励物).{0,16}生成(?:规范|规则|skill|md)?|生成(?:规范|规则|skill|md).{0,16}(?:素材|资源|图标|icon|道具|奖励物)|多套系素材资源生成规范/i.test(text)) return true;
+      if (Object.prototype.hasOwnProperty.call(run || {}, 'executionKind') && this.normalizeSkillExecutionKind(run?.executionKind) === 'default') return false;
       return /纯生图|生成图片|生图|出图|图片生成|文生图|以图生图|图生图|同\s*IP\s*生图|same[-_\s]*ip[-_\s]*image|sameipimage|gpt[-_\s]?image|imagegen|image[-_\s]*gen|image\s*2|image2|image_gen|图片产物|生成.*(?:海报|插画|角色|icon|图标|banner|KV|贴图|头像|素材)|(?:main|key)[-_\s]*visual|concept[-_\s]*art|character[-_\s]*(?:design|art)|image[-_\s]*(?:generation|creation|editing)|text[-_\s]*to[-_\s]*image|img2img|image[-_\s]*to[-_\s]*image|visual[-_\s]*asset|game[-_\s]*asset|poster[-_\s]*(?:design|generation)|banner[-_\s]*(?:design|generation)|(?:generate|create|make|design).{0,40}(?:image|poster|banner|illustration|character|avatar|asset|texture|visual)/i.test(text);
     },
 
