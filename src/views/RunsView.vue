@@ -31,7 +31,13 @@
           <div v-if="app.isSavedTemplateWorkflowRun(run)" class="run-template-list-title">
             <a v-if="app.runTaskUrl(run)" :href="app.runTaskUrl(run)" target="_blank" rel="noopener noreferrer" class="task-title-link" @click.stop>{{ app.runTemplateTitle(run) }}</a>
             <strong v-else>{{ app.runTemplateTitle(run) }}</strong>
-            <span class="run-template-skill-pill">{{ app.runTemplateSkillName(run) }}</span>
+            <span
+              v-for="skillName in runTemplateSkillNames(run)"
+              :key="`${run.id}-${skillName}`"
+              class="run-template-skill-pill"
+            >
+              {{ skillName }}
+            </span>
           </div>
           <template v-else>
             <a v-if="app.runTaskUrl(run)" :href="app.runTaskUrl(run)" target="_blank" rel="noopener noreferrer" class="task-title-link" @click.stop>{{ app.runGroupTitle(run) }}</a>
@@ -150,7 +156,13 @@
             <div class="run-template-item-main">
               <div class="run-template-title-row">
                 <strong>{{ workflow.name }}</strong>
-                <span class="run-template-skill-pill">{{ workflowPrimaryMaterialName(workflow) }}</span>
+                <span
+                  v-for="skillName in workflowMaterialNames(workflow)"
+                  :key="`${workflow.id}-${skillName}`"
+                  class="run-template-skill-pill"
+                >
+                  {{ skillName }}
+                </span>
               </div>
               <p class="run-template-description">{{ workflow.description || '暂无模板说明' }}</p>
               <span class="run-template-meta">{{ workflowMetaText(workflow) }}</span>
@@ -932,6 +944,12 @@ export default {
     },
     templateMaterialDisplayName(value = '') {
       return this.app.runMaterialDisplayName(value);
+    },
+    runTemplateSkillNames(run = {}) {
+      return this.app.runTemplateSkillNames(run, 2);
+    },
+    workflowMaterialNames(workflow = {}) {
+      return this.app.customWorkflowMaterialNames(workflow, 2);
     },
     workflowPrimaryMaterialName(workflow = {}) {
       return this.app.customWorkflowPrimaryMaterialName(workflow);

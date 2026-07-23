@@ -19576,13 +19576,29 @@ export default {
       return `${scope} · ${stageCount} 阶段`;
     },
 
+    customWorkflowMaterialNames(workflow = {}, limit = 0) {
+      const projectId = workflow.projectId || this.runForm.projectId || this.selectedProjectId || '';
+      const stages = Array.isArray(workflow.stages) ? workflow.stages : [];
+      const names = [];
+      const seen = new Set();
+      stages.forEach((stage, index) => {
+        const hint = this.runMaterialHintFromWorkflowStage(stage, projectId);
+        const displayName = this.runMaterialDisplayName(hint);
+        const fallbackName = String(stage?.name || stage?.skillId || '').trim();
+        const value = (displayName && !/^(skills?|md|skills-md|custom-stage)$/i.test(displayName))
+          ? displayName
+          : (fallbackName || displayName || hint || `未配置 md / Skill ${index + 1}`);
+        const normalized = String(value || '').trim();
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        names.push(normalized);
+      });
+      if (!names.length) return ['未配置 md / Skill'];
+      return limit > 0 ? names.slice(0, limit) : names;
+    },
+
     customWorkflowPrimaryMaterialName(workflow = {}) {
-      const stage = Array.isArray(workflow.stages) ? workflow.stages[0] || {} : {};
-      const hint = this.runMaterialHintFromWorkflowStage(stage, workflow.projectId || this.runForm.projectId || this.selectedProjectId || '');
-      const displayName = this.runMaterialDisplayName(hint);
-      if (displayName && !/^(skills?|md|skills-md|custom-stage)$/i.test(displayName)) return displayName;
-      const name = String(stage.name || stage.skillId || '').trim();
-      return name || displayName || hint || '未配置 md / Skill';
+      return this.customWorkflowMaterialNames(workflow, 1)[0] || '未配置 md / Skill';
     },
 
     isSavedTemplateWorkflowRun(run = null) {
@@ -19601,15 +19617,28 @@ export default {
     },
 
     runTemplateSkillName(run = {}) {
+      return this.runTemplateSkillNames(run, 2).join(' + ');
+    },
+
+    runTemplateSkillNames(run = {}, limit = 0) {
       const workflow = this.customWorkflowForRun(run);
-      const workflowSkillName = workflow ? this.customWorkflowPrimaryMaterialName(workflow) : '';
-      if (workflowSkillName && workflowSkillName !== '未配置 md / Skill') return workflowSkillName;
-      const hint = [
+      if (workflow) return this.customWorkflowMaterialNames(workflow, limit);
+      const source = [
         ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
         run.primarySkillPath,
         run.stage
-      ].find(value => String(value || '').trim());
-      return this.runMaterialDisplayName(hint) || '未配置 md / Skill';
+      ];
+      const names = [];
+      const seen = new Set();
+      source.forEach((value, index) => {
+        const displayName = this.runMaterialDisplayName(value);
+        const normalized = String(displayName || value || '').trim();
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        names.push(normalized || `未配置 md / Skill ${index + 1}`);
+      });
+      if (!names.length) return ['未配置 md / Skill'];
+      return limit > 0 ? names.slice(0, limit) : names;
     },
 
     runTemplateDescription(run = {}) {
