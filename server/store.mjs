@@ -997,7 +997,8 @@ export async function listRuns() {
   const artifactRuns = await Promise.all(runs.map(enrichRunGeneratedArtifactEvidence));
   const hydratedRuns = await Promise.all(artifactRuns.map(hydrateRunStages));
   const figmaEnrichedRuns = await Promise.all(hydratedRuns.map(enrichRunWithFigmaLogEvidence));
-  const enrichedRuns = await Promise.all(figmaEnrichedRuns.map(enrichRunWithImageGenerationEvidence));
+  const imageEvidenceRuns = await Promise.all(figmaEnrichedRuns.map(enrichRunWithImageGenerationEvidence));
+  const enrichedRuns = imageEvidenceRuns.map(reconcileFileOrganizationRunStatus);
   const accountReconciledRuns = await Promise.all(enrichedRuns.map(reconcileRunAccountFields));
   const evidenceReconciledRuns = accountReconciledRuns.map(reconcileFigmaEvidenceRunStatus);
   await persistRunReadReconciliations(runs, evidenceReconciledRuns);
@@ -1187,7 +1188,7 @@ export async function getRun(id) {
   const artifactRun = await enrichRunGeneratedArtifactEvidence(run);
   const hydrated = await hydrateRunStages(artifactRun);
   const enriched = await enrichRunWithFigmaLogEvidence(hydrated);
-  const imageReconciled = await enrichRunWithImageGenerationEvidence(enriched);
+  const imageReconciled = reconcileFileOrganizationRunStatus(await enrichRunWithImageGenerationEvidence(enriched));
   const accountReconciled = await reconcileRunAccountFields(imageReconciled);
   const evidenceReconciled = reconcileFigmaEvidenceRunStatus(accountReconciled);
   await persistRunReadReconciliations(run ? [run] : [], evidenceReconciled ? [evidenceReconciled] : []);
@@ -1731,6 +1732,51 @@ function noFigmaImageArtifactMissingReason() {
 
 function noFigmaImageArtifactNextStep() {
   return '继续执行或重新执行时确认成品图保存到“生成图片/”或“outputs/”目录，工作台会自动归档供预览、打开和下载。';
+}
+
+function reconcileFileOrganizationRunStatus(run = {}) {
+  if (!run || !isFileOrganizationRun(run)) return run;
+  const summary = run.resultSummary && typeof run.resultSummary === 'object' ? run.resultSummary : {};
+  const blockerReason = cleanString(summary.blockerReason || run.blocker?.reason);
+  const summaryText = cleanString(summary.summary);
+  const finalText = cleanString(summary.finalText || run.workerResult?.finalText);
+  const rawStatus = `${cleanString(run.status)} ${cleanString(run.workerStatus)} ${cleanString(summary.status)}`.toLowerCase();
+  const imageArtifactBlocked = /本次纯生图执行结束后未检测到可下载的生成图片产物|Image2 \/ GPT Image 2 出图未成功/.test(`${summaryText}\n${blockerReason}`);
+  const completedByLog = /无阻塞；|阻塞原因或复核建议：无阻塞|结构已整理到位|已核对总计\s*\d+\s*张\s*PNG/i.test(finalText);
+  if (!/blocked|failed/.test(rawStatus) || !imageArtifactBlocked || !completedByLog || Number(run.exitCode) !== 0) {
+    return run;
+  }
+  const finishedAt = cleanString(run.finishedAt || run.completedAt || run.updatedAt || new Date().toISOString());
+  const stages = Array.isArray(run.stages)
+    ? run.stages.map(stage => {
+      const status = cleanString(stage.status).toLowerCase();
+      if (/blocked|failed|error/i.test(status)) {
+        return { ...stage, status: 'completed', finishedAt: stage.finishedAt || finishedAt };
+      }
+      return stage;
+    })
+    : run.stages;
+  return {
+    ...run,
+    status: 'completed',
+    workerStatus: 'completed',
+    currentStage: '执行完成',
+    stages,
+    blocker: {
+      ...(run.blocker && typeof run.blocker === 'object' ? run.blocker : {}),
+      reason: ''
+    },
+    resultSummary: {
+      ...summary,
+      status: 'completed',
+      statusText: 'completed',
+      summary: '已按文件整理任务完成交付；不再按纯生图缺产物阻塞展示。',
+      blockerReason: '',
+      needsHumanReview: false,
+      nextStep: '',
+      generatedArtifactPolicy: 'non-image-file-organization-completed'
+    }
+  };
 }
 
 function mentionsMissingFigmaTarget(text = '') {
