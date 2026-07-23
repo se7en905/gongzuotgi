@@ -951,6 +951,7 @@ export default {
       runCodexFloatingRunId: '',
       runLogDrawerVisible: false,
       runLogCollapse: [],
+      runLogLoadingId: '',
       logText: '选择一个任务后查看执行日志。',
       selectedArtifact: null,
       artifactPreview: {},
@@ -4826,6 +4827,7 @@ export default {
         this.resetRunChatForm();
         this.runLogDrawerVisible = false;
         this.runLogCollapse = [];
+        this.runLogLoadingId = '';
         this.ensureRunDetailLoaded(value)
           .then(run => {
             if (this.selectedRunId !== value) return;
@@ -4833,6 +4835,7 @@ export default {
           })
           .catch(error => console.warn('执行详情读取失败', error));
         if (this.shouldConnectRunEvents(this.selectedRun)) {
+          this.logText = '正在读取当前执行日志...';
           this.loadSelectedRunLog();
           this.connectEvents(value);
         } else {
@@ -4844,6 +4847,7 @@ export default {
         this.runChatPanelOpen = false;
         this.runLogDrawerVisible = false;
         this.runLogCollapse = [];
+        this.runLogLoadingId = '';
         this.disconnectRunEvents();
         this.logText = '选择一个任务后查看执行日志。';
         this.selectedArtifact = null;
@@ -25034,20 +25038,28 @@ export default {
     async loadSelectedRunLog() {
       const run = this.selectedRun;
       if (!run?.id) {
+        this.runLogLoadingId = '';
         this.logText = '选择一个任务后查看执行日志。';
         return;
       }
       if (!this.canViewRunLog) {
+        this.runLogLoadingId = '';
         this.logText = '当前角色不能查看原始执行日志。';
         return;
       }
+      const loadingRunId = run.id;
+      this.runLogLoadingId = loadingRunId;
       try {
         const response = await fetch(`/api/runs/${encodeURIComponent(run.id)}/log?tailBytes=${RUN_LOG_FETCH_TAIL_BYTES}`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const text = await response.text();
+        if (this.selectedRunId !== loadingRunId || this.runLogLoadingId !== loadingRunId) return;
         this.logText = trimRunLogBuffer(text || (run.status === 'running' ? '执行中，暂无日志输出。' : '暂无日志。'));
       } catch {
+        if (this.selectedRunId !== loadingRunId || this.runLogLoadingId !== loadingRunId) return;
         this.logText = run.status === 'running' ? '执行中，日志暂未可读。' : '日志读取失败。';
+      } finally {
+        if (this.runLogLoadingId === loadingRunId) this.runLogLoadingId = '';
       }
     },
 
