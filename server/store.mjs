@@ -8591,8 +8591,28 @@ function hasGeneratedImageRunEvidenceMarker(run = {}) {
   return /generated-image|生成图片产物|生成图片[\\/]|(?:^|[\\/])生成图片(?:[\\/]|$)/i.test(text);
 }
 
+function isFileOrganizationRun(run = {}) {
+  const text = [
+    run.requirement,
+    run.title,
+    run.sourceTitle,
+    run.customWorkflowName,
+    run.customWorkflowDescription,
+    run.primarySkillPath,
+    run.primarySkillTitle,
+    run.stage,
+    run.primarySkillContent,
+    ...(Array.isArray(run.selectedMaterialHints) ? run.selectedMaterialHints : []),
+    ...(Array.isArray(run.selectedMaterialSnapshots)
+      ? run.selectedMaterialSnapshots.flatMap(item => [item?.path, item?.title, item?.name, item?.content])
+      : [])
+  ].filter(Boolean).join('\n');
+  return /新增文件整理|目录整理|目录结构|copy-matched-images|wrap-brand-folders|merge-aliases|clear-files-recursive|clear-child-contents|remove-first-level-children|remove-folders|按对应子文件夹复制图片|把品牌文件夹整体包进一个容器目录|合并别名目录|以基准文件夹检查缺失子文件夹/i.test(text);
+}
+
 function isImageGenerationRun(run = {}) {
   if (normalizeExecutionKind(run.executionKind) === 'image-generation') return true;
+  if (isFileOrganizationRun(run)) return false;
   const text = [
     run.requirement,
     run.title,
@@ -8615,6 +8635,7 @@ function isImageGenerationRun(run = {}) {
 
 function isExplicitImageGenerationRun(run = {}) {
   if (normalizeExecutionKind(run.executionKind) === 'image-generation') return true;
+  if (isFileOrganizationRun(run)) return false;
   const text = [
     run.requirement,
     run.title,
